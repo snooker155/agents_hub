@@ -79,8 +79,8 @@ the 4xx or 402 body carry the structure as `refusal` (`code`
 
 An agent that cannot itself exfiltrate, but can hand a request to an agent
 that can, effectively can. `run_agent_tool`, `delegate_task_tool`,
-`wait_for_agent_tool`, `run_flow_tool`, `run_new_flow_tool`, `run_team_tool`,
-`run_team_tool` and `run_loop_tool` are the edges of that graph: each one
+`wait_for_agent_tool`, `run_flow_tool`, `run_new_flow_tool`, `run_team_tool`
+and `run_loop_tool` are the edges of that graph: each one
 hands work (and, for the wait/poll tools, eventually the result) to another
 agent whose own tools are not in the caller's tool list at all.
 `run_new_flow_tool` builds the flow it runs, so it also checks every agent in

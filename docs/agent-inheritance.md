@@ -2,12 +2,13 @@
 
 An agent can `extend` another: start from its prompt, tools, model and the
 rest, and declare only what is different. The system agents
-([system-agents](system-agents.md)) are good parents to build on — `analyst`
-for a finance or medical specialist that still queries the connected data the
-same way, `verifier` for a reviewer that checks a different kind of claim,
-`screener` for a recruiting or vendor-screening specialist — and any
-agent can be a parent, system or custom, with one rule: **a system agent is
-a child only of another system agent**; your own agents can never make a system agent their child.
+([system-agents](system-agents.md)) are good parents to build on: `analyst`
+for a finance or medical specialist that still reads the workspace's
+spreadsheets and files the same way, `verifier` for a reviewer that checks a
+different kind of claim, `screener` for a recruiting or vendor-screening
+specialist. Any agent can be a parent, system or custom, with one rule:
+**a system agent is a child only of another system agent**; your own agents can
+never make a system agent their child.
 
 Inheritance is resolved live, every time the agent runs or its definition is
 read: a child always reflects the parent's current state, not a copy taken
@@ -37,7 +38,7 @@ and setting it counts as the child overriding that key.
 `domain`, `capacity`, `definition_id`, `memory_type`, `memory_data`,
 `owner_workspace`, `shared`, the review fields, `system`,
 `user_modified`, `is_default_chat_agent`, the `http_*` fields,
-`default_workspace_only`, and `capability_override` — a security exemption is
+`default_workspace_only`, and `capability_override`, a security exemption is
 granted per agent, reviewed on its own terms, never picked up from a parent.
 
 **Skills** attached anywhere in the chain are available to the child at run
@@ -45,7 +46,7 @@ time; the child's own page lists only its own.
 
 ## The prompt
 
-A child's `instructions.md` holds only its own text — it can be empty. The
+A child's `instructions.md` holds only its own text and can be empty. The
 effective prompt is built from the parent's **effective** prompt (so a
 grandparent's text already carries through), split into a preamble (the text
 before the first `## ` heading) and sections by heading, case insensitive and
@@ -65,8 +66,8 @@ expanding to the parent's full text), otherwise the parent's as is.
 
 **Example.** `analyst`'s instructions open with its own preamble, then
 `## How to work`, `## What to return`, `## Rules`. A `finance_analyst` that
-extends it can leave `## How to work` untouched (the steps — look at the
-data, show the query, sanity check it — apply to finance numbers too), add a
+extends it can leave `## How to work` untouched (the steps: look at the
+data, show the calculation, sanity check it, apply to finance numbers too), add a
 `## Finance specifics` section (write to the finance notes pool, hand off to
 a reviewer before anything leaves the team), and never touch `## Rules`. A
 `medical_analyst` extending the same parent could instead **replace**
@@ -84,7 +85,7 @@ meaning: exactly this list). The two styles do not mix in one field.
 
 In the dashboard, the Tools tab's per-field routes (`POST /api/agents/{id}/tools`,
 `.../delegates`, `.../handoffs`, `PUT .../guardrails`, `.../secrets`) still take
-a plain list — the full set this agent should now have, same as for any
+a plain list, the full set this agent should now have, same as for any
 agent. Saving a child through one of these compares that list with the
 parent's current effective list and stores only the difference: an addition
 the child has that the parent does not, a removal of something the parent
@@ -129,17 +130,17 @@ parent.
 ## Setting, changing and pinning the parent
 
 `POST /api/agents/create` takes `extends` and, optionally, `extends_version`;
-`system_prompt` is optional once `extends` is set — the child's instructions
+`system_prompt` is optional once `extends` is set, the child's instructions
 can start empty and gain only what is particular to it. Afterwards,
 `PUT /api/agents/{id}/extends` with `{"extends", "extends_version"}` sets,
-changes or repins the parent; `extends: null` **detaches** the agent —
+changes or repins the parent; `extends: null` **detaches** the agent,
 whatever it currently resolves to (prompt, tools, model, every inherited
 field) is written into the agent's own record as a plain, standalone agent.
 Detaching does not change behavior at the moment it runs; it only stops
 future parent edits from reaching it.
 
 `extends_version` pins the child to one stored version of the parent instead
-of its current state — the parent can keep changing without moving the
+of its current state, so the parent can keep changing without moving the
 child. `null` (the default) follows the parent live. A pin is a version of
 the immediate parent only: it does not freeze a grandparent further up the
 chain.
@@ -147,7 +148,7 @@ chain.
 **A field set back to the parent's own current value becomes inherited
 again.** Overriding is "this agent's value differs from the parent's
 effective value", not a flag that survives the two becoming equal by
-coincidence — if a child's `model` happens to match what the parent now has,
+coincidence, if a child's `model` happens to match what the parent now has,
 the next save reads as "nothing to override" and the field reports as
 inherited from then on, even though nothing about intent changed. Pin the
 parent, or leave a deliberately redundant override in place, if a field must
@@ -161,21 +162,20 @@ stay the child's own regardless of what the parent does later.
   through the chain) is refused.
 - A system agent can be a parent; it gets `extends` only to another system
   agent, which no shipped agent does.
-- A parent with children cannot be deleted (409, naming the children) — detach
+- A parent with children cannot be deleted (409, naming the children): detach
   or delete them first.
 
 ## The guard on a parent's change
 
 The capability guard checks a child's **effective** tools (and delegates,
-and the rest) at every save — its own, and, when a parent changes, every
+and the rest) at every save, its own, and, when a parent changes, every
 unpinned descendant's effective set recomputed against the new parent.
 Saving a parent that would hand an unpinned child the lethal-trifecta
 combination ([tools-and-capabilities](tools-and-capabilities.md)) is refused,
 naming the child (`"error": "inherited_capability_violation"`,
 `"agent_id"`). `capability_override` is never inherited, so a parent that
-needs the override to run safely (the way `verifier` delegates to the web
-search agent, reviewed and accepted) does not pass that exemption down: a
-child that keeps the same delegate without the override closes the trifecta
+needs the override to run safely (reviewed and accepted on its own) does not
+pass that exemption down: a child that keeps the same delegate without the override closes the trifecta
 on its own account and is refused until it either removes the inherited
 path (`-the_delegate`) or sets `capability_override` itself, reviewed on its
 own terms.
@@ -188,7 +188,7 @@ differently: every unpinned child is checked against the updated parent, and
 a child that would end up with a blocked combination declines exactly what
 the parent gained in this upgrade. The new items become `-item` deltas on
 the child, which keeps running as it did before the upgrade. Its version
-history gets a row saying what it declined and why, the inbox gets a
+history gets a row saying what it declined and why, the notification panel gets a
 warning, and the Inheritance tab shows the declined items struck through.
 Children that stay within the guard take the new items as usual. To accept
 them anyway, remove the `-item` delta (Reset to inherited on the list) once
@@ -207,7 +207,7 @@ file can declare only its own additions and removals:
 ---
 id: finance_analyst
 extends: analyst
-tools: [db_list_connections, db_schema, db_query, calculator, write_file, search_memory, run_agent_tool]
+tools: [list_files, read_file, search_text, calculator, write_file, search_memory, run_agent_tool]
 ---
 
 ## Finance specifics
@@ -225,7 +225,7 @@ delegates: [-visualizer]
 ```
 
 A file's own fields are its own overrides and deltas, read back the same way
-(`GET .../inheritance`), never the parent's effective values flattened in —
+(`GET .../inheritance`), never the parent's effective values flattened in,
 so a file that only ever says `delegates: [-visualizer]` keeps planning
 `unchanged` across repeated applies, and if the parent later changes, the
 child's effective set moves with it without the file needing an edit.
@@ -233,7 +233,7 @@ Changing `extends` or `extends_version` on an existing agent goes through
 `PUT .../extends` the same way the dashboard's "change parent" action does,
 not a per-field route. `ah apply --export` on a child writes `extends` (and
 `extends_version` when pinned) and only the fields and deltas that are the
-child's own — an inherited field the child never touched is left out of the
+child's own, an inherited field the child never touched is left out of the
 file, the same way a fresh agent's defaults are.
 
 See [apply](apply.md) for the rest of the agent file format.

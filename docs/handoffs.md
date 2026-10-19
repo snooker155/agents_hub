@@ -69,8 +69,7 @@ narrower filters would otherwise get the whole conversation back through it.
 
 - A handoff happens only in a conversation: the web chat, the blocking
   `/api/chat/message` endpoint, the terminal client and an instance
-  inbox. In a task run, a scheduled run or an
-  evaluation the tool answers that a handoff needs a conversation and points at
+  inbox. In a task run or a scheduled run the tool answers that a handoff needs a conversation and points at
   `delegate_task_tool`.
 - One turn hands over at most `AGENTS_HUB_HANDOFF_MAX_DEPTH` times (3 by
   default).

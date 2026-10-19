@@ -4,9 +4,7 @@ A workspace file is a file stored once in a workspace and referenced by its
 id everywhere else: a chat turn, a memory pool, a task, an
 agent's tools. Upload a contract once, and the same `file_0123456789abcdef`
 is what the chat attaches, what the knowledge pool indexes and what a task
-run finds in its working directory. This is the Files API shape of the
-Anthropic and OpenAI platforms, with the file belonging to a workspace
-rather than to an account.
+run finds in its working directory.
 
 The Artifacts page (`/artifacts`; the old `/files` and `/artifacts/files`
 redirect there with their query) lists the files of the selected workspace
@@ -39,7 +37,7 @@ so over it the field says so and the drop does nothing.
 | `name` | the name as uploaded (any script, no path) |
 | `mime_type` | the type the upload declared, or a guess from the name |
 | `size`, `sha256` | bytes and their hash |
-| `source` | where it came from: `upload`, `chat`, `agent`, `memory`, `task`, `eval`, `api` |
+| `source` | where it came from: `upload`, `chat`, `agent`, `memory`, `task`, `api` |
 | `created_by` | who added it (for `agent`, the agent) |
 | `created_at` | when |
 | `meta` | free-form details: for `agent`, the run and agent that saved it; for `chat`, the conversation |
@@ -154,8 +152,8 @@ named only.
   `delete_file`) register what they write in the workspace folder as
   workspace files, see "Files in the workspace folder" above.
 
-"Where used" (`GET /api/files/{id}/usage`) reads the pools, tasks and eval
-cases back from their own records, and the chat conversations from the
+"Where used" (`GET /api/files/{id}/usage`) reads the pools and tasks
+back from their own records, and the chat conversations from the
 `workspace_file_uses` table, the one place a chat turn leaves a trace of the
 file after the request is over.
 

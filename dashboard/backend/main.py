@@ -427,7 +427,7 @@ from routes import files as files_router
 app.include_router(files_router.router)
 
 
-# Docs domain: a corpus document (the changelog) for the in-app Docs page.
+# Docs domain: a corpus document for the in-app Docs page.
 from routes import docs as docs_router
 app.include_router(docs_router.router)
 

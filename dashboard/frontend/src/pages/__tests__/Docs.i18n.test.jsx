@@ -2,6 +2,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Docs from '../Docs';
+import { SECTIONS as REGISTRY } from '../../components/docs/sections';
 import { I18nProvider } from '../../i18n';
 
 // The Docs page used to mix translated strings with hardcoded English prose, so
@@ -20,17 +21,9 @@ vi.mock('../../api', () => ({
   getDoc: (...a) => getDocMock(...a),
 }));
 
-const SECTIONS = [
-  'getting-started', 'installation', 'concepts', 'features', 'chat', 'workspaces', 'projects', 'tasks',
-  'plan', 'views', 'agents', 'importing-agents', 'marketplace', 'skills', 'orchestrator',
-  'teams', 'flows', 'loops', 'tools', 'memory', 'web-logs',
-  'instances', 'nodes', 'containers', 'models', 'providers', 'connectors',
-  'tutorials', 'cli', 'cli-api', 'faq',
-  // Guide sections (GuideDoc, the docsGuide namespace).
-  'project-deployments', 'files', 'registry', 'agent-loop', 'steering',
-  'outcomes', 'sessions-runs', 'services', 'deployments', 'local-models', 'health',
-  'production', 'accounts', 'widget', 'integrations',
-];
+// Every section the registry knows, so a section that is added or dropped there
+// is covered (or stops being asked for) without editing this list.
+const SECTIONS = REGISTRY.map((section) => section.id);
 
 // A language is "reaching the page" when its own script/function words show up.
 const EVIDENCE = {

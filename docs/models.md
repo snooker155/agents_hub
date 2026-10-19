@@ -8,6 +8,13 @@ offered, what they cost, and which is default per provider.
 A provider exposes many models. The catalog curates that raw list down to the
 ones you actually want offered: **only enabled models appear in the picker**.
 
+## Discover
+
+**Discover** on a provider asks its live API for the model list (and the
+context windows and release dates it reports) and merges the new models into
+the catalog: disabled, with the price filled in from the shipped table when it
+has one and zero otherwise. Enabling a discovered model is a separate step.
+
 ## Defaults and overrides
 
 Resolution order, most specific first:
@@ -98,10 +105,19 @@ providers without one show a dash. A call that never chose a level, such as a
 chat title or a rubric grader, sends nothing and keeps the provider default. For
 what a positive level shows in the chat, see [agents](agents.md).
 
+## Usage
+
+The Usage tab adds up the recorded runs per provider and model: run count,
+input, cached and output tokens, and the estimated cost from the catalog
+prices. It can be limited to the current workspace and to a date range.
+
 ## Providers
 
 API keys and base URLs live in [settings](settings.md), not here. This page is
-about which models and what they cost. Local providers (Ollama, LM Studio) and
-custom OpenAI-compatible backends are configured the same way.
+about which models and what they cost. The cloud providers are OpenAI,
+Anthropic and Google. Ollama and LM Studio are local servers that the hub
+reaches by their URL (`OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`); it does not run
+models itself. A custom OpenAI-compatible backend is a base URL too
+(`OPENAI_BASE_URL`), configured the same way.
 
 Related: [settings](settings.md).

@@ -91,7 +91,7 @@ export default {
         "**Steer** platziert Ihre Nachricht vor dem nächsten Modellschritt des Agenten, ohne ihn zu stoppen.",
         "**Interrupt** stoppt den Run wie **Stop** und startet ihn dann mit Ihrer Nachricht am Ende neu.",
         "**Queue** wartet im Chat, bis die aktuelle Runde beendet ist, bevor Ihre Nachricht eingeht.",
-        "**Anweisung** fügt Ihren Text für den Rest des Runs dem Systemprompt des Agenten hinzu. Nur der Besitzer des Runs oder ein Admin darf sie senden, nie ein Agent.",
+        "**Anweisung** fügt Ihren Text für den Rest des Runs dem Systemprompt des Agenten hinzu. Nur Sie können sie senden, nie ein Agent.",
         "Eine Nachricht, die eintrifft, während der Agent seine endgültige Antwort schreibt, geht nicht verloren: dafür läuft noch ein zusätzlicher Durchgang."
       ]
     },
@@ -104,7 +104,7 @@ export default {
         "Die Verlaufsfilter reichen vom breitesten zum engsten: `full`, `summary`, `last_n:<N>`, `none`.",
         "Eine Runde übergibt höchstens ein paar Mal (standardmäßig dreimal), und das Gespräch geht nie an einen Agenten zurück, der es schon einmal hatte."
       ]
-    },
+    }
   },
   "outcomes": {
     "nav": "Ergebnisbewertung",
@@ -156,8 +156,7 @@ export default {
       "points": [
         "Filtern Sie [Läufe](/messages) oder [Sitzungen](/sessions) nach Status `failed` und einem Zeitfenster.",
         "Das `error`-Feld des Runs reicht meist allein aus; öffnen Sie das Log, wenn nicht.",
-        "Ein Run, den ein Guardrail gestoppt hat, endet mit dem Status `guardrail_tripped` und einem Fehler, der das Guardrail nennt.",
-        "Ein Lauf einer Aufgabe, der sein Geldlimit erreicht, wird pausiert statt als fehlgeschlagen beendet, und die Aufgabe wartet auf Freigabe."
+        "Ein Run, den ein Guardrail gestoppt hat, endet mit dem Status `guardrail_tripped` und einem Fehler, der das Guardrail nennt."
       ]
     },
     "s3": {
@@ -171,13 +170,14 @@ export default {
   },
   "deployments": {
     "nav": "Deployments",
-    "title": "Deployments, Environments und Sandboxes",
-    "lead": "Die Seite **Deployments** ist eine Arbeitsansicht über die geplanten Jobs, die tatsächlich produktive Arbeit leisten: agent-, flow- und loop-Jobs von der Seite [Plan](/plan), jeder mit einem Protokoll jeder Auslösung.",
+    "title": "Deployments und Sandboxes",
+    "lead": "Die Seite **Deployments** ist eine Arbeitsansicht über die geplanten Jobs, die tatsächlich produktive Arbeit leisten: Agent-, Flow- und Loop-Jobs von der Seite [Plan](/plan), jeder mit einem Protokoll jeder Auslösung.",
     "s0": {
       "h": "Was ein Deployment hinzufügt",
       "points": [
         "**auto_pause_after**: nach wie vielen aufeinanderfolgenden fehlgeschlagenen Auslösungen der Job automatisch pausiert wird, `0` schaltet dies ab, Standard `3`.",
-        "**agent_version** (nur bei Agent-Jobs): den Job auf eine gespeicherte Agentenversion festlegen."
+        "**agent_version** (nur bei Agent-Jobs): den Job auf eine gespeicherte Agentenversion festlegen.",
+        "**Ressourcen** (nur bei Agent-Jobs): ein Projekt, Workspace-Dateien, zusätzliche Secrets und Speicher-Pools, die jede vom Job angelegte Aufgabe mitbekommt, ohne den Agenten selbst zu ändern."
       ]
     },
     "s1": {
@@ -187,64 +187,29 @@ export default {
         "Ein Job, der ständig fehlschlägt, pausiert sich selbst; existiert das Ziel (Agent, Flow oder Loop) nicht mehr, pausiert er sofort.",
         "**Run now** löst einen Job sofort aus, auch pausiert, damit eine Korrektur getestet werden kann, ohne ihn vorher fortzusetzen."
       ]
+    },
+    "s2": {
+      "h": "Wo Code läuft",
+      "p": "Ein Snippet aus `run_code` läuft in einem Wegwerf-Docker-Container ohne Netzwerk, mit schreibgeschütztem Root und Grenzen für Speicher, CPU und Prozesse. Ist Docker nicht erreichbar, lässt `CODE_RUNNER_FALLBACK=local` es als einfachen Subprozess auf diesem Rechner laufen, ganz ohne Isolation, das ist also eine bewusste Entscheidung. Die Sandbox-Prüfung des Doctors sagt, was gerade laufen kann."
     }
   },
   "health": {
     "nav": "Health",
-    "title": "Health und das Runbook",
+    "title": "Health und der Doctor",
     "lead": "Die Seite [Status](/health) zeigt, ob die beweglichen Teile am Leben sind, und der Doctor beurteilt, ob dieser Zustand tatsächlich in Ordnung ist.",
     "s0": {
       "h": "Die Momentaufnahme und der Doctor",
       "points": [
         "`GET /api/health` meldet die Datenbank, Run-Zahlen, Hintergrunddienste, Speichergröße und welche Provider-Schlüssel gesetzt sind; `null` bedeutet, die Prüfung konnte es nicht feststellen, nicht dass etwas ausgefallen ist.",
         "Der Doctor macht aus dieser Momentaufnahme Urteile: jede Prüfung liefert `ok`, `warn`, `fail` oder `skip` mit einem Satz und einer Lösung, der Gesamtstatus ist der schlechteste davon.",
-        "Zu den Prüfungen gehören Migrationen, der Standard-Provider, CORS, veraltete Runs, die Run-Warteschlange, freier Speicherplatz, Docker und die Sandbox-Provider."
+        "Zu den Prüfungen gehören Migrationen, der Standard-Provider, CORS, Sicherheitseinstellungen, veraltete Runs, freier Speicherplatz, Docker, die Sandbox und der Frontend-Build."
       ]
     },
     "s1": {
-      "h": "Das Runbook",
-      "p": "Für einen Fehler, den ein Betreiber tatsächlich erlebt (ein ungültiger Provider-Schlüssel, ein nicht aktiviertes Modell, eine festhängende Run-Warteschlange, ein voller Datenträger, eine festhängende Lease, ein Proxy, der den Live-Stream puffert), gibt das Runbook das Symptom, wie man es mit dem Doctor oder der Health-Momentaufnahme bestätigt, und die Lösung. Die meisten Prüfungen erfolgen, bevor etwas läuft, sodass eine Ablehnung, etwa ein Budgetlimit oder ein deaktiviertes Modell, nie einen halb ausgeführten Run hinterlässt."
+      "h": "Wenn eine Prüfung fehlschlägt",
+      "p": "Jede Prüfung liefert einen Satz und eine Lösung, dazu einen Link „Read more“ in die Referenz unten. Die üblichen Ursachen eines fehlschlagenden Runs sind ein ungültiger Provider-Schlüssel, ein nicht aktiviertes Modell, ein festhängender Run-Eintrag, ein voller Datenträger oder ein nicht erreichbarer Docker-Daemon."
     },
     "callout": "Eine hohe Zahl bei `running_runs` ohne lebende Instanzen bedeutet meist verwaiste Datensätze eines abgestürzten Prozesses, nicht tatsächlich laufende Arbeit."
-  },
-  "production": {
-    "nav": "Produktion",
-    "title": "Betrieb in Produktion",
-    "lead": "So betreiben Sie den Hub mit mehr als einem Backend: Postgres statt SQLite, die Rollen `api` und `worker`, ein Objektspeicher für gemeinsame Dateien sowie sichere Backups, Releases und Rollbacks.",
-    "s0": {
-      "h": "Rollen und die Startwarteschlange",
-      "p": "`AGENTS_HUB_ROLE=api` bedient die API und stellt jeden Lauf in eine Warteschlange, statt ihn selbst zu starten; `ah worker` übernimmt auf einem beliebigen Host einen Start aus dieser Warteschlange und führt ihn dort aus.",
-      "points": [
-        "Läufe melden sich über einen Heartbeat statt über eine PID, sodass ein abstürzender Worker den bereits gestarteten Lauf nicht stoppt.",
-        "Ein toter Lauf mit einem Checkpoint wird automatisch davon neu gestartet, bis zu einer festen Grenze, statt sofort fehlzuschlagen.",
-        "Hintergrundaufgaben, die nur einmal laufen dürfen, etwa der Scheduler und der Watchdog, laufen unter einer Datenbanksperre, damit mehrere Replikate sie nie doppelt ausführen."
-      ]
-    },
-    "s1": {
-      "h": "Postgres und die Broker-Bridge",
-      "p": "Standardmäßig läuft ein Backend mit SQLite auf der Festplatte. Für mehrere Backends braucht es `AGENTS_HUB_DATABASE_URL` auf Postgres, damit sich alle Replikate eine Datenbank teilen, und `AGENTS_HUB_BROKER_URL` auf Redis, damit ein auf einem Replikat beendeter Lauf auch einen Browser-Tab erreicht, der mit einem anderen Replikat verbunden ist.",
-      "points": [
-        "`docker compose --profile ha` startet mit einem Befehl Postgres, Redis, einen mitgelieferten Objektspeicher, zwei API-Replikate und zwei Worker.",
-        "Das Helm-Chart in `deploy/helm/agents-hub` gibt einem echten Cluster dieselbe Struktur, ohne Postgres oder Redis selbst zu betreiben."
-      ]
-    },
-    "s2": {
-      "h": "Objektspeicher für gemeinsame Dateien",
-      "p": "Lauf-Protokolle, Workspaces und View-Dateien liegen weiterhin als Dateien auf der Festplatte, nicht als Datenbankzeilen. Wird `AGENTS_HUB_BLOB_URL` auf einen S3-kompatiblen Bucket gesetzt, werden Lauf-Protokolle, Flow-Protokolle und View-Dateien dorthin gespiegelt, sodass ein Replikat eine Datei auch lesen kann, die es nicht selbst geschrieben hat.",
-      "points": [
-        "Workspaces selbst brauchen weiterhin einen gemeinsamen Mount, den der Objektspeicher noch nicht abdeckt.",
-        "Bleibt die Einstellung leer, bleibt alles lokal, genau wie bei einer Bereitstellung mit nur einem Replikat."
-      ]
-    },
-    "s3": {
-      "h": "Backups, Releases und Rollback",
-      "p": "`ah db backup` schreibt ein Archiv mit der Datenbank und dem Zustand daneben; `ah db restore` spielt es zurück, und `ah db verify` prüft es, ohne die laufende Datenbank anzufassen. Ein Release ist eine Version, die für Backend, Dashboard und Helm-Chart gilt, geschnitten mit `scripts/release.py`.",
-      "points": [
-        "Erstellen Sie vor jedem Upgrade ein Backup: Ein neuerer Build migriert die Datenbank in dem Moment, in dem er sie öffnet.",
-        "Ein älterer Build weigert sich, eine bereits von einem neueren migrierte Datenbank zu öffnen, daher bedeutet ein Rollback eines Releases mit Migrationen eine Wiederherstellung aus dem Backup, nicht nur ein Auschecken des alten Codes."
-      ]
-    },
-    "callout": "Wird `docker compose --scale backend=N` ohne gesetztes `AGENTS_HUB_BROKER_URL` ausgeführt, erhalten Browser-Tabs auf anderen Replikaten keine Live-Updates mehr, bis sie neu laden."
   },
   "integrations": {
     "nav": "Integrationen",
@@ -259,4 +224,32 @@ export default {
     },
     "callout": "Agenten schicken Ihnen mit notify_user eine Benachrichtigung, und eine geplante Benachrichtigung auf der Seite [Plan](/plan) landet im selben Posteingang."
   },
+  "backup": {
+    "nav": "Backup",
+    "title": "Backup, Wiederherstellung und Upgrade",
+    "lead": "Alles, was der Dienst schreibt, liegt unter `.agents_hub/` in der Arbeitskopie: die SQLite-Datenbank, Workspaces, Laufprotokolle und Views. `ah db backup` macht daraus ein Archiv, `ah db restore` lädt es zurück.",
+    "s0": {
+      "h": "Was das Archiv enthält",
+      "points": [
+        "Eine konsistente Kopie der Datenbank, ein Manifest mit App-Version und Zeilenzahl je Tabelle und standardmäßig die Zustandsordner daneben: Run- und Flow-Logs, Workspaces, View-Assets und Speicher-Pools.",
+        "Nicht enthalten: laufende Prozesse, die eine Wiederherstellung nicht fortsetzt, und `.env` mit Ihren Schlüsseln. Das Archiv ist Zustand, keine Konfiguration."
+      ]
+    },
+    "s1": {
+      "h": "Die drei Befehle",
+      "points": [
+        "`ah db backup --to <dir>` schreibt ein `.tar.gz` mit Zeitstempel; `--no-files` behält nur die Datenbank.",
+        "`ah db verify <archive>` prüft ein Archiv, ohne die laufende Datenbank anzufassen.",
+        "`ah db restore <archive> --force` lädt es in die konfigurierte Datenbank und entpackt seine Dateien; ohne `--force` verweigert der Befehl eine Datenbank, die schon Zeilen enthält."
+      ]
+    },
+    "s2": {
+      "h": "Sicher upgraden",
+      "points": [
+        "Machen Sie vor jedem `git pull` ein Backup: ein neuerer Build migriert die Datenbank, sobald er sie öffnet.",
+        "Ein älterer Build weigert sich, eine Datenbank zu öffnen, die ein neuerer schon migriert hat, ein Zurück nach einer Migration heißt also, das Backup einzuspielen, nicht nur den alten Code auszuchecken."
+      ]
+    },
+    "callout": "Die ah-db-Befehle öffnen die Datenbank des Prozesses, in dem sie laufen. Führen Sie sie dort aus, wo der Zustand liegt, unter Docker also im Backend-Container."
+  }
 };

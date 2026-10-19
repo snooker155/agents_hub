@@ -5,8 +5,7 @@ whatever it can infer.
 
 The corpus is ``docs/*.md`` at the repository root, with ``docs/index.json``
 listing each file's title, summary, surface and links; an entry may instead name
-a ``path`` from the repository root, which is how CHANGELOG.md is in the corpus
-as ``changelog``. All of it is shipped with the product, so this is the same
+a ``path`` from the repository root, for a file kept outside docs/. All of it is shipped with the product, so this is the same
 text for every install and there is nothing to configure.
 
 Two tools, deliberately small:
@@ -58,7 +57,7 @@ _json_err = json_err
 def _mtime(path: Any) -> float:
     """A file's modification time, or 0 when it is missing. Part of every cache
     key below, so a long-lived process (a runner replica) sees an edited index
-    or CHANGELOG.md on its next call instead of the text it read at start."""
+    on its next call instead of the text it read at start."""
     try:
         return path.stat().st_mtime
     except OSError:
@@ -82,8 +81,7 @@ def _index() -> List[Dict[str, Any]]:
 
 def _path_for(entry: Dict[str, Any]) -> Any:
     """Where an entry's text lives: ``docs/<id>.md`` unless the entry names a
-    ``path`` relative to the repository root (the changelog is CHANGELOG.md at
-    the root, shipped with the product like the rest)."""
+    ``path`` relative to the repository root (for a file kept outside docs/)."""
     rel = str(entry.get("path") or "").strip()
     return (PROJECT_ROOT / rel) if rel else (DOCS_DIR / f"{entry['id']}.md")
 

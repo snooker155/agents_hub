@@ -72,7 +72,7 @@ ignore = [
 # apply everywhere: every package was reviewed, so a broad except either
 # names the exceptions the block can raise or carries a `noqa: BLE001` with
 # the reason it must catch everything, and logs what it swallows. Nothing is
-# ignored here any more; keep it that way (CONTRIBUTING.md "Blind excepts").
+# ignored here any more; keep it that way.
 
 # Coverage of the backend by the test suite (CI "Run tests" step). fail_under
 # is a floor, not a goal: the suite reached it when the gate was added

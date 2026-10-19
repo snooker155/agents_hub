@@ -13,19 +13,19 @@ A task moves through twelve statuses: `todo`, `ready`, `pending`,
 `in_progress`, `blocked`, `awaiting_input`, `awaiting_approval`, `stopped`,
 `resolved`, `reviewing`, `reviewed`, `done`.
 
-- **todo** — not started.
-- **ready** — queued for the orchestrator or an instance that takes tasks to pick up.
-- **pending** — assigned but waiting on a manual "start" approval.
-- **in_progress** — an agent is running.
-- **blocked** — work cannot proceed; `blocked_reason` says why.
-- **awaiting_input** — paused because the agent asked the user a question.
-- **awaiting_approval** — paused in front of a tool call that needs a yes
+- **todo**: not started.
+- **ready**: queued for the orchestrator or an instance that takes tasks to pick up.
+- **pending**: assigned but waiting on a manual "start" approval.
+- **in_progress**: an agent is running.
+- **blocked**: work cannot proceed; `blocked_reason` says why.
+- **awaiting_input**: paused because the agent asked the user a question.
+- **awaiting_approval**: paused in front of a tool call that needs a yes
   (see [hooks](hooks.md)).
-- **stopped** — aborted or paused by the user.
-- **resolved** — a worker finished; nothing has reviewed it yet.
-- **reviewing** — a reviewer is running.
-- **reviewed** — the reviewer recorded a verdict.
-- **done** — finished.
+- **stopped**: aborted or paused by the user.
+- **resolved**: a worker finished; nothing has reviewed it yet.
+- **reviewing**: a reviewer is running.
+- **reviewed**: the reviewer recorded a verdict.
+- **done**: finished.
 
 Every status change is checked against a fixed transition table and against
 who is asking for it (an **actor**): `user` (the dashboard), `agent` (an
@@ -34,7 +34,7 @@ assigned agent, through the `update_task`/`stop_task`/`block_task` tools), or
 cascade). `system` may perform any transition in the table below; `user` is
 further limited to the statuses in the "user" column; `agent` may only do the
 small set of moves marked **bold** below. Anything else raises
-`IllegalTransition` — a 400 from the API, a JSON error from the tool.
+`IllegalTransition`, a 400 from the API and a JSON error from the tool.
 
 ### Transition table
 
@@ -115,14 +115,14 @@ small set of moves marked **bold** below. Anything else raises
 | done | reviewing | system |
 
 Most rows read "system, user" because reassigning an executor (`POST /api/tasks/{id}/assign`,
-or the terminal client) is allowed from almost any status — including a blocked,
-resolved, reviewed or even a done task — and lands it on `ready`, `in_progress`,
+or the terminal client) is allowed from almost any status, including a blocked,
+resolved, reviewed or even a done task, and lands it on `ready`, `in_progress`,
 or `reviewing`. The assignment is one of four executor kinds:
 
-- **agent** — an agent id
-- **flow** — a flow id
-- **team** — a team id
-- **loop** — a loop id
+- **agent**: an agent id
+- **flow**: a flow id
+- **team**: a team id
+- **loop**: a loop id
 
 A person assigns a flow, team or loop directly; the orchestrator assigns only
 agents. The task page offers a picker for any kind. `POST /api/tasks/{id}/assign`
@@ -131,7 +131,7 @@ as well as `{"agent_id": "..."}` for compatibility.
 
 The "user" column mirrors what the dashboard's Kanban board already enforces:
 dragging a card only ever targets `todo`, `ready`, `in_progress`, `blocked`,
-`stopped`, `done`, `reviewed` or `resolved` — the "waiting" and "reviewing"
+`stopped`, `done`, `reviewed` or `resolved`. The "waiting" and "reviewing"
 columns are not drop targets, because those statuses are entered and left by the
 system, not by a person picking a status. The bold rows are the only moves an
 **agent** may make through its own tools: picking up ready work (`todo` → `ready`),
@@ -139,7 +139,7 @@ starting on work it was given (`todo`/`ready` → `in_progress`), finishing
 (`in_progress` → `resolved`), blocking itself with a reason (`in_progress` →
 `blocked`), and unblocking itself (`blocked` → `in_progress`). An agent's
 `update_task` call can never set `done`, `reviewed`, `reviewing`, an
-`awaiting_*` status, `stopped`, or `pending` — those are reserved for the
+`awaiting_*` status, `stopped`, or `pending`: those are reserved for the
 system and the person watching the task.
 
 Retry and review now apply to every executor kind: automatic retry and the

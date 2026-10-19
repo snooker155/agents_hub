@@ -8,9 +8,9 @@ optionally memory. Running it produces a [run](sessions-and-runs.md).
 **The prompt** is assembled from three markdown files in the agent's definition
 folder, concatenated in order:
 
-- `instructions.md` (required) — the system prompt: who it is and how to work
-- `capabilities.md` (optional) — what it can do, in its own words
-- `usage.md` (optional) — when to invoke it and when not to
+- `instructions.md` (required): the system prompt, who it is and how to work
+- `capabilities.md` (optional): what it can do, in its own words
+- `usage.md` (optional): when to invoke it and when not to
 
 All three go into the system prompt, which is why an agent can describe itself
 accurately: it is carrying the description. It is also why a `capabilities.md`
@@ -53,7 +53,7 @@ HTTP contract without its code ever entering this process.
 `examples/agents/` holds prompts that ship with the repository for reference
 but are not seeded: a waterfall delivery team, an event-planning crew, two
 interactive-fiction helpers, and a three-stage job-search pipeline, grouped by
-theme, plus a `misc/` set. None of them sit under `agents/definitions/` — a
+theme, plus a `misc/` set. None of them sit under `agents/definitions/`: a
 folder there holds only a system agent `bootstrap/agents.json` seeds (the
 prompts of agents an operator creates or imports live in
 `.agents_hub/definitions/`), so an unconnected folder was dead weight rather

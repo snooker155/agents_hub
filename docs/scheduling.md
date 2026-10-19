@@ -1,18 +1,21 @@
 # Scheduling and the Plan page
 
-Future work: notifications, agent tasks and flow triggers, plus the inbox
-showing what fired.
+Future work: notifications, agent tasks, flow and loop triggers and memory
+consolidation, plus the inbox showing what fired.
 
 ## Job kinds
 
-- **notification** — a reminder. Lands in the inbox and the bell.
-- **agent_task** — creates and starts a real task at the appointed time. With an
+- **notification**: a reminder. Lands in the inbox and the bell.
+- **agent_task**: creates and starts a real task at the appointed time. With an
   agent named, that agent runs it; without, the orchestrator routes it.
 - **flow**: triggers a flow run, with an optional JSON seed merged into its
   initial state and a concurrency cap so a recurring flow job cannot stack up
   runaway instances.
 - **loop**: starts a run of a loop. A firing is skipped, and recorded as an
   error, while a run of the same loop is already active.
+- **memory_consolidate**: folds a memory pool and its recent sessions into a
+  new pool (`consolidate_pool_id`, `consolidate_session_limit`), see
+  [memory](memory.md).
 
 `agent_task`, `flow` and `loop` jobs, shown as production deployments rather
 than reminders, get their own page with the resources a job hands its runs
@@ -49,7 +52,7 @@ time back to you, because relative times are where this goes wrong.
 ## The scheduler itself
 
 A background service, started with the backend. If jobs stop firing, check that
-it is actually running — the health snapshot reports it directly. See
+it is actually running: the health snapshot reports it directly. See
 [service-health](service-health.md).
 
 ## Lease and idempotency

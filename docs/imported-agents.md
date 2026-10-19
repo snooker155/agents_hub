@@ -20,22 +20,22 @@ One manifest file at the repository root (`agent-hub.json`, `.agent-hub.json` or
 `agenthub.json`) declaring the agent's id, name and a runtime block, and one
 HTTP endpoint:
 
-- **`POST <run_path>`** — receives `{prompt, run_id, workspace}`, replies
+- **`POST <run_path>`**: receives `{prompt, run_id, workspace}`, replies
   `{ok, output, error}`. Required; everything else is optional.
-- **`GET <health_path>`** — any 2xx/3xx. Used by the readiness check.
-- **`POST <stream_path>`** — optional. Answers with NDJSON or SSE frames
+- **`GET <health_path>`**: any 2xx/3xx. Used by the readiness check.
+- **`POST <stream_path>`**: optional. Answers with NDJSON or SSE frames
   (`token`, `thinking`, `tool_start`, `tool_end`, `usage`, `done`). The agent's
   tokens then appear in the chat bubble live, exactly like a built-in agent's,
   because the frames are translated onto the same event vocabulary.
-- **`GET <graph_path>`** — optional. An agent that is internally a graph
+- **`GET <graph_path>`**: optional. An agent that is internally a graph
   publishes its own shape here, and the hub draws it. See
   [the shape of an agent](#the-shape-of-an-agent).
-- **`POST <resume_path>`** — optional. An agent that stops to ask a person
+- **`POST <resume_path>`**: optional. An agent that stops to ask a person
   declares this and is *continued* through it. See
   [pausing to ask](#pausing-to-ask).
-- **Packaging** — a Dockerfile named in the manifest, or an already-running
+- **Packaging**: a Dockerfile named in the manifest, or an already-running
   service whose URL you give at import time.
-- **`runtime.env`** — what the agent needs (model keys, tokens). Required
+- **`runtime.env`**: what the agent needs (model keys, tokens). Required
   entries that are unset are reported as missing rather than failing mid-run.
 
 An agent with no manifest is still importable: the readiness report names each
@@ -101,10 +101,10 @@ The bundled example ships a graph that does this
 
 ## The import flow
 
-1. **Check repository** — clone and analyse. Nothing is registered yet.
-2. **Read the readiness report** — each gap is listed with its fix.
-3. **Register** — the agent joins the list, report attached.
-4. **Re-check** — re-run the checks after filling a gap in, for example once the
+1. **Check repository**: clone and analyse. Nothing is registered yet.
+2. **Read the readiness report**: each gap is listed with its fix.
+3. **Register**: the agent joins the list, report attached.
+4. **Re-check**: re-run the checks after filling a gap in, for example once the
    service is up at the endpoint you supplied.
 
 Two worked examples ship with the product. Under

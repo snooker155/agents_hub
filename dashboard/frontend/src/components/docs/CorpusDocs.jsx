@@ -1,8 +1,8 @@
 /**
- * Docs sections rendered from the documentation corpus: changelog, guides, references and the FAQ.
+ * Docs sections rendered from the documentation corpus: guides, references and the FAQ.
  */
 import { ArrowRight, BookOpen } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Markdown from 'react-markdown';
 import { Link } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
@@ -12,7 +12,7 @@ import { Callout, H2, H3, P, Rich } from './DocsPrimitives';
 import { sectionForCorpus } from './sections';
 import { useI18n } from '../../i18n';
 
-// Corpus documents (docs/*.md and CHANGELOG.md, GET /api/docs/<id>) are the
+// Corpus documents (docs/*.md, GET /api/docs/<id>) are the
 // text the agents read with read_doc. They are rendered with this page's own
 // headings and paragraphs, and without the chat's line breaks: the files are
 // wrapped at 80 columns, a newline there is a space.
@@ -37,33 +37,6 @@ const CORPUS_COMPONENTS = {
     return <a href={href} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">{children}</a>;
   },
 };
-
-// The changelog is not written here: it is CHANGELOG.md from the corpus, so
-// this page, read_doc and the site all show the same text. It is kept in English.
-export function ChangelogDoc() {
-  const { t } = useI18n();
-  const [doc, setDoc] = useState(null);
-  const [error, setError] = useState(null);
-  useEffect(() => {
-    let live = true;
-    getDoc('changelog')
-      .then(({ data }) => { if (live) setDoc(data); })
-      .catch((e) => { if (live) setError(e?.response?.data?.detail || e?.message || 'error'); });
-    return () => { live = false; };
-  }, []);
-  if (error) return <Callout tone="warn">{t('docs.changelogError', { error })}</Callout>;
-  if (!doc) {
-    return (
-      <PageLoader size="sm" label={t('docs.changelogLoading')} />
-    );
-  }
-  return (
-    <div>
-      <P>{t('docs.changelogIntro')}</P>
-      <Markdown remarkPlugins={[remarkGfm]} components={CORPUS_COMPONENTS}>{doc.content}</Markdown>
-    </div>
-  );
-}
 
 // "Full reference": a corpus document under a guide section, fetched the first
 // time it is opened. The guide above it is translated; the reference is the

@@ -50,11 +50,11 @@ lists them in its panel next to the changed files.
 - **Charts and graphs** from data the agent computed
 - **3D scenes** that show existing `.glb` or `.gltf` models bound in from the
   workspace, with cameras, lights and environments
-- **Simulations** — `view_compute` runs a simulation server-side on numpy and
+- **Simulations**: `view_compute` runs a simulation server-side on numpy and
   streams frames in: gravitational N-body, a 2D wave field, the 1D
   time-dependent Schrödinger equation, the per-layer activations of a forward
   pass. Optionally recorded as a replayable clip.
-- **Controls** — sliders and toggles wired to parameters
+- **Controls**: sliders and toggles wired to parameters
 - **Annotations and timelines** over the result
 - **Code**: a runnable, editable, versioned snippet, instead of a code fence
   in prose. See [Code](#code) below.

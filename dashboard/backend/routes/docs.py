@@ -1,8 +1,8 @@
 """
 The documentation corpus over HTTP, for the dashboard's Docs page.
 
-The page is written in JSX, but a document that changes with every release
-(the changelog) is served from the corpus the agents read (tools/docs_tool.py,
+The page is written in JSX, but a document that is edited often
+is served from the corpus the agents read (tools/docs_tool.py,
 docs/index.json), so the page and ``read_doc`` show the same text and nothing
 has to be copied by hand.
 """

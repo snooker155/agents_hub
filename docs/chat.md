@@ -5,9 +5,9 @@ no setup.
 
 ## What you can point it at
 
-- **An agent** — one agent answers.
-- **A flow** — the whole graph runs, with per-node streaming.
-- **A team** — the roster works the request over its shared board.
+- **An agent**: one agent answers.
+- **A flow**: the whole graph runs, with per-node streaming.
+- **A team**: the roster works the request over its shared board.
 
 The picker defaults to the workspace's default chat agent, which is the Main
 Agent unless you changed it.
@@ -152,6 +152,12 @@ afterwards. A divider in the transcript says who took over and why, and the top
 bar switches to the new agent. What of the conversation the new agent sees is
 set per agent (the whole conversation, a summary, the last messages, or only
 your latest message). See [handoffs](handoffs.md).
+
+## While the agent works
+
+You can keep typing while a turn runs. The message can be injected into the
+running turn, interrupt it, or wait and go out as the next turn. See
+[steering](steering.md#in-the-chat-composer).
 
 ## Costs and approvals
 

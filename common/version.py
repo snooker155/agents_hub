@@ -1,9 +1,7 @@
 """
 Which build of Agents Hub this is: the release version and the commit.
 
-One source for the version, ``pyproject.toml``'s ``[project] version``, which
-``scripts/release.py`` bumps together with the frontend's ``package.json`` and
-the Helm chart. An image built by the release workflow cannot read the
+One source for the version, ``pyproject.toml``'s ``[project] version``. An image built by the release workflow cannot read the
 checkout's git history, so it carries both values as environment variables
 baked in at build time (``AGENTS_HUB_VERSION``, ``AGENTS_HUB_GIT_SHA``, see the
 ``Dockerfile``); they win over what the files say, because an image is exactly

@@ -17,9 +17,11 @@ bar changes what you see everywhere.
   you, from the Agents page.
 - **`default_chat_agent`**: which agent the Chat page pre-selects. New
   workspaces get the Main Agent.
-- **Settings overrides**: model defaults, environment variables, execution mode
-  (in-process or Docker), log level, the shell and web policies, and per-agent
-  memory assignments.
+- **Settings overrides**: provider keys, RAG settings, execution mode
+  (in-process or Docker), log level, task assignment, the tool and web
+  policies, agent roles and per-agent memory assignments. A default model
+  (`provider/model`) can also be stored on the workspace; the main agent sets
+  it with `update_workspace`.
 
 ## Per-workspace memory
 
@@ -33,7 +35,7 @@ context between them.
 
 The workspace page has a Settings tab drawn by the same sections as the
 Settings page, holding what is configured per workspace: agent execution,
-the tool policy, **web access** (the workspace's own allow and deny domain
+agent roles ([workspace-roles](workspace-roles.md)), the tool policy, **web access** (the workspace's own allow and deny domain
 lists, `/api/workspaces/{name}/web-policy`, which replace the global ones
 for its runs), **personal memory** (the switch that lets the agents keep a
 private pool about the user, [memory](memory.md)), task assignment,
@@ -97,8 +99,8 @@ person even where the workspace's approval gate is off.
 - Removing a custom agent from a workspace does not delete it; it stays in the
   registry and in any other workspace that has it.
 - Agent capacity is per workspace. A workspace that is not `default` caps how
-  many nodes and sessions one agent may hold.
+  many running instances one agent may have (1 unless the workspace raises it).
 - Files live in the workspace folder, not in the project folder, unless the
   agent was told a project. A file "gone missing" is usually one level up.
 
-Related: [projects](projects.md), [agents](agents.md), [memory](memory.md).
+Related: [projects](projects.md), [agents](agents.md), [memory](memory.md), [workspace-roles](workspace-roles.md).

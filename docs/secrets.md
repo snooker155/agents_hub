@@ -90,9 +90,9 @@ from another. A flow run receives the union of the names its agent nodes
 declare, resolved at workspace scope only; agent-scoped values stay with
 single-agent runs.
 
-A lookup failure (no key, Vault unreachable, a value that no longer decrypts)
-is logged by name and hands out nothing. It never stops the launch and never
-falls back to handing out more.
+A lookup failure (no key, a value that no longer decrypts) is logged by name
+and hands out nothing. It never stops the launch and never falls back to
+handing out more. The one exception is a secret bound to hosts, see below.
 
 **In-process runs.** A chat turn, an entity build chat, the decomposer and a
 delegated worker run inside the backend process, where there is no
@@ -106,9 +106,9 @@ allowlist, in the same workspace.
 
 ## Managing them
 
-In the dashboard: a workspace's Agents tab has a Secrets card. It lists name,
+In the dashboard: a workspace's Secrets tab lists them. It lists name,
 scope, the last four characters of the value (only for values longer than
-eight characters), and when it was set. The agent side is on the agent's
+eight characters), the hosts it is bound to and when it was set. The agent side is on the agent's
 Behavior tab: a Secrets card with the names this agent may receive, offering the
 names the current workspace holds as one-click suggestions. Saving it goes
 through the capability guard like the tools list does.
@@ -126,21 +126,16 @@ Over REST: `GET /api/workspaces/{name}/secrets`,
 `PUT /api/workspaces/{name}/secrets/{secret}` with `{value, agent_id?}`,
 `DELETE /api/workspaces/{name}/secrets/{secret}?agent_id=`.
 
-## Vault
+## Secrets bound to hosts
 
-Set `AGENTS_HUB_SECRET_BACKEND=vault` to keep values in HashiCorp Vault (KV
-version 2) instead of the database:
-
-| variable | meaning |
-|---|---|
-| `AGENTS_HUB_VAULT_URL` | e.g. `https://vault.internal:8200` |
-| `AGENTS_HUB_VAULT_TOKEN` | a token with read, write and delete on the path below |
-| `AGENTS_HUB_VAULT_MOUNT` | the KV v2 mount, `secret` by default |
-
-Each value is stored at `agents-hub/<workspace>/<agent or _>/<name>`
-under the mount. The `secrets` table keeps a metadata row (name, scope, hint)
-with an empty ciphertext, so listing and precedence never need Vault; only
-reading a value does. `AGENTS_HUB_SECRET_KEY` is not used with this backend.
+A secret may carry `allowed_hosts` (set with `allowed_hosts` in the `PUT`
+body, or `PUT /api/workspaces/{name}/secrets/{secret}/hosts`). Inside the
+backend process a tool receives such a secret only when it names one of those
+hosts (a subdomain of a listed host matches). A run in a separate process
+cannot be watched that way, so its launch is refused with an explanation
+instead of handing the value out unbound. Setting
+`AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK=1` hands the value over in plain text
+anyway. This is the one secrets failure that stops a launch.
 
 ## Agent identity in external systems
 

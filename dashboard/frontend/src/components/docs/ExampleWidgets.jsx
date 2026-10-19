@@ -152,7 +152,7 @@ export function WorkspaceModelExample() {
         </div>
       </div>
       <p className="text-xs text-gray-500 mt-3">
-        Create one workspace per client, product or experiment. The <code className="bg-gray-100 px-1 rounded">{t('exampleWidgets.default')}</code> workspace acts as an “all” view.
+        {t('exampleWidgets.workspaceHint')}
       </p>
     </DemoFrame>
   );
@@ -176,7 +176,7 @@ export function ProjectCardExample() {
         <p className="text-sm text-gray-500 mt-1">{t('exampleWidgets.reworkTheCheckoutFunnelAnd')}</p>
         <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
           <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.repo')}</span><br /><span className="font-mono text-gray-700">{t('exampleWidgets.gitlabComAcmeWeb')}</span></div>
-          <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.preview')}</span><br /><span className="font-mono text-gray-700">{t('exampleWidgets.localhost5173')}</span></div>
+          <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.tracker')}</span><br /><span className="font-mono text-gray-700">{t('exampleWidgets.jiraWeb')}</span></div>
           <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.stack')}</span><br /><span className="text-gray-700">{t('exampleWidgets.reactFastapi')}</span></div>
           <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.tasks')}</span><br /><span className="text-gray-700">{t('exampleWidgets.k5Open12Done')}</span></div>
         </div>
@@ -508,8 +508,8 @@ const TOOL_GROUPS = {
     { name: 'read_file', args: 'path' },
     { name: 'write_file', args: 'path, content' },
   ],
-  shell: [{ name: 'run_command', args: 'cmd' }],
-  planning: [{ name: 'create_plan', args: 'steps[]' }],
+  execution: [{ name: 'run_shell', args: 'command' }],
+  reasoning: [{ name: 'think', args: 'thought' }],
 };
 
 export function ToolExample() {
@@ -578,38 +578,6 @@ export function MemoryExample() {
 }
 
 // ---------------------------------------------------------------------------
-// Nodes & Sessions — synthetic node + run timeline
-// ---------------------------------------------------------------------------
-export function NodeSessionExample() {
-  const { t } = useI18n();
-  const events = [
-    ['00:00', t('exampleWidgets.sessionEvents.start')],
-    ['00:01', 'Tool call: read_file(auth/oauth.py)'],
-    ['00:04', 'Tool call: write_file(auth/oauth.py)'],
-    ['00:09', 'Tool call: run_command(pytest)'],
-    ['00:12', t('exampleWidgets.sessionEvents.done')],
-  ];
-  return (
-    <DemoFrame label={t('exampleWidgets.aNodeRunningOneSession')}>
-      <div className="rounded-lg border border-gray-200 p-2.5 mb-3 flex items-center gap-2 text-sm">
-        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-        <span className="font-medium text-gray-800">{t('exampleWidgets.sweAgent')}</span>
-        <Badge color="blue">{t('exampleWidgets.running')}</Badge>
-        <span className="ml-auto text-[11px] text-gray-400">{t('exampleWidgets.node1ActiveSession')}</span>
-      </div>
-      <ol className="space-y-1.5">
-        {events.map(([t, e], i) => (
-          <li key={i} className="flex gap-3 text-xs">
-            <span className="font-mono text-gray-400 shrink-0">{t}</span>
-            <span className="text-gray-600">{e}</span>
-          </li>
-        ))}
-      </ol>
-    </DemoFrame>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Orchestrator — interactive routing demo
 // ---------------------------------------------------------------------------
 const candidates = (t) => [
@@ -626,7 +594,7 @@ export function OrchestratorExample() {
   return (
     <DemoFrame label={t('exampleWidgets.autoAssigningATask')}>
       <div className="rounded-lg bg-gray-50 border border-gray-200 p-2.5 text-sm text-gray-800 mb-3">
-        Task: <strong>{t('exampleWidgets.fixTheFailingCiPipeline')}</strong>
+        {t('exampleWidgets.taskLabel')} <strong>{t('exampleWidgets.fixTheFailingCiPipeline')}</strong>
       </div>
       <div className="flex items-center justify-center gap-2 text-gray-400 mb-3">
         <ArrowDown className="w-4 h-4" /> <Network className="w-4 h-4" /> <span className="text-xs">{t('exampleWidgets.orchestratorScoresAgentsByCapability')}</span>

@@ -31,7 +31,9 @@ cd agents_hub
 docker compose up --build              # backend :8000, dashboard :8080
 ```
 
-`.env` is optional here; the stack comes up without provider keys and you add
+There is no login in this edition, so both ports are published on 127.0.0.1
+only; `HUB_BIND` in `.env` changes that, and should name an address of a
+network you alone can reach. `.env` is optional here; the stack comes up without provider keys and you add
 them from Settings. `BACKEND_PORT` and `WEB_PORT` move the published ports, and
 the dashboard follows them because it talks to its own origin. The checkout
 is bind mounted into the backend, so state lands in `.agents_hub/` under it
@@ -138,12 +140,11 @@ Docker install at all.
 ### Adding `ah` to a Docker install
 
 **In the container** there is nothing to add: the backend image carries
-`ah` (images after 0.12.0; in 0.12.0 and older `python -m cli` is the same
-program). It runs direct, on the same database and volume as the backend:
+`ah` (`python -m cli` is the same program). It runs direct, on the same database and volume as the backend:
 
 ```bash
 docker compose exec backend ah doctor
-docker compose exec backend ah db backup --to /data/backups
+docker compose exec backend ah db status
 alias ah='docker compose -f ~/agents-hub/docker-compose.yml exec backend ah'
 ```
 
@@ -174,22 +175,22 @@ file REST-only `ah` on a machine that has it, to copy anywhere ([cli](cli.md),
 `ah setup` asks its way through the whole install, the way OpenClaw's first
 run does, and writes nothing until you confirm a review of every value:
 
-1. **Install**: this checkout (Path B) or Compose from this checkout
-   (Path A). Then QuickStart (only what cannot be guessed) or
-   Advanced.
+1. **Install**: the one shape in this edition, this machine from this
+   checkout (a virtualenv, `ah up`). Then QuickStart (only what cannot be
+   guessed) or Advanced.
 2. **Providers and models**: OpenAI, Anthropic, Google, Ollama, LM Studio.
    Each key or address is checked by asking the provider for its model list,
    and the default model is picked from presets matched against that list
    (balanced, strongest, fastest), from the whole list, or typed. On this
    machine the presets are also enabled in the [Models](models.md) catalog
    with the default starred.
-3. **Features**: in Advanced the demo workspace, the dashboard port, where
-   agents run and RAG.
+3. **Features**: the demo workspace, and in Advanced where agents run (local
+   processes or one container each) and RAG.
 4. **Review** of every setting it will write (secrets masked) and every
    action it will take.
 5. **Apply**: installs missing Python extras, writes `.env` (the previous one is
    kept as `.env.bak-<time>`), fills the catalog and offers to start the hub
-   (`ah up`, or `docker compose up -d`).
+   (`ah up`).
 
 An answers file that names `demo` still applies it in QuickStart.
 
@@ -221,7 +222,7 @@ in force, and an empty answer to a key keeps the current key.
 
 ```bash
 ah setup                       # ask
-ah setup --shape docker --dir ~/agents-hub
+ah setup --advanced            # skip the QuickStart question
 ah setup --dry-run             # stop after the review
 ah setup --answers setup.json  # unattended, see below
 ```
@@ -232,8 +233,7 @@ default, and a missing required answer stops with its name:
 
 ```json
 {
-  "shape": "docker",
-  "dir": "/srv/agents-hub",
+  "shape": "local",
   "providers": {"anthropic": {"api_key": "sk-ant-...", "model": "claude-sonnet-5"}},
   "demo": false,
   "start": true
@@ -302,7 +302,7 @@ themselves: the first connection in any process ensures the schema, so the
 backend or a CLI command may equally be the one to run them. A SQLite
 database is archived before it migrates, and a release with migrations
 cannot be rolled back without that archive: read the release's **Upgrade
-notes** in the [changelog](changelog.md) first, and [deployment](deployment.md)
+notes** in the release notes first, and [deployment](deployment.md)
 ("Upgrading", "Rolling back") for the full procedure.
 
 ## When it will not start

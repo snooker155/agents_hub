@@ -91,7 +91,7 @@ export default {
         "**Steer** places your message before the agent's next model step, without stopping it.",
         "**Interrupt** stops the run like **Stop**, then relaunches it with your message added at the end.",
         "**Queue** waits for the current turn to finish before your message goes in, in chat.",
-        "**Instruction** adds your text to the agent's system prompt for the rest of the run. Only the run's owner or an admin may send one, never an agent.",
+        "**Instruction** adds your text to the agent's system prompt for the rest of the run. Only you can send one, never an agent.",
         "A message that arrives while the agent is writing its final answer still gets one more pass instead of being lost."
       ]
     },
@@ -104,7 +104,7 @@ export default {
         "History filters run from widest to narrowest: `full`, `summary`, `last_n:<N>`, `none`.",
         "One turn hands over at most a few times (three by default), and the conversation never goes back to an agent that already held it."
       ]
-    },
+    }
   },
   "outcomes": {
     "nav": "Outcome grading",
@@ -156,8 +156,7 @@ export default {
       "points": [
         "Filter [Runs](/messages) or [Sessions](/sessions) by status `failed` and a time window.",
         "The run's `error` field is usually enough on its own; open its log when it is not.",
-        "A run a guardrail stopped ends with status `guardrail_tripped` and an error naming the guardrail.",
-        "A task's run that reached its money cap is paused, not failed, and the task waits for approval."
+        "A run a guardrail stopped ends with status `guardrail_tripped` and an error naming the guardrail."
       ]
     },
     "s3": {
@@ -171,13 +170,14 @@ export default {
   },
   "deployments": {
     "nav": "Deployments",
-    "title": "Deployments, environments and sandboxes",
+    "title": "Deployments and sandboxes",
     "lead": "The **Deployments** page is a working view over the scheduled jobs that do production work: agent, flow and loop jobs from the [Plan](/plan) page, each with a journal of every firing.",
     "s0": {
       "h": "What a deployment adds",
       "points": [
         "**auto_pause_after**: how many consecutive firing failures pause the job automatically, `0` to turn it off, default `3`.",
-        "**agent_version** (agent jobs only): pin the job to a stored agent version."
+        "**agent_version** (agent jobs only): pin the job to a stored agent version.",
+        "**Resources** (agent jobs only): a project, workspace files, extra secrets and memory pools that every task the job creates carries along, without changing the agent itself."
       ]
     },
     "s1": {
@@ -187,64 +187,29 @@ export default {
         "A job that keeps failing pauses itself; a target that no longer exists (agent, flow or loop) pauses it immediately.",
         "**Run now** fires a job immediately, even while paused, so a fix can be retested without resuming it first."
       ]
+    },
+    "s2": {
+      "h": "Where code runs",
+      "p": "A snippet from `run_code` runs in a throwaway Docker container with no network, a read-only root and memory, CPU and process limits. When Docker is not reachable, `CODE_RUNNER_FALLBACK=local` lets it run as a plain subprocess on this machine instead, with no isolation at all, so that is an explicit choice. The doctor's sandbox check says which one can run right now."
     }
   },
   "health": {
     "nav": "Health",
-    "title": "Health and the runbook",
+    "title": "Health and the doctor",
     "lead": "The [Status](/health) page shows whether the moving parts are alive and, through the doctor, judges whether that state is actually fine.",
     "s0": {
       "h": "The snapshot and the doctor",
       "points": [
         "`GET /api/health` reports the database, run counts, background services, storage size and provider keys set; a value of `null` means the check could not tell, not that the thing is down.",
         "The doctor turns that snapshot into judgements: each check comes back `ok`, `warn`, `fail` or `skip` with one sentence and a fix, and the overall status is the worst of them.",
-        "Checks include migrations, the default provider, CORS, stale runs, the run queue, disk space, Docker and the sandbox providers."
+        "Checks include migrations, the default provider, CORS, security settings, stale runs, free disk, Docker, the sandbox and the frontend build."
       ]
     },
     "s1": {
-      "h": "The runbook",
-      "p": "For a failure an operator actually hits (an invalid provider key, a model not enabled, a stuck run queue, a full disk, a stuck lease, a proxy buffering the live stream), the runbook gives the symptom, how to confirm it with the doctor or the health snapshot, and the fix. Most fixes are checked before anything runs, so a refusal, such as a budget cap or a disabled model, never leaves a run half done."
+      "h": "When a check fails",
+      "p": "Each check comes back with one sentence and a fix, and a Read more link into the reference below. The usual causes of a failing run are an invalid provider key, a model that is not enabled, a stuck run record, a full disk or a Docker daemon that cannot be reached."
     },
     "callout": "A large `running_runs` count with no live instances usually means orphaned records from a process that died, not live work still in progress."
-  },
-  "production": {
-    "nav": "Production",
-    "title": "Running in production",
-    "lead": "How to run the hub with more than one backend: Postgres instead of SQLite, `api` and `worker` roles, an object store for shared files, and how to back up, release and roll back safely.",
-    "s0": {
-      "h": "Roles and the launch queue",
-      "p": "`AGENTS_HUB_ROLE=api` serves the API and puts each run on a queue instead of spawning it; `ah worker` on any host claims a launch from that queue and runs it there.",
-      "points": [
-        "Runs report a heartbeat instead of a pid, so a worker dying does not stop the run it started.",
-        "A dead run with a checkpoint is relaunched from it automatically, up to a limit, instead of failing outright.",
-        "Background jobs that must run once, such as the scheduler and the watchdog, run under a database lease so several replicas never run them twice."
-      ]
-    },
-    "s1": {
-      "h": "Postgres and the broker bridge",
-      "p": "The default is one backend and SQLite on disk. Running several backends needs `AGENTS_HUB_DATABASE_URL` pointed at Postgres so every replica shares one database, and `AGENTS_HUB_BROKER_URL` pointed at Redis so a run finishing on one replica still reaches a browser tab connected to another.",
-      "points": [
-        "`docker compose --profile ha` starts Postgres, Redis, a bundled object store, two API replicas and two workers in one command.",
-        "The Helm chart in `deploy/helm/agents-hub` gives a real cluster the same shape, without running Postgres or Redis itself."
-      ]
-    },
-    "s2": {
-      "h": "Object store for shared files",
-      "p": "Run logs, workspaces and view assets are still files on disk, not database rows. Setting `AGENTS_HUB_BLOB_URL` to an S3 compatible bucket mirrors run logs, flow logs and view assets so a replica that did not write a file can still read it.",
-      "points": [
-        "Workspaces themselves still need a shared mount; the object store does not cover them yet.",
-        "Leaving the setting empty keeps everything local, exactly like a single replica deployment."
-      ]
-    },
-    "s3": {
-      "h": "Backups, releases and rollback",
-      "p": "`ah db backup` writes one archive with the database and the state around it; `ah db restore` loads it back and `ah db verify` checks it without touching the live database. A release is one version across the backend, the dashboard and the Helm chart, cut with `scripts/release.py`.",
-      "points": [
-        "Take a backup before every upgrade: a newer build migrates the database the moment it opens it.",
-        "An older build refuses to open a database a newer one already migrated, so rolling back a release with migrations means restoring a backup, not just checking out the old code."
-      ]
-    },
-    "callout": "Running `docker compose --scale backend=N` without `AGENTS_HUB_BROKER_URL` set leaves browser tabs on other replicas without live updates until they refetch."
   },
   "integrations": {
     "nav": "Integrations",
@@ -259,4 +224,32 @@ export default {
     },
     "callout": "Agents send you a notification with notify_user, and a scheduled notification on the [Plan](/plan) page lands in the same inbox."
   },
+  "backup": {
+    "nav": "Backup",
+    "title": "Backup, restore and upgrade",
+    "lead": "Everything the service writes sits under `.agents_hub/` in the checkout: the SQLite database, workspaces, run logs and views. `ah db backup` turns that into one archive and `ah db restore` loads it back.",
+    "s0": {
+      "h": "What the archive holds",
+      "points": [
+        "A consistent copy of the database, a manifest with the app version and a row count per table, and by default the state folders beside it: run and flow logs, workspaces, view assets and memory pools.",
+        "Not in it: running processes, which a restore does not resume, and `.env` with your keys. The archive is state, not configuration."
+      ]
+    },
+    "s1": {
+      "h": "The three commands",
+      "points": [
+        "`ah db backup --to <dir>` writes a timestamped `.tar.gz`; `--no-files` keeps the database alone.",
+        "`ah db verify <archive>` checks an archive without touching the live database.",
+        "`ah db restore <archive> --force` loads it into the configured database and extracts its files; without `--force` it refuses a database that already holds rows."
+      ]
+    },
+    "s2": {
+      "h": "Upgrading safely",
+      "points": [
+        "Take a backup before every `git pull`: a newer build migrates the database the moment it opens it.",
+        "An older build refuses to open a database a newer one already migrated, so going back after a migration means restoring the backup, not only checking out the old code."
+      ]
+    },
+    "callout": "The ah db commands open the database of the process they run in. Run them where the state lives, which under Docker means inside the backend container."
+  }
 };

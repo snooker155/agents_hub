@@ -86,7 +86,7 @@ once.
 ## Reading a failure
 
 1. Find the run. Filter by status `failed` and a time window.
-2. Read its `error` — often enough on its own.
+2. Read its `error`, which is often enough on its own.
 3. Open its log when it is not.
 
 Errors group usefully: the same message across several agents is a model or

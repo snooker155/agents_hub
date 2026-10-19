@@ -25,8 +25,6 @@ export function Installation() {
 cd agents_hub
 docker compose up --build`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.dockerBody')}</Rich></P>
-      <CodeBlock label={t('docs.terminal')}>{`docker compose --profile scale up --build --scale backend=3`}</CodeBlock>
-      <P><Rich>{t('docs.installDoc.dockerProfiles')}</Rich></P>
 
       <H3>{t('docs.installDoc.installerTitle')}</H3>
       <CodeBlock label={t('docs.terminal')}>{`git clone -b lite https://github.com/snooker155/agents_hub.git
@@ -42,8 +40,8 @@ pip install -e ".[backend,agents]"
 cp .env.example .env
 cd dashboard/frontend && npm install && cd ../..`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.byHandBody')}</Rich></P>
-      <CodeBlock label={t('docs.terminal')}>{`python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000 --reload
-cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173`}</CodeBlock>
+      <CodeBlock label={t('docs.terminal')}>{`python -m uvicorn dashboard.backend.main:app --host 127.0.0.1 --port 8000 --reload
+cd dashboard/frontend && npm run dev -- --host 127.0.0.1 --port 5173`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.byHandNoInstall')}</Rich></P>
 
       <H3>{t('docs.installDoc.configTitle')}</H3>
@@ -52,6 +50,9 @@ OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-5
 AGENT_EXECUTION_MODE=local`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.configBody')}</Rich></P>
+
+      <H3>{t('docs.installDoc.firstRunTitle')}</H3>
+      <P><Rich>{t('docs.installDoc.firstRunBody')}</Rich></P>
 
       <H3>{t('docs.installDoc.verifyTitle')}</H3>
       <CodeBlock label={t('docs.terminal')}>{`curl http://localhost:8000/api/health

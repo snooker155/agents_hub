@@ -44,27 +44,27 @@ want, and nothing the product ships will change them.
 
 ## The menu
 
-The sidebar follows the same tree in five groups: **Conversation** (Chat,
-Dashboard), **Work** (projects, tasks, the plan, artifacts, flows, loops,
-teams, workspaces), **Agents and library** (agents, models, skills, memory, the
-marketplace), **Integrations** (connectors) and
-**Records** (sessions, runs, costs, settings).
+The sidebar follows the same tree in five groups: **Conversation** (Chat),
+**Work** (projects, tasks, the plan, artifacts, flows, loops, teams, the
+orchestrator, deployments, workspaces), **Agents and library** (agents, models,
+skills, memory, the marketplace, the toolbox, instances), **Integrations**
+(connectors) and **Records** (sessions, messages, run groups, web logs,
+guardrails, containers, health, settings, docs).
 
-It has two modes. The **simple menu** keeps fifteen pages, the ones a
-newcomer needs, workspaces among them, plus Settings and Docs, and leaves the
-Dashboard out, since a person using the hub for themselves has little to watch
-there; it is the default. The **full menu** shows every page. The toggle at the
-foot of the menu switches between them, and the browser remembers the choice.
-No page is removed in either mode, and the simple menu never changes shape: a
-page outside it lights up the row it belongs to (Deployments opened from the
-Plan page lights up Plan, Loops and Teams light up Agent Flows, Connectors light
-up Settings, and so do the Dashboard and Sessions).
+It has two modes. The **simple menu** keeps fourteen pages, the ones a
+newcomer needs, workspaces among them, plus Settings and Docs; it is the
+default. The **full menu** shows every page. The toggle at the foot of the menu
+switches between them, and the browser remembers the choice. No page is
+removed in either mode, and the simple menu never changes shape: a page outside
+it lights up the row it belongs to (Deployments opened from the Plan page
+lights up Plan, Loops and Teams light up Flows, Connectors, Sessions and the
+other records light up Settings).
 
 ## Two things worth knowing early
 
 **Money is real.** Every run costs tokens. A team is members times rounds; a loop is a whole flow repeated. The tools
 that start those refuse until you have approved them, and the refusal shows the
-estimate.
+estimate. Each run page shows what that run cost.
 
 **Capabilities are enforced.** An agent that can read your private data, ingest
 text from outside, *and* send data out is a data-exfiltration primitive. The

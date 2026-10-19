@@ -8,9 +8,9 @@ the members: they see each other's messages and respond.
 
 ## Modes
 
-- **Centralized** — a leader agent directs the others. Needs a leader.
-- **Autonomous** — no leader; members act on the board as they see fit.
-- **Parallel** — members work the same request independently.
+- **Centralized**: a leader agent directs the others. Needs a leader.
+- **Autonomous**: no leader; members act on the board as they see fit.
+- **Parallel**: members work the same request independently.
 
 An **entry agent** receives the request first. It must be one of the members.
 

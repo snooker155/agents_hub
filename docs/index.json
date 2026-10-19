@@ -270,8 +270,7 @@
         "troubleshooting",
         "deployment",
         "backup",
-        "demo",
-        "changelog"
+        "demo"
       ],
       "headings": [
         "Prerequisites",
@@ -465,7 +464,7 @@
     {
       "id": "service-health",
       "title": "Service health and diagnostics",
-      "summary": "Whether the moving parts are alive, and what to do when they are not.",
+      "summary": "Whether the moving parts are alive, and what to do when they are not: the health snapshot, the /livez, /readyz and /metrics endpoints, and the doctor's checks.",
       "surface": "Health",
       "related": [
         "containers",
@@ -480,6 +479,7 @@
       "headings": [
         "The snapshot",
         "Reading it correctly",
+        "Probes",
         "The usual diagnoses",
         "Doctor"
       ]
@@ -507,7 +507,7 @@
     {
       "id": "settings",
       "title": "Settings",
-      "summary": "Credentials and connection details. What models are offered and which is default lives on the [models](models.md) page, not here.",
+      "summary": "Credentials and connection details: provider keys and base URLs, local servers, custom backends, global temperature, agent execution, web access, RAG, logging, and the per-workspace palette. What models are offered and which is default lives on the [models](models.md) page, not here.",
       "surface": "Settings",
       "related": [
         "connectors",
@@ -520,6 +520,7 @@
         "What is here",
         "After saving a first key",
         "Per-workspace overrides",
+        "Palette",
         "Reading the health of this"
       ]
     },
@@ -541,6 +542,7 @@
         "Versions",
         "Installed copies and their original",
         "Skills from a repository",
+        "Safety review",
         "SKILL.md in and out",
         "API"
       ]
@@ -548,7 +550,7 @@
     {
       "id": "system-agents",
       "title": "System agents",
-      "summary": "An agent is either **system** (shipped with the product) or **custom** (yours). There is nothing in between.",
+      "summary": "An agent is either **system** (shipped with the product) or **custom** (yours). The roster lists the built-in agents and what each one does.",
       "surface": "Agents",
       "related": [
         "agents",
@@ -594,7 +596,7 @@
       "id": "trackers",
       "title": "Issue trackers",
       "surface": "Connectors",
-      "summary": "Jira and GitLab are linked to a project's repository. A sync is idempotent: issues from the tracker become tasks. Tools read issues, create them, comment and transition their status.",
+      "summary": "Jira, linked to a project and mirrored into its tasks. A sync is idempotent: issues from the tracker become tasks. Tools read issues, create them, comment and transition their status.",
       "related": [
         "connectors",
         "projects",
@@ -641,9 +643,14 @@
         "The capability model",
         "Why capabilities and not tool names",
         "Consequences you will actually hit",
+        "Lifting the block: per agent, or for every agent",
         "When a chat turn is refused",
         "Delegation counts as holding the capability",
+        "What comes back from a delegate",
+        "Web access",
+        "Domain lists per agent",
         "run_code",
+        "Connector tools",
         "Group aliases",
         "Approval gates, which are a different thing"
       ]
@@ -681,7 +688,10 @@
       "headings": [
         "Getting one",
         "Studio",
+        "From chat",
         "What views can do",
+        "Kind guides and specialists",
+        "Code",
         "Slides",
         "Gotchas"
       ]
@@ -775,8 +785,7 @@
       "related": [
         "installation",
         "service-health",
-        "backup",
-        "changelog"
+        "backup"
       ],
       "headings": [
         "The shapes",
@@ -805,8 +814,8 @@
     {
       "id": "secrets",
       "title": "Secrets",
-      "summary": "Encrypted per-workspace values, optionally scoped to one agent, handed to a run as environment variables only under the names its agent declares.",
-      "surface": "Workspace, Agents tab, Secrets card",
+      "summary": "Encrypted per-workspace values, optionally scoped to one agent and bound to hosts, handed to a run as environment variables only under the names its agent declares.",
+      "surface": "Workspace, Secrets tab",
       "related": [
         "tools-and-capabilities",
         "workspaces",
@@ -821,10 +830,9 @@
         "The agent's allowlist",
         "How a run receives them",
         "Managing them",
-        "Vault",
+        "Secrets bound to hosts",
         "Agent identity in external systems",
-        "Gotchas",
-        "Related"
+        "Gotchas"
       ]
     },
     {
@@ -865,7 +873,7 @@
       "id": "tool-policy",
       "title": "Tool policy",
       "summary": "Three modes decide what an agent's tool call can do: always_allow runs it, always_ask holds it for approval, and auto sends it to a small model to classify.",
-      "surface": "Tool policy",
+      "surface": "Settings, Agent execution",
       "related": [
         "agents",
         "hooks",
@@ -878,6 +886,7 @@
         "What each mode does",
         "What happens to a denied call",
         "Where decisions are visible",
+        "The per-call trail",
         "Never gated",
         "Cost"
       ]
@@ -920,6 +929,8 @@
       "headings": [
         "The API",
         "Inject",
+        "System message",
+        "Model switch",
         "Interrupt",
         "In the chat composer",
         "On pages",
@@ -1024,42 +1035,6 @@
         "Where it is used",
         "Citations",
         "API"
-      ]
-    },
-    {
-      "id": "security",
-      "path": "SECURITY.md",
-      "title": "Security policy: reporting a vulnerability",
-      "summary": "How to report a vulnerability privately (a confidential GitLab issue or email), how fast it is answered, which versions get fixes, what counts as a vulnerability and what is a documented choice, and the hardening list: the API has no login, so keep the hub on localhost or a private network.",
-      "surface": "Product",
-      "related": [
-        "service-health"
-      ],
-      "headings": [
-        "Reporting a vulnerability",
-        "Supported versions",
-        "What counts",
-        "Hardening"
-      ]
-    },
-    {
-      "id": "changelog",
-      "path": "CHANGELOG.md",
-      "title": "Changelog: what's new in each release",
-      "summary": "What changed in every release, newest first: features added, behaviour changed, bugs fixed, security notes and upgrade notes. The place to find the latest, recent and new functionality of the service.",
-      "surface": "Product",
-      "related": [
-        "overview",
-        "installation",
-        "deployment"
-      ],
-      "headings": [
-        "Unreleased",
-        "Added",
-        "Changed",
-        "Fixed",
-        "Security",
-        "Upgrade notes"
       ]
     }
   ]

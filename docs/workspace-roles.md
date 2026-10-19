@@ -73,9 +73,9 @@ can do lives in its own container and its own keys.
 
 ## Upgrading
 
-The shipped system agents name roles from this release on. A system agent you
-edited by hand stopped following the seed, so on the first start of this
-release its `delegates` and `handoffs` are rewritten once: where the seed now
+The shipped system agents name roles. A system agent you edited by hand
+stopped following the seed, so on the first start that finds a role name
+missing its `delegates` and `handoffs` are rewritten once: where the seed now
 names `@coder` and the record names `swe_agent`, the id becomes the reference.
 Nothing else you chose changes, and until a workspace binds the role the
 reference reaches the same agent. Pinning the id again afterwards is kept.

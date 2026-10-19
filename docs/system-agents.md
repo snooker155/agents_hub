@@ -21,42 +21,44 @@ That is the escape hatch, and it is one-way.
 ## The roster
 
 **Talking to you**
-- **Main Agent** — the default in Chat. Answers, delegates, and starts the
+- **Main Agent**: the default in Chat. Answers, delegates, and starts the
   long-running work after you approve the cost.
-- **Universal Agent** — a capable generalist with no fixed specialty; the
+- **Universal Agent**: a capable generalist with no fixed specialty; the
   standard starting agent for teams.
-- **Prompt Engineer** — writes prompts for use outside this product.
+- **Prompt Engineer**: writes prompts for use outside this product.
 
 **Coordinating**
-- **Orchestrator** — drives the task lifecycle and picks the agent for each task.
-- **Decomposer** — breaks a task into ordered subtasks.
-- **Agent Creator** — creates, inspects and edits agents.
+- **Orchestrator**: drives the task lifecycle and picks the agent for each task.
+- **Decomposer**: breaks a task into ordered subtasks.
+- **Agent Creator**: creates, inspects and edits agents.
 
 **Building things**
 - **Flow Creator**, **Loop Creator**, **Team Creator**,
-  **Project Manager** — each owns one entity kind, and each
+  **Project Manager**: each owns one entity kind, and each
   has its own chat on that entity's page.
-- **Architect Agent** — builds a project's structure graph from real source.
-- **Planner** — turns that graph into a task tree.
-- **Visualizer** — builds and edits views, and is the entry point for every
+- **Architect Agent**: builds a project's structure graph from real source.
+- **Planner**: turns that graph into a task tree.
+- **Visualizer**: builds and edits views, and is the entry point for every
   "show me" request; web requests go on to the one below.
-- **Web View Builder** — builds live web pages as `html` views and snippets as
+- **Web View Builder**: builds live web pages as `html` views and snippets as
   `code` views.
-- **Memory Extractor** — distils documents into a memory pool.
+- **Memory Extractor**: distils documents into a memory pool.
+- **Quest Manager** (`plot-manager`): designs quest templates with scenes,
+  objects, exits and events, and sets up the starting state of each quest.
 
 **Doing the work**
-- **SWE Agent** — reads and changes files.
-- **Code Reviewer** — reviews what was produced.
+- **SWE Agent**: reads and changes files.
+- **Code Reviewer**: reviews what was produced.
 - **Verifier**: checks non-code work, reports, figures, texts, plans, against
   its sources and against a task's rubric, then passes or blocks the task.
   The non-code counterpart of the Code Reviewer.
-- **Researcher** — combines workspace and memory into a
+- **Researcher**: combines workspace and memory into a
   conclusion. Holds no outbound channel. Its id is `researcher`; the old id
   `researcher_agent` still works everywhere an agent id is accepted, and an
   existing install has its stored references renamed once at startup, with a
   backup written first.
-- **Analyst**: answers questions from connected databases, spreadsheets and
-  files, with the query or calculation behind every figure.
+- **Analyst**: answers questions from the workspace's spreadsheets and
+  files, with the calculation behind every figure.
 - **Writer**: turns notes, research and data into a finished document, saved
   as a file in the workspace.
 - **Screener**: scores one document against another, a CV against a job

@@ -204,7 +204,7 @@ def check_cors(snap: Dict[str, Any]) -> Result:
 # ── security posture ─────────────────────────────────────────────────────────
 
 def check_security(snap: Dict[str, Any]) -> Result:
-    """The settings SECURITY.md's hardening list names, read together: the
+    """The security settings of a single-user install, read together: the
     capability guard, the secret key against the secrets already stored, and
     the execution mode the runs use."""
     from agents.capability_guard import guard_mode

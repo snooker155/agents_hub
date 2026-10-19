@@ -14,11 +14,11 @@ agent.
 
 A loop that will not converge must still end. Set some of:
 
-- **max iterations** — the hard stop
-- **target score** — good enough, numerically
-- **patience** — stop after N passes with no improvement
-- **cost ceiling** — stop when spend reaches a limit
-- **wall clock** — stop after a duration
+- **max iterations**: the hard stop
+- **target score**: good enough, numerically
+- **patience**: stop after N passes with no improvement
+- **cost ceiling**: stop when spend reaches a limit
+- **wall clock**: stop after a duration
 
 Set at least one you trust. A loop with a vague criterion and no bounds is the
 most expensive object in the product: one iteration is a whole flow.

@@ -5,7 +5,7 @@ repository instead of only in the hub. `ah apply <paths>` reads the files,
 prints a plan of what it would create, update, leave alone or delete, and then
 makes the hub match them. A lock file, `ah.lock`, records the hub id each
 declared resource got, so the next apply updates it instead of creating a
-second one. The shape follows Anthropic's `ant apply` for Managed Agents.
+second one.
 
 ```bash
 ah apply hub/ --dry-run      # the plan only

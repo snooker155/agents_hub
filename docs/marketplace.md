@@ -6,7 +6,8 @@ built in one workspace gets published, cloned and used in another.
 ## Publishing an agent, a flow or a skill
 
 An item becomes visible in the marketplace when it is published from its own
-page. Nothing is listed by accident: system agents never appear, and neither do
+page. The Marketplace page lists agents and flows; published skills are listed
+in the catalog on the Skills page. Nothing is listed by accident: system agents never appear, and neither do
 agents marked `default_workspace_only`.
 
 Only definition-level information is exposed: the prompt markdown, the tool

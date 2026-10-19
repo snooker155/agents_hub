@@ -3,8 +3,7 @@
 A template is one ready agent to start from: a tuned prompt, a tool set that
 passes the [capability guard](tools-and-capabilities.md), the connectors it
 works best with, a default [outcome](outcomes.md) rubric and a few example
-first messages. The model is the set of starter agents Anthropic offers for
-Claude Managed Agents. A template creates a single agent that you name and
+first messages. A template creates a single agent that you name and
 adjust first.
 
 | Template | What it does | Connectors (optional in brackets) |

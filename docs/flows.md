@@ -33,9 +33,9 @@ it costs anything to run.
 ## Node kinds
 
 - **Agent**: runs the agent picked for it with the input it receives.
-- **Condition** — routes down one branch or another.
-- **Transform** — reshapes data between nodes without a model call.
-- **Processor** — non-agent work in the middle of a pipeline.
+- **Condition**: routes down one branch or another.
+- **Transform**: reshapes data between nodes without a model call.
+- **Processor**: non-agent work in the middle of a pipeline.
 - **Container**: runs a whole team, loop or flow as a nested run (see below).
 - **Map**: runs one agent per item of a list, several at once (see Branching).
 
@@ -123,10 +123,10 @@ branch that is not taken costs nothing.
 
 `on_error` on the flow decides what a failure does to everything else:
 
-- **fail_fast** (default) — nodes already running finish, nothing new starts.
-- **continue** — a node still runs when at least one of its inputs succeeded, so
+- **fail_fast** (default): nodes already running finish, nothing new starts.
+- **continue**: a node still runs when at least one of its inputs succeeded, so
   a join tolerates one failed branch. The run is still reported as failed.
-- **isolate_branch** — everything downstream of the failure is skipped, and the
+- **isolate_branch**: everything downstream of the failure is skipped, and the
   branches beside it run to the end.
 
 Per node, `retry: {max, backoff_seconds}` repeats a failed attempt and

@@ -1,5 +1,5 @@
 /**
- * Docs sections for planning, teams, evals, models, memory and platform services.
+ * Docs sections for planning, teams, loops, models, memory and platform services.
  */
 import { GitBranch } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -20,6 +20,8 @@ export function PlanDoc() {
         <li><strong>{t('docs.notification')}</strong> {t('docs.remindTheUserAtA')}</li>
         <li><strong>{t('docs.agentTask')}</strong> {t('docs.startATaskWithA')}</li>
         <li><strong>{t('docs.flow')}</strong> {t('docs.triggerAFlowWithAn')}</li>
+        <li><strong>{t('docs.loop')}</strong> {t('docs.loopJobDesc')}</li>
+        <li><strong>{t('docs.memoryConsolidateKind')}</strong> {t('docs.consolidateJobDesc')}</li>
       </ul>
       <P><Rich>{t('docs.planDoc.recurrence')}</Rich></P>
       <H3>{t('docs.agentsScheduleToo')}</H3>
@@ -40,7 +42,7 @@ export function TeamsDoc() {
       <H3>{t('docs.modes')}</H3>
       <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
         <li><strong>{t('docs.centralized')}</strong> {t('docs.aLeadReadsTheBoard')}</li>
-        <li><strong>{t('docs.autonomous')}</strong> {t('docs.everyMemberActsEachRound')}</li>
+        <li><strong>{t('docs.autonomous')}</strong> {t('docs.onlyAddressedMembersAct')}</li>
         <li><strong>{t('docs.parallel')}</strong> {t('docs.membersWorkTheRoundSide')}</li>
       </ul>
       <Callout tone="warn"><Rich>{t('docs.teamsDoc.callout')}</Rich></Callout>
@@ -120,6 +122,10 @@ export function ConnectorsDoc() {
       <P><Rich>{t('docs.connectorsDoc.lead')}</Rich></P>
       <H3><GitBranch className="inline w-4 h-4 text-orange-500 mr-1" /> {t('docs.git')}</H3>
       <P><Rich>{t('docs.connectorsDoc.git')}</Rich></P>
+      <H3>{t('docs.jira')}</H3>
+      <P><Rich>{t('docs.connectorsDoc.trackers')}</Rich></P>
+      <H3>{t('docs.alertRules')}</H3>
+      <P><Rich>{t('docs.connectorsDoc.alerts')}</Rich></P>
       <H3>{t('docs.otherThingsConfiguredInSettings')}</H3>
       <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1 my-2">
         <li><strong>{t('docs.apiKeys')}</strong> {t('docs.openaiAnthropicGoogleCredentialsAnd')}</li>
@@ -228,7 +234,7 @@ export function InstancesDoc() {
       </ul>
       <P>
         <Link className="text-indigo-600 underline" to="/instances">{t('docs.instancesDoc.openPage')}</Link>
-        {' — '}{t('docs.instancesDoc.openHint')}
+        {': '}{t('docs.instancesDoc.openHint')}
       </P>
       <Callout tone="tip">{t('docs.instancesDoc.tip')}</Callout>
     </div>

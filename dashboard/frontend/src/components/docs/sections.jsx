@@ -2,14 +2,14 @@
  * Registry of the Docs sections and the corpus id to section lookup.
  */
 import {
-  Activity, Box, Boxes, Brain, CalendarClock, CheckSquare, ClipboardCheck,
+  Activity, Archive, Box, Boxes, Brain, CalendarClock, CheckSquare, ClipboardCheck,
   Database, Download, Factory, FileText, Folder, FolderGit2,
   Gauge, Globe, GraduationCap, HardDriveDownload, HelpCircle, History, Images, KeyRound, Layers,
   MessageCircle, MessageSquareCode, Navigation, Network, Radio, Repeat, Rocket,
-  ScrollText, Send, Server, ServerCog, SettingsIcon, Share2, ShieldCheck, Sparkles, Store,
+  Send, Server, SettingsIcon, Share2, ShieldCheck, Sparkles, Store,
   Target, Terminal, Users, UsersRound, Webhook, Wrench,
 } from 'lucide-react';
-import { ChangelogDoc, Faq, GuideDoc } from './CorpusDocs';
+import { Faq, GuideDoc } from './CorpusDocs';
 import {
   AgentsDoc, FlowsDoc, ImportingAgentsDoc, MarketplaceDoc, ProjectsDoc, SkillsDoc, TasksDoc,
   ViewsDoc, WebLogsDoc, WorkspacesDoc,
@@ -37,7 +37,6 @@ export const GROUPS = [
       { id: 'installation', key: 'installation', icon: HardDriveDownload, render: Installation },
       { id: 'concepts', key: 'concepts', icon: Boxes, render: Concepts },
       { id: 'features', key: 'overview', icon: Sparkles, render: Features },
-      { id: 'changelog', key: 'changelog', icon: ScrollText, render: ChangelogDoc },
     ],
   },
   {
@@ -82,18 +81,13 @@ export const GROUPS = [
     key: 'operations',
     items: [
       { id: 'instances', key: 'instances', icon: Radio, render: InstancesDoc },
-      guide('deployments', 'deployments', Layers, ['deployments', 'sandboxes']),
+      guide('deployments', 'deployments', Layers, ['deployments']),
       { id: 'containers', key: 'containers', icon: Box, render: ContainersDoc },
       { id: 'models', key: 'models', icon: Brain, render: ModelsDoc },
       { id: 'providers', key: 'providers', icon: SettingsIcon, render: ProvidersDoc },
       { id: 'connectors', key: 'connectors', icon: Send, render: ConnectorsDoc },
-      guide('health', 'health', Activity, ['service-health', 'runbook']),
-      guide('production', 'production', ServerCog, ['deployment', 'scaling', 'workers', 'storage', 'backup']),
-    ],
-  },
-  {
-    key: 'access',
-    items: [
+      guide('health', 'health', Activity, ['service-health']),
+      guide('backup', 'backup', Archive, ['backup']),
       guide('integrations', 'integrations', Share2, ['notifications', 'secrets']),
     ],
   },

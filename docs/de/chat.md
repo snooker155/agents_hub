@@ -69,6 +69,10 @@ Liefert ein Agent einen ausführbaren oder bearbeitbaren Ausschnitt zurück (ein
 
 Ein Agent kann das Gespräch auch abgeben: Mit `handoff_to_agent` antwortet der genannte Agent Ihnen im selben Turn direkt und behält danach das Gespräch. Ein Trenner im Transkript zeigt, wer übernommen hat und warum, und die obere Leiste wechselt zum neuen Agenten. Was der neue Agent vom Gespräch sieht, wird pro Agent festgelegt (das ganze Gespräch, eine Zusammenfassung, die letzten Nachrichten oder nur Ihre letzte Nachricht). Siehe [handoffs](handoffs.md).
 
+## Während der Agent arbeitet
+
+Sie können weiterschreiben, während ein Turn läuft. Die Nachricht kann in den laufenden Turn eingespeist werden, ihn unterbrechen oder warten und als nächster Turn gesendet werden. Siehe [steering](steering.md#in-the-chat-composer).
+
 ## Kosten und Genehmigungen
 
 Alles, was echtes Geld kostet, hält an und fragt nach. Bietet ein Agent an, einen Flow, einen Loop oder ein Team auszuführen, zeigt er die Schätzung und wartet auf ein klares Ja. "Klingt gut" ist keine Genehmigung, und die Agenten sind angewiesen, es als mehrdeutig zu behandeln.

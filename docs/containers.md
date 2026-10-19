@@ -29,6 +29,12 @@ where a resident instance is something an operator is actively watching:
 command line as a pure function (no daemon needed), which is what
 `tests/test_run_sandbox.py` asserts against.
 
+When the hub itself runs in Docker Compose, the daemon resolves bind mounts on
+the host, so the compose file sets `HOST_PROJECT_ROOT` to the checkout's host
+path and `managers/container_manager.py` rebases the in-container state paths
+onto it. Keep the state directory inside the checkout (or follow the comment in
+`docker-compose.yml`), or the agent containers mount an empty directory.
+
 ## HTTP-only state transport
 
 By default a run reaches the shared database (`agents_hub.db`, holding run
@@ -48,8 +54,8 @@ A resident instance's container gets the same under its own snapshot
 directory; a registry edit reaches a running instance on its next restart. Snapshots of finished runs
 are removed by the maintenance sweep.
 
-Setting `AGENT_RUN_STATE_TRANSPORT=http` (env var, or `run_state_transport` in
-Settings; default `db`) closes that: `build_run_command` mounts the whole
+Setting `AGENT_RUN_STATE_TRANSPORT=http` (env var, or the `run_state_transport`
+setting; default `db`) closes that: `build_run_command` mounts the whole
 state dir `:ro` instead, with `run_logs/` re-mounted read-write on top so the
 run can still write its own log file directly. Everything else the run's own
 entrypoint (`runtime/agent_run.py`) needs to write, opening and closing its
@@ -84,7 +90,7 @@ request to the backend (`POST /api/run-state/tasks/<id>/delegate`, the same
 same route family as above, whatever `AGENT_RUN_STATE_TRANSPORT` says), and
 the backend creates the subtask and launches the delegate exactly as it
 launches a run from the dashboard: in its own container with its own limits
-and environment, or onto the run queue. Nothing is spawned inside the delegating container, whose
+and environment. Nothing is spawned inside the delegating container, whose
 environment is forced to `AGENT_EXECUTION_MODE=local` and has neither the
 Docker CLI nor the socket; before this the delegate ran there as a bare
 subprocess sharing the parent's cgroup, network and read-only root, and

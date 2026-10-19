@@ -34,7 +34,7 @@ once the process is listening.
 ```
 POST /api/instances
 {"agent_id": "swe_agent", "workspace": "default",
- "label": "reviewer", "take_tasks": false, "publish": false, "concurrency": 4}
+ "label": "reviewer", "take_tasks": false, "concurrency": 4}
 ```
 
 `ah instance start <agent>` does the same from the CLI; `ah instance list`,
@@ -103,13 +103,8 @@ stuck instance usually shows the same tool call repeating.
 ## The mailbox
 
 Messages are queued to an instance and claimed atomically, so none is answered
-twice. A mailbox holds three kinds of message: a plain `message`, answered with
-the conversation's history; a `turn`, a whole chat request written there by
-the backend (chat/routing.py) and executed by the carrier as the chat
-pipeline, its events posted back to the backend for the conversation's
-channel and the instance's; and a `job`, one agent invocation the backend
-hands over (a replay, a decomposition, the agent part of an
-entity chat), answered with a result document on the row. A resident instance
+twice. What the instance page and `ah instance message` write is a plain
+`message`, answered by the carrier with the conversation's history. A resident instance
 is woken the moment a message is written, or else by checking its mailbox
 every `AGENTS_HUB_INSTANCE_POLL_SECONDS` (default 0.5). A message sitting in
 the mailbox of a standby instance means nothing picked it up, which is usually

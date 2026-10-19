@@ -1,8 +1,7 @@
 # Running with Docker Compose
 
-Agents Hub is one backend, one dashboard and, if you want it, one browser
-service, all on your machine. This page covers the compose files,
-and how to upgrade and roll back. State is SQLite and files
+Agents Hub is one backend and one dashboard, all on your machine. This page
+covers the compose file, and how to upgrade and roll back. State is SQLite and files
 on disk, so there is nothing else to run.
 
 ## The shapes
@@ -36,29 +35,7 @@ docker compose up --build                       # backend and dashboard
 docker compose restart backend                  # picks up code changes
 ```
 
-## Releases
-
-A release is a semver version (`X.Y.Z`, or `X.Y.Z-rc.1` for a prerelease)
-that names the same thing everywhere: `pyproject.toml`, the dashboard's
-`package.json` and
-the git tag `vX.Y.Z`. While the major version is 0, a minor release may change
-the API or configuration and says so in `CHANGELOG.md` under **Changed**; a
-patch release never does. A release that adds schema migrations lists them
-under **Upgrade notes**, because that is what decides how it rolls back.
-
-Cutting one is two commands, and nothing leaves the machine until the push:
-
-```bash
-python scripts/release.py plan minor     # the new version and its notes, nothing written
-python scripts/release.py cut minor      # bump every file, move Unreleased into the
-                                         # new section, commit, tag vX.Y.Z
-git push origin dev && git push origin v0.2.0
-```
-
-`cut` refuses a dirty tree, an existing tag and a version that is not newer.
-When nobody wrote anything under **Unreleased** in `CHANGELOG.md`, it fills the
-section from the commit subjects since the previous tag, so edit the commit
-before pushing if the notes need words.
+## Version and the RAG stack
 
 The `Dockerfile` leaves out the RAG stack (torch, sentence-transformers,
 chromadb and the remote vector stores, a gigabyte of wheels that only the
@@ -66,23 +43,22 @@ embedding features import, docs/memory.md). Build with it when `RAG_VECTOR_DB`
 is anything but `none`: `WITH_RAG=true` in `.env` (docker-compose.yml passes it
 to the image).
 
-Which release is running: `ah version` or `GET /api/system/version`, which also names
+Which build is running: `ah version` or `GET /api/system/version`, which also names
 the newest schema migration the build knows. Images built from the checkout carry the version and
 commit as `AGENTS_HUB_VERSION` and `AGENTS_HUB_GIT_SHA`, and as OCI labels.
 
 ## Upgrading
 
-1. Read the release's **Upgrade notes**.
-2. Take a backup with the build you are running now, before switching:
+1. Take a backup with the build you are running now, before switching:
    `ah db backup --to /backups` (docs/backup.md). A newer build migrates the
    database the moment it opens it, backup included. The
    first process of the new build also archives the database by itself
    before it migrates (below), but that copy holds the database only, not the
    workspaces and logs beside it.
-3. Move to the release. Compose: `git fetch --tags && git checkout vX.Y.Z`,
+2. Move to the new version. Compose: `git pull` (or check out the commit or tag you want),
    then `docker compose up -d --build` (the backend bind mounts the checkout,
    so the checkout is what runs).
-4. Migrations run when the first process opens the database. Check with
+3. Migrations run when the first process opens the database. Check with
    `ah version`, `ah doctor` and the Health page.
 
 ## Rolling back
@@ -90,29 +66,29 @@ commit as `AGENTS_HUB_VERSION` and `AGENTS_HUB_GIT_SHA`, and as OCI labels.
 An older build cannot open a database a newer one has migrated: its migration
 runner refuses a ledger that names versions it does not know, on purpose,
 since old code writing to a newer schema is how data goes quietly wrong. So a
-rollback over a release with migrations is a restore, and anything written
-after the upgrade is lost. A rollback over a release without migrations is
+rollback over a version with migrations is a restore, and anything written
+after the upgrade is lost. A rollback over a version without migrations is
 only the checkout.
 
 The copy to restore:
 
 Before a process applies new migrations, it writes
   `.agents_hub/backups/pre-migrate_<time>_to_<version>.tar.gz`: the database
-  as the previous release left it, in the archive format `ah db restore`
-  reads, with that release's version in its manifest as `app_version`. The
+  as the previous version left it, in the archive format `ah db restore`
+  reads, with that version in its manifest as `app_version`. The
   newest five are kept. `AGENTS_HUB_BACKUP_BEFORE_MIGRATE=0` turns it off. A
   failed copy is logged and the upgrade goes on.
 
-Then, with the previous release's build (checked out):
+Then, with the previous build (checked out):
 
 ```bash
 docker compose down                      
-git checkout v<previous>
+git checkout <previous-commit-or-tag>
 ah db verify .agents_hub/backups/pre-migrate_<time>_to_<version>.tar.gz
 mkdir -p .agents_hub/rolled-back && mv .agents_hub/agents_hub.db* .agents_hub/rolled-back/
 ah db restore --no-files .agents_hub/backups/pre-migrate_<time>_to_<version>.tar.gz
 docker compose up -d --build
-ah version                               # the previous release, and it opens the database
+ah version                               # the previous version, and it opens the database
 ```
 
 The migrated database has to be out of the way first: the previous build
@@ -123,7 +99,6 @@ confirmed).
 Use `--no-files` with a pre-migrate archive (it holds no files); a full
 backup from step 2 restores the files too. `ah db restore` writes to the
 database the process is configured with, so run it with the same `.env` as
-the service. This sequence was run end to end
-from 0.1.0 to the current build and back.
+the service.
 
 Related: [installation](installation.md), [backup](backup.md), [containers](containers.md).

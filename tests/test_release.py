@@ -1,22 +1,12 @@
-"""Releases: the version source, scripts/release.py, and the database archive
+"""Releases: the version source, and the database archive
 taken before a schema migration (docs/deployment.md "Releases")."""
 import asyncio
-import importlib.util
-import json
-import shutil
 import threading
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-
-
-def _release_module():
-    spec = importlib.util.spec_from_file_location("release_script", ROOT / "scripts" / "release.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 # ── common/version.py ────────────────────────────────────────────────────────
@@ -43,75 +33,6 @@ def test_system_version_route(monkeypatch):
     body = asyncio.run(system_version())
     assert body["version"] == "1.2.3"
     assert body["schema_latest"] >= 24
-
-
-# ── scripts/release.py ───────────────────────────────────────────────────────
-
-@pytest.mark.parametrize("current,spec,expected", [
-    ("0.1.0", "patch", "0.1.1"),
-    ("0.1.0", "minor", "0.2.0"),
-    ("0.1.0", "major", "1.0.0"),
-    ("0.3.0-rc.1", "patch", "0.3.0"),
-    ("0.1.0", "v0.2.0-rc.1", "0.2.0-rc.1"),
-])
-def test_next_version(current, spec, expected):
-    assert _release_module().next_version(current, spec) == expected
-
-
-@pytest.mark.parametrize("spec", ["0.1.0", "0.0.9", "0.1.0-rc.1", "banana"])
-def test_next_version_refuses_older_or_invalid(spec):
-    rel = _release_module()
-    with pytest.raises(rel.ReleaseError):
-        rel.next_version("0.1.0", spec)
-
-
-def test_changelog_release_renames_unreleased():
-    rel = _release_module()
-    text = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a thing\n\n## [0.1.0] - 2026-09-24\n\nold\n"
-    out = rel.release_changelog(text, "0.2.0", "2026-10-01", [])
-    assert "## [Unreleased]\n\n## [0.2.0] - 2026-10-01\n\n### Added\n\n- a thing" in out
-    assert rel.section_body(out, "0.2.0") == "### Added\n\n- a thing"
-    assert rel.section_body(out, "0.1.0") == "old"
-    with pytest.raises(rel.ReleaseError):
-        rel.release_changelog(out, "0.2.0", "2026-10-02", [])
-
-
-def test_empty_unreleased_is_filled_from_commits():
-    rel = _release_module()
-    text = "# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-09-24\n\nold\n"
-    out = rel.release_changelog(text, "0.1.1", "2026-10-01", ["Fix the widget", "Add a button"])
-    assert rel.section_body(out, "0.1.1") == "### Changes\n\n- Fix the widget\n- Add a button"
-
-
-def test_write_versions_moves_every_file_together(tmp_path, monkeypatch):
-    rel = _release_module()
-    paths = {
-        "PYPROJECT": ROOT / "pyproject.toml",
-        "PACKAGE_JSON": ROOT / "dashboard" / "frontend" / "package.json",
-        "PACKAGE_LOCK": ROOT / "dashboard" / "frontend" / "package-lock.json",
-        "README": ROOT / "README.md",
-    }
-    for name, src in paths.items():
-        dst = tmp_path / src.name
-        shutil.copy(src, dst)
-        monkeypatch.setattr(rel, name, dst)
-
-    assert len(set(rel.read_versions().values())) == 1, "the checkout's version files disagree"
-    rel.write_versions("7.0.0-rc.2")
-    assert set(rel.read_versions().values()) == {"7.0.0-rc.2"}
-    lock = json.loads((tmp_path / "package-lock.json").read_text())
-    assert lock["packages"][""]["version"] == "7.0.0-rc.2"
-    # Only the package's own version moved, never a dependency's.
-    before = json.loads(paths["PACKAGE_LOCK"].read_text())
-    assert {k: v.get("version") for k, v in lock["packages"].items() if k} == \
-        {k: v.get("version") for k, v in before["packages"].items() if k}
-
-
-def test_check_flags_a_tag_that_does_not_match(capsys):
-    rel = _release_module()
-    assert rel.cmd_check(None) == 0
-    assert rel.cmd_check("v99.0.0") == 1
-    assert "does not match" in capsys.readouterr().err
 
 
 # ── the archive before a migration ───────────────────────────────────────────

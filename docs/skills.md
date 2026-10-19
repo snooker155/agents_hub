@@ -122,8 +122,7 @@ from pasted SKILL.md text is therefore reviewed on import and on every sync
   none.
 
 Flags are signals, not verdicts, and nothing is blocked: a skill about prompt
-injection gets flagged for quoting one. The sync result and the source
-list count the flagged skills, and the doctor's `skills` check
+injection gets flagged for quoting one. The sync result counts the flagged skills, and the doctor's `skills` check
 ([service health](service-health.md#check-skills)) warns while a skill
 attached to an agent carries a high flag. A skill edited or restored here is
 reviewed again; a skill nobody reviewed (hand-written, or synced by an older

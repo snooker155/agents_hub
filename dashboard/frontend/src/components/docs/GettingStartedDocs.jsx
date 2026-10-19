@@ -57,11 +57,11 @@ export function GettingStarted() {
 source .venv/bin/activate
 pip install -r dashboard/backend/requirements.txt
 pip install -r requirements-agents.txt
-python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000 --reload`}</CodeBlock>
+python -m uvicorn dashboard.backend.main:app --host 127.0.0.1 --port 8000 --reload`}</CodeBlock>
       <H3>{t('docs.frontendReactVite')}</H3>
       <CodeBlock label={t('docs.terminal')}>{`cd dashboard/frontend
 npm install
-npm run dev -- --host 0.0.0.0 --port 5173`}</CodeBlock>
+npm run dev -- --host 127.0.0.1 --port 5173`}</CodeBlock>
       <P>{t('docs.backendHttpLocalhost8000Frontend')}</P>
       <H3>{t('docs.orWithDocker')}</H3>
       <CodeBlock label={t('docs.terminal')}>{`docker compose up --build`}</CodeBlock>
@@ -260,7 +260,7 @@ export function Tutorials() {
         steps={[
           <>{t('docs.open')} <Link className="text-indigo-600 underline" to="/workspaces">{t('docs.workspaces')}</Link> {t('docs.andCreateOneOrUse')} <code className="bg-gray-100 px-1 rounded">{t('docs.default')}</code>{t('docs.thenSelectItInThe')}</>,
           <>{t('docs.goTo')} <Link className="text-indigo-600 underline" to="/tasks">{t('docs.tasks')}</Link> {t('docs.andClick')} <strong>{t('docs.newTask')}</strong>{t('docs.giveItAClearInstruction')}</>,
-          <>{t('docs.assignAnAgentOrLet')} <code className="bg-gray-100 px-1 rounded">{t('docs.taskAssignmentMode')}</code> {t('docs.isSetToAuto')}</>,
+          <>{t('docs.assignAnAgentOrLet')}</>,
           <>{t('docs.runItAndOpenThe')}</>,
         ]}
       />

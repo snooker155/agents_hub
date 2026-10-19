@@ -14,7 +14,7 @@ import api from './index';
 export const getSystemHealth = () => api.get('/health');
 
 // One document of the documentation corpus the agents read (docs/index.json),
-// e.g. 'changelog'. Returns { id, title, content, lang, truncated }.
+// e.g. 'loops'. Returns { id, title, content, lang, truncated }.
 // lang defaults to the current UI language ('en', 'ru', or 'de'); the backend falls back to English.
 export const getDoc = (id, lang = '') => api.get(`/docs/${id}`, { params: { ...(lang ? { lang } : {}) } });
 // Service health.

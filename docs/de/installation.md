@@ -89,11 +89,11 @@ Der direkte Modus auf dem Host erreicht keine Docker-Installation. Bei Weg A geh
 
 ### `ah` zu einer Docker-Installation hinzufügen
 
-**Im Container** ist nichts hinzuzufügen: Das Backend-Image bringt `ah` mit (Images nach 0.12.0; in 0.12.0 und älter ist `python -m cli` dasselbe Programm). Er läuft direkt, auf derselben Datenbank und demselben Volume wie das Backend:
+**Im Container** ist nichts hinzuzufügen: Das Backend-Image bringt `ah` mit (`python -m cli` ist dasselbe Programm). Er läuft direkt, auf derselben Datenbank und demselben Volume wie das Backend:
 
 ```bash
 docker compose exec backend ah doctor
-docker compose exec backend ah db backup --to /data/backups
+docker compose exec backend ah db status
 alias ah='docker compose -f ~/agents-hub/docker-compose.yml exec backend ah'
 ```
 
@@ -117,11 +117,11 @@ Ohne Python auf dem Host baut `scripts/build_cli_binary.sh` auf einem Rechner, d
 
 `ah setup` fragt sich durch die ganze Installation, so wie der erste Start von OpenClaw, und schreibt nichts, bis Sie eine Übersicht über jeden Wert bestätigt haben:
 
-1. **Installation**: dieser Checkout (Weg B) oder Compose aus diesem Checkout (Weg A). Danach QuickStart (nur, was sich nicht erraten lässt) oder Advanced.
+1. **Installation**: die einzige Form in dieser Edition, dieser Rechner aus diesem Checkout (virtuelle Umgebung, `ah up`). Danach QuickStart (nur, was sich nicht erraten lässt) oder Advanced.
 2. **Anbieter und Modelle**: OpenAI, Anthropic, Google, Ollama, LM Studio. Jeder Schlüssel und jede Adresse wird geprüft, indem der Anbieter nach seiner Modellliste gefragt wird. Das Standardmodell wird aus Voreinstellungen gewählt, die gegen diese Liste abgeglichen werden (ausgewogen, stärkstes, schnellstes), aus der ganzen Liste oder per Eingabe. Auf diesem Rechner werden die Voreinstellungen außerdem im Katalog von [Modelle](models.md) aktiviert, das Standardmodell mit einem Stern.
-3. **Funktionen**: in Advanced der Demo-Workspace, der Dashboard-Port, wo die Agenten laufen und RAG.
+3. **Funktionen**: der Demo-Workspace, in Advanced außerdem, wo die Agenten laufen (lokale Prozesse oder je ein Container), und RAG.
 4. **Übersicht** über jede Einstellung, die geschrieben wird (Geheimnisse maskiert), und jede Aktion, die ausgeführt wird.
-5. **Anwenden**: installiert fehlende Python-Extras, schreibt die `.env` (die vorherige bleibt als `.env.bak-<time>` erhalten), füllt den Katalog und bietet an, den Hub zu starten (`ah up` oder `docker compose up -d`).
+5. **Anwenden**: installiert fehlende Python-Extras, schreibt die `.env` (die vorherige bleibt als `.env.bak-<time>` erhalten), füllt den Katalog und bietet an, den Hub zu starten (`ah up`).
 
 Eine Antwortdatei, die `demo` nennt, wendet es auch in QuickStart an.
 
@@ -152,7 +152,7 @@ Installation, die vor dem Update schon genutzt wurde (ein Chat), hält sie nicht
 
 ```bash
 ah setup                       # fragen
-ah setup --shape docker --dir ~/agents-hub
+ah setup --advanced            # skip the QuickStart question
 ah setup --dry-run             # nach der Übersicht anhalten
 ah setup --answers setup.json  # unbeaufsichtigt, siehe unten
 ```
@@ -161,8 +161,7 @@ Für eine unbeaufsichtigte Installation hat jede Frage einen Schlüssel, und ein
 
 ```json
 {
-  "shape": "docker",
-  "dir": "/srv/agents-hub",
+  "shape": "local",
   "providers": {"anthropic": {"api_key": "sk-ant-...", "model": "claude-sonnet-5"}},
   "demo": false,
   "start": true
@@ -204,7 +203,7 @@ Alles, was der Dienst schreibt, landet unter `.agents_hub/` im Checkout: `agents
 | B | `git pull && ./install.sh` (übernimmt neue Abhängigkeiten; die `.env` bleibt unberührt) |
 | C | `git pull && pip install -e ".[backend,agents]"`, `npm install` im Dashboard |
 
-Eine editierbare Installation braucht für Code-Änderungen keine Neuinstallation. Schema-Änderungen wenden sich von selbst an: Die erste Verbindung in einem beliebigen Prozess stellt das Schema sicher, daher kann ebenso gut das Backend oder ein CLI-Befehl sie ausführen. Eine SQLite-Datenbank wird vor der Migration archiviert, und ein Release mit Migrationen lässt sich ohne dieses Archiv nicht zurückrollen: Lesen Sie zuerst die **Upgrade notes** des Releases im [changelog](changelog.md) und für das vollständige Vorgehen [deployment](deployment.md) ("Upgrading", "Rolling back").
+Eine editierbare Installation braucht für Code-Änderungen keine Neuinstallation. Schema-Änderungen wenden sich von selbst an: Die erste Verbindung in einem beliebigen Prozess stellt das Schema sicher, daher kann ebenso gut das Backend oder ein CLI-Befehl sie ausführen. Eine SQLite-Datenbank wird vor der Migration archiviert, und ein Release mit Migrationen lässt sich ohne dieses Archiv nicht zurückrollen: Lesen Sie zuerst die **Upgrade notes** des Releases in den Release-Hinweisen und für das vollständige Vorgehen [deployment](deployment.md) ("Upgrading", "Rolling back").
 
 ## Wenn es nicht startet
 

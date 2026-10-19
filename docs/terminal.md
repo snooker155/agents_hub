@@ -41,7 +41,7 @@ Read live from `.env` or the environment, no restart needed:
 
 Messages on the socket: the panel sends JSON text (`{"type": "input", "data": ...}`, `{"type": "resize", "cols": ..., "rows": ...}`, `{"type": "close"}` to end the session). The hub sends one `{"type": "session", ...}` first (the session id, whether it was a resume, the limits), then the replayed buffer and the live output as binary frames, and `{"type": "exit"}` when the shell ends, `{"type": "taken_over"}` when another window attached, or `{"type": "error", "detail": ...}` before refusing. `GET /api/terminal/sessions` lists your open sessions.
 
-Behind a proxy the socket needs the upgrade forwarded. The dashboard image's nginx does this for `/api/terminal/.../ws` (and the browser's frame stream), and the Vite dev server proxies WebSockets under `/api`. Another reverse proxy needs the same: `Upgrade` and `Connection: upgrade` on those paths and a read timeout longer than the idle limit.
+Behind a proxy the socket needs the upgrade forwarded. The dashboard image's nginx does this for `/api/terminal/.../ws`, and the Vite dev server proxies WebSockets under `/api`. Another reverse proxy needs the same: `Upgrade` and `Connection: upgrade` on those paths and a read timeout longer than the idle limit.
 
 ## Limits
 

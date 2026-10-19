@@ -10,7 +10,7 @@ Whether the moving parts are alive, and what to do when they are not.
   running state
 - **entity_runs**: counts by kind (flow, loop, team) and active runs
   by kind
-- **services**: plan scheduler and run watchdog
+- **services**: plan scheduler, run watchdog, singleton supervisor and the external state publisher
 - **storage**: database size, WAL size, run-log size and file count, total
   state size
 - **providers**: which is default and which keys are set (as booleans)
@@ -29,7 +29,10 @@ Two traps, both common:
 ## Probes
 
 `GET /api/health` is for you looking at a page. `/livez` and `/readyz` are
-for a container health check. Both sit outside `/api`.
+for a container health check. Both sit outside `/api`, as does `GET /metrics`,
+which serves counters (runs by status, tokens, tool calls, run durations) in the
+Prometheus text format for anything that wants to scrape them. The hub ships
+no Prometheus or dashboard stack of its own.
 
 - **`GET /livez`**: 200 `{"status": "alive"}` whenever the process can run
   Python at all. No database access.
@@ -79,8 +82,7 @@ origins, comma separated.
 
 ### Check: security
 
-The settings the hardening list in `SECURITY.md` (repository root) asks for,
-read together. A warning for each of: `CAPABILITY_GUARD` set to anything but
+The settings that matter for safety, read together. A warning for each of: `CAPABILITY_GUARD` set to anything but
 `block`; secrets stored while `AGENTS_HUB_SECRET_KEY` is empty (runs then
 receive none of them). Fix: the setting the warning names, in `.env` or on
 the Settings page.

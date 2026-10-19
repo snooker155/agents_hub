@@ -1,469 +1,439 @@
 # Architecture
 
-How Agents Hub is put together: the runtime layers, what each package is
-responsible for, where state is written, and the surfaces the two of them meet
-at. For installing and running it see [docs/installation.md](./docs/installation.md);
-for what the product *does*, the corpus in [docs/](./docs/).
+How Agents Hub (the Lite edition, one person on one machine) is put together:
+the processes, what each package does, how a run executes and streams, where
+state is written, and what happens at startup. For installing it see
+[SETUP.md](./SETUP.md); for what the product does, the corpus in
+[docs/](./docs/).
 
 ## Contents
 
-- [Runtime layers](#runtime-layers)
-- [Folder structure](#folder-structure)
-- [Important files](#important-files)
-- [Agent definitions: layered instructions](#agent-definitions--layered-instructions)
-- [Importing agents from their own repositories](#importing-agents-from-their-own-repositories)
-- [Memory subsystems](#memory-subsystems)
-- [Storage model](#storage-model)
-- [API surface](#api-surface)
-- [Agent execution modes](#agent-execution-modes)
+- [Overview](#overview)
+- [Backend](#backend)
+- [Core packages](#core-packages)
+- [Frontend](#frontend)
+- [How a run executes](#how-a-run-executes)
+- [Live updates](#live-updates)
+- [Storage](#storage)
+- [Startup](#startup)
+- [Health and diagnostics](#health-and-diagnostics)
+- [Agent definitions](#agent-definitions)
+- [Imported agents](#imported-agents)
+- [Memory](#memory)
 - [Security posture](#security-posture)
 - [Interface language](#interface-language)
 - [Tech stack](#tech-stack)
 
-## Runtime layers
+## Overview
 
-Agents Hub is split into two main runtime layers:
-
-1. Backend API
-   The backend is a FastAPI application in `dashboard/backend`. It exposes the main REST API, loads environment settings, initializes session infrastructure, and coordinates the core domain modules.
-
-2. Frontend Dashboard
-   The frontend is a React + Vite application in `dashboard/frontend`. It provides the operational UI for workspaces, tasks, projects, agent flows, sessions, chat, and container tooling. Pages are lazy-loaded on demand with error boundaries per route, so bundle size stays manageable across forty-odd pages. Route titles come from `dashboard/frontend/src/components/routeTitles.js`. The Chat and AgentDetails pages are split across `dashboard/frontend/src/components/chat/` and `dashboard/frontend/src/components/agent/`, keeping chat-specific logic separate.
-
-Under those runtime layers, the backend works with several domain modules:
-
-- `agents/`
-  Agent definitions (per-agent folders, the seeded roster only — see `bootstrap/agents.json`), prompt assembly, the factory, the run launcher, response parsing, the capability guard, per-workspace tool hooks (`hooks.py`), callbacks (streaming, guards, statistics), the remote-agent adapter, and the repository importer.
-- `managers/`
-  Process-level lifecycle: run records and logs, agent containers (`container_manager`), and the watchdog that reconciles crashed runs. `run_manager.py` is a facade over `managers/runs/` (`store`, `lifecycle`, `task_finalize`, `notifications`, `groups`), kept as the single import point the rest of the codebase already uses.
-- `runtime/`
-  Entrypoints a subprocess actually executes — `agent_run.py`, `instance_run.py`, `flow_run.py`, plus the Docker runner.
-- `common/`
-  The database core (`db.py`: SQLite; `common/migrations/`, `db_migrate.py`, `db_transfer.py`), the single `.env` parser with mtime caching (`dotenv.py`), configuration, paths, workspace and user context, the session broker, pricing, and the sinks that route a run's side effects (stream, artifacts, views, graph).
-- `instances/`
-  Live agent copies: the single registration point every execution channel calls, the instance store, the carrier of a resident instance (the process or container the agent page's Run starts, `carrier.py`, running `runtime/instance_run.py`), the per-instance mailbox with its conversations and wake-up, and the server-side rebuild of a copy's conversation history.
-- `chat/`
-  The chat pipeline, context assembly, attachments, streaming, and the flow/team drivers behind a conversation. The `entity_chat_router` factory builds the four identical routes (history, clear, send, stop) that every entity chat exposes, parametrized by the entity type.
-- `flow/`, `loops/`, `teams/`
-  The three multi-agent execution models — a DAG engine, the iterate-until-good-enough wrapper, and the roster-with-a-message-board runner. Each has its own store, runner, and cost estimator.
-- `plans/`
-  Scheduled jobs (notification / agent task / flow trigger), the background scheduler, and the notification inbox.
-- `views/`
-  The view store, the op protocol that makes a view editable step by step, Studio's scene context, server-side compute runtimes, and the scoped proxy for served views.
-- `evals/`
-  The developer prompt-injection harness (`python -m evals.injection`): a corpus of hostile pages, a static defence audit and a sweep against a real agent.
-- `tasks/`, `projects/`
-  Task models, execution and activity logs, and result storage; project metadata plus the project graph. The routes delegate to project services: `planner_service` (the Planner agent and its prompt), `git_service` (git and provider operations), and `proxy_service` (validated backend base URL and forwarded requests).
-- `memory/`
-  Layered memory abstractions: shared memory store, episodic events, procedural skills, knowledge graph, and RAG query layer.
-- `reasoning/`
-  The `think` and `plan` scratchpads, their persistence, and the optional step gates that enforce reasoning before action.
-- `providers/`
-  Provider registry, adapters for OpenAI-compatible backends, and context-window metadata.
-- `tools/`
-  Agent tools: filesystem, patching, shell, calculator, task and flow management, scheduling, web access, and the visualization family behind views. `capabilities.py` classifies every tool for the capability guard; `approval.py` is the awaiting-approval gate a workspace can put in front of a destructive call. The `_crud.py` factory builds the four entity management tool modules (flow, loop, team, project) from handlers and schemas; `_json.py` provides the shared JSON envelope for all tool results.
-- `connectors/`
-  Outside-world integrations: Jira and git (GitLab provider, repo operations, issue sync).
-- `notify/`
-  Alert rules (a failed run, spend over a threshold) that raise an in-app notification on their own.
-At a high level, the flow looks like this:
-
-`Dashboard / CLI -> FastAPI backend -> task/project/workspace services -> agent factory (assembles layered instructions + memory tools) -> local or Docker execution -> runs, logs, results, views, sessions, files`
-
-## Folder Structure
-
-The most important top-level folders and files are:
+One backend process owns the database, the background services and the live
+event stream. The dashboard and the `ah` command are two clients of the same
+code. Agent work that takes long runs in child processes, or in Docker
+containers when `AGENT_EXECUTION_MODE=docker`.
 
 ```text
-agents_hub/
-├── agents/
-│   ├── definitions/         # One folder per seeded agent — layered markdown definitions
-│   │   ├── swe_agent/
-│   │   │   ├── instructions.md
-│   │   │   ├── capabilities.md
-│   │   │   └── usage.md
-│   │   ├── orchestrator/
-│   │   ├── researcher/
-│   │   ├── code_reviewer/
-│   │   ├── visualizer/      # Ships with the visualization toolset bound
-│   │   ├── agent_creator/
-│   │   └── ...              # the full seed roster is bootstrap/agents.json
-│   ├── prompt_assembly.py   # Builds the runtime system prompt from the three markdown layers
-│   ├── registry.py          # AgentSpec loader (the `agents` document store)
-│   ├── agent_factory.py     # Constructs runnable agents and binds tools / memory
-│   ├── agent_launcher.py    # Starts a run (process launch, run record)
-│   ├── agent_response.py    # Structured response envelope (buttons, views, …)
-│   ├── agent_replay.py      # Re-run a recorded run, optionally on another model
-│   ├── capability_guard.py  # Refuses dangerous tool combinations at save/build time
-│   ├── remote_agent.py      # HTTP adapter for agents imported from their own repos
-│   ├── hooks.py             # PreToolUse / PostToolUse workspace hooks (.hooks.json)
-│   ├── importer/            # Manifest parsing, readiness checks, clone/promote
-│   └── callbacks/           # Streaming, in-loop guards, run statistics
-├── managers/                # Run records (a facade over managers/runs/), agent containers, run watchdog
-├── runtime/                 # Subprocess entrypoints: agent_run, instance_run, flow_run, docker_runner
-├── notify/                  # Alert rules that raise in-app notifications
-├── common/
-│   ├── db.py                # database core (SQLite WAL) — runs, tasks, sessions, instances, views, evals …
-│   ├── migrations/          # numbered schema migrations
-│   ├── db_transfer.py       # ah db migrate: copy the database to another file
-│   ├── db_migrate.py        # One-time migration from the legacy JSON stores
-│   ├── config.py            # Environment-driven settings
-│   ├── paths.py             # Canonical paths under .agents_hub/
-│   ├── pricing.py           # Run cost from catalog prices
-│   ├── *_sink.py            # Where a run's stream / artifacts / entities / graph updates go
-│   └── entity_links.py      # Entity kind → dashboard URL, for the links a reply carries
-├── instances/               # Live agent copies — registry, store, carrier, mailbox, wake-up, rebuilt history
-├── chat/                    # Chat pipeline: context, attachments, streaming, flow & team drivers
-│   └── entity_chat_router.py # Factory for entity chat routes (history, clear, send, stop)
-├── flow/                    # Flow definitions, DAG engine, entities, run store
-├── loops/                   # Iterate a flow until an agent judges it good enough
-├── teams/                   # Bounded roster of agents over a shared message board
-├── plans/                   # Scheduled jobs, background scheduler, notification inbox
-├── views/                   # View store, op protocol, Studio context, compute runtimes, proxy
-├── evals/                   # Developer prompt-injection harness (python -m evals.injection)
-├── reasoning/               # think / plan scratchpads and their step gates
-├── providers/               # Provider registry, OpenAI-compatible adapters, context windows
-├── connectors/              # Jira and git (GitLab) integrations
-├── dashboard/
-│   ├── backend/             # FastAPI API and route modules
-│   └── frontend/            # React/Vite dashboard
-│       └── src/
-│           ├── components/chat/      # Chat page and entity chat components
-│           ├── components/agent/     # AgentDetails page components and tabs
-│           ├── components/routeTitles.js     # Route title labels
-│           ├── App.jsx               # Router, lazy pages, error boundaries per route
-│           └── components/features.js        # Optional feature flags from /api/health
-├── memory/
-│   ├── models.py            # SharedMemory schema (notes, structured slots, RAG files)
-│   ├── store.py             # SharedMemory persistence
-│   ├── episodic.py          # Episode events store (interaction/task/decision/error/observation)
-│   ├── procedural.py        # Procedure / skills store
-│   ├── graph.py             # Knowledge graph (Nodes + Edges) store
-│   ├── graph_extract.py     # Background extraction of graph triples from conversation
-│   ├── rag_query.py         # RAG search over indexed documents
-│   ├── injection.py         # Injects memory capability hints into the system prompt
-│   └── tool.py              # LangChain tools exposed to agents (recall / remember / forget / record_episode …)
-├── projects/                # Project models, storage, and the project graph
-│   ├── planner_service.py   # Planner agent and its prompt builder
-│   ├── git_service.py       # Git and provider operations
-│   └── proxy_service.py     # Backend base URL validation and proxying
-├── tasks/                   # Task models, storage, execution artifacts
-├── tools/                   # Tool implementations exposed to agents, plus approval.py (the awaiting_approval gate)
-├── workspace/               # Workspace storage and metadata helpers
-├── bootstrap/               # Seed agents (agents.json) and workspaces for a fresh install
-├── docs/                    # Shipped documentation corpus (search_docs / read_doc, and the Docs page)
-├── examples/
-│   ├── agents/              # Example prompts, not seeded — waterfall/, events/, story/, jobs/, misc/ (see examples/agents/README.md)
-│   ├── imported-agents/     # Worked HTTP-import examples (Aider, a LangGraph graph in Python and JS)
-│   └── 0N_*/                # Numbered runnable walkthroughs (task assistant, human-in-loop approval, Docker isolation, …)
-├── .agents_hub/             # Runtime state: agents_hub.db, workspaces, logs, views
-├── cli/
-│   ├── main.py              # Terminal entry point: every command, and its rendering
-│   └── backend.py           # The operations it calls — in-process, or over REST
-├── agents_hub/              # Installable wrapper: gives the `ah` / `agents-hub` commands, imports cli.main from the checkout
-├── install.sh               # Venv, service, the `ah` command, the shell hook
-├── Dockerfile               # Backend service (target backend) and the agents base image (target agents)
-├── dashboard/frontend/Dockerfile   # Frontend: Vite dev server, or nginx serving the built bundle
-└── docker-compose.yml       # Local multi-service Docker setup
+  browser (React dashboard)           terminal (ah)
+        |  REST /api/*, SSE /api/stream       |  in-process calls, or REST with AGENTS_HUB_URL
+        v                                      v
+  +-------------------------------------------------------------+
+  | FastAPI backend (dashboard/backend/main.py)                 |
+  |  routes -> chat, tasks, flows, loops, teams, instances, ... |
+  |  background: plan scheduler, run watchdog, live-state feed  |
+  |  chat turns run here, in process                            |
+  +---------------+-------------------------------+-------------+
+                  | spawns                        | reads and writes
+                  v                               v
+  task, flow, loop, team and           .agents_hub/agents_hub.db (SQLite, WAL)
+  instance runs: a subprocess          .agents_hub/ files: logs, workspaces,
+  (runtime/*.py) or a Docker           views, definitions, files
+  container (agents-hub/base image)
+        |  write run records directly, publish live events to /api/stream/publish
+        +-----------------------------------------------------------> backend
 ```
 
-## Important Files
+There is no queue, no worker role and no external service: every piece above
+runs on the one machine.
 
-- `dashboard/backend/main.py`
-  FastAPI entrypoint. Loads `.env`, configures CORS, registers routes, and starts the background services.
-- `dashboard/backend/routes/workspaces.py`
-  Workspace routes including `GET/PUT /{name}/policy` for the approval gate toggle (`require_tool_approval`) and hook configuration (`hooks`).
-- `dashboard/frontend/src/App.jsx`
-  Main frontend app shell and routing entrypoint. Pages are declared as lazy imports with a `guard()` wrapper that adds an error boundary and `RouteFallback` loader per route.
-- `dashboard/frontend/src/components/routeTitles.js`
-  Route titles for each page, used by the dashboard to label breadcrumbs and section headings.
-- `dashboard/frontend/src/components/chat/`
-  Chat component family for the Chat and entity chat pages: ChatComposer, ChatMessageList, ChatTopBar, ChatSidebar, and supporting utilities for message rendering and session management.
-- `dashboard/frontend/src/components/agent/`
-  Agent details component family: tabs for configuration, tools, memory, model, skills, logs, docker, commands, history and instances; supporting utilities for agent state and model selection.
-- `agents/definitions/<agent_id>/`
-  Per-agent folder containing the layered prompt files (see "Agent Definitions" below).
-- `agents/prompt_assembly.py`
-  Concatenates `instructions.md` + `capabilities.md` + `usage.md` into the runtime system prompt.
-- `agents/agent_factory.py`
-  Builds runnable agent instances from registry definitions and wires tools / memory.
-- `agents/agent_launcher.py`
-  Starts a run: resolves the model, launches the process, and records the run.
-- `managers/run_manager.py`
-  Tracks runs, logs, session links, and execution metadata.
-- `managers/container_manager.py`
-  Builds agent images and manages agent containers when Docker execution is enabled.
-- `managers/run_watchdog.py`
-  Background reconciliation: auto-starts runs an orchestrator assigned but never started, fails runs whose process died, sweeps instances whose carrier died, and drains the mailboxes of instances that went idle.
-- `instances/registry.py`
-  The one call (`ensure_instance`) every execution channel makes to register a live copy of an agent, plus the state transitions that keep the Instances page honest.
-- `chat/entity_chat_router.py`
-  Factory that builds the four identical routes (GET for history, DELETE to clear, POST to send, POST to stop) that every entity chat (team, loop, memory pool) exposes, parametrized by entity type and load/prompt/spec/summarize hooks.
-- `projects/planner_service.py`
-  The Planner agent, its system prompt assembly, and the agent builder with raised iteration limits for planning large projects.
-- `projects/git_service.py`
-  Git operations for projects: status, pull, clone, issue sync, publish. Each function is synchronous plain Python; routes are the ones that know about `asyncio.to_thread`.
-- `projects/proxy_service.py`
-  Validated backend base URLs for proxied requests: rejects non-http(s) schemes and cloud metadata addresses, rewrites container hostnames to reach the Docker host.
-- `common/db.py`
-  The database core. One WAL-journaled SQLite file backs the stores that several processes mutate concurrently — runs, tasks, sessions, instances, views, evals, loops, teams, simulations.
-- `memory/injection.py`
-  Injects shared / episodic / graph / RAG capability hints into the assembled system prompt at runtime.
-- `common/dotenv.py`
-  The single `.env` file parser shared across every entry point, with mtime-based caching so multiple reads in one request hit the file only once.
-- `common/config.py`
-  Central environment-driven settings shared across the app.
-- `common/paths.py`
-  Canonical paths for runtime state under `.agents_hub/` (workspaces, episodes, graphs, shared memory).
-- `common/entity_links.py`
-  One table mapping each entity kind (task, view, flow, agent, job, project, file) to its dashboard URL and label, plus the payload / markdown-line renderers every surface uses.
-- `tools/_crud.py`
-  CRUD tool factory shared by four entity management modules (flow, loop, team, project). Wraps entity-specific handlers with try/except, `json_ok`/`json_err` envelopes, and the `@tool` decorator.
-- `tools/_json.py`
-  Shared JSON envelope for all tool results: `json_ok({...})` on success, `json_err(message, code=...)` on failure. One module where twenty-six identical copies used to live.
-- `.agents_hub/agents_hub.db`
-  The database holding runs, tasks, sessions, instances, views, the eval / loop / team / simulation records, and the document collections below.
-- `agents` document store
-  Registry of `AgentSpec` records — model, provider, tools, memory, node settings (`agents/registry.py`; a run container reads it from the snapshot in `.agents_hub/run_snapshots/`).
-- `models` document store
-  Model catalog: which models are enabled per provider, the default per provider, and per-model pricing (`providers/catalog.py`).
-- `documents` table (`common/docstore.py`)
-  Project metadata, central per-workspace metadata (settings overrides, allowed agents/flows, env vars, model override, keyed by workspace name; the per-folder `.workspace.json` a fresh open still migrates in and removes), scheduled jobs, notifications, memory pools and the other former JSON stores, one named collection each.
-- `.agents_hub/workspaces/`
-  Generated workspace folders — logs, plans, knowledge and project subfolders, and views under `<workspace>/.views/`.
+## Backend
 
-## Agent Definitions — Layered Instructions
+`dashboard/backend/main.py` is the FastAPI application. In order, it:
 
-Each agent lives in its own folder under `agents/definitions/<agent_id>/`. The runtime system prompt is assembled at load time by concatenating up to three layered markdown files:
+1. loads `.env` from the checkout into the environment;
+2. calls `ensure_initial_state()` from `common/bootstrap.py` (see
+   [Startup](#startup)) before any route imports touch the stores;
+3. installs the middleware: the identity guard (`common/identity.py`, which
+   lets every request through as the one local operator), optimistic
+   concurrency for agent edits (`agents/revision.py`), and CORS from
+   `ALLOW_ORIGINS`;
+4. registers the route modules from `dashboard/backend/routes/`;
+5. in its lifespan, starts the singleton supervisor (`common/singletons.py`),
+   the plan scheduler (`plans/scheduler.py`), the live-state publisher
+   (`common/live_state.py`) and the run watchdog (`managers/run_watchdog.py`).
+   Each starts in its own `try`, so one that fails does not take the API down.
 
-| Layer              | File               | Required | Purpose                                                                                          |
-| ------------------ | ------------------ | -------- | ------------------------------------------------------------------------------------------------ |
-| Core instructions  | `instructions.md`  | yes      | The agent's role, reasoning rules, constraints, and operating procedure                          |
-| Capabilities       | `capabilities.md`  | no       | What this agent can and cannot do — included under a `## Capabilities` heading                   |
-| Usage              | `usage.md`         | no       | When and how to invoke this agent (good fits, poor fits, invocation tips) under a `## Usage` heading |
+The routes are grouped by domain, almost all under `/api`:
 
-The assembly is done by `agents/prompt_assembly.py`:
+| Area | Prefixes |
+| --- | --- |
+| Agents | `/api/agents`, `/api/agent-import`, `/api/agent-templates`, `/api/marketplace`, `/api/skills`, `/api/tools` |
+| Conversation | `/api/chat`, `/api/chats`, `/api/entity-chats`, `/api/context` |
+| Work | `/api/tasks`, `/api/projects`, `/api/plan`, `/api/flows`, `/api/flow-entities`, `/api/loops`, `/api/teams`, `/api/instances` |
+| Runs | `/api/messages`, `/api/sessions`, `/api/runs`, `/api/runs/groups`, `/api/run-state`, `/api/terminal` |
+| Knowledge | `/api/memory`, `/api/shared-memory`, `/api/views`, `/api/files`, `/api/web-logs`, `/api/docs` |
+| Environment | `/api/workspaces`, `/api/models`, `/api/settings`, `/api/containers`, `/api/connectors`, `/api/trackers`, `/api/git` |
+| Live and operations | `/api/stream`, `/api/health`, `/api/system`, `/api/first-run`, `/api/demo`, `/livez`, `/readyz`, `/metrics` |
 
-```text
-instructions.md
-└─ + "## Capabilities\n\n" + capabilities.md   (if present)
-└─ + "## Usage\n\n"        + usage.md          (if present)
-```
+Policy routes for guardrails, tool policy, outcomes, steering, per-agent loop
+settings, tool approvals, memory versions and memory consolidation live in
+their own modules in the same folder and are registered from `main.py` too.
+`GET /` answers with a small banner, and `ah api get <path>` calls any route
+from the terminal.
 
-This layering keeps the **core behavior** (`instructions.md`) separate from the **declarative metadata** (`capabilities.md`, `usage.md`) that the orchestrator and dashboard surface when picking an agent for a task. You can edit any layer independently from the dashboard's Agent Manager or directly on disk.
+## Core packages
 
-The registry (`.agents_hub/agents.json`) stores everything *except* the prompt itself — model, provider, temperature, tools, memory binding, node type, etc. — so prompt edits never require touching JSON.
+| Package | What it holds |
+| --- | --- |
+| `agents/` | The agent registry (`agents/registry.py`, records in the `agents` document store), prompt assembly from markdown layers (`agents/prompt_assembly.py`), the factory that builds a runnable agent with its tools and memory (`agents/agent_factory.py`), the agent loop and its policies (`agents/loop_executor.py`, `agents/agent_loop.py`, `agents/loop_ext/`), the task run launcher (`agents/agent_launcher.py`), inheritance (`agents/inheritance.py`), versions and pins (`agents/versions.py`), workspace roles such as `@coder` (`agents/roles.py`), templates (`agents/templates/`), the capability guard, tool hooks (`agents/hooks.py`), streaming and guard callbacks (`agents/callbacks/`), replay, and the importer for agents from git repositories (`agents/importer/`, `agents/remote_agent.py`). |
+| `chat/` | The chat pipelines (`chat/pipelines.py`): context assembly, attachments, compaction, handoffs (`chat/handoff.py`), the per-conversation broadcast (`chat/broadcast.py`) and the shared router factory for entity chats (`chat/entity_chat_router.py`). |
+| `tasks/`, `projects/` | Task models, assignment, delegation (`tasks/delegate.py`), outcomes graded against a rubric (`tasks/outcome.py`, `tasks/rubric_grader.py`); project metadata, the project graph, the planner, and git operations (`projects/git_service.py`). |
+| `flow/`, `loops/`, `teams/` | The three ways to run several agents: a graph engine with branching nodes (`flow/engine.py`, `flow/branching.py`), a flow repeated until an evaluator is satisfied (`loops/evaluator.py`), and a roster of agents on a message board (`teams/runner.py`). Each has a store, a launcher and a runner. |
+| `plans/` | Scheduled jobs, the scheduler loop, escalation, and the notification inbox. |
+| `instances/` | Live copies of agents: the registry every execution channel calls (`instances/registry.py`), the store, the carrier that runs a resident instance as a process or container (`instances/carrier.py`), the mailbox, wake-up and rebuilt history. |
+| `runtime/` | The entrypoints a child process runs: `runtime/agent_run.py`, `runtime/instance_run.py`, `runtime/flow_run.py`, `runtime/loop_run.py`, `runtime/team_run.py`, the shared launch envelope (`runtime/entity_launch.py`) and the container starter (`runtime/docker_runner.py`). |
+| `managers/` | Run records and logs (`managers/run_manager.py`, a facade over `managers/runs/`), agent images and containers (`managers/container_manager.py`), and the run watchdog. |
+| `sandbox/` | Where `run_code` executes a snippet: `sandbox/docker.py` (no network, resource limits) or `sandbox/local.py`, picked by `sandbox/registry.py`. |
+| `tools/` | The tools agents call: files and patches, shell (`tools/shell.py`), code (`tools/run_code.py`), web fetch (`tools/web.py`), tasks, flows, loops, teams, projects, schedules, delegation and handoff, views (`tools/views.py`), workspace files, trackers and git publishing (`tools/git_publish.py`), the docs tools (`tools/docs_tool.py`), human input, the approval gate (`tools/approval.py`), the per-tool policy (`tools/permission_policy.py`) and the capability classes (`tools/capabilities.py`). |
+| `guardrails/` | Input and output checks, sequence rules over tool calls, their store and the runtime that applies them. |
+| `memory/` | Memory pools, episodes, procedures (skills), the knowledge graph, RAG queries, personal memory (`memory/personal.py`), consolidation, versions, skill import and safety review, and the memory tools. |
+| `views/` | The view store, the op protocol that edits a view step by step, the Studio context, kind guides (`views/guides/`), compute runtimes (`views/compute/`), slides export (`views/slides_pptx.py`) and the scoped proxy for served HTML views (`views/serve.py`). |
+| `files/` | Workspace files kept by id, and where each one is used. |
+| `connectors/` | Jira as an issue tracker (`connectors/trackers/`) and GitLab for repositories, issue sync and merge requests (`connectors/git/`), with stored credentials. |
+| `notify/` | Alert rules that raise an in-app notification on their own, for example on a failed run. |
+| `providers/` | The provider registry (OpenAI, Anthropic, Google, Ollama, LM Studio, and custom OpenAI-compatible backends), the model catalog (`providers/catalog.py`), the hub's own chat model drivers (`providers/openai_driver.py`, `providers/anthropic_driver.py`) and context-window data. |
+| `reasoning/` | The `think` and `plan` scratchpads and the gates that require them before action. |
+| `declarative/` | `ah apply`: parse agent, memory pool and schedule files, plan against the hub, apply, record a lock, and export back to files. |
+| `workspace/` | Workspace folders and metadata, including settings overrides and the palette. |
+| `cli/` | The `ah` command (`cli/main.py`, groups in `cli/commands/`), its backend switch between in-process calls and REST (`cli/backend.py`), the OpenAPI-driven `ah api`, and the setup wizard (`cli/onboard/`). `agents_hub/` is the installable wrapper that puts `ah` on the PATH. |
+| `common/` | Shared infrastructure, listed below. |
+| `bootstrap/` | The seed for a fresh state: `bootstrap/agents.json` and the `default` and `demo` workspace templates. |
+| `evals/` | A developer harness for prompt injection (`python -m evals.injection`), not part of the running service. |
 
-## Importing Agents from Their Own Repositories
+The parts of `common/` the rest leans on:
 
-An agent that already exists and is already tested elsewhere does not have to be rebuilt as a hub definition. **Agents → Import from Repo** clones a repository, checks whether its agent can run here, and registers it either way — an agent that is not yet runnable appears in the list marked *needs setup*, carrying the list of what is missing and a **Save & re-check** button on its page.
+- `common/db.py`: the SQLite connection (WAL journal), used by every process
+  that touches state, with numbered migrations in `common/migrations/`;
+- `common/docstore.py`: the `documents` table as named JSON collections;
+- `common/paths.py`: every path under the state root;
+- `common/config.py` and `common/dotenv.py`: settings from the environment and
+  `.env`;
+- `common/session_broker.py`: the channels behind `/api/stream`;
+- `common/live_runs.py`: the short-term tail of each run in flight;
+- `common/chat_store.py`: conversations as rows;
+- `common/secrets.py`: encrypted secrets and their delivery to runs;
+- `common/ssrf.py` and `common/untrusted.py`: the guards on fetched content;
+- `common/bootstrap.py`, `common/first_run.py`, `common/demo_workspace.py`:
+  startup seeding, the first run in the browser, the demo;
+- `common/health.py`, `common/doctor.py`, `common/metrics.py`: diagnostics;
+- `common/maintenance.py`: run retention and orphan file pruning;
+- `common/db_backup.py`: `ah db backup`, `restore` and `verify`.
 
-Imported agents run **outside** this process. The hub never imports their Python, so their dependency tree stays theirs; prompts are forwarded over HTTP by `agents/remote_agent.py` and the record is a normal `AgentSpec` with `type: "remote"`, reachable through the unchanged `create_agent(...).run(...)` path.
+## Frontend
 
-The contract a repository must satisfy is one manifest file plus one endpoint:
+`dashboard/frontend/` is a React 19 application built with Vite and styled
+with Tailwind. Below, `src` means `dashboard/frontend/src`.
+`src/App.jsx` declares the routes, each page lazy-loaded behind its own error
+boundary; the sidebar map is `src/components/navMenu.js`, with a simple and a
+full menu. Pages are in `dashboard/frontend/src/pages/`, larger page families
+in `dashboard/frontend/src/components/` (chat, agent, flow editor, first run,
+terminal), view renderers in `dashboard/frontend/src/views/`, and the API
+client in `dashboard/frontend/src/api/`.
 
-```jsonc
-// agent-hub.json at the repository root
-{
-  "schema": "agents-hub/agent-manifest@1",
-  "id": "aider",
-  "name": "Aider",
-  "runtime": {
-    "kind": "http",
-    "port": 8410,
-    "run_path": "/run",
-    "stream_path": "/run/stream",
-    "health_path": "/health",
-    "docker": { "dockerfile": "Dockerfile.agenthub" },
-    "env": [{ "name": "OPENAI_API_KEY", "required": true }]
-  }
-}
-```
+Colors come from one generated file, `src/theme.css`, written by
+`dashboard/frontend/scripts/gen-theme.mjs`. The generator repaints the brand
+utility classes with the magenta ramp, gives every color utility a dark-theme
+counterpart, and emits the `style-magenta` and `style-neutral` classes the two
+palette styles use. `npm run dev` and `npm run build` run it first. At
+runtime `src/lib/palette.js` applies the workspace palette: Magenta (the
+default), Neutral, the Forest, Slate and Sunset presets, or a custom set of
+brand, neutral, success and danger colors.
 
-```text
-POST <run_path>   {"prompt": …, "run_id": …, "workspace": …}       required
-              ->  {"ok": true, "output": …, "error": null}
-GET  <health_path>  ->  any 2xx/3xx                                recommended
-```
+In development the Vite server proxies `/api` to the backend on port 8000.
+In Docker the built bundle is served by nginx (`dashboard/frontend/docker/`),
+which proxies `/api` without buffering so SSE keeps flowing.
 
-**Streaming.** Declaring `runtime.stream_path` makes runs stream instead of returning in one response — the endpoint answers with NDJSON or SSE frames (`token`, `thinking`, `tool_start`, `tool_end`, `usage`, `done`), which the hub translates onto the event vocabulary the chat already renders and pushes through the same emitter a built-in agent uses. An imported agent's output therefore appears in the chat bubble token by token, exactly like a local one's. The `usage` frame is credited to the run's token counters, which is what restores cost accounting across the process boundary. Streaming runs only when the repository declared the endpoint *and* something on this side is listening; otherwise the single POST is used.
+## How a run executes
 
-A complete worked example wrapping [Aider](https://github.com/Aider-AI/aider) ships in `examples/imported-agents/aider-agenthub/` (including a streaming endpoint that forwards aider's output line by line), and Docs → Importing Agents walks through it in the dashboard; [docs/imported-agents.md](./docs/imported-agents.md) is the short version. What remains genuinely different for a remote agent: no hub tools, no token accounting unless the agent reports it, and none of the hub's in-loop guards (tool-repetition, context-window, capability) — those work by intercepting an agent's own loop, which lives in the other process.
+| What runs | Where |
+| --- | --- |
+| A chat turn | In the backend process: `chat/pipelines.py` builds the agent and runs the loop, streaming as it goes. |
+| A task run, `ah agent run` | A subprocess running `runtime/agent_run.py`, or a container from the agent's image, started by `agents/agent_launcher.py`. |
+| A flow or team run | A subprocess or container through `runtime/entity_launch.py`. |
+| A loop run | Always a local subprocess. |
+| A resident instance (the agent page's Run) | A long-lived process or container started by `instances/carrier.py`, waiting on its mailbox. |
+| `run_code` | The Docker sandbox by default (no network, read-only filesystem, resource limits), or the host with `CODE_RUNNER_PROVIDER=local`; `CODE_RUNNER_FALLBACK=local` falls back to the host while Docker is down. |
+| An imported agent | Its own HTTP service, or a container the hub runs from the repository's Dockerfile. |
 
-Implementation: `agents/importer/` (manifest, readiness checks, clone/promote), `agents/remote_agent.py` (the HTTP adapter), `dashboard/backend/routes/agent_import.py` (the API).
+The execution mode is read live for each launch: the workspace's own setting
+first, then `AGENT_EXECUTION_MODE`. In `docker` mode the backend builds
+`agents-hub/base:latest` (the `agents` target of the `Dockerfile`) and
+per-agent images on top of it from the Containers page, starts the container
+with resource limits (`AGENT_DOCKER_MEMORY`, `AGENT_DOCKER_CPUS`), a scrubbed
+environment and only the mounts the run needs, and puts it on the
+`agents-hub` bridge network. A run reaches its records directly through
+SQLite; with `AGENT_RUN_STATE_TRANSPORT=http` its state mount is read-only and
+it writes through `/api/run-state` instead. Under compose the backend drives
+the host's Docker daemon through the mounted socket, and `HOST_PROJECT_ROOT`
+tells it which host path holds the checkout. See
+[docs/containers.md](./docs/containers.md).
 
-## Memory Subsystems
+Every kind of run shares one status vocabulary (`common/run_status.py`).
+Records of task runs are in `runs`, flow, loop and team runs in
+`entity_runs`. The run watchdog starts runs an orchestrator assigned but never
+launched, fails runs whose process died, and corrects instances whose carrier
+is gone.
 
-Agents Hub provides several distinct, complementary memory layers. An agent is bound to a memory **pool** (typically the workspace) via its `memory_type` / `memory_data` fields on `AgentSpec`. Capability hints and the available tools are then injected into the system prompt at runtime by `memory/injection.py`.
+Before a tool call happens it passes the workspace hooks, the guardrails, the
+per-tool policy and, when the workspace asks for it, a person's approval. In a
+chat turn the approval is a card in the conversation; auto mode
+(`common/auto_mode.py`) skips it for that conversation.
 
-### 1. Shared Memory — notes, structured slots, journal
+## Live updates
 
-Defined in [memory/models.py](memory/models.py) (`SharedMemory`). One pool holds:
+The dashboard holds a single `EventSource` on `/api/stream`. Every event
+names a channel, and a page adds or drops channel interest on the open
+connection (`POST /api/stream/{client_id}/channels`) instead of reconnecting.
+After a dropped connection the broker replays what the client missed.
 
-- **Notes** — free-form titled markdown notes (`notes: [{id, title, content, created_at}]`)
-- **Structured slots** — dict-shaped records keyed by name (e.g. `project = {name, url, priority}`); fields can be merged into an existing slot or a new slot can be created
-- **Journal** — date-titled notes that share the prefix used by `JOURNAL_PREFIX` for chronological logging
-- **RAG files** — metadata for documents indexed into the workspace's RAG index
+A chat turn publishes to `chat:<conversation_id>` (`chat/broadcast.py`), so the
+same conversation open in a second tab follows the generation, and the tab
+that started the turn recognises its own echo by the `origin_client` on each
+event. Several turns of one conversation may run at once. If the browser is
+gone when a turn finishes, the server writes the turn into the conversation
+itself.
 
-Agents read and write this layer through the `recall` and `remember` tools, and remove entries with `forget`. The `remember` tool merges fields into an existing structured slot by default; pass `replace=True` to overwrite. `forget` deletes a slot or note (and its graph mirror); the auto-managed journal cannot be deleted.
+A child process has no broker of its own, so it posts its events to
+`POST /api/stream/publish` and the backend fans them out. `common/live_runs.py`
+keeps the text, thinking and tool steps of each run in flight for a short
+while, which is what `GET /api/chats/{id}/live` and
+`GET /api/messages/{run_id}/live` answer, so a page opened mid-answer starts
+from the middle of it. `common/live_state.py` polls what changes outside the
+backend (container status, instance heartbeats, growing logs) and publishes
+snapshots on the same stream, so no page polls.
 
-### 2. Episodic Memory — discrete events
+## Storage
 
-Defined in [memory/episodic.py](memory/episodic.py). Each `Episode` captures one event with:
+Everything is under the state root: `.agents_hub/` in the checkout, or
+`AGENTS_HUB_ROOT` when it is set. Anything several processes change at once
+lives in the database; anything a person edits, or that is naturally a file,
+stays a file.
 
-- `kind`: `interaction` | `task` | `decision` | `error` | `observation`
-- `outcome`: `success` | `failure` | `partial` | `n/a`
-- `summary`, `actor`, `subject`, `tags`, `details`, and `occurred_at`
-
-Episodes are stored per-pool with a retention cap of `MAX_EPISODES_PER_POOL = 10` — low-signal kinds (`interaction`, `observation`) are pruned first. Agents log events with `record_episode` and look them up with `recall_episodes` (filter by kind / outcome / since, or rank by keyword).
-
-### 3. Procedural Memory — skills
-
-Defined in [memory/procedural.py](memory/procedural.py). A `Procedure` is a named, reusable how-to with:
-
-- `description` — "when to use this" (matched against task instructions to surface relevant skills)
-- `steps` — ordered checklist
-- `tags`, `source` (`user` | `agent`), `success_rate`, `use_count`
-
-Procedures are owned per `agent_id` and per `workspace`. When `skills_enabled=True` on an `AgentSpec`, the relevant procedures are surfaced at runtime and skill management tools are auto-added.
-
-### 4. Knowledge Graph — entities and relations
-
-Defined in [memory/graph.py](memory/graph.py). The graph stores typed `Node`s and labeled `Edge`s with retention caps `MAX_NODES_PER_POOL = 500` and `MAX_EDGES_PER_POOL = 1500` (lowest-degree nodes pruned first; edges cascade). Agents use the `link` and `traverse` tools; `recall` enriches search results with 1-hop relations when relevant. Background extraction from conversation transcripts is handled in [memory/graph_extract.py](memory/graph_extract.py).
-
-### 5. RAG — document retrieval
-
-Defined in [memory/rag_query.py](memory/rag_query.py). When configured (Chroma index present), `recall` will also search indexed workspace documents and surface chunked passages alongside the structured / note / graph results. `is_rag_configured()` controls whether the RAG step is included in the recall pipeline.
-
-### How memory shows up in the prompt
-
-At runtime, `memory/injection.py` appends a `## Shared Memory` section to the assembled system prompt that lists:
-
-- The recall → remember workflow ("check context first, then recall, then remember")
-- Existing structured slot names and their fields (so agents extend, not duplicate)
-- Existing note titles and a journal index of recent dated entries
-- Episodic stats (totals by kind / outcome) and capability hints
-- A note when RAG is not configured
-
-The contents of the pool are **not** dumped into the prompt — only names and stats are. Agents discover actual values at runtime through the tools.
-
-## Storage Model
-
-State is split between a database (SQLite) and files on disk, along one line: anything several processes mutate concurrently lives in the database; anything a human edits, or that is naturally a file, stays a file.
-
-**The database** — `.agents_hub/agents_hub.db` (SQLite, WAL-journaled so the backend, agent subprocesses, and resident instances can read and write at the same time; `common/db.py`, `common/migrations/`). The JSON stores it replaced suffered whole-file locking, lost updates, and corruption-wipe hazards under exactly that concurrency. Tables:
+**The database** is `.agents_hub/agents_hub.db`, SQLite in WAL mode so the
+backend, run subprocesses and resident instances read and write it at the
+same time. The main tables:
 
 | Group | Tables |
 | --- | --- |
-| Execution | `runs`, `run_payloads`, `sessions`, `continuations`, `instances`, `instance_inbox`, `instance_carriers`, `routing_log` |
-| Conversation | `chats` |
+| Runs | `runs`, `run_payloads`, `run_steering`, `entity_runs`, `sessions`, `continuations`, `routing_log` |
+| Instances | `instances`, `instance_inbox`, `instance_carriers` |
+| Conversation | `chats`, `tool_approvals` |
 | Tasks | `tasks`, `task_activity`, `task_results` |
-| Views | `views`, `view_ops` |
-| Loops | `loops`, `loop_runs`, `loop_iterations` |
-| Teams | `teams`, `team_runs`, `team_messages` |
-| Documents | `documents` (`common/docstore.py`): the JSON collections that used to be one file each under a lock. One row per document, keyed by `(store, key)`, insertion order kept in `seq`. Stores: `agents`, `custom_providers`, `models`, `flows`, `flow_entities`, `plans`, `notifications`, `workspaces`, `projects`, `project_graphs`, `shared_memory`, `episodes:<pool>`, `graph_nodes:<pool>`, `graph_edges:<pool>`, `procedures`, `extractions:<pool>`, `entity_chats`, `git_connectors`, `web_log` |
+| Loops and teams | `loops`, `loop_runs`, `loop_iterations`, `teams`, `team_runs`, `team_messages` |
+| Views and files | `views`, `view_ops`, `workspace_files`, `workspace_file_uses` |
+| Agents and memory | `agent_versions`, `skill_versions`, `memory_versions`, `memory_consolidations`, `secrets` |
+| Documents | `documents`, one row per document, keyed by store and key |
 
-The schema is a sequence of numbered migrations (`common/migrations/`, ledger table `schema_migrations`), written in SQLite syntax. The first connection in any process applies the pending ones and runs the one-time import of the legacy JSON stores (`common/db_migrate.py` for the original tables, each `DocStore` for its own file), leaving the originals behind as `*.migrated` — so any entrypoint, backend or CLI, may touch the stores first. `ah db migrate --to <url|path>` copies the database to another file (`common/db_transfer.py`).
+The document stores in `documents` (`common/docstore.py`) include `agents`,
+`models`, `custom_providers`, `workspaces`, `projects`, `project_graphs`,
+`flows`, `flow_entities`, `plans`, `plan_fires`, `shared_memory`,
+`procedures`, `guardrails`, `entity_chats`, `git_connectors`, `web_log`,
+`first_run` and per-pool stores for episodes, graph nodes and graph edges.
 
-`chats` is the newest of these and arrived the same way the others did. The Chat page kept its conversations in the browser's `localStorage`, which made the record the service exists to produce the one thing it did not store: bound to a single browser profile, erased with the site data, and trimmed oldest-first once the ~5 MB quota was reached. A conversation is now a row (`common/chat_store.py`, `/api/chats`), holding the transcript as the UI renders it, beside the `runs` its turns produced. The browser keeps only what is true of that browser — which panel is open, which view mode was last used — and a profile still holding the old key hands it over once, additively, on first load.
+The schema is a sequence of numbered migrations (`common/migrations/`, ledger
+table `schema_migrations`). The first connection in any process applies the
+pending ones, so the backend and the CLI can each be first. The migration
+history is shared with the full edition of Agents Hub, so the schema also
+holds tables this edition never writes. Legacy JSON stores found in an old
+state directory are imported once and left behind as `*.migrated`.
 
-**Files** — under `.agents_hub/` unless noted:
+**Files**, under `.agents_hub/` unless noted:
 
-- `.agents_hub/run_snapshots/<run_id>/` — the registry snapshot a run or instance container reads (`agents.json`, `custom_providers.json`, `models.json` exported from the database by `common/snapshot.py` before the container starts, mounted read-only); pruned once the run is over
-- `.agents_hub/flow_logs/` — per-run flow logs; flow definitions and flow run records are in the database (`flows` document store and the `flow_runs` table; an existing `flows/` directory or `flow_runs.json` is imported once and renamed `.migrated`)
-- `run_logs/`, `instance_logs/`, `dockerfiles/` — generated artifacts
-- `workspaces/` — generated workspace folders (logs, plans, knowledge, project subfolders), and views under `<workspace>/.views/<view_id>/`; a workspace's settings live in the `workspaces` document store, not in its folder
-- `agents/definitions/<agent_id>/{instructions,capabilities,usage}.md` — layered agent prompts, in the repository rather than the state directory
-- `*.migrated` — the JSON and YAML files the database replaced (`agents.json`, `models.json`, `custom_providers.json`, `workspaces.json`, `plans.json`, `shared_memory.json`, `episodes/`, `graphs/`, `procedures.json`, `flows/`, ...), left behind by the one-time import and safe to delete
+- `workspaces/<name>/`: workspace folders (or links to the folder
+  `ah workspace init` registered), with `knowledge/` for RAG sources and
+  `.views/` for the views of that workspace
+- `definitions/<agent_id>/`: prompts of agents you created or edited; the
+  shipped prompts stay in `agents/definitions/` in the repository
+- `files/`: workspace files kept by id
+- `views/`: views that belong to no workspace
+- `run_logs/`, `instance_logs/`, `flow_logs/`: logs of runs, instances and flows
+- `run_snapshots/<run_id>/`: the registry copy a run container reads, removed
+  after the run
+- `dockerfiles/`: generated Dockerfiles for agent images
+- `imported_agents/<agent_id>/`: clones of imported agent repositories
 
-## API Surface
+Deleting `.agents_hub/` resets the hub; the next start seeds it again.
+`ah db backup` writes the database and these folders into one archive, and
+`ah db restore` brings it back ([docs/backup.md](./docs/backup.md)).
 
-The backend is organized by route domains, registered in `dashboard/backend/main.py`. Current route groups:
+## Startup
 
-| Area | Route groups |
-| --- | --- |
-| Agents | `agents`, `agent-import`, `marketplace`, `skills` |
-| Work | `tasks`, `plan`, `flows`, `flow-entities`, `loops`, `teams`, `runs/groups` |
-| Measurement | `stats`, `models`, `runs/{id}/replay` |
-| Knowledge | `shared-memory`, `web-logs`, `views` |
-| Environment | `workspaces`, `projects`, `tools`, `sessions`, `messages`, `instances`, `chat`, `chats`, `containers` |
-| Integration | `git`, `settings`, `stream`, `health`, `notify` |
+`ensure_initial_state()` in `common/bootstrap.py` runs before the routes load.
+It never overwrites what the person made:
 
-The root endpoint (`GET /`) returns the API banner and the domains it serves. Most application endpoints live under `/api/*`.
+1. seeds the agent registry from `bootstrap/agents.json` when it is empty, and
+   the `default` workspace from `bootstrap/workspaces/default/`;
+2. moves prompts the hub once wrote into `agents/definitions/` to the state
+   folder, and renames stored references to agents that were renamed;
+3. adds built-in agents missing from an older registry, then syncs the fields
+   the seed owns (tools, description, tier) into built-in agents the person
+   has not edited;
+4. points built-in agents at workspace roles, and stamps agents that held a
+   blocked tool combination before the capability guard existed with an
+   explicit override, so they keep working;
+5. seeds the demo workspace when `DEMO_WORKSPACE` is on
+   (`common/demo_workspace.py`, content in `bootstrap/workspaces/demo/`);
+6. clears what a full edition left in a shared state directory: its built-in
+   agents for features this edition does not have, its own model runtime
+   provider, and an empty `system` workspace. Only built-in records are
+   removed.
 
-Two are worth knowing by hand:
+The seed roster is `bootstrap/agents.json`: `orchestrator`, `agent_creator`, `decomposer`, `flow_creator`, `loop_creator`, `team_creator`, `project_manager`, `memory_extractor`, `architect_agent`, `planner`, `visualizer`, `web_view_builder`, `swe_agent`, `code_reviewer`, `researcher`, `verifier`, `analyst`, `writer`, `screener`, `main-agent`, `universal_agent`, `prompt-engineer`, `plot-manager`.
 
-```bash
-curl http://localhost:8000/            # API banner + route domains
-curl http://localhost:8000/api/health  # DB reachability, row counts, background services, state size
+On the first visit the dashboard opens the first run (`common/first_run.py`,
+`/api/first-run`): language, theme, a model key and the default model,
+personal memory, the demo workspace. It is recorded once per install, and an
+install already in use is marked finished instead of being asked.
+
+## Health and diagnostics
+
+- `GET /api/health` reports the database, the background services, storage
+  under the state root, the providers and the flow, loop and team runs. The
+  Health page shows it.
+- `GET /api/health/doctor` and `ah doctor` run the doctor
+  (`common/doctor.py`): migrations, the default provider, CORS, security
+  settings, stale runs, free disk, Docker, the sandbox, the frontend build and
+  the skill safety review. `ah doctor` exits 1 when a check fails.
+- `/livez`, `/readyz` and `/metrics` (Prometheus text format) are served
+  without a prefix by `dashboard/backend/routes/ops.py`.
+- `GET /api/system/version` and `ah version` report the version from
+  `pyproject.toml` and the git commit.
+
+See [docs/service-health.md](./docs/service-health.md).
+
+## Agent definitions
+
+A built-in agent's prompt lives in `agents/definitions/<agent_id>/`, in up
+to three markdown files that `agents/prompt_assembly.py` joins at load time:
+
+| File | Required | Purpose |
+| --- | --- | --- |
+| `instructions.md` | yes | Role, rules and procedure |
+| `capabilities.md` | no | What the agent can and cannot do, under `## Capabilities` |
+| `usage.md` | no | When to use it, under `## Usage` |
+
+Prompts of agents you create, and edits to built-in ones, are written to
+`.agents_hub/definitions/<agent_id>/`, which is read before the shipped
+folder. The rest of an agent (model, provider, tools, memory pools, secrets,
+guardrails, loop settings, parent agent) is its record in the `agents`
+document store. An agent that extends another inherits the parent's fields
+and prompt sections and stores only its differences.
+
+## Imported agents
+
+An agent that already exists in its own git repository does not have to be
+rebuilt. **Agents → Import from Repo** clones the repository into
+`.agents_hub/imported_agents/`, reads its `agent-hub.json` manifest, checks
+whether it can run, and registers it as a record with `type: "remote"`. The
+hub never imports its code: `agents/remote_agent.py` forwards each prompt
+over HTTP.
+
+```text
+POST <run_path>     {"prompt": ..., "run_id": ..., "workspace": ...}
+                ->  {"ok": true, "output": ..., "error": null}
+POST <stream_path>  optional, NDJSON or SSE frames: token, thinking, tool_start, tool_end, usage, done
+GET  <health_path>  optional, any 2xx or 3xx
 ```
 
-`/api/health` is what to read when something feels stuck: it reports the liveness of every background service — the plan scheduler and the run watchdog — instead of making you infer it from logs.
+When the manifest names a Dockerfile, the hub can build and run the container
+itself (`agents/importer/docker_runtime.py`). An imported agent gets no hub
+tools and none of the in-loop guards, since its loop lives in another
+process; token accounting works when it reports `usage` frames. Worked
+examples (Aider, LangGraph in Python and JavaScript) are in
+`examples/imported-agents/`; see [docs/imported-agents.md](./docs/imported-agents.md).
 
-**Live updates.** The dashboard holds a single `EventSource` onto `/api/stream`, and everything that moves is a channel on it: chat tokens, flow nodes, team boards, loop iterations, simulation ticks, view frames. Nothing needs polling to discover that the backend went away.
+## Memory
 
-**A turn belongs to its conversation, not to the window that asked for it.** Every chat pipeline publishes its events to `chat:<conversation_id>` (`chat/broadcast.py`), so the same conversation open in a second tab or on another device mirrors the generation as it happens, and a turn started from an agent's inbox shows up in the chat page rather than appearing complete at the end. Each event names the client that started the turn, which is how that tab recognises its own echo and does not render every token twice. The mirror is never saved: the tab that ran the turn writes the transcript, and a save announces itself on the same channel so the others reload rather than drift. If that tab is gone when the run finishes, the server writes the turn itself, so closing a window mid-answer no longer loses it.
+An agent is bound to one or more memory pools, usually its workspace's.
+`memory/injection.py` adds a short section to the system prompt naming what
+the pool holds (slot names, note titles, counts), never the contents, and the
+agent reads and writes through tools.
 
-**Catching up.** A broadcast only carries what comes next, so `common/live_runs.py` keeps a short-term tail of each run in flight: the text so far, the thinking and tool steps behind it, dropped shortly after the run ends. It is what `GET /api/chats/{id}/live` and `GET /api/messages/{run_id}/live` answer, so a page opened mid-answer starts from the middle of the answer rather than the middle of a word. This is what makes a running run's own page show its generation instead of an empty log.
+- **Shared memory** (`memory/models.py`, `memory/store.py`): notes,
+  structured slots and a dated journal, through `recall`, `remember` and
+  `forget`.
+- **Episodes** (`memory/episodic.py`): discrete events with a kind and an
+  outcome, through `record_episode` and `recall_episodes`.
+- **Procedures** (`memory/procedural.py`): the skills, reusable how-tos with
+  steps, versions (`memory/skill_versions.py`) and a safety review
+  (`memory/skill_review.py`).
+- **Knowledge graph** (`memory/graph.py`): typed nodes and labelled edges,
+  through `link` and `traverse`, filled in the background from conversations
+  (`memory/graph_extract.py`).
+- **RAG** (`memory/rag_query.py`, `dashboard/backend/rag/`): passages from
+  indexed workspace files, when the RAG extras are installed and
+  `RAG_VECTOR_DB` is not `none`.
+- **Personal memory** (`memory/personal.py`): facts about the person, switched
+  on per workspace and per agent.
 
-## Agent Execution Modes
+Pools keep versions. A consolidation job (`memory/consolidation.py`), which
+the Plan page can schedule, writes a consolidated pool from a pool and its
+recent sessions (duplicates merged, outdated facts replaced) and leaves the
+source pool unchanged. See
+[docs/memory.md](./docs/memory.md).
 
-The application supports two main execution models, resolved live (workspace
-override, then the global setting) so a change on the Settings page applies to
-the next instance or run without a restart — never frozen at process start:
+## Security posture
 
-- `local`
-  Agents run as local subprocesses on the host machine: `instances/carrier.py`
-  for resident instances (the agent page's Run), `agents/agent_launcher.py` for
-  one-shot task runs.
-- `docker`
-  Agents run inside managed Docker containers using the container tooling in
-  `managers/container_manager.py`, for both surfaces above — a resident instance via
-  `start_node_container`, a task run via `runtime/docker_runner.start_run_container`.
-  Task runs additionally get a hardened profile on top of what a resident
-  instance's container has (resource limits, a read-only root filesystem, a scrubbed
-  environment); see [docs/containers.md](docs/containers.md) for the full
-  mount table and the one documented gap (the shared SQLite database is still
-  mounted read-write). The Containers page builds the shared base image and
-  per-agent images on top of it, previews the generated Dockerfile, and lists,
-  logs, stops, and removes containers.
+- **One person, no login.** Every request acts as the local operator
+  (`common/identity.py`). `ah up` and the compose file bind to `127.0.0.1`;
+  keep it that way unless the network is yours alone. Leave `ALLOW_ORIGINS`
+  at its local default rather than `*`.
+- **Capability guard.** `tools/capabilities.py` classifies tools and
+  `agents/capability_guard.py` refuses tool sets that combine into a way to
+  move data out, both when an agent is saved and when it is built.
+- **In-loop guards.** Tool repetition limits and a context-window guard in
+  `agents/callbacks/guards.py`.
+- **Hooks, policy and approval.** Per-workspace hooks run around tool calls
+  (`agents/hooks.py`); they come from the workspace settings, and a
+  `.hooks.json` file in a workspace folder is never run. The per-tool policy
+  and the approval gate hold calls for a person.
+- **Web content.** `fetch_url` passes the SSRF guard and the domain policy,
+  wraps what it fetched as data, and logs every call with flags for injection
+  phrasing and hidden instructions (the Web logs page).
+- **Secrets.** Stored encrypted with `AGENTS_HUB_SECRET_KEY` and handed only to
+  the agents that declare them; a secret bound to hosts is checked in the
+  process that uses it.
+- **Isolation.** `AGENT_EXECUTION_MODE=docker` runs agents in containers, and
+  `CAPABILITY_OVERRIDE_REQUIRES_CONTAINER` (on by default) requires that
+  isolation behind any per-agent capability override. Mounting the Docker socket into
+  the backend container gives it control of the host daemon; drop that line in
+  `docker-compose.yml` if you do not need agent containers.
 
-A run record's `execution_mode` and `container_name` fields track which mode a
-given run used; `container_name` is what `run_manager`/`run_watchdog` key
-stop and liveness checks off, not `execution_mode` (see docs/containers.md).
+## Interface language
 
-Related environment variables:
-
-- `AGENT_EXECUTION_MODE`
-- `AGENT_DOCKER_IMAGE`
-- `AGENT_DOCKER_NETWORK`
-- `AGENT_DOCKER_EXTRA_ARGS`
-- `AGENT_DOCKER_MEMORY` (run containers only, default `2g`)
-- `AGENT_DOCKER_CPUS` (run containers only, default `2`)
-
-## Security Posture
-
-The hub runs locally by default and its guardrails reflect that, but several are worth knowing before exposing it further:
-
-- **Identity.** One local person, no login and no accounts: everything is allowed. Keep the port on the local machine.
-- **Capability guard.** `tools/capabilities.py` classifies tools, and `agents/capability_guard.py` refuses tool sets that compose into a data-exfiltration primitive — enforced at save time (the bad combination never reaches a runtime) and again at build time, since memory pools, skills, and reasoning tools all append to the list.
-- **In-loop guards.** Tool-repetition limits and a context-window guard intercept an agent's own loop (`agents/callbacks/guards.py`). These do *not* apply to imported remote agents, whose loop lives in another process.
-- **Tool hooks and approval.** A workspace can run its own code around every tool call (`PreToolUse` / `PostToolUse`, configured in `<workspace>/.hooks.json`, executed with a scrubbed environment) and can require a human yes before a destructive call happens: the task parks in `awaiting_approval` with the call on it and resumes once the operator answers. Both are off until configured. See `agents/hooks.py`, `tools/approval.py` and `docs/hooks.md`.
-- **Untrusted web content.** Retrieved pages are wrapped and labeled as data, and every call is logged with the exact text handed to the agent plus flags for injection phrasing, hidden instructions, credential-shaped strings, and exfiltration-shaped requests. Flags are signals for review, not verdicts — blocking is done by the SSRF guard, the domain policy, and the capability model.
-- **Isolation.** `AGENT_EXECUTION_MODE=docker` runs agents in managed containers; `CAPABILITY_OVERRIDE_REQUIRES_CONTAINER=true` additionally requires real isolation behind any per-agent capability override.
-
-## Interface Language
-
-The dashboard ships in **English, Russian and German**, switchable from the picker next to the theme toggle in the top bar. The choice persists in `localStorage`; on first visit the browser's `navigator.languages` decides, falling back to English.
-
-Wording lives in `dashboard/frontend/src/i18n/locales/<lang>/<namespace>.js` — one namespace per page or component (`dashboard.js`, `chat.js`, `settings.js`, …) plus shared ones (`common.js`, `status.js`, `taskStatus.js`, `priority.js`). Namespaces are discovered by glob, so adding a file is enough; there is no registry to update. Components read them through `const { t } = useI18n()` and a dotted key: `t('dashboard.stats.tasks')`.
-
-`t` supports `{{name}}` interpolation and plural forms via `Intl.PluralRules` — a key with `_one` / `_few` / `_many` / `_other` suffixes is selected by the `count` variable, which is what makes Russian read correctly (`1 элемент`, `3 элемента`, `12 элементов`). A missing key falls back to English and then to the key itself, so a gap is visible rather than blank.
-
-**Adding a language:** create `src/i18n/locales/<code>/` with the same namespace files and add the code to `LANGUAGES` in `src/i18n/core.js`. **Adding a string:** add the key to all three locale files — `dashboard/frontend` has no build-time check for parity, so keep them in step.
+The dashboard ships in English, Russian and German. Strings live in
+`dashboard/frontend/src/i18n/locales/<lang>/<namespace>.js`, one namespace per
+page or component, discovered by glob. Components read them with
+`const { t } = useI18n()` and a dotted key; plural forms use
+`Intl.PluralRules`, and a missing key falls back to English and then to the
+key itself. The documentation in `docs/` has Russian and German translations
+in `docs/ru/` and `docs/de/`.
 
 ## Tech stack
 
-**Backend** — FastAPI, Uvicorn, Pydantic / pydantic-settings, SQLite (WAL) for concurrent state, LangChain ecosystem libraries, Chroma / Pinecone / Qdrant for RAG vector storage, Typer for the CLI, Docker for optional agent isolation.
+**Backend:** Python 3.11+, FastAPI, Uvicorn, Pydantic and pydantic-settings,
+SQLite in WAL mode, `langchain-core` with the hub's own OpenAI and Anthropic
+drivers and agent loop, Chroma, Qdrant or Pinecone for optional RAG, Typer
+and Rich for the CLI, Docker for optional isolation.
 
-**Frontend** — React 19, Vite, Tailwind CSS, React Router, Axios, React Flow (flow canvas), and the view renderers: Vega-Lite (charts), Cytoscape (graphs), three.js with React Three Fiber (3D scenes), Mermaid (diagrams), KaTeX (equations).
+**Frontend:** React 19, Vite, Tailwind CSS, React Router, Axios, React Flow
+for the flow canvas, and the view renderers: Vega-Lite, Cytoscape, three.js,
+Mermaid and KaTeX.

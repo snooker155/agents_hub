@@ -6,15 +6,15 @@ different workspaces.
 
 ## The layers
 
-- **Core memory blocks** — named blocks of text, rendered straight into the
+- **Core memory blocks**: named blocks of text, rendered straight into the
   system prompt. The only layer the agent reads without a tool call.
-- **Shared** — notes, structured slots and a dated journal. The general store.
-- **Episodic** — discrete events: interaction, task, decision, error,
+- **Shared**: notes, structured slots and a dated journal. The general store.
+- **Episodic**: discrete events: interaction, task, decision, error,
   observation. What happened, when.
-- **Procedural** — reusable skills, surfaced by relevance to the current task.
+- **Procedural**: reusable skills, surfaced by relevance to the current task.
   See [skills](skills.md).
-- **Knowledge graph** — typed entities and labelled relations.
-- **RAG** — retrieval over indexed workspace documents.
+- **Knowledge graph**: typed entities and labelled relations.
+- **RAG**: retrieval over indexed workspace documents.
 
 ## Core memory blocks
 

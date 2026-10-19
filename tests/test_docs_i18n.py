@@ -56,9 +56,9 @@ class TestDocsTranslations:
     def test_read_doc_returns_english_when_missing(self):
         """read_doc falls back to English when translation is missing."""
         # Use a non-translated doc
-        data = _invoke_read_doc("changelog", lang="ru")
-        assert data["ok"], f"Failed to read changelog: {data.get('error')}"
-        # Changelog only exists in English, so lang should be 'en'
+        data = _invoke_read_doc("loops", lang="ru")
+        assert data["ok"], f"Failed to read loops: {data.get('error')}"
+        # loops only exists in English, so lang should be 'en'
         assert data["lang"] == "en", f"Expected lang='en' for untranslated doc, got {data.get('lang')}"
 
     def test_read_doc_returns_english_by_default(self):

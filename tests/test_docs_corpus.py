@@ -76,8 +76,6 @@ def test_the_corpus_covers_every_system_agent_surface():
     ("attach a skill to an agent", "skills"),
     ("import an agent from a git repository", "imported-agents"),
     ("what did an agent fetch from the web", "web-logs"),
-    ("what is new in the latest release", "changelog"),
-    ("recently added features and changes", "changelog"),
 ])
 def test_search_puts_the_right_doc_first(query, expected):
     result = _call(search_docs, query=query, limit=3)
@@ -133,13 +131,15 @@ def test_read_doc_returns_the_file():
     assert result["truncated"] is False
 
 
-def test_read_doc_serves_an_entry_by_path():
-    """CHANGELOG.md lives at the repository root, not in docs/; the index entry
-    names its path so "what's new" is answerable from the corpus."""
-    result = _call(read_doc, doc_id="changelog")
+def test_read_doc_serves_an_entry_by_path(tmp_path, monkeypatch):
+    """An index entry may name a ``path`` from the repository root instead of
+    a file in docs/."""
+    entry = {"id": "notes", "path": "NOTES.md", "title": "Notes", "summary": "s"}
+    _corpus_copy(tmp_path, monkeypatch, [entry])
+    (tmp_path / "NOTES.md").write_text("# Notes\n\nroot file\n", encoding="utf-8")
+    result = _call(read_doc, doc_id="notes")
     assert result["ok"] is True
-    assert result["content"].startswith("# Changelog")
-    assert "## [Unreleased]" in result["content"]
+    assert result["content"].startswith("# Notes")
 
 
 def _corpus_copy(tmp_path, monkeypatch, entries):
@@ -155,25 +155,25 @@ def _corpus_copy(tmp_path, monkeypatch, entries):
 
 
 def test_read_doc_sees_an_edit_without_a_restart(tmp_path, monkeypatch):
-    """A runner replica lives for hours; CHANGELOG.md changes under it."""
+    """A runner replica lives for hours; a root file changes under it."""
     import os
-    entry = {"id": "changelog", "path": "CHANGELOG.md", "title": "Changelog", "summary": "s"}
+    entry = {"id": "notes", "path": "NOTES.md", "title": "Notes", "summary": "s"}
     _corpus_copy(tmp_path, monkeypatch, [entry])
-    log = tmp_path / "CHANGELOG.md"
-    log.write_text("# Changelog\n\nold\n", encoding="utf-8")
-    assert "old" in _call(read_doc, doc_id="changelog")["content"]
-    log.write_text("# Changelog\n\nnew line\n", encoding="utf-8")
+    log = tmp_path / "NOTES.md"
+    log.write_text("# Notes\n\nold\n", encoding="utf-8")
+    assert "old" in _call(read_doc, doc_id="notes")["content"]
+    log.write_text("# Notes\n\nnew line\n", encoding="utf-8")
     os.utime(log, (log.stat().st_atime, log.stat().st_mtime + 5))
-    assert "new line" in _call(read_doc, doc_id="changelog")["content"]
+    assert "new line" in _call(read_doc, doc_id="notes")["content"]
 
 
 def test_read_doc_reports_a_missing_file_instead_of_empty_content(tmp_path, monkeypatch):
-    entry = {"id": "changelog", "path": "CHANGELOG.md", "title": "Changelog", "summary": "s"}
+    entry = {"id": "notes", "path": "NOTES.md", "title": "Notes", "summary": "s"}
     _corpus_copy(tmp_path, monkeypatch, [entry])
-    result = _call(read_doc, doc_id="changelog")
+    result = _call(read_doc, doc_id="notes")
     assert result["ok"] is False
     assert result["code"] == "unreadable"
-    assert "CHANGELOG.md" in result["error"]
+    assert "NOTES.md" in result["error"]
 
 
 def test_read_doc_tolerates_the_extension():
@@ -249,13 +249,13 @@ def test_the_help_block_is_gated_on_the_tool(live_registry):
         remove_agent("docsless_probe")
 
 
-def test_docs_route_serves_the_changelog_and_404s_an_unknown_id():
-    """The in-app Docs page reads the changelog from the corpus, not a copy."""
+def test_docs_route_serves_a_doc_and_404s_an_unknown_id():
+    """The in-app Docs page reads a corpus document, not a copy."""
     from fastapi import HTTPException
     from routes import docs as docs_routes
 
-    doc = docs_routes.get_doc("changelog")
-    assert doc["content"].startswith("# Changelog")
+    doc = docs_routes.get_doc("loops")
+    assert doc["content"].startswith("# Loops")
     with pytest.raises(HTTPException) as err:
         docs_routes.get_doc("no-such-doc")
     assert err.value.status_code == 404

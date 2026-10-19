@@ -6,6 +6,14 @@ Die Seite Modelle ist die maßgebliche Quelle dafür, welche Modelle es gibt, we
 
 Ein Anbieter stellt viele Modelle bereit. Der Katalog kürzt diese Rohliste auf die Modelle, die Sie tatsächlich anbieten möchten: **Nur aktivierte Modelle erscheinen in der Auswahl.**
 
+## Entdecken
+
+**Discover** fragt bei einem Anbieter dessen Live-API nach der Modellliste (und
+den Kontextfenstern und Erscheinungsdaten, die sie meldet) und nimmt die neuen
+Modelle in den Katalog auf: deaktiviert, mit dem Preis aus der mitgelieferten
+Tabelle, falls es dort einen gibt, sonst mit null. Ein entdecktes Modell zu
+aktivieren ist ein eigener Schritt.
+
 ## Standards und Überschreibungen
 
 Reihenfolge der Auflösung, das Spezifischste zuerst:
@@ -61,8 +69,12 @@ Die Spalte Nachdenken zeigt pro Modell zwei Dinge: den Aufwand, den der Anbieter
 
 Die Tabelle wurde gegen die API gemessen (`providers/reasoning_profile.py`). Anbieter ohne Eintrag zeigen einen Strich. Ein Aufruf, der nie eine Stufe gewählt hat, etwa ein Chat-Titel oder ein Rubrik-Grader, sendet nichts und behält den Standard des Anbieters. Was eine positive Stufe im Chat zeigt, steht in [agents](agents.md).
 
+## Nutzung
+
+Der Tab **Usage** summiert die aufgezeichneten Runs pro Anbieter und Modell: Anzahl der Runs, Eingabe-, zwischengespeicherte und Ausgabe-Tokens sowie die geschätzten Kosten nach den Katalogpreisen. Er lässt sich auf den aktuellen Workspace und einen Datumsbereich eingrenzen.
+
 ## Anbieter
 
-API-Schlüssel und Basis-URLs liegen in den [Einstellungen](settings.md), nicht hier. Diese Seite behandelt, welche Modelle es gibt und was sie kosten. Lokale Anbieter (Ollama, LM Studio) und eigene OpenAI-kompatible Backends werden auf dieselbe Weise konfiguriert.
+API-Schlüssel und Basis-URLs liegen in den [Einstellungen](settings.md), nicht hier. Diese Seite behandelt, welche Modelle es gibt und was sie kosten. Die Cloud-Anbieter sind OpenAI, Anthropic und Google. Ollama und LM Studio sind lokale Server, die der Hub über ihre URL erreicht (`OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`); selbst führt er keine Modelle aus. Ein eigenes OpenAI-kompatibles Backend ist ebenfalls eine Basis-URL (`OPENAI_BASE_URL`) und wird auf dieselbe Weise konfiguriert.
 
 Verwandt: [settings](settings.md).

@@ -20,7 +20,7 @@ running at all.
 
 **Output appears only when the run finishes.** Live updates ride a single
 `EventSource` on `/api/stream`. Check the connection indicator in the top bar,
-that live streaming is on in Settings → System, and that no proxy in front of
+that live streaming is on in Settings, Agent execution, and that no proxy in front of
 the backend buffers server-sent events.
 
 **An agent answers in text where a chart was expected.** Views come from the
@@ -70,7 +70,7 @@ See [containers](containers.md).
 
 **Nothing embeds, RAG is off.** The default image has no embedding stack.
 Build with `WITH_RAG=true` in `.env`, see [deployment](deployment.md),
-"Releases".
+"Version and the RAG stack".
 
 ## The CLI
 

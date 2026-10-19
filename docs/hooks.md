@@ -179,9 +179,9 @@ The gate holds a tool call until a person decides. It is opt-in per workspace:
 ```
 
 With it off (the default), only a hook's `ask` decision can require approval.
-With it on, these tools need a yes every time: `run_shell`, `delete_file`,
-`apply_unified_diff`, the `delete_*` entity tools, `remove_eval_case_tool` and
-`delete_workspace`.
+With it on, these tools need a yes every time: `run_shell`, `run_code`,
+`delete_file`, `apply_unified_diff`, the `delete_*` entity tools,
+`delete_workspace` and `git_publish`.
 Every one of them ends something, drops something, or writes over something a
 person may not get back.
 
@@ -235,8 +235,6 @@ trail carries `human_approved` or `human_denied`. A chat reopened while its
 turn waits shows the card again.
 
 The same happens for an agent the turn delegates to.
-
-A connection card is never settled for you: its secret is typed into the card.
 
 API: `GET /api/runs/{run_id}/tool-approvals` (`?status=pending`),
 `GET /api/tool-approvals/{id}`, and `POST /api/tool-approvals/{id}` with
