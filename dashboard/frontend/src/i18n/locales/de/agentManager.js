@@ -1,7 +1,5 @@
 export default {
-  ownServices_one: '{{count}} eigener',
-  ownServices_other: '{{count}} eigene',
-  startHint: 'Den Agenten in seinem Dienst oder im Runner des Arbeitsbereichs starten',
+  startHint: 'Eine residente Kopie des Agenten starten',
   startFailed: 'Der Agent konnte nicht gestartet werden',
   searchAgents: 'Agenten suchen…',
   noAgentsMatch: 'Kein Agent passt zu „{{query}}“.',

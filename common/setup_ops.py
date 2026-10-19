@@ -4,9 +4,6 @@ routes/first_run.py): the first model, the default model, the demo workspace.
 A key is typed into the first run's own form and checked against the provider
 before it is saved.
 
-Each operation is the install's own configuration and is written to the audit
-log as ``setup.<operation>``.
-
 **What they write is what the pages write.** The default model goes into the
 Models catalog (starred and enabled) and ``.env`` (``DEFAULT_PROVIDER`` and the
 provider's model, as `ah setup` does), and applies at once
@@ -96,16 +93,6 @@ def default_model() -> Dict[str, Any]:
     return {"provider": provider, "model": model, "usable": provider in usable_providers()}
 
 
-def _audit(principal: Any, op: str, details: Dict[str, Any]) -> None:
-    try:
-        from common import audit
-        from common.auth import LOCAL_PRINCIPAL
-        audit.record(f"setup.{op}", principal=principal or LOCAL_PRINCIPAL, object_type="setup",
-                     object_id=op, workspace="default", details={"via": "first_run", **details})
-    except Exception:  # noqa: BLE001 - the change stands; the audit trail is best effort here
-        log.warning("setup: audit of %s failed", op, exc_info=True)
-
-
 def _key_of(provider: str) -> str:
     from common import provider_env
     var = P.KEY_VAR.get(provider)
@@ -178,7 +165,7 @@ def _models_route():
     return m
 
 
-def choose_model(provider: str, model: str, *, principal: Any = None, check: bool = True) -> Dict[str, Any]:
+def choose_model(provider: str, model: str, *, check: bool = True) -> Dict[str, Any]:
     """Star and enable ``model`` in the catalog and make it the global default."""
     from common import provider_env
     provider = (provider or "").strip().lower()
@@ -220,37 +207,35 @@ def choose_model(provider: str, model: str, *, principal: Any = None, check: boo
         from providers import registry
         registry.upsert_backend({**(custom or {}), "default_model": model})
     provider_env.save(updates)
-    _audit(principal, "choose_model", {"provider": provider, "model": model})
     return {"ok": True, "provider": provider, "model": model,
             "summary": f"The default model is now {provider}/{model}."}
 
 
-def seed_demo(*, principal: Any = None) -> Dict[str, Any]:
+def seed_demo() -> Dict[str, Any]:
     from common.demo_workspace import demo_status, ensure_demo_workspace
     ensure_demo_workspace()
     counts = demo_status().get("counts") or {}
-    _audit(principal, "seed_demo", {})
     return {"ok": True, "summary": f"The demo workspace is there: {counts.get('agents', 0)} agents, "
                                    f"{counts.get('chats', 0)} chats, {counts.get('views', 0)} views."}
 
 
 _RUNNERS: Dict[str, Callable[..., Dict[str, Any]]] = {
-    "choose_model": lambda a, p: choose_model(a.get("provider", ""), a.get("model", ""), principal=p),
-    "seed_demo": lambda a, p: seed_demo(principal=p),
+    "choose_model": lambda a: choose_model(a.get("provider", ""), a.get("model", "")),
+    "seed_demo": lambda a: seed_demo(),
 }
 
 
-def perform(operation: str, args: Optional[Dict[str, Any]] = None, *, principal: Any = None) -> Dict[str, Any]:
-    """Run one operation as ``principal``. Raises :class:`SetupOpError`."""
+def perform(operation: str, args: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Run one operation. Raises :class:`SetupOpError`."""
     operation = str(operation or "").strip().lower()
     if operation not in OPERATIONS:
         raise SetupOpError(f"operation must be one of {', '.join(OPERATIONS)}", code="unknown_operation")
-    return _RUNNERS[operation](_args(args), principal)
+    return _RUNNERS[operation](_args(args))
 
 
 # ── the first model ──────────────────────────────────────────────────────────
 
-def first_model(provider: str, api_key: str = "", base_url: str = "", *, principal: Any = None) -> Dict[str, Any]:
+def first_model(provider: str, api_key: str = "", base_url: str = "") -> Dict[str, Any]:
     """Connect a provider and make its balanced model the default, in one go:
     the one step before any agent can run. The key is checked against the
     provider first and saved only when it works."""
@@ -278,8 +263,7 @@ def first_model(provider: str, api_key: str = "", base_url: str = "", *, princip
         updates[P.URL_VAR[provider]] = base_url
     provider_env.save(updates)
     _listings[f"{provider}|{provider_env.stamp()}"] = (time.time(), found)
-    result = choose_model(provider, model, principal=principal, check=False)
-    _audit(principal, "first_model", {"provider": provider, "model": model})
+    result = choose_model(provider, model, check=False)
     return {**result, "models": len(found.models)}
 
 

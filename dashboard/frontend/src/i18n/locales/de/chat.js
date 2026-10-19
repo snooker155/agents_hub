@@ -101,7 +101,7 @@ export default {
     off: 'Auto: aus',
     on: 'Auto: an',
     toggleHint: 'Automodus: jede Bestätigung in diesem Chat wird ohne Rückfrage angenommen (Shift+Tab)',
-    disabledByAdmin: 'Ein Administrator hat den Automodus in diesem Arbeitsbereich ausgeschaltet',
+    disabledInWorkspace: 'Der Automodus ist in den Einstellungen dieses Arbeitsbereichs ausgeschaltet',
     approvedAutomatically: 'Automatisch freigegeben (Automodus)',
   },
   composerHint: 'Enter zum Senden · Shift+Enter für neue Zeile · Tippen Sie',

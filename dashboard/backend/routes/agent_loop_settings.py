@@ -28,12 +28,11 @@ import dataclasses
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agents import registry
 from agents.loop_ext.settings import LOOP_SETTINGS, effective_loop_setting, env_name, workspace_loop_block
-from common import audit, identity
 from routes.workspaces import _ensure_writable_workspace
 from workspace import get_workspace_metadata, update_workspace_metadata
 
@@ -118,7 +117,7 @@ async def get_loop_settings(agent_id: str):
 
 
 @router.put("/api/agents/{agent_id}/loop-settings")
-async def update_loop_settings(agent_id: str, data: LoopSettingsUpdate, request: Request):
+async def update_loop_settings(agent_id: str, data: LoopSettingsUpdate):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -144,13 +143,6 @@ async def update_loop_settings(agent_id: str, data: LoopSettingsUpdate, request:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    try:
-        audit.record("agent.loop_settings", principal=identity.request_principal(request),
-                     object_type="agent", object_id=agent_id,
-                     workspace=getattr(new_spec, "owner_workspace", None),
-                     ip=identity.client_ip(request), details=changes)
-    except Exception:  # noqa: BLE001 - an audit failure must not undo the save
-        log.warning("could not record the loop-settings audit entry for %s", agent_id, exc_info=True)
 
     return _settings_dict(new_spec)
 
@@ -202,7 +194,7 @@ async def get_workspace_loop_settings(name: str):
 
 
 @router.put("/api/workspaces/{name}/loop-settings")
-async def update_workspace_loop_settings(request: Request, name: str, payload: Dict[str, Any]):
+async def update_workspace_loop_settings(name: str, payload: Dict[str, Any]):
     """Merge *payload* into the workspace's ``settings.loop`` block.
 
     A key set to ``null`` is removed (the agent then falls back to the
@@ -230,11 +222,5 @@ async def update_workspace_loop_settings(request: Request, name: str, payload: D
         settings.pop("loop", None)
     update_workspace_metadata(name, {"settings": settings})
 
-    try:
-        audit.record("workspace.loop_settings", principal=identity.request_principal(request),
-                     object_type="workspace", object_id=name, workspace=name,
-                     ip=identity.client_ip(request), details={"keys": sorted(payload)})
-    except Exception:  # noqa: BLE001 - an audit failure must not undo the save
-        log.warning("could not record the workspace loop-settings audit entry for %s", name, exc_info=True)
 
     return _workspace_loop_payload(name)

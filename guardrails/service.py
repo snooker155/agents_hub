@@ -11,7 +11,7 @@ applicable list) but never removes anything a run already recorded against
 it. Deletion has no "in use" check the way an environment's does: a
 guardrail is consulted per run, not held by one, so deleting it simply stops
 future runs from being checked against it; whatever it already found stays
-in the events collection and the audit log.
+in the events collection.
 """
 from __future__ import annotations
 

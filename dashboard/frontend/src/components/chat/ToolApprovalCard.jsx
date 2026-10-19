@@ -41,7 +41,6 @@ function clockTime(iso) {
 
 function errorKey(err) {
   const status = err?.response?.status;
-  if (status === 403) return 'toolApproval.errors.forbidden';
   if (status === 409) return 'toolApproval.errors.gone';
   return 'toolApproval.errors.failed';
 }

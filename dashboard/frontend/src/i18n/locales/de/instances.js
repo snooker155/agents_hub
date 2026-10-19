@@ -24,9 +24,7 @@ export default {
     failed: 'fehlgeschlagen',
   },
   kinds: {
-    runner: 'Runner',
     resident: 'Residente Instanz',
-    node: 'Knoten (migriert)',
     container: 'Container',
     task: 'Aufgabe',
     chat: 'Chat',

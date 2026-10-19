@@ -64,7 +64,6 @@ from .capabilities import (  # noqa: F401
     _capability_warning_dict,
     _capability_override_state,
     get_agent_auto_tools,
-    _can_edit_agent,
     get_agent_capability_override,
     update_agent_capability_override,
     update_agent_tools,

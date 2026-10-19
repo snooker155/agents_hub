@@ -37,9 +37,8 @@ checked but not yet finished are reserved against ``sum_max`` totals, so two
 parallel calls cannot both pass a limit only one of them fits.
 
 Findings are recorded like the text kinds': in ``state.guardrails`` (the
-run's ``loop.guardrails``), the guardrail events table with a masked excerpt
-of the call's input, and the audit log (``guardrail.trip`` for a block,
-``guardrail.ask`` for a hold). Passes are not recorded.
+run's ``loop.guardrails``) and the guardrail events table with a masked
+excerpt of the call's input. Passes are not recorded.
 """
 from __future__ import annotations
 
@@ -484,16 +483,6 @@ def _record(guard: Any, guardrail: Any, *, tool: str, tool_input: Any, reason: s
         })
     except Exception:  # noqa: BLE001 - the event log is best-effort, the decision stands
         log.warning("sequence guardrails: could not record an event", exc_info=True)
-    try:
-        from common import audit
-        audit.record(
-            "guardrail.trip" if guardrail.action == "block" else "guardrail.ask",
-            object_type="guardrail", object_id=guardrail.id, workspace=workspace,
-            details={"name": guardrail.name, "run_id": run_id, "task_id": task_id,
-                     "agent_id": agent_id, "tool": tool, "reason": reason},
-        )
-    except Exception:  # noqa: BLE001 - the audit log is best-effort, the decision stands
-        log.warning("sequence guardrails: could not write the audit record", exc_info=True)
 
 
 # ── the two hooks ToolGuard calls ────────────────────────────────────────────

@@ -6,13 +6,6 @@ workspace, list and search a workspace's files, read one's metadata, text or
 content, delete it, and ask where it is used (chat conversations, memory
 pools, tasks).
 
-Access follows the workspace the file belongs to, the same two checks every
-workspace-scoped route makes: reading needs the workspace to be visible to
-the caller (``common.access``), writing (upload, delete) needs the ``editor``
-role there (``identity.require_role``). A file id from another workspace is
-refused the same way a task id from one would be. Upload, delete and a folder
-index leave an audit row (``file.upload``, ``file.delete``, ``file.index``).
-
 ``POST /api/files/index`` registers every file of the workspace folder (what
 agents wrote with their filesystem tools before the registry followed them,
 or what a process outside the tools wrote) and tombstones the records of
@@ -32,8 +25,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from common import access, audit, identity
-from common.auth import WS_EDITOR
+from common import identity
 from files import service
 from files.usage import where_used
 
@@ -69,24 +61,15 @@ def _workspace_or_400(value: Optional[str]) -> str:
     return name
 
 
-def _load_visible(request: Request, file_id: str, *, include_deleted: bool = False) -> dict:
+def _load(file_id: str, *, include_deleted: bool = False) -> dict:
     record = service.get_file(file_id, include_deleted=include_deleted)
     if record is None:
         raise HTTPException(status_code=404, detail="File not found")
-    access.require_visible(_principal(request), record["workspace"])
     return record
-
-
-def _audit(request: Request, action: str, record: dict, details: Optional[dict] = None) -> None:
-    audit.record(action, principal=_principal(request), object_type="file",
-                 object_id=record["file_id"], workspace=record["workspace"],
-                 ip=identity.client_ip(request),
-                 details={"name": record["name"], "size": record["size"], **(details or {})})
 
 
 @router.get("")
 async def list_workspace_files(
-    request: Request,
     workspace: str = Query(...),
     source: Optional[str] = None,
     q: Optional[str] = None,
@@ -94,7 +77,6 @@ async def list_workspace_files(
 ):
     """A workspace's files, newest first, with its usage against the limits."""
     ws = _workspace_or_400(workspace)
-    access.require_visible(_principal(request), ws)
     return {
         "workspace": ws,
         "files": service.list_files(ws, source=source or None, q=q or None, limit=limit),
@@ -123,8 +105,6 @@ async def upload_file(
     the path is replaced, so nothing is deduplicated on this branch."""
     ws = _workspace_or_400(workspace_q or workspace)
     principal = _principal(request)
-    access.require_visible(principal, ws)
-    identity.require_role(principal, workspace=ws, role=WS_EDITOR)
 
     limit = service.max_file_bytes()
     chunks = []
@@ -150,7 +130,6 @@ async def upload_file(
                 created_by=created_by)
         except service.FileError as exc:
             _raise(exc)
-        _audit(request, "file.upload", record, {"source": record["source"], "path": record["meta"].get("path")})
         return {**record, "deduplicated": False}
 
     existing = service.find_duplicate(ws, hashlib.sha256(data).hexdigest())
@@ -164,7 +143,6 @@ async def upload_file(
         )
     except service.FileError as exc:
         _raise(exc)
-    _audit(request, "file.upload", record, {"source": record["source"]})
     return {**record, "deduplicated": False}
 
 
@@ -177,30 +155,24 @@ async def index_workspace_folder(request: Request, workspace: str = Query(...)):
     skipped: [{path, reason}]}``."""
     ws = _workspace_or_400(workspace)
     principal = _principal(request)
-    access.require_visible(principal, ws)
-    identity.require_role(principal, workspace=ws, role=WS_EDITOR)
     created_by = getattr(principal, "id", None) or identity.current_user_id()
     try:
         summary = service.index_workspace(ws, created_by=created_by)
     except service.FileError as exc:
         _raise(exc)
-    audit.record("file.index", principal=principal, object_type="workspace", object_id=ws,
-                 workspace=ws, ip=identity.client_ip(request),
-                 details={k: summary[k] for k in ("added", "updated", "unchanged", "removed")}
-                 | {"skipped": len(summary["skipped"])})
     return summary
 
 
 @router.get("/{file_id}")
-async def get_workspace_file(file_id: str, request: Request):
-    return _load_visible(request, file_id)
+async def get_workspace_file(file_id: str):
+    return _load(file_id)
 
 
 @router.get("/{file_id}/text")
-async def get_file_text(file_id: str, request: Request, max_chars: int = 50_000):
+async def get_file_text(file_id: str, max_chars: int = 50_000):
     """The file's text as the agents see it (plain text, code, PDF), for a
     preview. ``text`` is null for a binary file."""
-    record = _load_visible(request, file_id)
+    record = _load(file_id)
     try:
         text = service.extract_text(file_id)
     except KeyError:
@@ -218,9 +190,9 @@ async def get_file_text(file_id: str, request: Request, max_chars: int = 50_000)
 
 
 @router.get("/{file_id}/content")
-async def download_file(file_id: str, request: Request):
+async def download_file(file_id: str):
     """The file's bytes, as a download."""
-    record = _load_visible(request, file_id)
+    record = _load(file_id)
     try:
         path = service.local_path(file_id)
     except KeyError:
@@ -243,20 +215,18 @@ async def download_file(file_id: str, request: Request):
 
 
 @router.get("/{file_id}/usage")
-async def file_usage(file_id: str, request: Request):
+async def file_usage(file_id: str):
     """Where the file is referenced: chats, memory pools, tasks."""
-    _load_visible(request, file_id, include_deleted=True)
+    _load(file_id, include_deleted=True)
     return where_used(file_id)
 
 
 @router.delete("/{file_id}")
-async def delete_workspace_file(file_id: str, request: Request):
+async def delete_workspace_file(file_id: str):
     """Delete the file: its content goes, its record stays as a tombstone so
     what referenced it can still name it."""
-    record = _load_visible(request, file_id)
-    identity.require_role(_principal(request), workspace=record["workspace"], role=WS_EDITOR)
+    _load(file_id)
     usage = where_used(file_id)
     if not service.delete_file(file_id):
         raise HTTPException(status_code=404, detail="File not found")
-    _audit(request, "file.delete", record, {"references": usage.get("total", 0)})
     return {"file_id": file_id, "deleted": True, "references": usage.get("total", 0)}

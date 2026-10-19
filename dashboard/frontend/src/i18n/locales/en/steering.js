@@ -11,7 +11,7 @@ export default {
     inject: 'The agent reads your message before its next step and keeps going.',
     interrupt: 'Stop this turn now and send your message as the next one.',
     queue: 'Send your message once this turn has finished.',
-    system: 'Add this to the agent\'s instructions for the rest of this run. Only the run\'s owner or an admin may.',
+    system: 'Add this to the agent\'s instructions for the rest of this run.',
     switch_model: 'Move this run to another model from its next step on. The work so far stays in its context.',
   },
   queueOnlyHint: 'This turn cannot be steered, so your message is sent when it ends.',

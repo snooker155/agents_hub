@@ -32,8 +32,8 @@ process that bypasses the tools (Claude Code, a shell), and tombstones the
 records of files that are gone.
 
 Deleting a file keeps its row as a tombstone (``deleted_at`` set) and removes
-the content, locally and in the object store. An old chat turn, a citation or
-an audit row can still say which file it was; nothing can read it any more.
+the content. An old chat turn or a citation can still say which file it was;
+nothing can read it any more.
 
 Text for a prompt (:func:`text_for_prompt`) covers plain text, markdown, JSON,
 CSV and source code, and PDF through ``pypdf`` (the library the RAG ingest in

@@ -306,10 +306,6 @@ def test_routes_store_list_and_delete_without_ever_returning_a_value(key, client
     assert "sk-very-secret-1" not in listed.text
     assert client.delete("/api/workspaces/alpha/secrets/API_KEY").status_code == 200
     assert client.delete("/api/workspaces/alpha/secrets/API_KEY").status_code == 404
-    from common import audit
-    rows = audit.query(action="secret.set")
-    rows = rows["items"] if isinstance(rows, dict) else rows
-    assert rows and "sk-very-secret-1" not in repr(rows)
 
 
 def test_routes_validate_the_name_the_workspace_and_the_key(no_key, client):

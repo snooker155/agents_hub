@@ -233,11 +233,10 @@ def test_index_needs_a_folder():
 
 # ── over HTTP ────────────────────────────────────────────────────────────────
 
-def test_index_over_http_answers_the_summary_and_leaves_an_audit_row():
+def test_index_over_http_answers_the_summary():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     import routes.files as files_routes
-    from common import audit
 
     root = _folder("httpws")
     _write(root, "answer.md", "42")
@@ -252,6 +251,5 @@ def test_index_over_http_answers_the_summary_and_leaves_an_audit_row():
     assert [f["meta"]["path"] for f in listing["files"]] == ["answer.md"]
     fid = listing["files"][0]["file_id"]
     assert api.get(f"/api/files/{fid}/text").json()["text"] == "42"
-    assert "file.index" in {row["action"] for row in audit.query(action="file.")["items"]}
     assert api.post("/api/files/index", params={"workspace": "nowhere-at-all"}).status_code == 400
     assert api.post("/api/files/index").status_code == 422

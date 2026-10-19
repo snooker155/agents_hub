@@ -409,7 +409,7 @@ export default function ChatComposer() {
                   onClick={autoMode.toggle}
                   disabled={!autoMode.allowed}
                   data-testid="auto-mode-toggle"
-                  title={autoMode.allowed ? t('chat.autoMode.toggleHint') : t('chat.autoMode.disabledByAdmin')}
+                  title={autoMode.allowed ? t('chat.autoMode.toggleHint') : t('chat.autoMode.disabledInWorkspace')}
                   className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium transition-colors
                     disabled:opacity-40 disabled:cursor-not-allowed ${autoMode.on
                       ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'

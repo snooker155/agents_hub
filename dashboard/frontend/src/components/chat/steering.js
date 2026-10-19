@@ -6,7 +6,7 @@
  * its next model step; `interrupt` stops the turn and sends the message as
  * the next one; `queue` waits and sends it when the turn ends; `system`
  * ("Instruction") is an operator's addition to the run's system prompt for
- * the rest of the run (only the run's owner or an admin; never for a team).
+ * the rest of the run (never for a team).
  * The last choice is remembered in this browser's localStorage, the rule
  * lib/modelView.js follows. An instruction is never remembered as the choice:
  * it is picked on purpose each time.

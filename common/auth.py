@@ -1,40 +1,21 @@
 """
-Authorization for one operator: the names the routes read, and nothing to decide.
+The one operator: the constants and the :class:`Principal` shape the routes
+and the stores read.
 
 This hub runs for exactly one person on a machine only they can reach. There
 is no login, no accounts, no sessions, no API keys and no workspace
-membership: every request is the local operator, who holds every role. The
-stateful side (the request guard, the current-user context the stores stamp
-records with) is :mod:`common.identity`; this module holds the constants and
-the :class:`Principal` shape those routes and stores already use.
-
-The role vocabulary (``admin``, ``owner`` / ``editor`` / ``viewer``) is kept
-because the routes compare against it and the records carry it; with one
-operator the comparisons are always satisfied.
+membership: every request is the local operator, who may do everything. The
+stateful side (the current-user context the stores stamp records with) is
+:mod:`common.identity`.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
-
-#: The one identity posture.
-SINGLE = "single"
+from typing import Dict
 
 #: The owner id every ownable record gets. There is exactly one operator, so
 #: a real user id would be a fiction; this constant says so.
 LOCAL_OPERATOR_ID = "local"
-
-#: Global roles. The operator is the admin.
-ROLE_ADMIN = "admin"
-ROLE_MEMBER = "member"
-GLOBAL_ROLES = (ROLE_ADMIN, ROLE_MEMBER)
-
-#: Per-workspace roles, weakest first. Records and routes still name them.
-WS_VIEWER = "viewer"
-WS_EDITOR = "editor"
-WS_OWNER = "owner"
-WORKSPACE_ROLES = (WS_VIEWER, WS_EDITOR, WS_OWNER)
-_WS_RANK = {WS_VIEWER: 1, WS_EDITOR: 2, WS_OWNER: 3}
 
 
 def auth_headers() -> Dict[str, str]:
@@ -51,36 +32,18 @@ def auth_headers() -> Dict[str, str]:
 class Principal:
     """Who a request is acting as: always the local operator.
 
-    One value exists, :data:`LOCAL_PRINCIPAL`. The shape stays a dataclass
-    because routes read ``principal.id`` and ``principal.is_admin`` off it,
-    and the audit rows carry its ``kind`` and ``via``.
+    One value exists, :data:`LOCAL_PRINCIPAL`. Routes read ``principal.id``
+    and ``principal.username`` off it to stamp who did something (a steering
+    message's author, a terminal session's owner).
     """
     id: str
     username: str = ""
-    role: str = ROLE_ADMIN
     #: The one kind there is.
     kind: str = "local"
-    #: How the request arrived. Informational.
-    via: str = "local"
-
-    @property
-    def is_admin(self) -> bool:
-        return self.role == ROLE_ADMIN
 
 
-#: The one operator. Admin, because there is nobody to be an admin over:
-#: nothing is refused.
-LOCAL_PRINCIPAL = Principal(id=LOCAL_OPERATOR_ID, username=LOCAL_OPERATOR_ID,
-                            role=ROLE_ADMIN, kind="local", via="local")
+#: The one operator.
+LOCAL_PRINCIPAL = Principal(id=LOCAL_OPERATOR_ID, username=LOCAL_OPERATOR_ID, kind="local")
 
 
-def role_satisfies(held: Optional[str], required: str) -> bool:
-    """Whether a held workspace role covers the required one."""
-    return _WS_RANK.get((held or "").strip(), 0) >= _WS_RANK.get(required, 0)
-
-
-__all__ = [
-    "GLOBAL_ROLES", "LOCAL_OPERATOR_ID", "LOCAL_PRINCIPAL",
-    "Principal", "ROLE_ADMIN", "ROLE_MEMBER", "SINGLE", "WORKSPACE_ROLES",
-    "WS_EDITOR", "WS_OWNER", "WS_VIEWER", "auth_headers", "role_satisfies",
-]
+__all__ = ["LOCAL_OPERATOR_ID", "LOCAL_PRINCIPAL", "Principal", "auth_headers"]

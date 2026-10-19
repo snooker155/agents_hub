@@ -81,7 +81,7 @@ describe('shared vocabulary', () => {
   });
 
   it('gives every instance kind an icon', () => {
-    ['node', 'container', 'task', 'chat', 'flow_node', 'team_member'].forEach((kind) => {
+    ['resident', 'container', 'task', 'chat', 'flow_node', 'team_member'].forEach((kind) => {
       expect(KIND_ICONS[kind]).toBeTruthy();
     });
   });

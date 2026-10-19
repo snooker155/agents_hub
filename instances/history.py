@@ -28,27 +28,18 @@ MAX_TOOL_LINE = 240
 
 
 def _instance_runs(instance_id: Optional[str], limit: int,
-                   conversation_id: Optional[str] = None,
-                   service_id: Optional[str] = None) -> List[Dict[str, Any]]:
+                   conversation_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """The most recent finished runs of one conversation of the instance,
     oldest first. ``conversation_id`` None (or ``"main"``) is the main
-    conversation, which is every run of an instance that never had others.
-
-    With ``service_id`` the conversation is the service's, across every
-    replica that ever answered it: a conversation of a service has one
-    history whichever replica takes the next message (docs/services.md)."""
+    conversation, which is every run of an instance that never had others."""
     from instances.inbox import normalize_conversation
 
     cid = normalize_conversation(conversation_id)
     conversation_sql = "conversation_id IS NULL" if cid is None else "conversation_id = ?"
-    if service_id:
-        owner_sql, owner = "service_id = ?", str(service_id)
-    else:
-        owner_sql, owner = "instance_id = ?", str(instance_id)
-    params: List[Any] = [owner] + ([] if cid is None else [cid]) + [int(limit)]
+    params: List[Any] = [str(instance_id)] + ([] if cid is None else [cid]) + [int(limit)]
     rows = db.get_conn().execute(
         "SELECT run_id, input, output, title, started_at, status "
-        f"FROM runs WHERE {owner_sql} AND {conversation_sql} "
+        f"FROM runs WHERE instance_id = ? AND {conversation_sql} "
         "AND status IN ('completed', 'stopped') "
         "ORDER BY COALESCE(started_at, created_at) DESC LIMIT ?",
         params,
@@ -102,7 +93,6 @@ def build_instance_history(
     max_turns: int = DEFAULT_MAX_TURNS,
     include_tools: bool = True,
     conversation_id: Optional[str] = None,
-    service_id: Optional[str] = None,
 ) -> List[Any]:
     """The instance's prior turns as ``ChatHistoryMessage`` objects, oldest first.
 
@@ -112,7 +102,7 @@ def build_instance_history(
     from chat.models import ChatHistoryMessage
 
     history: List[Any] = []
-    for run in _instance_runs(instance_id, max_turns, conversation_id, service_id):
+    for run in _instance_runs(instance_id, max_turns, conversation_id):
         user, response = _exchange(run)
         if user:
             history.append(ChatHistoryMessage(role="user", content=user))
@@ -126,8 +116,7 @@ def build_instance_history(
 
 
 def describe_context(instance_id: Optional[str], *, max_turns: int = DEFAULT_MAX_TURNS,
-                     conversation_id: Optional[str] = None,
-                     service_id: Optional[str] = None) -> Dict[str, Any]:
+                     conversation_id: Optional[str] = None) -> Dict[str, Any]:
     """What the next message to this instance will carry into the prompt.
 
     Backs the instance page's Context tab: an operator who is about to write to
@@ -136,7 +125,7 @@ def describe_context(instance_id: Optional[str], *, max_turns: int = DEFAULT_MAX
     """
     turns: List[Dict[str, Any]] = []
     total_chars = 0
-    for run in _instance_runs(instance_id, max_turns, conversation_id, service_id):
+    for run in _instance_runs(instance_id, max_turns, conversation_id):
         user, response = _exchange(run)
         tools = _tool_summary(str(run.get("run_id")))
         total_chars += len(user) + len(response)
@@ -150,7 +139,6 @@ def describe_context(instance_id: Optional[str], *, max_turns: int = DEFAULT_MAX
         })
     return {
         "instance_id": instance_id,
-        "service_id": service_id,
         "conversation_id": conversation_id or "main",
         "turns": turns,
         "turn_count": len(turns),

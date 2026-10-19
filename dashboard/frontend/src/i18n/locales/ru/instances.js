@@ -24,9 +24,7 @@ export default {
     failed: 'с ошибкой',
   },
   kinds: {
-    runner: 'Раннер',
     resident: 'Резидентный инстанс',
-    node: 'Узел (перенесён)',
     container: 'Контейнер',
     task: 'Задача',
     chat: 'Чат',

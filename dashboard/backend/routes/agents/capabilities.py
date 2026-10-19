@@ -1,7 +1,7 @@
 """Capability overrides, tools, delegates, handoffs, reasoning, model and default chat agent."""
 import dataclasses
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from typing import Any, Dict, List, Optional
 
 from agents import registry
@@ -11,7 +11,6 @@ from agents.capability_guard import (
 )
 from models import AgentToolsUpdate, AgentDelegatesUpdate, AgentHandoffsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentCapabilityOverrideUpdate
 from workspace import system_agent_ids
-
 
 
 from ._common import (package, _get_workspace_default_chat_agent, _set_workspace_default_chat_agent, _workspace_for_chat_default)
@@ -83,29 +82,16 @@ async def get_agent_auto_tools(agent_id: str, workspace: Optional[str] = None):
     return {"agent_id": agent_id, "workspace": ws, "tools": auto_injected_tools(spec, ws)}
 
 
-def _can_edit_agent(request: Request, spec) -> bool:
-    """Whether the caller holds editor on the agent's workspace (always true
-    outside multi): the chat's refusal card shows its button only to them."""
-    from common import identity
-    from common.auth import WS_EDITOR
-    try:
-        identity.require_role(identity.request_principal(request),
-                              workspace=getattr(spec, "owner_workspace", None) or "default", role=WS_EDITOR)
-    except HTTPException:
-        return False
-    return True
-
-
 @router.get("/{agent_id}/capability-override")
-async def get_agent_capability_override(request: Request, agent_id: str):
+async def get_agent_capability_override(agent_id: str):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return {**_capability_override_state(spec), "can_edit": _can_edit_agent(request, spec)}
+    return _capability_override_state(spec)
 
 
 @router.post("/{agent_id}/capability-override")
-async def update_agent_capability_override(request: Request, agent_id: str, data: AgentCapabilityOverrideUpdate):
+async def update_agent_capability_override(agent_id: str, data: AgentCapabilityOverrideUpdate):
     """Accept, for this one agent, a tool combination the capability guard
     would otherwise refuse (tools/capabilities.py, the lethal trifecta).
 
@@ -118,8 +104,6 @@ async def update_agent_capability_override(request: Request, agent_id: str, data
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    if not _can_edit_agent(request, spec):
-        raise HTTPException(status_code=403, detail="Editor access to the agent's workspace is required")
     new_spec = dataclasses.replace(spec, capability_override=bool(data.capability_override))
     try:
         registry.add_agent(new_spec)
@@ -222,7 +206,7 @@ async def get_agent_handoffs(agent_id: str):
 
 
 @router.post("/{agent_id}/handoffs")
-async def update_agent_handoffs(agent_id: str, data: AgentHandoffsUpdate, request: Request):
+async def update_agent_handoffs(agent_id: str, data: AgentHandoffsUpdate):
     """Set the handoff targets and/or the default history filter. A field left
     out (null) keeps its value; an empty list removes the handoff tool."""
     spec = registry.get_agent(agent_id)
@@ -238,16 +222,6 @@ async def update_agent_handoffs(agent_id: str, data: AgentHandoffsUpdate, reques
         registry.add_agent(new_spec)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    try:
-        from common import audit, identity
-        audit.record("agent.handoffs", principal=identity.request_principal(request),
-                     object_type="agent", object_id=agent_id,
-                     workspace=getattr(new_spec, "owner_workspace", None),
-                     ip=identity.client_ip(request), details=changes)
-    except Exception:  # noqa: BLE001 - an audit failure must not undo the save
-        import logging
-        logging.getLogger(__name__).warning(
-            "could not record the handoffs audit entry for %s", agent_id, exc_info=True)
     return _handoffs_dict(new_spec)
 
 

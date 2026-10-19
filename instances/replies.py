@@ -79,8 +79,9 @@ def reply_for(msg_id: str) -> Optional[Dict[str, Any]]:
 
 def _process_text(proc: Dict[str, Any]) -> str:
     """The answer of a run that kept it in its process payload rather than in
-    ``output``: a chat turn executed on a replica (chat/turns.py) stores the
-    reply as the pipeline does, under ``response.text`` and the input context."""
+    ``output``: a finished copy written to from its page is answered by the
+    chat pipeline (instances/delivery.py), which stores the reply under
+    ``response.text`` and the input context."""
     response = proc.get("response")
     if isinstance(response, dict) and response.get("text"):
         return str(response["text"])

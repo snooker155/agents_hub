@@ -277,27 +277,6 @@ def prepare_run(
             log.debug("prepare_run: ignored error", exc_info=True)
     execution_mode = _ws_agent_mode or agent_execution_mode()
 
-    # Audit trail (common/audit.py): who launched this run. No HTTP request
-    # may be in flight here (a schedule or the watchdog launches too), so the
-    # actor comes from the current-user contextvar rather than a principal,
-    # "local" for the one operator or the system itself.
-    try:
-        from common import audit
-        from common.auth import LOCAL_OPERATOR_ID
-        from common.identity import current_user_id
-        _actor_id = current_user_id()
-        audit.record(
-            "run.launch",
-            actor={"actor_id": _actor_id,
-                   "actor_kind": "local" if _actor_id == LOCAL_OPERATOR_ID else "user",
-                   "actor_name": None},
-            workspace=ws_name, object_type="run", object_id=run_id,
-            details={"agent_id": agent_id, "task_id": str(task_id),
-                     "execution_mode": execution_mode},
-        )
-    except Exception:  # noqa: BLE001 - launch bookkeeping is best effort and must not block the run
-        log.debug("prepare_run: ignored error", exc_info=True)
-
     # The effective cpu limit of a docker-mode run's container, so
     # common.pricing can price the hours it lived once it ends.
     container_profile: Dict[str, Any] = {}

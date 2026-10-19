@@ -47,7 +47,7 @@ RUN_COLUMNS = (
     "provider", "model", "status", "message_origin", "pid", "exit_code",
     "error", "created_at", "started_at", "finished_at", "log_file",
     "input", "output", "instance_id", "heartbeat_at", "parent_run_id",
-    "conversation_id", "service_id",
+    "conversation_id",
 )
 
 TASK_COLUMNS = ("id", "key", "parent_id", "status", "workspace", "project_id",

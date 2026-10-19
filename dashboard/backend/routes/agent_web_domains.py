@@ -16,11 +16,10 @@ import dataclasses
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agents import registry
-from common import audit, identity
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +54,7 @@ async def get_web_domains(agent_id: str, workspace: Optional[str] = None):
 
 
 @router.put("/api/agents/{agent_id}/web-domains")
-async def update_web_domains(agent_id: str, data: WebDomainsUpdate, request: Request):
+async def update_web_domains(agent_id: str, data: WebDomainsUpdate):
     from tools.web import clean_host_list
     spec = registry.get_agent(agent_id)
     if not spec:
@@ -75,11 +74,4 @@ async def update_web_domains(agent_id: str, data: WebDomainsUpdate, request: Req
         registry.add_agent(new_spec)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
-        audit.record("agent.web_domains", principal=identity.request_principal(request),
-                     object_type="agent", object_id=agent_id,
-                     workspace=getattr(new_spec, "owner_workspace", None),
-                     ip=identity.client_ip(request), details=changes)
-    except Exception:  # noqa: BLE001 - an audit failure must not undo the save
-        log.warning("could not record the web-domains audit entry for %s", agent_id, exc_info=True)
     return _payload(new_spec, None)

@@ -9,8 +9,8 @@ it is on, two kinds of confirmation stop waiting for the person:
 * A call the tool guard holds for a person in the chat (agents/hooks.py,
   common/tool_approvals.py): the approval row is opened and settled as
   approved straight away, by "auto mode", and the chat shows the card
-  already resolved. The policy trail and the audit log record it like any
-  other approved call, with ``by: auto_mode``.
+  already resolved. The policy trail records it like any other approved
+  call, with ``by: auto_mode``.
 * A tool whose own ``user_approved`` argument gates it (run_flow_tool,
   run_team_tool, stop_run, ...): :func:`approved` lets the call
   through and records the same settled row, so the person sees what ran.
@@ -34,7 +34,7 @@ from typing import Any, Dict, Optional
 
 log = logging.getLogger(__name__)
 
-#: Who settled a call, on the approval row and in the audit trail.
+#: Who settled a call, on the approval row.
 DECIDED_BY = "auto mode"
 #: The guard's word for what decided (``by`` on the trail and the event).
 BY = "auto_mode"
@@ -64,7 +64,7 @@ def reset_turn(token) -> None:
 def allowed_for(workspace: Optional[str], source: Optional[str]) -> bool:
     """Whether a turn from ``source`` in ``workspace`` may run in auto mode:
     only from a surface with a person in front of it, and only where the
-    workspace's admin has not turned it off (``settings.allow_auto_approve``)."""
+    workspace has not turned it off (``settings.allow_auto_approve``)."""
     if str(source or "chat") not in INTERACTIVE_SOURCES:
         return False
     try:

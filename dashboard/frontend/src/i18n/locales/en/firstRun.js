@@ -98,7 +98,6 @@ export default {
     missing: 'Paste the key first.',
     no_models: 'The server answered but has no model to use yet: pull one first.',
     unknown_provider: 'This provider is not supported here.',
-    forbidden: 'Only an administrator can set this up.',
     no_key: 'Connect that provider’s key first.',
     unknown_model: 'The provider does not offer that model.',
   },

@@ -19,9 +19,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 
-from common import access, identity
 from managers.runs import groups as run_groups
 
 router = APIRouter(prefix="/api/runs/groups", tags=["run-groups"])
@@ -35,7 +34,6 @@ GROUP_SCAN = 500
 
 @router.get("")
 async def list_run_groups(
-    request: Request,
     kind: Optional[str] = None,
     workspace: Optional[str] = None,
     limit: int = 50,
@@ -50,11 +48,6 @@ async def list_run_groups(
     Returns ``{groups, total, limit, offset, kinds}``. Up to
     :data:`GROUP_SCAN` groups of each kind are read, merged, sorted and then
     paged, so one busy kind cannot crowd out the others.
-
-    A request naming no workspace is otherwise open to any signed-in account
-    (common/auth.py authorize()); the list is additionally narrowed here to
-    groups whose own workspace the caller can see, a no-op outside ``multi``
-    mode. See common/access.py.
     """
     limit = max(1, min(int(limit), 2000))
     offset = max(0, int(offset))
@@ -64,10 +57,6 @@ async def list_run_groups(
         found = run_groups.sort_groups(found, sort, order)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    principal = identity.request_principal(request)
-    visible = access.visible_workspaces(principal)
-    if visible is not None:
-        found = [g for g in found if access.can_see_workspace(principal, g.workspace)]
     page = found[offset:offset + limit]
     return {
         "groups": [g.to_dict() for g in page],

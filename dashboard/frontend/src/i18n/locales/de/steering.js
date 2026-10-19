@@ -11,7 +11,7 @@ export default {
     inject: 'Der Agent liest Ihre Nachricht vor seinem nächsten Schritt und arbeitet weiter.',
     interrupt: 'Diesen Durchgang jetzt stoppen und Ihre Nachricht als nächsten senden.',
     queue: 'Ihre Nachricht senden, sobald dieser Durchgang fertig ist.',
-    system: 'Dies für den Rest dieses Laufs zu den Anweisungen des Agenten hinzufügen. Nur der Besitzer des Laufs oder ein Admin darf das.',
+    system: 'Dies für den Rest dieses Laufs zu den Anweisungen des Agenten hinzufügen.',
     switch_model: 'Diesen Lauf ab dem nächsten Schritt auf ein anderes Modell umstellen. Die bisherige Arbeit bleibt im Kontext.',
   },
   queueOnlyHint: 'Dieser Durchgang lässt sich nicht lenken, daher wird Ihre Nachricht an seinem Ende gesendet.',

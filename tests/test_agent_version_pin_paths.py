@@ -3,11 +3,10 @@ concurrency on agent edits.
 
 Covers the paths tests/test_agent_version_pin.py does not: a chat turn and
 the blocking chat (chat/runs.py ``validate_chat_request``,
-``request_overrides``, ``create_chat_run``), a service's pin on a handoff
-(``turn_overrides``), ``/v1`` agent completions
+``request_overrides``, ``create_chat_run``), a handoff, ``/v1`` agent completions
 (routes/openai_compat.py ``_agent_run_options``), the widget's pin
 (widgets/service.py, widgets/turn.py, migration 0032), a resident worker's
-task run and a plain message to a pinned service (runtime/instance_run.py),
+task run (runtime/instance_run.py),
 the task assign route's launch params (tasks/assign.py), the CLI
 (``ah agent run`` / ``ah task assign`` / ``ah task create --agent-version``),
 the run record's ``agent_version_pinned`` flag, and the If-Match /
@@ -108,19 +107,10 @@ def test_chat_pin_and_overrides_refused_for_a_flow_target(two_versions):
     assert exc.value.status_code == 400
 
 
-def test_request_overrides_carry_the_pin_and_win_over_the_service(two_versions):
+def test_request_overrides_carry_the_pin(two_versions):
     from chat import runs as chat_runs
 
-    token = chat_runs.set_turn_context({"agent_version": 2, "pin_agent_id": "pin_agent"})
-    try:
-        assert chat_runs.request_overrides(_chat_request())["definition_version"] == 2
-        assert chat_runs.request_overrides(_chat_request(agent_version=1))["definition_version"] == 1
-        # An agent the turn was handed to is not the service's agent: no pin.
-        handed = _chat_request(agent_id="other_agent")
-        assert "definition_version" not in chat_runs.request_overrides(handed)
-        assert chat_runs.turn_overrides("other_agent") == {}
-    finally:
-        chat_runs.reset_turn_context(token)
+    assert chat_runs.request_overrides(_chat_request(agent_version=1))["definition_version"] == 1
     assert chat_runs.request_overrides(_chat_request()) == {}
 
 

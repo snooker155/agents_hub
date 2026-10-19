@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
   Activity, Brain, Check, ChevronDown, FileText, History, MessageSquare,
   Pencil, Plus, RefreshCw, RotateCw, Square, Trash2, Wrench, X,
@@ -160,14 +160,8 @@ function ConversationStat({ conversations, selected, onSelect, onNew, t }) {
   );
 }
 
-// The agent a runner answers as until the person picks another
-// (workspace.storage.DEFAULT_CHAT_AGENT_ID on the backend).
-const DEFAULT_RUNNER_AGENT = 'main-agent';
-
 export default function InstanceDetail() {
   const { instanceId } = useParams();
-  // `?agent=`: whom a runner replica opened from an agent's Run answers for.
-  const [searchParams] = useSearchParams();
   const { t } = useI18n();
   const { clientId } = useStream();
 
@@ -194,13 +188,10 @@ export default function InstanceDetail() {
 
   const [renaming, setRenaming] = useState(false);
   const [labelDraft, setLabelDraft] = useState('');
-  // The workspace's agents: a runner (a replica bound to no agent) answers
-  // for the one picked here, and the composer reads any agent's commands.
+  // The workspace's agents: the composer reads any agent's commands.
   const [agentChoices, setAgentChoices] = useState([]);
-  const [runnerAgent, setRunnerAgent] = useState(() => searchParams.get('agent') || '');
 
   const resident = !!instance?.resident;
-  const isRunner = !!instance?.runner;
 
   useEffect(() => {
     if (!instance) return;
@@ -208,12 +199,6 @@ export default function InstanceDetail() {
       .then((r) => {
         const list = r.data?.agents || r.data || [];
         setAgentChoices(list);
-        // A runner answers as the main agent until another is picked (a
-        // `?agent=` in the link wins); the first agent when there is no main.
-        if (instance.runner && list.length) {
-          setRunnerAgent((prev) => prev || (list.some((a) => a.id === DEFAULT_RUNNER_AGENT)
-            ? DEFAULT_RUNNER_AGENT : list[0].id));
-        }
       })
       .catch(() => setAgentChoices([]));
   }, [instance]);
@@ -323,10 +308,6 @@ export default function InstanceDetail() {
 
   // The composer's delivery: true when the copy took the message.
   const sendMessage = useCallback(async ({ message, attachments = [], references = [] }) => {
-    if (isRunner && !runnerAgent) {
-      setQueuedNote(t('instanceDetail.message.runnerNeedsAgent'));
-      return false;
-    }
     setQueuedNote('');
     try {
       const res = await messageInstance(instanceId, {
@@ -335,7 +316,6 @@ export default function InstanceDetail() {
         references,
         client_id: clientId,
         ...(resident ? { conversation_id: selectedConversation } : {}),
-        ...(isRunner ? { agent_id: runnerAgent } : {}),
       });
       if (res.data?.mode === 'running') {
         setStreaming(true);
@@ -357,7 +337,7 @@ export default function InstanceDetail() {
       setQueuedNote((typeof detail === 'string' && detail) || t('instanceDetail.message.failed'));
       return false;
     }
-  }, [clientId, instanceId, isRunner, load, resident, runnerAgent, selectedConversation, t]);
+  }, [clientId, instanceId, load, resident, selectedConversation, t]);
 
   const handleStop = async () => {
     setBusy('stopping');
@@ -458,7 +438,7 @@ export default function InstanceDetail() {
           </span>
         )}
         description={t('instanceDetail.description', {
-          agent: instance.agent_id || t('instances.kinds.runner'),
+          agent: instance.agent_id || '—',
           kind: t(`instances.kinds.${instance.kind}`, { defaultValue: instance.kind }),
         })}
         actions={(
@@ -650,10 +630,7 @@ export default function InstanceDetail() {
       <ComposerDock>
         <InstanceComposer
           agents={agentChoices}
-          agentId={isRunner ? runnerAgent : (instance.agent_id || '')}
-          isRunner={isRunner}
-          runnerAgent={runnerAgent}
-          onRunnerAgent={setRunnerAgent}
+          agentId={instance.agent_id || ''}
           canNewConversation={resident}
           onNewConversation={handleNewConversation}
           workspace={instance.workspace || 'default'}
@@ -662,11 +639,9 @@ export default function InstanceDetail() {
           liveRunId={liveRunId}
           onSend={sendMessage}
           onStop={resident ? handleInterrupt : handleStop}
-          hint={isRunner
-            ? t('instanceDetail.message.runnerHint')
-            : instance.delivery === 'direct'
-              ? t('instanceDetail.message.directHint')
-              : t('instanceDetail.message.queuedHint')}
+          hint={instance.delivery === 'direct'
+            ? t('instanceDetail.message.directHint')
+            : t('instanceDetail.message.queuedHint')}
           note={queuedNote}
           pendingCount={pending.length}
         />

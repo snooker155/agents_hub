@@ -58,11 +58,11 @@ describe('ToolApprovalCard', () => {
     await waitFor(() => expect(screen.getByText('Denied')).toBeTruthy());
   });
 
-  it('says who may answer when the server refuses', async () => {
-    decideToolApproval.mockRejectedValue({ response: { status: 403 } });
+  it('says so when the answer could not be sent', async () => {
+    decideToolApproval.mockRejectedValue({ response: { status: 500 } });
     show(<ToolApprovalCard approval={PENDING} />);
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/owner or an admin/));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Could not send the answer/));
     expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
   });
 

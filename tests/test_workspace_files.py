@@ -177,23 +177,17 @@ def test_delete_keeps_a_tombstone_and_removes_the_content():
 
 # ── the HTTP surface ─────────────────────────────────────────────────────────
 
-def _client(principal=None):
+def _client():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     import routes.files as files_routes
 
     app = FastAPI()
-    if principal is not None:
-        @app.middleware("http")
-        async def _as(request, call_next):
-            request.state.principal = principal
-            return await call_next(request)
     app.include_router(files_routes.router)
     return TestClient(app)
 
 
 def test_upload_download_and_delete_over_http():
-    from common import audit
     api = _client()
     resp = api.post("/api/files", params={"workspace": "acme"},
                     files={"file": ("notes.md", b"# Notes\nhello", "text/markdown")})
@@ -221,8 +215,6 @@ def test_upload_download_and_delete_over_http():
     gone = api.delete(f"/api/files/{fid}")
     assert gone.status_code == 200 and gone.json()["deleted"] is True
     assert api.get(f"/api/files/{fid}").status_code == 404
-    actions = {row["action"] for row in audit.query(action="file.")["items"]}
-    assert actions == {"file.upload", "file.delete"}
 
 
 def test_an_upload_with_a_path_lands_in_the_workspace_folder():

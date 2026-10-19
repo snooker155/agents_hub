@@ -6,10 +6,10 @@
  * the agent editor's switch). After that, "Try again" sends the same message
  * once more.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { getAgentCapabilityOverride, updateAgentCapabilityOverride } from '../../api';
+import { updateAgentCapabilityOverride } from '../../api';
 
 const btn = 'inline-flex items-center rounded-lg border px-3 py-1.5 text-xs font-medium disabled:opacity-50';
 const primary = `${btn} border-gray-800 bg-gray-800 text-white hover:bg-gray-700`;
@@ -23,20 +23,10 @@ function joinCaps(t, caps) {
 
 function GuardRefusal({ refusal, onRetry, canRetry }) {
   const { t } = useI18n();
-  const [canEdit, setCanEdit] = useState(null);
   const [state, setState] = useState('idle'); // idle | saving | allowed | blocked
   const [error, setError] = useState('');
   const agentId = refusal.agent_id;
   const allowable = refusal.override_allowed !== false && !!agentId;
-
-  useEffect(() => {
-    if (!allowable) return undefined;
-    let live = true;
-    getAgentCapabilityOverride(agentId)
-      .then(({ data }) => { if (live) setCanEdit(data?.can_edit !== false); })
-      .catch(() => { if (live) setCanEdit(false); });
-    return () => { live = false; };
-  }, [agentId, allowable]);
 
   const allow = async () => {
     setState('saving');
@@ -44,9 +34,9 @@ function GuardRefusal({ refusal, onRetry, canRetry }) {
     try {
       const { data } = await updateAgentCapabilityOverride(agentId, true);
       setState(data?.honoured_at_build === false ? 'blocked' : 'allowed');
-    } catch (err) {
+    } catch {
       setState('idle');
-      setError(err?.response?.status === 403 ? t('refusal.guard.forbidden') : t('refusal.guard.failed'));
+      setError(t('refusal.guard.failed'));
     }
   };
 
@@ -64,12 +54,11 @@ function GuardRefusal({ refusal, onRetry, canRetry }) {
         <p>{explanation}</p>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        {allowable && canEdit && state !== 'allowed' && state !== 'blocked' && (
+        {allowable && state !== 'allowed' && state !== 'blocked' && (
           <button type="button" className={primary} onClick={allow} disabled={state === 'saving'}>
             {state === 'saving' ? t('refusal.guard.allowing') : t('refusal.guard.allow')}
           </button>
         )}
-        {allowable && canEdit === false && <span className="text-xs">{t('refusal.guard.viewerNote')}</span>}
         {!allowable && <span className="text-xs">{t('refusal.guard.noOverride')}</span>}
         {state === 'allowed' && <span className="text-xs text-emerald-700">{t('refusal.guard.allowed')}</span>}
         {state === 'blocked' && <span className="text-xs">{t('refusal.guard.allowedButBlocked')}</span>}

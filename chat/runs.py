@@ -30,11 +30,9 @@ def utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# A turn executed on behalf of an instance: which instance the run belongs
-# to, the mailbox message it answers, a money cap and a version pin. Set for
-# the pipeline's task; ``create_chat_run`` writes it onto the run record and
-# ``turn_overrides`` hands the pin to the agent build. Empty for a plain chat
-# turn, which is every turn today; the hook stays for carriers.
+# The chat turn this thread belongs to, when its caller set one: today only
+# its ``source``, which common/tool_approvals.py reads for a run started
+# inside the turn. Empty for a plain chat turn.
 _turn_context: ContextVar[Optional[Dict[str, Any]]] = ContextVar("chat_turn_context", default=None)
 
 
@@ -50,34 +48,12 @@ def turn_context() -> Optional[Dict[str, Any]]:
     return _turn_context.get()
 
 
-def turn_overrides(agent_id: Optional[str] = None) -> dict:
-    """Agent build overrides the current turn asks for: the service's version pin.
-
-    The pin is a version of the service's agent: an agent the conversation
-    was handed to in the same turn (chat/handoff.py) runs as it is, so when
-    ``agent_id`` is given and is not the agent the turn was addressed to,
-    there is nothing to pin.
-    """
-    ctx = _turn_context.get() or {}
-    version = ctx.get("agent_version")
-    if version is None:
-        return {}
-    pinned_agent = ctx.get("pin_agent_id")
-    if agent_id and pinned_agent and str(agent_id) != str(pinned_agent):
-        return {}
-    try:
-        return {"definition_version": int(version)}
-    except (TypeError, ValueError):
-        return {}
-
-
 def version_pin(request: ChatRequest) -> Optional[int]:
     """The agent version this turn's run is built from: the request's own
-    ``agent_version``, else the service's pin (``turn_overrides``), else None
-    (the live definition)."""
+    ``agent_version``, else None (the live definition)."""
     if request.agent_version is not None:
         return int(request.agent_version)
-    return turn_overrides(request.agent_id).get("definition_version")
+    return None
 
 
 def request_overrides(request: ChatRequest) -> dict:
@@ -325,53 +301,32 @@ def create_chat_run(request: ChatRequest, **run_extra):
 
     # One chat instance per conversation: the same live copy answers every
     # message in the thread, so its instance page carries the whole exchange.
-    # A turn executed for an instance belongs to that instance instead: the
-    # run is a carrier run of it, in the conversation the mailbox message
-    # named.
+    # A resident copy answers its own mailbox in its own process
+    # (runtime/instance_run.py) and never comes through here.
     instance_id = None
-    turn = _turn_context.get()
-    if turn and turn.get("instance_id"):
-        instance_id = str(turn["instance_id"])
-        run_extra = {
-            "carrier_run": True,
-            "conversation_id": turn.get("conversation_id"),
-            "inbox_msg_id": turn.get("msg_id"),
-            **({"service_id": turn["service_id"]} if turn.get("service_id") else {}),
-            **({"agent_version_pin": int(turn["agent_version"])}
-               if turn.get("agent_version") is not None
-               and (not turn.get("pin_agent_id")
-                    or str(turn.get("pin_agent_id")) == str(request.agent_id)) else {}),
-            **run_extra,
-        }
-        # The copy the message was addressed to, when it was not the answering
-        # copy itself (a finished copy written to from its page and answered here).
-        if request.instance_id and str(request.instance_id) != instance_id:
-            run_extra.setdefault("addressed_instance_id", str(request.instance_id))
-    else:
-        try:
-            from instances import registry as instance_registry
-            instance = instance_registry.ensure_instance(
-                request.agent_id,
-                # An explicit id means this message was addressed to one live copy
-                # (from its instance page); the run joins that copy's journal
-                # instead of opening a second one for the same conversation.
-                instance_id=request.instance_id,
-                kind="chat",
-                workspace=request.workspace,
-                session_id=session_id,
-                task_id=conv_id,
-                project_id=request.project_id,
-                hint=run_title,
-                state="active",
-                reuse_session=not request.instance_id,
-            )
-            instance_id = instance["instance_id"]
-        except Exception:  # noqa: BLE001 - the turn runs without an instance record
-            log.debug("chat instance create failed", exc_info=True)
+    try:
+        from instances import registry as instance_registry
+        instance = instance_registry.ensure_instance(
+            request.agent_id,
+            # An explicit id means this message was addressed to one live copy
+            # (from its instance page); the run joins that copy's journal
+            # instead of opening a second one for the same conversation.
+            instance_id=request.instance_id,
+            kind="chat",
+            workspace=request.workspace,
+            session_id=session_id,
+            task_id=conv_id,
+            project_id=request.project_id,
+            hint=run_title,
+            state="active",
+            reuse_session=not request.instance_id,
+        )
+        instance_id = instance["instance_id"]
+    except Exception:  # noqa: BLE001 - the turn runs without an instance record
+        log.debug("chat instance create failed", exc_info=True)
 
-    # The version this turn was asked to run (the request's own pin; a
-    # service's pin is already in run_extra above) and its overrides, so the
-    # run page shows both.
+    # The version this turn was asked to run and its overrides, so the run
+    # page shows both.
     if request.agent_version is not None:
         run_extra["agent_version_pin"] = int(request.agent_version)
     if request.overrides:

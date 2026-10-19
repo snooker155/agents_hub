@@ -33,10 +33,7 @@ own sandbox through the dashboard, because only the dashboard mints the
 ticket a terminal needs. The operator may hold ``TERMINAL_MAX_PER_USER`` (3) sessions at once, attached or
 waiting out their grace period.
 
-Every open, resume and close lands in the audit log (``terminal.open``,
-``terminal.resume``, ``terminal.close``) with the container, the session and,
-on close, why it ended and how many bytes went each way. Keystrokes are not
-recorded: the log says who had a shell where and when, not what they typed.
+Keystrokes are not recorded.
 """
 from __future__ import annotations
 
@@ -338,7 +335,6 @@ class TerminalSession:
     target: Target
     user_id: str
     username: str
-    actor: Dict[str, Any]
     process: Any
     buffer_limit: int
     created_at: float = field(default_factory=time.time)
@@ -475,9 +471,8 @@ class TerminalManager:
 
     # open and close
 
-    def open(self, principal: Principal, target: Target, *, cols: int = 80, rows: int = 24,
-             ip: Optional[str] = None) -> TerminalSession:
-        from common import audit
+    def open(self, principal: Principal, target: Target, *, cols: int = 80,
+             rows: int = 24) -> TerminalSession:
         with self._lock:
             limit = max_per_user()
             mine = [s for s in self._sessions.values()
@@ -490,7 +485,7 @@ class TerminalManager:
             placeholder = TerminalSession(
                 id=session_id, target=target, user_id=principal.id,
                 username=principal.username or principal.id,
-                actor=audit.actor_fields(principal), process=None,
+                process=None,
                 buffer_limit=buffer_bytes())
             self._sessions[session_id] = placeholder
         try:
@@ -505,23 +500,11 @@ class TerminalManager:
             raise TerminalRefused(f"Could not start a shell in {target.container}: {exc}", 502)
         placeholder.start()
         self._ensure_reaper()
-        audit.record("terminal.open", principal=principal, object_type=target.kind,
-                     object_id=target.id, workspace=target.workspace, ip=ip,
-                     details={"session_id": session_id, "container": target.container})
         return placeholder
-
-    def resumed(self, session: TerminalSession, principal: Principal,
-                ip: Optional[str] = None) -> None:
-        from common import audit
-        audit.record("terminal.resume", principal=principal, object_type=session.target.kind,
-                     object_id=session.target.id, workspace=session.target.workspace, ip=ip,
-                     details={"session_id": session.id, "container": session.target.container})
 
     def close(self, session: TerminalSession, *, reason: str, code: str = "closed") -> bool:
         """End ``session`` (idempotent): stop the shell, tell an attached
-        socket, write the ``terminal.close`` audit row. True when this call
-        was the one that closed it."""
-        from common import audit
+        socket. True when this call was the one that closed it."""
         with session.lock:
             if session.closed:
                 return False
@@ -539,14 +522,8 @@ class TerminalManager:
                 log.debug("terminal %s: no exit code", session.id, exc_info=True)
         with self._lock:
             self._sessions.pop(session.id, None)
-        audit.record("terminal.close", actor=session.actor, object_type=session.target.kind,
-                     object_id=session.target.id, workspace=session.target.workspace,
-                     details={"session_id": session.id, "container": session.target.container,
-                              "reason": reason, "why": code, "exit_code": session.exit_code,
-                              "seconds": round(time.time() - session.created_at, 1),
-                              "bytes_in": session.bytes_in, "bytes_out": session.bytes_out})
-        # The socket hears last, so whatever it does next (a reconnect, a
-        # read of the audit log) already sees the session gone.
+        # The socket hears last, so whatever it does next (a reconnect)
+        # already sees the session gone.
         with session.lock:
             sink, session.sink = session.sink, None
         if sink is not None:

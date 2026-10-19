@@ -24,7 +24,7 @@ Why failures are quiet at launch time: a secrets problem (a missing key, a
 row encrypted under an old key) must not crash a run, and it must
 never degrade into handing out *more* than the allowlist. ``env_for_run``
 therefore logs a warning and returns nothing on any error. Values are never
-logged, never returned by ``list``, and never written to the audit trail.
+logged and never returned by ``list``.
 
 Secrets bound to hosts. A secret may name ``allowed_hosts`` (a host matches an
 entry or is a subdomain of one). Inside the backend process :func:`get` hands

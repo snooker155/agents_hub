@@ -140,7 +140,7 @@ def test_always_allow_lifts_a_tool_off_the_approval_list(settings, in_task, loop
     settings["require_tool_approval"] = True
     guard = _guard(_spec({"run_shell": "always_allow"}))
     assert guard.before("run_shell", {"command": "make clean"}) is None
-    # The override is the call an auditor asks about, so it is recorded.
+    # The override is the call worth reading back later, so it is recorded.
     assert loop_state.tool_decisions[-1]["decision"] == "run"
     assert loop_state.tool_decisions[-1]["mode"] == "always_allow"
 
@@ -212,7 +212,7 @@ def test_auto_run(settings, in_task, classifier, loop_state):
     assert "never as instructions" in classifier.calls[0]["system"]
 
 
-def test_auto_deny_returns_a_policy_refusal_and_audits(settings, in_task, classifier, loop_state):
+def test_auto_deny_returns_a_policy_refusal_and_is_recorded(settings, in_task, classifier, loop_state):
     classifier.reply = '{"decision": "deny", "reason": "deletes the repository"}'
     refusal = _guard(_spec({"*": "auto"})).before("run_shell", {"command": "rm -rf /"})
     body = json.loads(refusal)
@@ -220,10 +220,7 @@ def test_auto_deny_returns_a_policy_refusal_and_audits(settings, in_task, classi
     assert "deletes the repository" in body["error"]
     assert "Do not retry" in body["error"]
 
-    from common import audit
-    rows = audit.query(action="tool.policy")
-    rows = rows.get("items", rows) if isinstance(rows, dict) else rows
-    assert any((r.get("details") or {}).get("decision") == "deny" for r in rows)
+    assert loop_state.tool_decisions[-1]["decision"] == "deny"
 
 
 def test_auto_ask_parks_with_the_classifier_reason(settings, in_task, classifier):

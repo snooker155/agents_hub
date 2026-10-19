@@ -3,7 +3,7 @@
 Covers the model's validation per rule kind, the PII detectors (true and
 false positives), the judge check (a fake model, garbage output, fail_closed
 both ways), the service (uniqueness, scope, archive, applicable list,
-applies_to selected), the runtime (block vs warn, events, audit, retention),
+applies_to selected), the runtime (block vs warn, events, retention),
 the StandardAgent integration (an input trip never reaches the model, an
 output trip fires after the loop), and the REST routes. No real provider is
 ever called: every judge check goes through a fake chat model.
@@ -248,7 +248,7 @@ def test_list_applicable_scope_and_applies_to():
     assert ids_with_sel == {glob_all.id, ws_all.id, glob_sel.id}
 
 
-# ── runtime: the trip dict, block vs warn, events, audit ─────────────────────
+# ── runtime: the trip dict, block vs warn, events ─────────────────────
 
 class _Spec:
     def __init__(self, guardrails=None):
@@ -355,8 +355,7 @@ def test_runtime_stage_only_checks_the_matching_stage():
     assert trip is not None
 
 
-def test_runtime_records_events_with_masked_excerpt_and_audit():
-    from common import db
+def test_runtime_records_events_with_masked_excerpt():
     g = service.create_guardrail({"name": "secret-guard", "kind": "pii",
                                   "config": {"detectors": ["api_key"]}, "action": "block"})
     state = _state(workspace="w1")
@@ -370,20 +369,14 @@ def test_runtime_records_events_with_masked_excerpt_and_audit():
     assert "sk-abcdefghijklmnopqrstuvwx" not in events[0]["excerpt"]
     assert events[0]["run_id"] == "r1"
 
-    rows = db.get_conn().execute(
-        "SELECT action FROM audit_log WHERE object_id = ? ORDER BY id", (g.id,)).fetchall()
-    assert [r["action"] for r in rows] == ["guardrail.trip"]
 
-
-def test_runtime_warn_writes_audit_as_warn():
-    from common import db
+def test_runtime_warn_records_a_warn_event_and_does_not_trip():
     g = service.create_guardrail({"name": "w", "kind": "keywords", "config": {"keywords": ["careful"]},
                                   "action": "warn"})
     state = _state()
-    runtime.check_input(_Agent(), state, "be careful please")
-    rows = db.get_conn().execute(
-        "SELECT action FROM audit_log WHERE object_id = ? ORDER BY id", (g.id,)).fetchall()
-    assert [r["action"] for r in rows] == ["guardrail.warn"]
+    assert runtime.check_input(_Agent(), state, "be careful please") is None
+    events = store.list_events(guardrail_id=g.id)
+    assert [e["action"] for e in events] == ["warn"]
 
 
 def test_prune_events_respects_retention(monkeypatch):
@@ -514,17 +507,6 @@ def test_routes_events(client):
     runtime.check_input(_Agent(), state, "this is bad")
     events = client.get("/api/guardrails/events", params={"guardrail_id": g["id"]}).json()
     assert len(events) == 1 and events[0]["guardrail_id"] == g["id"]
-
-
-def test_routes_audit_writes(client):
-    from common import db
-    r = client.post("/api/guardrails", json={"name": "Audited", "kind": "keywords",
-                                              "config": {"keywords": ["a"]}})
-    gid = r.json()["id"]
-    client.delete(f"/api/guardrails/{gid}")
-    actions = [row["action"] for row in db.get_conn().execute(
-        "SELECT action FROM audit_log WHERE object_id = ? ORDER BY id", (gid,)).fetchall()]
-    assert actions == ["guardrail.create", "guardrail.delete"]
 
 
 def test_routes_agent_guardrails(client, monkeypatch):

@@ -13,8 +13,8 @@ with the history rebuilt by :mod:`instances.history`.
 
 Every message belongs to a conversation of its instance. The instance page
 writes to the main one (``conversation_id`` NULL, spelled ``"main"`` on the
-API); an external caller names its own, so two callers of one published copy
-never see each other's turns. A carrier answers several conversations at once
+API); a caller may name its own, so two callers of one copy never see each
+other's turns. A carrier answers several conversations at once
 but only one message of any conversation at a time, which is what
 ``claim_next(exclude_conversations=...)`` is for.
 
@@ -24,7 +24,6 @@ answer one message twice.
 """
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
@@ -38,9 +37,9 @@ log = logging.getLogger(__name__)
 MAIN_CONVERSATION = "main"
 MAX_CONVERSATION_ID = 120
 
-#: Message kinds. A ``message`` is text the carrier answers with the
-#: conversation's history (runtime/instance_run.py answer_message). The
-#: column keeps room for other kinds; only this one is written today.
+#: The only message kind: text the carrier answers with the conversation's
+#: history (runtime/instance_run.py answer_message). The table's ``kind``,
+#: ``payload`` and ``result`` columns are left from the full edition's jobs.
 KIND_MESSAGE = "message"
 
 
@@ -58,17 +57,15 @@ def public_conversation(conversation_id: Optional[str]) -> str:
 
 
 def enqueue(instance_id: str, body: str, *, origin: str = "web",
-            conversation_id: Optional[str] = None, kind: str = KIND_MESSAGE,
-            payload: Optional[Dict[str, Any]] = None) -> str:
+            conversation_id: Optional[str] = None) -> str:
     """Queue a message for an instance and wake its carrier. Returns the message id."""
     msg_id = "msg_" + uuid.uuid4().hex[:16]
     with db.transaction() as conn:
         conn.execute(
             "INSERT INTO instance_inbox (msg_id, instance_id, body, origin, created_at, "
-            "conversation_id, kind, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "conversation_id, kind) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (msg_id, str(instance_id), str(body), origin, utc_iso(),
-             normalize_conversation(conversation_id), kind or KIND_MESSAGE,
-             json.dumps(payload, default=str) if payload is not None else None),
+             normalize_conversation(conversation_id), KIND_MESSAGE),
         )
     return msg_id
 
@@ -78,20 +75,6 @@ def get(msg_id: str) -> Optional[Dict[str, Any]]:
         "SELECT * FROM instance_inbox WHERE msg_id = ?", (str(msg_id),)
     ).fetchone()
     return dict(row) if row is not None else None
-
-
-def payload_of(message: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """The decoded ``payload`` of a claimed message, ``{}`` when it has none."""
-    raw = (message or {}).get("payload")
-    if not raw:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    try:
-        data = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 def has_pending(instance_id: str) -> bool:
@@ -161,29 +144,6 @@ def mark_error(msg_id: str, error: str) -> None:
     with db.transaction() as conn:
         conn.execute("UPDATE instance_inbox SET error = ? WHERE msg_id = ?",
                      (str(error)[:2000], str(msg_id)))
-
-
-def finish(msg_id: str, *, result: Any = None, error: Optional[str] = None) -> None:
-    """Close a job message with its result document, or its error."""
-    with db.transaction() as conn:
-        conn.execute(
-            "UPDATE instance_inbox SET result = ?, error = ?, finished_at = ? WHERE msg_id = ?",
-            (json.dumps(result, default=str) if result is not None else None,
-             (str(error)[:2000] if error else None), utc_iso(), str(msg_id)),
-        )
-
-
-def result_of(message: Optional[Dict[str, Any]]) -> Any:
-    """The decoded ``result`` of a finished job message, None when there is none."""
-    raw = (message or {}).get("result")
-    if raw in (None, ""):
-        return None
-    if isinstance(raw, (dict, list)):
-        return raw
-    try:
-        return json.loads(raw)
-    except (TypeError, ValueError):
-        return None
 
 
 def history(instance_id: str, limit: int = 50) -> List[Dict[str, Any]]:

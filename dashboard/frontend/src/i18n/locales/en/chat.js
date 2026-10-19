@@ -101,7 +101,7 @@ export default {
     off: 'Auto: off',
     on: 'Auto: on',
     toggleHint: 'Auto mode: every confirmation in this chat is accepted without asking you (Shift+Tab)',
-    disabledByAdmin: 'An administrator turned auto mode off in this workspace',
+    disabledInWorkspace: 'Auto mode is turned off in this workspace\'s settings',
     approvedAutomatically: 'Approved automatically (auto mode)',
   },
   composerHint: 'Enter to send · Shift+Enter for new line · Type',

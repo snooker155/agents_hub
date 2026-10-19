@@ -11,8 +11,7 @@ import { useI18n } from '../../i18n';
  * Run, where the agent is not already fixed: the Instances page's button.
  *
  * The form asks only the agent and the workspace (routes/instances.py) and
- * opens the copy's page. A runner answers for the agent named in each
- * message, so its page opens with that agent picked.
+ * opens the copy's page.
  *
  * `agentId` fixes the agent (Run from the agent's own page); without it the
  * form offers a select built from `agents` (the fleet grid already holds the
@@ -72,7 +71,7 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
         workspace: workspace || null,
       });
       onClose();
-      navigate(instancePath(data, effectiveAgentId));
+      navigate(instancePath(data));
     } catch (err) {
       setError(err.response?.data?.detail || t('startInstance.failed'));
     } finally {

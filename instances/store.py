@@ -36,24 +36,21 @@ INSTANCE_COLUMNS: Tuple[str, ...] = (
     "current_run_id", "task_id", "provider", "model",
     "created_at", "started_at", "last_activity_at", "finished_at",
     "archived_at", "runs_count", "total_tokens", "total_duration_ms",
-    "last_activity", "error", "service_id",
+    "last_activity", "error",
 )
 
 LIVE_STATES = ("starting", "active", "standby")
 TERMINAL_STATES = ("finished", "stopped", "failed")
 ALL_STATES = LIVE_STATES + TERMINAL_STATES
 
-KINDS = ("resident", "runner", "task", "chat", "flow_node", "team_member", "node", "container")
+KINDS = ("resident", "task", "chat", "flow_node", "team_member", "node", "container")
 
 #: A copy started on purpose (the agent page's Run, ``POST /api/instances``)
 #: that lives in a process or container of its own until stopped
 #: (instances/carrier.py). "node" and "container" are the kinds such a copy
 #: had while nodes existed; rows migrated from then keep reading as carriers.
-#: A "runner" is the same process bound to no agent: a replica of a runner
-#: service (services/), which answers any agent's chat turn (docs/services.md).
 RESIDENT_KIND = "resident"
-RUNNER_KIND = "runner"
-CARRIER_KINDS = ("resident", "runner", "node", "container")
+CARRIER_KINDS = ("resident", "node", "container")
 
 #: Kinds this edition never creates: runners (service replicas), nodes and
 #: playground roles. A state directory the full edition also used holds such
@@ -63,7 +60,7 @@ FOREIGN_KINDS = ("runner", "node", "sim_role")
 # Fields an update may set back to None explicitly. Anything else passed as
 # None is ignored, so a partial update never wipes a field by accident.
 CLEARABLE = (
-    "current_run_id", "task_id", "error", "pid", "container_name", "service_id",
+    "current_run_id", "task_id", "error", "pid", "container_name",
     "expose_token", "exposed_at", "inbound_secret", "http_url",
     "carrier_error", "carrier_exit_code", "carrier_finished_at",
     "stop_requested_at", "finished_at",
@@ -137,13 +134,9 @@ def _where(
     q: Optional[str] = None,
     include_archived: bool = False,
     kinds: Optional[Tuple[str, ...]] = None,
-    service_id: Optional[str] = None,
 ) -> Tuple[str, List[Any]]:
     clauses: List[str] = []
     params: List[Any] = []
-    if service_id:
-        clauses.append("service_id = ?")
-        params.append(str(service_id))
     if workspace:
         # Instances with no workspace recorded belong to "default", mirroring
         # how the Messages list treats runs.
@@ -237,13 +230,10 @@ def list_instances(limit: int = 100, offset: int = 0, sort: Optional[str] = None
     }
 
 
-def counts_by_state(workspace: Optional[str] = None, agent_id: Optional[str] = None,
-                    service_id: Optional[str] = None) -> Dict[str, int]:
-    """Per-state totals for the header strip — one grouped query, not N.
-
-    Narrowed the way the list beside it is: a service page counts that
-    service's replicas, not every copy in the hub."""
-    where, params = _where(workspace=workspace, agent_id=agent_id, service_id=service_id)
+def counts_by_state(workspace: Optional[str] = None,
+                    agent_id: Optional[str] = None) -> Dict[str, int]:
+    """Per-state totals for the header strip: one grouped query, not N."""
+    where, params = _where(workspace=workspace, agent_id=agent_id)
     rows = db.get_conn().execute(
         f"SELECT state, COUNT(*) AS n FROM instances{where} GROUP BY state", params
     ).fetchall()

@@ -4,10 +4,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { I18nProvider } from '../../../i18n';
 
-const getAgentCapabilityOverride = vi.fn();
 const updateAgentCapabilityOverride = vi.fn();
 vi.mock('../../../api', () => ({
-  getAgentCapabilityOverride: (...a) => getAgentCapabilityOverride(...a),
   updateAgentCapabilityOverride: (...a) => updateAgentCapabilityOverride(...a),
 }));
 
@@ -23,7 +21,6 @@ const show = (ui) => render(<I18nProvider><MemoryRouter>{ui}</MemoryRouter></I18
 describe('RefusalCard, capability guard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getAgentCapabilityOverride.mockResolvedValue({ data: { can_edit: true } });
   });
 
   it('allows the agent in place and offers a retry', async () => {
@@ -36,31 +33,21 @@ describe('RefusalCard, capability guard', () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
-  it('shows the reason without the button to a viewer', async () => {
-    getAgentCapabilityOverride.mockResolvedValue({ data: { can_edit: false } });
-    show(<RefusalCard refusal={GUARD} />);
-    await screen.findByText(/Ask an editor/);
-    expect(screen.queryByRole('button', { name: 'Allow for this agent' })).toBeNull();
-    expect(screen.getByText(/reads private data/)).toBeTruthy();
-  });
-
   it('has no button for a rule that cannot be softened', () => {
     show(<RefusalCard refusal={{ ...GUARD, override_allowed: false }} />);
     expect(screen.queryByRole('button', { name: 'Allow for this agent' })).toBeNull();
-    expect(getAgentCapabilityOverride).not.toHaveBeenCalled();
   });
 
-  it('says so when the caller may not edit', async () => {
-    updateAgentCapabilityOverride.mockRejectedValue({ response: { status: 403 } });
+  it('says so when the exception could not be saved', async () => {
+    updateAgentCapabilityOverride.mockRejectedValue({ response: { status: 500 } });
     show(<RefusalCard refusal={GUARD} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Allow for this agent' }));
-    await screen.findByText(/editor of this workspace/);
+    await screen.findByText(/Could not save the exception/);
   });
 });
 
 describe('MessageBubble with a refusal', () => {
   it('renders the card instead of the error text', () => {
-    getAgentCapabilityOverride.mockResolvedValue({ data: { can_edit: true } });
     show(<MessageBubble msg={{ id: 'm1', role: 'agent', error: true, content: 'Error: Agent blocked', refusal: GUARD }} />);
     expect(screen.queryByText('Error: Agent blocked')).toBeNull();
     expect(screen.getByText('This agent is not allowed to run with these tools')).toBeTruthy();

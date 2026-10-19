@@ -105,25 +105,6 @@ def start_flow_run(
         parent_run_id=parent_run_id,
     )
 
-    # Audit trail (common/audit.py). No HTTP request may be in flight here (a
-    # flow may be fired by a schedule), so the actor comes from the
-    # current-user contextvar, "local" for the one operator.
-    try:
-        from common import audit
-        from common.auth import LOCAL_OPERATOR_ID
-        from common.identity import current_user_id
-        _actor_id = current_user_id()
-        audit.record(
-            "flow.launch",
-            actor={"actor_id": _actor_id,
-                   "actor_kind": "local" if _actor_id == LOCAL_OPERATOR_ID else "user",
-                   "actor_name": None},
-            workspace=ws_name, object_type="run", object_id=run_id,
-            details={"flow_id": flow_id, "task_id": str(task_id)},
-        )
-    except Exception:  # noqa: BLE001 - the audit entry must not fail a launch
-        log.debug("flow launch audit failed", exc_info=True)
-
     cli_args = [
         "--flow-id", flow_id,
         "--workspace", str(ws_path),

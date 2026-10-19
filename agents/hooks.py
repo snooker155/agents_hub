@@ -104,7 +104,7 @@ class HookOutcome:
 
     decision: str = "allow"          # allow | deny | ask
     reason: str = ""
-    hook: str = ""                   # which hook decided, for the audit trail
+    hook: str = ""                   # which hook decided, for the policy trail
 
     @property
     def denied(self) -> bool:
@@ -834,7 +834,7 @@ class ToolGuard:
 
         if mode == policy.ALWAYS_ALLOW:
             # An operator's explicit always_allow lifts the tool off the approval
-            # list. Worth a row: it is the call an auditor will ask about.
+            # list. Worth a row: it is the call worth reading back later.
             if (source in policy.EXPLICIT_SOURCES and self.gate_enabled()
                     and needs_approval(tool_id, self.spec)):
                 self._record(call, policy.RUN,
@@ -936,7 +936,7 @@ class ToolGuard:
         Blocks this thread: for an async run the deciding half already runs
         in a worker thread (:meth:`abefore`), so the event loop, the stream
         and the Stop button keep working while the person reads the card.
-        The answer goes on the policy trail and in the audit log like every
+        The answer goes on the policy trail like every
         other decided call: ``human_approved`` for a yes, ``human_denied``
         for a no, a timeout or a stop.
         """
@@ -999,10 +999,10 @@ class ToolGuard:
                 cached: bool = False, approved: bool = False, code: str = "",
                 trail: bool = True) -> Any:
         """Record one decided call: on the run and in the Tool policy store,
-        on the call's trail entry (``evaluated_permission`` and ``reason_code``),
-        and as an audit row unless it is a cached repeat. Every call that gets
-        here is a deny, an ask, an ``auto`` decision, a spent approval or an
-        always_allow that lifted the approval list; a plain allow never does."""
+        and on the call's trail entry (``evaluated_permission`` and
+        ``reason_code``). Every call that gets here is a deny, an ask, an
+        ``auto`` decision, a spent approval or an always_allow that lifted the
+        approval list; a plain allow never does."""
         from tools import permission_policy as policy
         entry = policy.Decision(tool=call.tool, mode=call.mode, decision=decision, reason=reason or "",
                                 by=by, fingerprint=call.fingerprint, source=call.source, cached=cached)
@@ -1012,9 +1012,6 @@ class ToolGuard:
                                           reason=reason, approved=approved)
         if trail:
             policy.note_call(call.tool, policy.permission_of(decision), code, fingerprint=call.fingerprint)
-        if not cached:
-            policy.audit_decision(entry, agent_id=self.agent_id, run_id=call.run_id,
-                                  task_id=call.task_id, workspace=self.workspace, code=code)
         return entry
 
     def _sequence(self, call: "_Call") -> Optional["_Verdict"]:

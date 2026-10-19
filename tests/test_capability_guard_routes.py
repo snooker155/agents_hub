@@ -197,7 +197,6 @@ def test_workspace_web_policy_route_reads_and_writes_the_lists(monkeypatch):
     monkeypatch.setattr(ws_routes, "get_workspace_metadata", lambda name: store)
     monkeypatch.setattr(ws_routes, "update_workspace_metadata", lambda name, patch: store.update(patch))
     monkeypatch.setattr(ws_routes, "_ensure_writable_workspace", lambda name: None)
-    monkeypatch.setattr(ws_routes.audit, "record", lambda *a, **k: None)
     app = FastAPI()
     app.include_router(ws_routes.router)
     c = TestClient(app)

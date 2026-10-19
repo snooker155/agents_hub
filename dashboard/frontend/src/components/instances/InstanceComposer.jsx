@@ -31,10 +31,7 @@ import { useI18n } from '../../i18n';
  *
  * @param {object} props
  * @param {object[]} props.agents      the workspace's agents (for `/config` and the agent's commands).
- * @param {string}   props.agentId     the agent answering: the copy's, or the runner's pick.
- * @param {boolean}  props.isRunner    a replica bound to no agent picks one per message.
- * @param {string}   props.runnerAgent the runner's current pick.
- * @param {function} props.onRunnerAgent
+ * @param {string}   props.agentId     the agent answering: the copy's own.
  * @param {boolean}  props.canNewConversation offers `/new` (resident copies).
  * @param {function} props.onNewConversation
  * @param {string}   props.workspace   for the file and entity pickers.
@@ -50,9 +47,6 @@ import { useI18n } from '../../i18n';
 export default function InstanceComposer({
   agents = [],
   agentId = '',
-  isRunner = false,
-  runnerAgent = '',
-  onRunnerAgent = () => {},
   canNewConversation = false,
   onNewConversation = () => {},
   workspace = '',
@@ -268,7 +262,7 @@ export default function InstanceComposer({
   };
 
   const canSend = (input.trim() || pendingAttachments.length > 0 || pendingReferences.length > 0)
-    && !sending && !(isRunner && !runnerAgent);
+    && !sending;
 
   return (
     <div className="bg-white border border-gray-200 rounded-2xl shadow-lg p-3" data-testid="instance-composer">
@@ -414,24 +408,7 @@ export default function InstanceComposer({
         </div>
       )}
 
-      {/* A runner picks the agent per message: the picker stands to the left
-          of the box, as tall as the box is. */}
       <div className="flex items-stretch gap-2">
-      {isRunner && (
-        <select
-          value={runnerAgent}
-          onChange={(e) => onRunnerAgent(e.target.value)}
-          className="flex-shrink-0 max-w-[14rem] px-3 text-sm border border-gray-300 rounded-2xl bg-white
-            focus:outline-none"
-          aria-label={t('instanceDetail.message.runnerAgent')}
-        >
-          <option value="">{t('instanceDetail.message.runnerAgent')}</option>
-          {(agents || []).map((a) => (
-            <option key={a.id} value={a.id}>{a.name || a.id}</option>
-          ))}
-        </select>
-      )}
-
       <div
         className="flex-1 min-w-0 flex items-center gap-2 border border-gray-300 rounded-2xl px-3 py-2
           transition-all"

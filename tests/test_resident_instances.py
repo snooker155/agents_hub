@@ -70,6 +70,7 @@ def test_start_spawns_instance_run_and_records_the_carrier(fake_agent, fake_pope
     cmd = fake_popen[0]["cmd"]
     assert cmd[1:3] == ["-m", "runtime.instance_run"]
     assert cmd[cmd.index("--instance-id") + 1] == inst["instance_id"]
+    assert cmd[cmd.index("--agent-id") + 1] == "swe_agent"
     assert fake_popen[0]["env"]["AGENT_INSTANCE_ID"] == inst["instance_id"]
     history = carrier.carriers(inst["instance_id"])
     assert len(history) == 1 and history[0]["reason"] == "start" and history[0]["pid"] == 424242
@@ -78,6 +79,9 @@ def test_start_spawns_instance_run_and_records_the_carrier(fake_agent, fake_pope
 def test_start_rejects_an_unknown_agent(fake_agent, fake_popen):
     with pytest.raises(ValueError):
         carrier.start("nobody")
+    # A copy always runs an agent: there is no copy bound to none.
+    with pytest.raises(ValueError):
+        carrier.start("")
     assert fake_popen == []
 
 
@@ -339,7 +343,7 @@ def test_start_route_starts_a_resident_copy(monkeypatch, instances_client, fake_
     resp = instances_client.post("/api/instances", json={"agent_id": "swe_agent", "workspace": "ws"})
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["for_agent"] == "swe_agent" and body["agent_id"] == "swe_agent"
+    assert body["agent_id"] == "swe_agent"
     assert captured[-1]["workspace"] == "ws" and "inbound_secret" not in body
 
     resp = instances_client.post("/api/instances", json={

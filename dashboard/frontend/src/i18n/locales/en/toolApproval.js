@@ -26,7 +26,6 @@ export default {
   noteShown: 'Note: {{note}}',
   waiting: 'Waiting for your approval of {{tool}}',
   errors: {
-    forbidden: 'Only the run\'s owner or an admin can answer this call.',
     gone: 'This call is no longer waiting for an answer.',
     failed: 'Could not send the answer. Try again.',
   },

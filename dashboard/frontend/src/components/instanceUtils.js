@@ -1,4 +1,4 @@
-import { Activity, Box, Cpu, Layers, MessageSquare, Radio, Server, Users } from 'lucide-react';
+import { Activity, Box, Layers, MessageSquare, Radio, Server, Users } from 'lucide-react';
 
 /*
  * Shared vocabulary for rendering agent instances.
@@ -19,13 +19,8 @@ export const STATE_STYLES = {
 
 export const KIND_ICONS = {
   resident: Radio,
-  // A runner: the same process bound to no agent, which answers any agent's
-  // chat turn.
-  runner: Cpu,
-  // Legacy kinds: rows a migration turned an old node or container record
-  // into (instances/store.py CARRIER_KINDS). Nodes are gone from the UI, but
-  // an unmigrated row can still carry one of these kinds.
-  node: Server,
+  // Legacy kind: a row a migration turned an old container record into
+  // (instances/store.py CARRIER_KINDS); it still reads as a resident copy.
   container: Box,
   task: Activity,
   chat: MessageSquare,
@@ -63,13 +58,7 @@ export function relativeTime(iso, t) {
   return t('instances.time.days', { count: Math.floor(h / 24) });
 }
 
-/**
- * The page of the copy a start returned (POST /api/instances). A runner has
- * no agent of its own, so the page is told whom the messages typed there are
- * for.
- */
-export function instancePath(instance, agentId) {
-  const base = `/instances/${instance.instance_id}`;
-  const forAgent = instance.for_agent || agentId;
-  return instance.kind === 'runner' && forAgent ? `${base}?agent=${encodeURIComponent(forAgent)}` : base;
+/** The page of the copy a start returned (POST /api/instances). */
+export function instancePath(instance) {
+  return `/instances/${instance.instance_id}`;
 }

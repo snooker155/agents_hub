@@ -28,9 +28,6 @@ export default {
   message: {
     directHint: 'Write to this copy. It answers with its previous work in context.',
     queuedHint: 'This copy is busy or runs its own loop: your message is delivered to it and answered in its process.',
-    runnerAgent: 'Which agent answers',
-    runnerNeedsAgent: 'Pick the agent this runner answers for.',
-    runnerHint: 'This runner answers for the agent you pick: your message becomes a chat turn of that agent, with the conversation so far.',
     placeholder: 'Write to this instance…',
     send: 'Send',
     queued: 'Sent, waiting for the instance to answer.',

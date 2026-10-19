@@ -85,7 +85,7 @@ export function buildMenu({ t }) {
         { name: t('nav.orchestrator'), path: '/orchestrator', icon: Network, home: '/flows' },
         // Schedules of work, opened from the Plan page.
         { name: t('nav.deployments'), path: '/deployments', icon: Rocket, home: '/plan' },
-        // Creating a workspace, its settings and its members: the top bar only
+        // Creating a workspace and its settings: the top bar only
         // switches between the ones that exist.
         { name: t('nav.workspaces'), path: '/workspaces', icon: Folder, simple: true },
       ],

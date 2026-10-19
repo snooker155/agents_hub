@@ -98,7 +98,6 @@ export default {
     missing: 'Fügen Sie zuerst den Schlüssel ein.',
     no_models: 'Der Server antwortet, hat aber noch kein Modell: laden Sie zuerst eines.',
     unknown_provider: 'Dieser Anbieter wird hier nicht unterstützt.',
-    forbidden: 'Nur ein Administrator kann das einrichten.',
     no_key: 'Verbinden Sie zuerst den Schlüssel dieses Anbieters.',
     unknown_model: 'Der Anbieter bietet dieses Modell nicht an.',
   },

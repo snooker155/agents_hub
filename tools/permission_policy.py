@@ -29,7 +29,7 @@ workspace. A plain ``always_allow`` that changed nothing is not recorded: it is
 what every read-only call of every agent does, and logging it would bury the
 decisions worth reading under thousands of ``read_file`` rows. An
 ``always_allow`` that lifted a tool off the approval list is recorded, since
-that is exactly the call an auditor asks about.
+that is exactly the call worth reading back.
 
 agents/hooks.py applies all of this inside ``ToolGuard.before``; this module
 only decides and records, and holds no per-run state of its own (a built agent
@@ -596,35 +596,6 @@ def record(
         log.debug("tool policy: could not store a decision for %s", decision.tool, exc_info=True)
 
 
-def audit_decision(decision: Decision, *, agent_id: str, run_id: str, task_id: str,
-                   workspace: Optional[str], code: str = "") -> None:
-    """A ``tool.policy`` audit row for one decided call.
-
-    The guard writes one for every deny and ask, for every ``auto`` decision
-    and for a person's approval being spent; never for a plain allow, which
-    every read-only call of every agent would turn into noise.
-    """
-    try:
-        from common import audit
-        audit.record(
-            "tool.policy",
-            actor={"actor_id": None, "actor_kind": "system", "actor_name": f"agent {agent_id}".strip()},
-            object_type="tool", object_id=decision.tool,
-            workspace=workspace_name(workspace) or workspace,
-            result=decision.decision,
-            details={"agent_id": agent_id, "run_id": run_id, "task_id": task_id,
-                     "tool": decision.tool, "mode": decision.mode,
-                     "decision": decision.decision, "reason": decision.reason,
-                     "by": decision.by,
-                     "evaluated_permission": permission_of(decision.decision),
-                     "reason_code": code or reason_code(
-                         by=decision.by, decision=decision.decision, mode=decision.mode,
-                         source=decision.source, reason=decision.reason)},
-        )
-    except Exception:  # noqa: BLE001 - an audit write must not decide the tool call
-        log.debug("tool policy: audit write failed", exc_info=True)
-
-
 _last_prune = 0.0
 
 
@@ -669,19 +640,13 @@ def list_decisions(
     run_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     workspace: Optional[str] = None,
-    visible: Optional[Iterable[str]] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    """Recent decisions, newest first, filtered by any of the given fields.
-
-    ``visible`` (a set of workspace names, or None for "all") is how the route
-    hands down what the caller may see.
-    """
+    """Recent decisions, newest first, filtered by any of the given fields."""
     try:
         prune(force=False)
     except Exception:  # noqa: BLE001 - a failed prune still leaves a readable list
         log.debug("tool policy: prune failed", exc_info=True)
-    allowed = set(visible) if visible is not None else None
     limit = max(1, min(int(limit or 50), 500))
     out: List[Dict[str, Any]] = []
     docs = store().all()
@@ -694,8 +659,6 @@ def list_decisions(
         if agent_id and doc.get("agent_id") != agent_id:
             continue
         if workspace and (doc.get("workspace") or "") != workspace:
-            continue
-        if allowed is not None and (doc.get("workspace") or "") not in allowed:
             continue
         out.append(doc)
         if len(out) >= limit:
@@ -892,7 +855,6 @@ __all__ = [
     "PERMISSION_DENY",
     "REASON_CODES",
     "RUN",
-    "audit_decision",
     "cached_decision",
     "call_verdict",
     "classifier_model",

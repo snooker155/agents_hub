@@ -13,9 +13,8 @@ For a person:
   (answered by someone else, timed out, or the run was stopped).
 
 Who may answer: the one operator, from the dashboard. No agent tool reaches
-this route, so an agent never approves its own call. Every answer lands
-in the audit log as ``tool.approval``; the waiting run adds its own
-``tool.policy`` row with ``human_approved`` or ``human_denied``.
+this route, so an agent never approves its own call. The waiting run notes
+the answer on its policy trail as ``human_approved`` or ``human_denied``.
 
 For the waiting run (under ``/api/run-state``, like the steering claim the
 loop makes; ``common.state_transport.HttpStateTransport`` calls these from a
@@ -34,7 +33,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from common import access, audit, identity, tool_approvals
+from common import identity, tool_approvals
 
 log = logging.getLogger(__name__)
 
@@ -46,55 +45,6 @@ class DecideBody(BaseModel):
     note: str = ""
 
 
-def _run_of(approval: Dict[str, Any]) -> Dict[str, Any]:
-    from managers.run_manager import get_run_by_id
-    return get_run_by_id(str(approval.get("run_id") or "")) or {}
-
-
-def _workspace(approval: Dict[str, Any], run: Dict[str, Any]) -> Optional[str]:
-    return run.get("workspace") or approval.get("workspace")
-
-
-def _owner(approval: Dict[str, Any], run: Dict[str, Any]) -> Optional[str]:
-    """The user who may answer besides an admin: who the call recorded, else
-    the conversation's owner (a call written before the run knew its owner)."""
-    owner = str(approval.get("owner") or "")
-    if owner:
-        return owner
-    conv_id = str(run.get("task_id") or run.get("conversation_id") or "")
-    if conv_id and str(run.get("session_type") or "") == "chat":
-        try:
-            from common import chat_store
-            return str((chat_store.get_chat(conv_id) or {}).get("owner") or "") or None
-        except Exception:  # noqa: BLE001 - an unknown owner leaves the call to admins
-            log.debug("tool approvals: owner lookup failed for %s", conv_id, exc_info=True)
-    return None
-
-
-def _require_answerer(request: Request, approval: Dict[str, Any], run: Dict[str, Any]):
-    """The caller's principal, once they may answer this call; 403 otherwise."""
-    return require_answerer(identity.request_principal(request), approval, run)
-
-
-def require_answerer(principal: Any, approval: Dict[str, Any], run: Dict[str, Any]):
-    """:func:`_require_answerer` for a principal already in hand."""
-    access.require_visible(principal, _workspace(approval, run))
-    if principal is None:
-        return None
-    if principal.is_admin:
-        return principal
-    owner = _owner(approval, run)
-    # owner_or_admin reads a "local" owner (filed before identity existed) as
-    # anyone's, the rule every other owned record follows.
-    if owner and access.owner_or_admin(principal, owner):
-        return principal
-    raise HTTPException(status_code=403, detail="only the run's owner or an admin may answer this call")
-
-
-def _require_visible(request: Request, approval: Dict[str, Any], run: Dict[str, Any]) -> None:
-    access.require_visible(identity.request_principal(request), _workspace(approval, run))
-
-
 def _load(approval_id: str) -> Dict[str, Any]:
     approval = tool_approvals.get(approval_id)
     if approval is None:
@@ -103,57 +53,40 @@ def _load(approval_id: str) -> Dict[str, Any]:
 
 
 @router.get("/api/runs/{run_id}/tool-approvals")
-def list_run_approvals(run_id: str, request: Request, status: Optional[str] = None):
+def list_run_approvals(run_id: str, status: Optional[str] = None):
     from managers.run_manager import get_run_by_id
     run = get_run_by_id(run_id) or {}
     rows = tool_approvals.list_for_run(run_id, status=status or None)
     if not run and not rows:
         raise HTTPException(status_code=404, detail="no such run")
-    access.require_visible(identity.request_principal(request),
-                           run.get("workspace") or (rows[0].get("workspace") if rows else None))
     return {"approvals": rows}
 
 
 @router.get("/api/tool-approvals/{approval_id}")
-def get_approval(approval_id: str, request: Request):
-    approval = _load(approval_id)
-    _require_visible(request, approval, _run_of(approval))
-    return {"approval": approval}
+def get_approval(approval_id: str):
+    return {"approval": _load(approval_id)}
 
 
 @router.post("/api/tool-approvals/{approval_id}")
 def decide_approval(approval_id: str, body: DecideBody, request: Request):
-    approval = _load(approval_id)
-    run = _run_of(approval)
-    principal = _require_answerer(request, approval, run)
-    return answer(approval, run, principal, body.decision, body.note)
+    return answer(_load(approval_id), identity.request_principal(request), body.decision, body.note)
 
 
-def answer(approval: Dict[str, Any], run: Dict[str, Any], principal: Any, decision: str,
+def answer(approval: Dict[str, Any], principal: Any, decision: str,
            note: str = "") -> Dict[str, Any]:
-    """Settle a waiting call for a person who may answer it (the caller
-    checked :func:`require_answerer`) and record it in the audit log.
-    Raises 400 for an unknown decision, 409 when the call no longer waits."""
+    """Settle a waiting call as the operator. Raises 400 for an unknown
+    decision, 409 when the call no longer waits."""
     approval_id = str(approval.get("approval_id") or "")
     decision = str(decision or "").strip().lower()
     if decision not in tool_approvals.DECISIONS:
         raise HTTPException(status_code=400, detail="decision must be approve or deny")
     author = principal or "operator"
     settled = tool_approvals.decide(approval_id, decision, note=note, author=author)
-    details = {"run_id": approval.get("run_id"), "tool": approval.get("tool"),
-               "decision": decision, "note": (note or "").strip()[:500],
-               "agent_id": approval.get("agent_id"), "approval_id": approval_id}
     if settled is None:
         current = tool_approvals.get(approval_id) or approval
-        audit.record("tool.approval", principal=principal, object_type="tool",
-                     object_id=approval.get("tool"), workspace=_workspace(approval, run),
-                     result="error", details={**details, "status": current.get("status")})
         raise HTTPException(status_code=409, detail={
             "message": "This call is no longer waiting for an answer.",
             "status": current.get("status")})
-    audit.record("tool.approval", principal=principal, object_type="tool",
-                 object_id=approval.get("tool"), workspace=_workspace(approval, run),
-                 result=settled.get("status") or "ok", details=details)
     return {"approval": settled}
 
 

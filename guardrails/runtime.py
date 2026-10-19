@@ -11,8 +11,7 @@ respectively. Both share :func:`_run`:
   entirely: they are the only checks with real latency and cost;
 * every check that finds something (pass or fail is not logged, a finding
   is) is appended to ``state.guardrails``, written to the ``guardrail_events``
-  collection with a masked excerpt, and recorded in the audit log as
-  ``guardrail.trip`` (block) or ``guardrail.warn`` (warn);
+  collection with a masked excerpt;
 * the first blocking violation is returned as the trip dict
   ``StandardAgent._guardrail_trip`` turns into a ``guardrail_tripped`` result;
   a warn never stops the run.
@@ -106,23 +105,6 @@ def _record_event(state: Any, guardrail: Any, *, stage: str, action: str, reason
         log.warning("guardrails: could not record an event", exc_info=True)
 
 
-def _record_audit(state: Any, guardrail: Any, *, action: str, reason: str) -> None:
-    try:
-        from common import audit
-        verb = "guardrail.trip" if action == "block" else "guardrail.warn"
-        audit.record(
-            verb, object_type="guardrail", object_id=guardrail.id,
-            workspace=getattr(state, "workspace", "") or None,
-            details={
-                "name": guardrail.name, "run_id": getattr(state, "run_id", ""),
-                "task_id": getattr(state, "task_id", ""),
-                "agent_id": getattr(state, "agent_id", ""), "reason": reason,
-            },
-        )
-    except Exception:  # noqa: BLE001 - the audit log is best-effort, must not break the run
-        log.warning("guardrails: could not write the audit record", exc_info=True)
-
-
 def _check_one(guardrail: Any, text: str, workspace: Optional[str]) -> Dict[str, Any]:
     """Run one guardrail against *text*.
 
@@ -130,7 +112,7 @@ def _check_one(guardrail: Any, text: str, workspace: Optional[str]) -> Dict[str,
     ``fail_closed`` decides the outcome: ``passed=False`` (blocks, if the
     guardrail's action is "block") when True, ``passed=True`` with a logged
     warning when False. Either way the error itself is folded into the
-    reason so it still shows up in the event and the audit record.
+    reason so it still shows up in the event.
     """
     if checks.is_rule_kind(guardrail.kind):
         reason, hits = checks.check_rule(guardrail.kind, guardrail.config, text)
@@ -174,7 +156,6 @@ def _run(agent: Any, state: Any, stage: str, text: str) -> Optional[Dict[str, An
         excerpt = _excerpt(text, outcome.get("hits"))
         _record_event(state, guardrail, stage=stage, action=guardrail.action, reason=reason,
                       excerpt=excerpt)
-        _record_audit(state, guardrail, action=guardrail.action, reason=reason)
         if guardrail.action == "block" and trip is None:
             trip = {
                 "guardrail_id": guardrail.id, "name": guardrail.name, "stage": stage,

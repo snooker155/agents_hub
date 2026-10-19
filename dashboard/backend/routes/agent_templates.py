@@ -26,8 +26,6 @@ from pydantic import BaseModel
 
 from agents import registry
 from agents import templates
-from common import access, identity
-from common.auth import WS_EDITOR
 from models import AgentCreateCustom
 
 log = logging.getLogger(__name__)
@@ -85,11 +83,6 @@ async def get_agent_template(template_id: str, workspace: Optional[str] = None):
 async def create_from_template(template_id: str, data: CreateFromTemplate, request: Request):
     template = _template_or_404(template_id)
     workspace = (data.workspace or "").strip() or None
-    principal = identity.request_principal(request)
-    if workspace:
-        access.require_visible(principal, workspace)
-    identity.require_role(principal, workspace=workspace or "default", role=WS_EDITOR)
-
     # The wizard's own id style: lowercase, no spaces.
     agent_id = re.sub(r"\s+", "_", (data.id or "").strip()).lower() \
         or templates.free_agent_id(template.id, _taken)

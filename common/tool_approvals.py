@@ -12,8 +12,8 @@ stop. Approve runs the call in the same turn; Deny hands the refusal (with
 the person's note) back as the tool's output. No new user message, no new
 turn, the history does not move.
 
-Who answers: the run's owner or an admin, the rule steering's ``system`` mode
-follows (dashboard/backend/routes/tool_approvals.py checks it). Surfaces with
+Who answers: the one operator, from the dashboard
+(dashboard/backend/routes/tool_approvals.py). Surfaces with
 nobody in the dashboard to answer (the widget, channels, ``/v1``)
 keep the advisory refusal: :func:`chat_context` returns None for them.
 
@@ -261,7 +261,8 @@ def transport_for(run_id: str) -> Any:
 
 def _turn_source() -> Optional[str]:
     """The ``source`` of the chat turn this thread belongs to, when the turn
-    context carries it (chat/turns.py). None when there is no turn context."""
+    context carries it (chat/runs.py set_turn_context). None when there is
+    no turn context."""
     try:
         from chat.runs import turn_context
         ctx = turn_context()
@@ -273,8 +274,8 @@ def _turn_source() -> Optional[str]:
 
 
 def _owner_of(run: Dict[str, Any]) -> Optional[str]:
-    """The user who may answer besides an admin: the conversation's owner,
-    else the user this turn acts for."""
+    """The user the call is filed under: the conversation's owner, else the
+    user this turn acts for."""
     conv_id = str(run.get("task_id") or run.get("conversation_id") or "")
     if conv_id and str(run.get("session_type") or "") == "chat":
         try:
@@ -293,7 +294,7 @@ def _owner_of(run: Dict[str, Any]) -> Optional[str]:
     try:
         from common import identity
         return identity.current_user_id() or None
-    except Exception:  # noqa: BLE001 - no identity: admins answer
+    except Exception:  # noqa: BLE001 - no identity: filed under nobody
         return None
 
 

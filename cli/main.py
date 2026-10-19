@@ -1086,16 +1086,6 @@ def _secrets_call(direct, method: str, path: str, *, params=None, json=None):
         raise typer.Exit(1)
 
 
-def _secrets_audit(action: str, workspace: str, name: str, agent: Optional[str],
-                   user: Optional[str]) -> None:
-    """Direct mode writes the same audit row the route would, as the operator."""
-    from common import audit
-    from common.auth import LOCAL_PRINCIPAL
-    audit.record(action, principal=LOCAL_PRINCIPAL, object_type="secret", object_id=name,
-                 workspace=workspace,
-                 details={"name": name, "agent_id": agent or "", "user_id": user or ""})
-
-
 @secrets_app.command("keygen")
 def secrets_keygen():
     """Print a fresh key for AGENTS_HUB_SECRET_KEY."""
@@ -1153,7 +1143,6 @@ def secrets_set(
     def direct(s):
         row = s.set_secret(ws, name, value, agent_id=agent, user_id=user, created_by="local",
                            allowed_hosts=hosts)
-        _secrets_audit("secret.set", ws, name, agent, user)
         return row
 
     body = {"value": value, "agent_id": agent, "user_id": user}
@@ -1177,7 +1166,6 @@ def secrets_delete(
         if not s.delete_secret(ws, name, agent_id=agent, user_id=user):
             console.print(f"[red]Error:[/red] no secret {name} at that scope in {ws}.")
             raise typer.Exit(1)
-        _secrets_audit("secret.delete", ws, name, agent, user)
         return {"deleted": True}
 
     params = {k: v for k, v in (("agent_id", agent), ("user_id", user)) if v}

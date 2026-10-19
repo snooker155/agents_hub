@@ -1,7 +1,5 @@
 export default {
-  ownServices_one: '{{count}} own',
-  ownServices_other: '{{count}} own',
-  startHint: 'Start the agent in its service, or in the workspace runner',
+  startHint: 'Start a resident copy of the agent',
   startFailed: 'Could not start the agent',
   searchAgents: 'Search agents…',
   noAgentsMatch: 'No agent matches “{{query}}”.',

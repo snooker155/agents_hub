@@ -188,12 +188,11 @@ def _seed_workspace_metadata(name: str, attached_path: Optional[str] = None) -> 
     ``attached_path`` records where an attached workspace points, so the API can
     report it without a filesystem round trip.
     """
-    from common.identity import claim_workspace, current_user_id
+    from common.identity import current_user_id
 
     _migrate_legacy_metadata()
     if _workspaces_store.exists(name) and attached_path is None:
         return
-    seeded = False
     with _workspaces_store.transaction():
         meta = _workspaces_store.get(name)
         if meta is None:
@@ -210,18 +209,9 @@ def _seed_workspace_metadata(name: str, attached_path: Optional[str] = None) -> 
             default_chat = _default_chat_agent_id()
             if default_chat:
                 meta["default_chat_agent"] = default_chat
-            seeded = True
         if attached_path is not None:
             meta["attached_path"] = attached_path
         _workspaces_store.put(name, meta)
-    # Outside the transaction: the membership row is a database write, and the
-    # creator has to become an ``owner`` member or they could not reach the
-    # workspace they just made. A no-op in every mode but multi.
-    if seeded:
-        try:
-            claim_workspace(name)
-        except Exception:  # noqa: BLE001 - recoverable (see comment): a create must not fail because of it
-            log.debug("claim_workspace failed for %s", name, exc_info=True)
 
 
 def attach_workspace_folder(target: Path | str, name: Optional[str] = None) -> Path:

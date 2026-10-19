@@ -24,9 +24,7 @@ export default {
     failed: 'failed',
   },
   kinds: {
-    runner: 'Runner',
     resident: 'Resident instance',
-    node: 'Node (migrated)',
     container: 'Container',
     task: 'Task',
     chat: 'Chat',

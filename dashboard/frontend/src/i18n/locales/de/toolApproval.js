@@ -26,7 +26,6 @@ export default {
   noteShown: 'Notiz: {{note}}',
   waiting: 'Wartet auf Ihre Freigabe für {{tool}}',
   errors: {
-    forbidden: 'Nur der Besitzer des Laufs oder ein Admin kann diesen Aufruf beantworten.',
     gone: 'Dieser Aufruf wartet nicht mehr auf eine Antwort.',
     failed: 'Die Antwort konnte nicht gesendet werden. Bitte erneut versuchen.',
   },

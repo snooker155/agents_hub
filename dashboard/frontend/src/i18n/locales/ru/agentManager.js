@@ -1,8 +1,5 @@
 export default {
-  ownServices_one: '{{count}} свой',
-  ownServices_few: '{{count}} своих',
-  ownServices_many: '{{count}} своих',
-  startHint: 'Запустить агента в его сервисе или в раннере пространства',
+  startHint: 'Запустить резидентную копию агента',
   startFailed: 'Не удалось запустить агента',
   searchAgents: 'Поиск агентов…',
   noAgentsMatch: 'Нет агентов по запросу «{{query}}».',

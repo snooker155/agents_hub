@@ -512,14 +512,11 @@ def test_a_turn_run_here_is_announced_when_it_starts_and_ends(monkeypatch):
     assert announced == ["conv-a", "conv-a"]
 
 
-def test_the_running_endpoint_lists_only_chats_the_caller_can_see(client, monkeypatch):
+def test_the_running_endpoint_lists_only_stored_chats(client):
     from common import chat_store, live_runs
-    from routes import chats
 
     chat_store.save_chat({"id": "conv-mine", "messages": []})
-    chat_store.save_chat({"id": "conv-hidden", "messages": []})
-    for conv in ("conv-mine", "conv-hidden", "conv-unstored"):
+    for conv in ("conv-mine", "conv-unstored"):
         live_runs.start_turn(conversation_id=conv)
-    monkeypatch.setattr(chats, "_chat_visible", lambda principal, chat: chat["id"] != "conv-hidden")
 
     assert client.get("/api/chats/running").json() == {"conversations": ["conv-mine"]}

@@ -6,18 +6,9 @@ character hint, and there is no route that reads a value back. A secret is
 only ever read by the launcher, into the environment of a run whose agent
 declares its name.
 
-Who may touch them: ``secrets`` is an owner-scoped workspace segment
-(``common.auth.OWNER_SCOPED_SEGMENTS``), so in ``multi`` mode the middleware
-already refuses anyone but the workspace's owner or an administrator, reads
-included. The routes check again with ``identity.require_role`` so the rule
-does not depend on the middleware's path parsing alone. These routes exist in
-every mode: one operator on a laptop has keys to keep out of ``.env`` too.
-
 The agent side, ``/api/agents/{agent_id}/secrets``, edits which names an
 agent may receive. It lives here rather than in routes/agents.py because it
-is the other half of the same decision, and it is stricter than an ordinary
-agent edit: in ``multi`` mode only an administrator, or the owner of the
-workspace the agent belongs to, may widen what an agent can read.
+is the other half of the same decision.
 """
 from __future__ import annotations
 
@@ -27,9 +18,8 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from common import audit, identity
+from common import identity
 from common import secrets as secret_store
-from common.auth import WS_OWNER
 
 router = APIRouter(tags=["secrets"])
 
@@ -71,18 +61,8 @@ def _check_scope(agent_id: Optional[str], user_id: Optional[str]) -> None:
             raise HTTPException(status_code=400, detail=f"Unknown agent '{agent_id}'")
 
 
-def _scope_details(name: str, agent_id: Optional[str], user_id: Optional[str],
-                   allowed_hosts: Optional[List[str]] = None) -> dict:
-    # What the audit row carries: the name and the scope, never the value.
-    details: dict = {"name": name, "agent_id": agent_id or "", "user_id": user_id or ""}
-    if allowed_hosts is not None:
-        details["allowed_hosts"] = list(allowed_hosts)
-    return details
-
-
 @router.get("/api/workspaces/{name}/secrets")
-async def list_workspace_secrets(request: Request, name: str) -> List[dict]:
-    identity.require_role(_principal(request), workspace=name, role=WS_OWNER)
+async def list_workspace_secrets(name: str) -> List[dict]:
     _require_workspace(name)
     return secret_store.list_secrets(name)
 
@@ -90,7 +70,6 @@ async def list_workspace_secrets(request: Request, name: str) -> List[dict]:
 @router.put("/api/workspaces/{name}/secrets/{secret}")
 async def put_workspace_secret(request: Request, name: str, secret: str, payload: SecretPut):
     principal = _principal(request)
-    identity.require_role(principal, workspace=name, role=WS_OWNER)
     _require_workspace(name)
     agent_id = (payload.agent_id or "").strip() or None
     user_id = (payload.user_id or "").strip() or None
@@ -102,18 +81,13 @@ async def put_workspace_secret(request: Request, name: str, secret: str, payload
                                       allowed_hosts=payload.allowed_hosts)
     except secret_store.SecretsError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    audit.record("secret.set", principal=principal, object_type="secret", object_id=secret,
-                 workspace=name, ip=identity.client_ip(request),
-                 details=_scope_details(secret, agent_id, user_id, row.get("allowed_hosts")))
     return row
 
 
 @router.put("/api/workspaces/{name}/secrets/{secret}/hosts")
-async def put_workspace_secret_hosts(request: Request, name: str, secret: str,
+async def put_workspace_secret_hosts(name: str, secret: str,
                                      payload: SecretHostsPut):
     """Change where a secret may be sent without re-entering its value."""
-    principal = _principal(request)
-    identity.require_role(principal, workspace=name, role=WS_OWNER)
     _require_workspace(name)
     agent_id = (payload.agent_id or "").strip() or None
     user_id = (payload.user_id or "").strip() or None
@@ -122,24 +96,16 @@ async def put_workspace_secret_hosts(request: Request, name: str, secret: str,
                                             agent_id=agent_id, user_id=user_id)
     except secret_store.SecretsError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    audit.record("secret.hosts", principal=principal, object_type="secret", object_id=secret,
-                 workspace=name, ip=identity.client_ip(request),
-                 details=_scope_details(secret, agent_id, user_id, row.get("allowed_hosts")))
     return row
 
 
 @router.delete("/api/workspaces/{name}/secrets/{secret}")
-async def delete_workspace_secret(request: Request, name: str, secret: str,
+async def delete_workspace_secret(name: str, secret: str,
                                   agent_id: Optional[str] = None,
                                   user_id: Optional[str] = None):
-    principal = _principal(request)
-    identity.require_role(principal, workspace=name, role=WS_OWNER)
     _require_workspace(name)
     if not secret_store.delete_secret(name, secret, agent_id=agent_id, user_id=user_id):
         raise HTTPException(status_code=404, detail="No such secret")
-    audit.record("secret.delete", principal=principal, object_type="secret", object_id=secret,
-                 workspace=name, ip=identity.client_ip(request),
-                 details=_scope_details(secret, agent_id, user_id))
     return {"deleted": True}
 
 
@@ -151,12 +117,6 @@ def _agent_or_404(agent_id: str):
     if spec is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     return spec
-
-
-def _require_agent_admin(principal, spec) -> None:
-    """Administrator, or owner of the workspace the agent belongs to: the
-    operator is both."""
-    return None
 
 
 @router.get("/api/agents/{agent_id}/secrets")
@@ -172,7 +132,6 @@ async def put_agent_secrets(request: Request, agent_id: str, payload: AgentSecre
     from agents import registry
     principal = _principal(request)
     spec = _agent_or_404(agent_id)
-    _require_agent_admin(principal, spec)
     names: List[str] = []
     try:
         for raw in payload.secrets:
@@ -187,7 +146,4 @@ async def put_agent_secrets(request: Request, agent_id: str, payload: AgentSecre
                            note="secrets allowlist")
     except ValueError as exc:  # CapabilityViolation included
         raise HTTPException(status_code=400, detail=str(exc))
-    audit.record("agent.secrets", principal=principal, object_type="agent", object_id=agent_id,
-                 ip=identity.client_ip(request),
-                 details={"secrets": names})
     return {"secrets": names}

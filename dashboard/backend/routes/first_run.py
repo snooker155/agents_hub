@@ -22,11 +22,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from common import identity
 
 router = APIRouter(prefix="/api/first-run", tags=["first-run"])
 
@@ -69,14 +68,12 @@ async def act(body: FirstRunAction):
 
 
 @router.post("/model")
-async def first_model(body: FirstModel, request: Request):
+async def first_model(body: FirstModel):
     from common import setup_ops
-    principal = identity.request_principal(request)
     try:
-        return await run_in_threadpool(setup_ops.first_model, body.provider, body.api_key, body.base_url,
-                                       principal=principal)
+        return await run_in_threadpool(setup_ops.first_model, body.provider, body.api_key, body.base_url)
     except setup_ops.SetupOpError as exc:
-        raise HTTPException(status_code=403 if exc.code == "forbidden" else 400,
+        raise HTTPException(status_code=400,
                             detail={"code": exc.code, "message": str(exc)})
 
 
@@ -93,16 +90,15 @@ async def get_options():
 
 
 @router.post("/op")
-async def run_op(body: FirstRunOp, request: Request):
+async def run_op(body: FirstRunOp):
     from common import setup_ops
     if body.operation not in _OPERATIONS:
         raise HTTPException(status_code=400, detail={"code": "unknown_operation",
                                                      "message": f"operation must be one of {', '.join(_OPERATIONS)}"})
-    principal = identity.request_principal(request)
     try:
-        return await run_in_threadpool(setup_ops.perform, body.operation, body.args, principal=principal)
+        return await run_in_threadpool(setup_ops.perform, body.operation, body.args)
     except setup_ops.SetupOpError as exc:
-        raise HTTPException(status_code=403 if exc.code == "forbidden" else 400,
+        raise HTTPException(status_code=400,
                             detail={"code": exc.code, "message": str(exc)})
 
 

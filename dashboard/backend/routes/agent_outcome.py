@@ -16,11 +16,10 @@ import dataclasses
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agents import registry
-from common import audit, identity
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ async def get_default_outcome(agent_id: str):
 
 
 @router.put("/api/agents/{agent_id}/default-outcome")
-async def update_default_outcome(agent_id: str, data: DefaultOutcomeUpdate, request: Request):
+async def update_default_outcome(agent_id: str, data: DefaultOutcomeUpdate):
     from tasks.outcome import OutcomeError, normalize_outcome
     spec = registry.get_agent(agent_id)
     if not spec:
@@ -66,11 +65,4 @@ async def update_default_outcome(agent_id: str, data: DefaultOutcomeUpdate, requ
         registry.add_agent(new_spec)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
-        audit.record("agent.default_outcome", principal=identity.request_principal(request),
-                     object_type="agent", object_id=agent_id,
-                     workspace=getattr(new_spec, "owner_workspace", None),
-                     ip=identity.client_ip(request), details={"cleared": new_outcome is None})
-    except Exception:  # noqa: BLE001 - an audit failure must not undo the save
-        log.warning("could not record the default-outcome audit entry for %s", agent_id, exc_info=True)
     return _payload(new_spec)

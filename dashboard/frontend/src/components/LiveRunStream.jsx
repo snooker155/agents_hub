@@ -220,7 +220,7 @@ function useRunSteering(runId, done) {
   return { messages, refresh };
 }
 
-// `system` adds to the run's system prompt (only its owner or an admin).
+// `system` adds to the run's system prompt.
 // `switch_model` moves the run to another enabled catalog model from its
 // next model call on (the message is the model's `provider/model` id).
 const RUN_STEER_MODES = ['inject', 'interrupt', 'system', 'switch_model'];

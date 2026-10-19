@@ -449,7 +449,7 @@ const AgentManager = () => {
     setStartingAgentId(agent.id);
     try {
       const { data } = await startInstance({ agent_id: agent.id, workspace: workspaceFilter || null });
-      navigate(instancePath(data, agent.id));
+      navigate(instancePath(data));
     } catch (e) {
       toast.error(t('agentManager.startFailed'), errorDetail(e));
     } finally {

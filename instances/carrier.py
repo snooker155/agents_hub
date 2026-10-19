@@ -165,9 +165,8 @@ class CapacityReached(ValueError):
 
 
 def workspace_capacity(workspace: Optional[str], agent_id: str) -> Optional[int]:
-    """The workspace's number for ``agent_id``: how many services of the agent
-    it allows (routes/services.py), and, for a copy started outside any
-    service, how many live copies.
+    """The workspace's number for ``agent_id``: how many live resident copies
+    of the agent it allows.
 
     None (no limit) in the default workspace; elsewhere the workspace's
     capacity override for the agent, 1 when it has none (the same rule the
@@ -200,15 +199,13 @@ def _check_capacity(workspace: Optional[str], agent_id: str) -> None:
 
 
 def start(
-    agent_id: Optional[str],
+    agent_id: str,
     *,
     workspace: Optional[str] = None,
     label: Optional[str] = None,
     take_tasks: bool = False,
     concurrency: Optional[int] = None,
     started_by: Optional[str] = None,
-    service_id: Optional[str] = None,
-    check_capacity: bool = True,
 ) -> Dict[str, Any]:
     """Start a resident instance of ``agent_id`` and return its record.
 
@@ -218,33 +215,20 @@ def start(
     CapacityReached when the workspace already runs as many copies of the
     agent as it allows, and RuntimeError when the process or container cannot
     be started.
-
-    ``agent_id`` None starts a **runner**: the same process bound to no agent,
-    which answers chat turns of any agent (kind ``runner``, docs/services.md).
-    ``service_id`` marks the instance as a replica of that service; a service
-    caps its own replicas, so ``check_capacity`` is off for those and the
-    workspace's per-agent capacity does not apply a second time.
     """
     from agents.registry import get_agent
 
-    agent_id = (agent_id or "").strip() or None
-    spec = None
-    if agent_id:
-        spec = get_agent(agent_id)
-        if not spec:
-            raise ValueError(f"Unknown agent: {agent_id}")
-        if check_capacity:
-            _check_capacity(workspace, agent_id)
-    kind = store.RESIDENT_KIND if agent_id else store.RUNNER_KIND
-    if not label and not agent_id:
-        label = registry.build_label("runner", registry._next_seq("", workspace))
+    agent_id = (agent_id or "").strip()
+    if not agent_id or not get_agent(agent_id):
+        raise ValueError(f"Unknown agent: {agent_id}")
+    _check_capacity(workspace, agent_id)
     instance = registry.ensure_instance(
-        agent_id or "", kind=kind, workspace=workspace, label=label or None,
-        state="starting", service_id=service_id,
+        agent_id, kind=store.RESIDENT_KIND, workspace=workspace, label=label or None,
+        state="starting",
     )
     instance_id = instance["instance_id"]
     fields: Dict[str, Any] = {
-        "take_tasks": bool(take_tasks) and bool(agent_id),
+        "take_tasks": bool(take_tasks),
         "concurrency": clamp_concurrency(concurrency) if concurrency else default_concurrency(),
         "carrier_log_file": str(CARRIER_LOGS_DIR / f"instance_{instance_id}.log"),
         "started_by": started_by,
@@ -263,6 +247,8 @@ def _spawn(instance: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
     """Start the carrier process (or container) for ``instance``."""
     instance_id = instance["instance_id"]
     agent_id = str(instance.get("agent_id") or "")
+    if not agent_id:
+        raise RuntimeError(f"Instance {instance_id} has no agent to run")
     workspace = instance.get("workspace")
     log_file = Path(instance.get("carrier_log_file")
                     or CARRIER_LOGS_DIR / f"instance_{instance_id}.log")
@@ -271,9 +257,8 @@ def _spawn(instance: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
         sys.executable, "-m", "runtime.instance_run",
         "--instance-id", instance_id,
         "--log-file", str(log_file),
+        "--agent-id", agent_id,
     ]
-    if agent_id:
-        inner_cmd.extend(["--agent-id", agent_id])
     abs_ws = _abs_workspace(workspace)
     if abs_ws:
         inner_cmd.extend(["--workspace", abs_ws])
@@ -295,7 +280,7 @@ def _spawn(instance: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
         from managers.container_manager import container_name_for_node, start_node_container
         container_name = container_name_for_node(instance_id)
         result = start_node_container(
-            instance_id, agent_id or "runner", inner_cmd + ["--write-stdout-to-log"], workspace, env,
+            instance_id, agent_id, inner_cmd + ["--write-stdout-to-log"], workspace, env,
         )
         if not result.get("success"):
             raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")

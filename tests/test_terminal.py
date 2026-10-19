@@ -125,11 +125,6 @@ def _ticket(client, rid, session_id=None, headers=None):
     return response.json()["ticket"]
 
 
-def _audit(action):
-    from common import audit
-    return audit.query(action=action)["items"]
-
-
 # ── tickets ──────────────────────────────────────────────────────────────────
 
 def _user():
@@ -180,7 +175,7 @@ def test_unknown_targets_and_other_hosts(procs, client):
 
 # ── a session over the socket ────────────────────────────────────────────────
 
-def test_open_type_resize_and_audit(procs, client):
+def test_open_type_and_resize(procs, client):
     rid = _container_run()
     ticket = _ticket(client, rid)
     with client.websocket_connect(f"/api/terminal/run/{rid}/ws?ticket={ticket}&cols=100&rows=30") as ws:
@@ -194,10 +189,9 @@ def test_open_type_resize_and_audit(procs, client):
         ws.send_json({"type": "resize", "cols": 132, "rows": 40})
         assert _wait(lambda: proc.sizes[-1] == (132, 40))
         session_id = hello["session_id"]
-    assert _wait(lambda: term.manager().get(session_id).sink is None)
-    opened = _audit("terminal.open")
-    assert opened and opened[0]["object_id"] == rid
-    assert opened[0]["details"]["container"] == CONTAINER
+    session = term.manager().get(session_id)
+    assert _wait(lambda: session.sink is None)
+    assert session.target.id == rid and session.target.container == CONTAINER
 
 
 def test_the_shell_exiting_is_reported_and_closes_the_session(procs, client):
@@ -208,9 +202,8 @@ def test_the_shell_exiting_is_reported_and_closes_the_session(procs, client):
         procs[0].exit(0)
         message = ws.receive_json()
         assert message["type"] == "exit" and message["code"] == 0
+        assert message["reason"] == "the shell exited"
     assert term.manager().get(session_id) is None
-    closed = _audit("terminal.close")
-    assert closed and closed[0]["details"]["reason"] == "the shell exited"
 
 
 def test_reconnect_replays_the_buffer_then_streams(procs, client):
@@ -234,7 +227,6 @@ def test_reconnect_replays_the_buffer_then_streams(procs, client):
         assert ws.receive_bytes() == b"echo:pwd\r"
     assert len(procs) == 1
     assert procs[0].sizes[-1] == (90, 20)
-    assert _audit("terminal.resume")
 
 
 def test_a_second_socket_takes_the_session_over(procs, client):
@@ -252,6 +244,7 @@ def test_closing_from_the_panel_ends_the_session_at_once(procs, client):
     rid = _container_run()
     with client.websocket_connect(f"/api/terminal/run/{rid}/ws?ticket={_ticket(client, rid)}") as ws:
         session_id = ws.receive_json()["session_id"]
+        session = term.manager().get(session_id)
         ws.send_json({"type": "close"})
         # Wait for the server's close frame: leaving the block cancels the
         # handler, which could otherwise land before it reads the message.
@@ -259,7 +252,7 @@ def test_closing_from_the_panel_ends_the_session_at_once(procs, client):
             ws.receive_json()
     assert term.manager().get(session_id) is None
     assert procs[0].closed
-    assert _audit("terminal.close")[0]["details"]["reason"] == "closed by the user"
+    assert session.close_reason == "closed by the user"
     response = client.post(f"/api/terminal/run/{rid}/ticket", json={"session_id": session_id})
     assert response.status_code == 410
 
@@ -279,8 +272,7 @@ def test_a_dropped_session_waits_its_grace_period_then_closes(procs):
     assert manager.reap(now=time.time() + 30) == []
     assert manager.reap(now=time.time() + 61) == [session.id]
     assert procs[0].closed and manager.get(session.id) is None
-    row = _audit("terminal.close")[0]
-    assert "reattached" in row["details"]["reason"]
+    assert "reattached" in session.close_reason
 
 
 def test_an_idle_session_closes_even_while_attached(procs, monkeypatch):
@@ -291,7 +283,7 @@ def test_an_idle_session_closes_even_while_attached(procs, monkeypatch):
     manager = term.manager()
     assert manager.reap(now=time.time() + 100) == []
     assert manager.reap(now=session.last_activity + 121) == [session.id]
-    assert "idle" in _audit("terminal.close")[0]["details"]["reason"]
+    assert "idle" in session.close_reason
 
 
 def test_sessions_per_user_are_limited(procs, client, monkeypatch):

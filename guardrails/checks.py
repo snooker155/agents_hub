@@ -91,7 +91,7 @@ _PII_FINDERS = {
 
 def mask(text: str, hits: Any = None) -> str:
     """*text* with every matched secret blanked out: what an excerpt going
-    into the events collection or the audit log shows instead of the real
+    into the events collection shows instead of the real
     value. Longest hits first, so one match that contains another (a full
     card number containing a shorter phone-shaped substring) is not left
     half-masked."""

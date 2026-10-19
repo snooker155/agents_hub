@@ -28,9 +28,6 @@ export default {
   message: {
     directHint: 'Schreiben Sie dieser Kopie, sie antwortet mit ihrer bisherigen Arbeit im Kontext.',
     queuedHint: 'Die Kopie ist beschäftigt oder hat eine eigene Schleife: Ihre Nachricht wird ihr zugestellt und in ihrem Prozess beantwortet.',
-    runnerAgent: 'Welcher Agent antwortet',
-    runnerNeedsAgent: 'Wähle den Agenten, für den dieser Runner antwortet.',
-    runnerHint: 'Dieser Runner antwortet für den gewählten Agenten: deine Nachricht wird ein Chat-Zug dieses Agenten mit der bisherigen Unterhaltung.',
     placeholder: 'An diese Instanz schreiben…',
     send: 'Senden',
     queued: 'Gesendet, wartet auf die Antwort der Instanz.',

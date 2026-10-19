@@ -12,7 +12,6 @@ import shutil
 from tasks import service as tasks_service
 from common.bootstrap import ensure_initial_state
 from common.session_broker import notify_change
-from common import audit, identity
 from workspace import (
     create_workspace_folder,
     attach_workspace_folder,
@@ -644,7 +643,7 @@ async def get_workspace_settings_overrides(name: str):
 
 
 @router.put("/{name}/settings-overrides")
-async def update_workspace_settings_overrides(request: Request, name: str, payload: dict):
+async def update_workspace_settings_overrides(name: str, payload: dict):
     """Replace workspace-scoped settings."""
     _ensure_writable_workspace(name)
     overrides = payload.get("overrides", {})
@@ -662,9 +661,6 @@ async def update_workspace_settings_overrides(request: Request, name: str, paylo
             cleaned[key] = current[key]
     previous = dict(current)
     update_workspace_metadata(name, {"settings": cleaned})
-    audit.record("workspace.settings", principal=identity.request_principal(request),
-                 object_type="workspace", object_id=name, workspace=name,
-                 ip=identity.client_ip(request), details={"keys": sorted(cleaned)})
     # The log level is the one override this process acts on itself, so re-read
     # it now instead of making the user restart the backend. Resolving through
     # the active workspace means editing some *other* workspace is a no-op here.
@@ -818,7 +814,7 @@ async def get_workspace_web_policy(name: str):
 
 
 @router.put("/{name}/web-policy")
-async def update_workspace_web_policy(request: Request, name: str, payload: dict):
+async def update_workspace_web_policy(name: str, payload: dict):
     """Set the workspace's web domain policy. Each key is optional; an empty
     list (or a missing key left as it was) falls back to the global list."""
     _ensure_writable_workspace(name)
@@ -838,10 +834,6 @@ async def update_workspace_web_policy(request: Request, name: str, payload: dict
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=f"{key}: {exc}")
     update_workspace_metadata(name, {"settings": settings})
-    audit.record("workspace.web_policy", principal=identity.request_principal(request),
-                 object_type="workspace", object_id=name, workspace=name,
-                 ip=identity.client_ip(request),
-                 details={k: settings.get(k) for k in _WEB_POLICY_KEYS})
     return _web_policy_payload(name)
 
 
@@ -852,7 +844,7 @@ async def get_workspace_policy(name: str):
 
 
 @router.post("/{name}/policy/import-hooks-file")
-async def import_workspace_hooks_file(request: Request, name: str):
+async def import_workspace_hooks_file(name: str):
     """Store the workspace folder's ``.hooks.json`` as the workspace's hooks.
 
     The file itself is never run (agents write into the folder,
@@ -867,14 +859,11 @@ async def import_workspace_hooks_file(request: Request, name: str):
         raise HTTPException(status_code=404, detail="this workspace has no readable .hooks.json")
     hooks = _validate_hooks(raw)
     update_workspace_metadata(name, {"hooks": hooks})
-    audit.record("workspace.hooks_import", principal=identity.request_principal(request),
-                 object_type="workspace", object_id=name, workspace=name,
-                 ip=identity.client_ip(request), details={"events": sorted(hooks)})
     return _policy_payload(name)
 
 
 @router.put("/{name}/policy")
-async def update_workspace_policy(request: Request, name: str, payload: dict):
+async def update_workspace_policy(name: str, payload: dict):
     """Replace the workspace's tool policy.
 
     ``require_tool_approval``, ``tool_policy`` and ``tool_policy_model`` are
@@ -958,10 +947,6 @@ async def update_workspace_policy(request: Request, name: str, payload: dict):
         updates["hooks"] = _validate_hooks(payload.get("hooks"))
     if updates:
         update_workspace_metadata(name, updates)
-        audit.record("workspace.policy", principal=identity.request_principal(request),
-                     object_type="workspace", object_id=name, workspace=name,
-                     ip=identity.client_ip(request),
-                     details={"keys": sorted(k for k in payload if k in (*settings_keys, "hooks"))})
     return _policy_payload(name)
 
 
@@ -974,15 +959,12 @@ async def get_workspace_personal_memory(name: str):
 
 
 @router.put("/{name}/personal-memory")
-async def update_workspace_personal_memory(request: Request, name: str, data: WorkspacePersonalMemoryUpdate):
+async def update_workspace_personal_memory(name: str, data: WorkspacePersonalMemoryUpdate):
     """Turn personal memory in this workspace on or off. Off, every agent has
     it off; the agents' own switches are kept for when it is turned back on."""
     from memory import personal
     _ensure_writable_workspace(name)
     result = personal.set_workspace_enabled(name, data.enabled)
-    audit.record("workspace.personal_memory", principal=identity.request_principal(request),
-                 object_type="workspace", object_id=name, workspace=name,
-                 ip=identity.client_ip(request), details={"enabled": data.enabled})
     return result
 
 
@@ -996,7 +978,7 @@ async def get_workspace_roles(name: str):
 
 
 @router.put("/{name}/roles/{role}")
-async def update_workspace_role(request: Request, name: str, role: str, data: WorkspaceRoleUpdate):
+async def update_workspace_role(name: str, role: str, data: WorkspaceRoleUpdate):
     """Give a role to one of the workspace's agents, or back to its default
     (empty ``agent_id``). Refused when the agent is not in the workspace, or
     when an agent that calls the role would then reach a capability
@@ -1007,10 +989,6 @@ async def update_workspace_role(request: Request, name: str, role: str, data: Wo
         roles.set_binding(name, role, data.agent_id)
     except roles.RoleError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
-    audit.record("workspace.role", principal=identity.request_principal(request),
-                 object_type="workspace", object_id=name, workspace=name,
-                 ip=identity.client_ip(request),
-                 details={"role": role, "agent_id": data.agent_id or None})
     notify_change("workspaces")
     return {"workspace": name, "roles": roles.describe(name)}
 
@@ -1023,17 +1001,13 @@ async def get_workspace_env(name: str):
 
 
 @router.put("/{name}/env")
-async def update_workspace_env(request: Request, name: str, payload: dict):
+async def update_workspace_env(name: str, payload: dict):
     """Replace workspace-scoped environment variables."""
     _ensure_writable_workspace(name)
     env_vars = payload.get("env_vars", {})
     if not isinstance(env_vars, dict):
         raise HTTPException(status_code=400, detail="env_vars must be a key-value object")
     update_workspace_metadata(name, {"env_vars": env_vars})
-    # Names only, never values: an env block is exactly where a secret lives.
-    audit.record("workspace.env", principal=identity.request_principal(request),
-                 object_type="workspace", object_id=name, workspace=name,
-                 ip=identity.client_ip(request), details={"keys": sorted(env_vars)})
     return {"env_vars": env_vars}
 
 

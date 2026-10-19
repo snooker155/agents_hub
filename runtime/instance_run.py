@@ -1,5 +1,5 @@
 """
-Instance runner: the process of a resident instance (instances/carrier.py).
+The process of a resident instance (instances/carrier.py).
 
 Started by the carrier as::
 
@@ -155,13 +155,8 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
     msg_id = str(message.get("msg_id") or "")
     conversation_id = message.get("conversation_id")
     instance = instance_store.get(instance_id) or {}
-    if not agent_id:
-        log(f"Message {msg_id[:12]} dropped: this runner has no agent of its own")
-        instance_inbox.mark_error(msg_id, "this instance runs no agent of its own; it takes chat turns only")
-        return None
     if not body:
         return None
-    service_id = instance.get("service_id") or None
 
     from agents.agent_factory import create_agent
     from agents.agent_invoke import invoke_agent
@@ -179,8 +174,7 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
     pub_cbs: list = []
     try:
         history = build_history_messages(
-            build_instance_history(instance_id, conversation_id=conversation_id,
-                                   service_id=service_id))
+            build_instance_history(instance_id, conversation_id=conversation_id))
         open_run(
             run_id, agent_id, pid=None, session_id=instance.get("session_id"),
             session_type="chat", channel=_CHANNEL_BY_ORIGIN.get(origin, "instance"),
@@ -188,7 +182,6 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
             title=body[:60] + ("…" if len(body) > 60 else ""),
             input=body, instance_id=instance_id, message_origin=origin,
             conversation_id=conversation_id, carrier_run=True, inbox_msg_id=msg_id,
-            **({"service_id": service_id} if service_id else {}),
         )
         instance_inbox.attach_run(msg_id, run_id)
         instance_registry.mark_active(instance_id, run_id, body[:200])
@@ -659,14 +652,12 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
 class InstanceLoop:
     """Mailbox, task input and heartbeat of one resident instance."""
 
-    def __init__(self, instance_id: str, agent_id: Optional[str], workspace: Optional[str]):
+    def __init__(self, instance_id: str, agent_id: str, workspace: Optional[str]):
         from common.workspace_context import normalize_workspace_name
         from instances import carrier
 
         self.instance_id = instance_id
-        # Empty for a runner: a replica bound to no agent, which takes chat
-        # turns (each naming its own agent) and never tasks.
-        self.agent_id = (agent_id or "").strip()
+        self.agent_id = agent_id.strip()
         self.workspace = workspace
         self.scope = normalize_workspace_name(workspace) or "default"
         self.pool = ThreadPoolExecutor(max_workers=carrier.MAX_CONCURRENCY,
@@ -729,7 +720,7 @@ class InstanceLoop:
         return started
 
     def maybe_sweep_tasks(self, instance: Dict[str, Any]) -> None:
-        if not instance.get("take_tasks") or not self.agent_id:
+        if not instance.get("take_tasks"):
             return
         if self.task_thread and self.task_thread.is_alive():
             return
@@ -752,7 +743,7 @@ class InstanceLoop:
     def run(self) -> None:
         from instances import carrier, store, wake
 
-        log(f"Instance {self.instance_id} ({self.agent_id or 'runner'}) ready, workspace scope {self.scope}")
+        log(f"Instance {self.instance_id} ({self.agent_id}) ready, workspace scope {self.scope}")
         os.environ["AGENT_WORKSPACE"] = self.scope
         _set_status(self.instance_id, "running")
         heartbeat = threading.Thread(target=self._heartbeat, name="instance-heartbeat", daemon=True)
@@ -838,10 +829,10 @@ def _warm_up() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Resident instance runner")
+    parser = argparse.ArgumentParser(description="Resident instance process")
     parser.add_argument("--instance-id", required=True)
-    parser.add_argument("--agent-id", default="",
-                        help="The agent this instance is a copy of; omitted for a runner")
+    parser.add_argument("--agent-id", required=True,
+                        help="The agent this instance is a copy of")
     parser.add_argument("--workspace", default=None)
     parser.add_argument("--log-file", default=None)
     parser.add_argument("--write-stdout-to-log", action="store_true",
@@ -855,7 +846,7 @@ def main() -> None:
         _log_fh = open(log_path, "a", encoding="utf-8", buffering=1)
 
     os.environ.setdefault("AGENT_INSTANCE_ID", args.instance_id)
-    log(f"=== Instance {args.instance_id} starting, agent={args.agent_id or 'runner'} ===")
+    log(f"=== Instance {args.instance_id} starting, agent={args.agent_id} ===")
     signal.signal(signal.SIGTERM, _on_sigterm(args.instance_id))
 
     try:

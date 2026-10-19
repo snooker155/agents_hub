@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from common import access, identity
+from common import identity
 from instances import carrier, delivery, inbox, replies, store
 from instances import history as instance_history
 from instances import registry as instance_registry
@@ -61,12 +61,10 @@ class InstanceMessage(BaseModel):
     client_id: Optional[str] = None
     # Which conversation of the instance; the main one when left out.
     conversation_id: Optional[str] = None
-    # A runner (a copy bound to no agent) answers for the agent named here.
-    agent_id: Optional[str] = None
     # What the chat composer attaches to a turn (chat/models.py): files from
     # the computer or the workspace, and hub records by pointer. Folded into
-    # the message text here (see ``_compose_message``), so every way a copy
-    # takes a message — a revival, its mailbox, a runner — carries them.
+    # the message text here (see ``_compose_message``), so both ways a copy
+    # takes a message, a revival and its mailbox, carry them.
     attachments: List[InstanceAttachment] = []
     references: List[InstanceReference] = []
 
@@ -88,7 +86,7 @@ def _compose_message(instance: Dict[str, Any], body: InstanceMessage, text: str)
     from chat.references import resolve_references
 
     request = ChatRequest(
-        agent_id=instance.get("agent_id") or (body.agent_id or "").strip() or None,
+        agent_id=instance.get("agent_id") or None,
         message=text,
         workspace=instance.get("workspace"),
         project_id=instance.get("project_id"),
@@ -181,18 +179,6 @@ async def list_instances(
     first) or a key of ``store.INSTANCE_SORTS``; ``order`` is ``asc``/``desc``;
     the list pages load rows in batches and refetch the whole loaded window
     from the top, so ``limit`` goes up to 2000.
-
-    A request naming no workspace is otherwise open to any signed-in account
-    (common/auth.py authorize()); the page is additionally narrowed here to
-    instances whose own workspace the caller can see, a no-op outside
-    ``multi`` mode. Filtered after the SQL page is fetched, so ``total`` still
-    counts the unfiltered page (common/access.py). The header counts are not
-    narrowed the same way: ``counts_by_state`` aggregates in SQL and does not
-    take a set of workspaces, so under ``multi`` mode without a single
-    ``workspace`` given they may count instances outside what the items list
-    shows. Left as-is: recomputing the tally in Python for every restricted
-    caller would be the full-table scan this route exists to avoid, and the
-    header strip is not itself the leak (no record is returned, only a count).
     """
     try:
         page = store.list_instances(
@@ -211,9 +197,7 @@ async def list_instances(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    principal = identity.request_principal(request)
-    items = access.filter_by_workspace(principal, page["items"])
-    items = [carrier.sync(i) or i for i in items]
+    items = [carrier.sync(i) or i for i in page["items"]]
     task_ids = {str(i.get("task_id")) for i in items if i.get("task_id")}
     tasks_by_id = tasks_service.get_tasks(task_ids) if task_ids else {}
     return {
@@ -251,9 +235,7 @@ async def start_instance(body: InstanceStart, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-    out = _enrich(instance, request=request)
-    out["for_agent"] = agent_id
-    return out
+    return _enrich(instance, request=request)
 
 
 @router.get("/summary")
@@ -288,10 +270,9 @@ async def get_instance_timeline(instance_id: str, max_turns: int = 40,
     """One conversation as an exchange: what was asked, what it answered, what
     it used to get there, plus anything still queued in it. The main
     conversation when ``conversation_id`` is left out."""
-    instance = _get_or_404(instance_id)
+    _get_or_404(instance_id)
     context = instance_history.describe_context(
-        instance_id, max_turns=max_turns, conversation_id=conversation_id,
-        service_id=instance.get("service_id") or None)
+        instance_id, max_turns=max_turns, conversation_id=conversation_id)
     return {**context, "pending": inbox.pending(instance_id, conversation_id,
                                                 any_conversation=False)}
 
@@ -300,10 +281,9 @@ async def get_instance_timeline(instance_id: str, max_turns: int = 40,
 async def get_instance_context(instance_id: str, max_turns: int = 20,
                                conversation_id: Optional[str] = None):
     """Exactly what the next message of a conversation will carry into the prompt."""
-    instance = _get_or_404(instance_id)
+    _get_or_404(instance_id)
     return instance_history.describe_context(
-        instance_id, max_turns=max_turns, conversation_id=conversation_id,
-        service_id=instance.get("service_id") or None)
+        instance_id, max_turns=max_turns, conversation_id=conversation_id)
 
 
 @router.get("/{instance_id}/conversations")

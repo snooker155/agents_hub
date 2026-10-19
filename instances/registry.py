@@ -32,7 +32,7 @@ DELTA_FIELDS = (
     "instance_id", "agent_id", "workspace", "kind", "state", "label",
     "current_run_id", "task_id", "node_id", "container_name", "session_id",
     "last_activity", "last_activity_at", "finished_at", "runs_count",
-    "total_tokens", "total_duration_ms", "error", "service_id",
+    "total_tokens", "total_duration_ms", "error",
 )
 
 # Environment variable carrying the instance id into a spawned agent process.
@@ -105,7 +105,6 @@ def ensure_instance(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     reuse_session: bool = False,
-    service_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return the instance for this execution context, creating it if new.
 
@@ -124,7 +123,6 @@ def ensure_instance(
         "session_id": session_id, "node_id": node_id,
         "container_name": container_name, "pid": pid, "task_id": task_id,
         "project_id": project_id, "provider": provider, "model": model,
-        "service_id": service_id,
     }
     fields = {k: v for k, v in fields.items() if v is not None}
 

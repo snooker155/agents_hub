@@ -6,25 +6,16 @@ An agent's ``tool_policy`` (``AgentSpec.tool_policy``) maps a tool id, or
 (tools/permission_policy.py). The workspace has the same map under
 ``settings.tool_policy``, edited through ``/api/workspaces/{name}/policy``;
 the agent's entries win over it.
-
-Who may do what. Reading follows workspace visibility, like the neighbouring
-record routes. Writing an agent's policy needs the editor role in the
-workspace that owns the agent; an agent owned by no workspace (a system or
-shared agent, present everywhere) needs an administrator, since the change
-reaches workspaces the caller may not belong to. Outside ``multi`` mode every
-check is a no-op. A write lands in the audit log as ``agent.tool_policy``.
 """
 from __future__ import annotations
 
 import dataclasses
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agents import registry
-from common import access, audit, identity
-from common.auth import WS_EDITOR
 from tools import permission_policy as policy
 
 router = APIRouter(tags=["tool_policy"])
@@ -32,10 +23,6 @@ router = APIRouter(tags=["tool_policy"])
 
 class ToolPolicyUpdate(BaseModel):
     tool_policy: Dict[str, Any] = {}
-
-
-def _principal(request: Request):
-    return identity.request_principal(request)
 
 
 def _agent_or_404(agent_id: str):
@@ -102,44 +89,29 @@ def _payload(spec: Any, workspace: Optional[str]) -> Dict[str, Any]:
 
 
 @router.get("/api/agents/{agent_id}/tool-policy")
-async def get_agent_tool_policy(request: Request, agent_id: str, workspace: Optional[str] = None):
+async def get_agent_tool_policy(agent_id: str, workspace: Optional[str] = None):
     """The agent's tool policy, the mode each of its tools resolves to, and
     the valid modes."""
-    spec = _agent_or_404(agent_id)
-    ws = workspace or getattr(spec, "owner_workspace", None)
-    if ws:
-        access.require_visible(_principal(request), ws)
-    return _payload(spec, workspace)
+    return _payload(_agent_or_404(agent_id), workspace)
 
 
 @router.put("/api/agents/{agent_id}/tool-policy")
-async def update_agent_tool_policy(request: Request, agent_id: str, body: ToolPolicyUpdate,
+async def update_agent_tool_policy(agent_id: str, body: ToolPolicyUpdate,
                                    workspace: Optional[str] = None):
     """Replace the agent's tool policy. An empty object clears it, so the
     workspace policy and the approval list decide again."""
     spec = _agent_or_404(agent_id)
-    principal = _principal(request)
-    owner = getattr(spec, "owner_workspace", None)
-    if owner:
-        identity.require_role(principal, workspace=owner, role=WS_EDITOR)
-    else:
-        identity.require_role(principal, admin=True)
     cleaned = _validated(body.tool_policy)
-    before = policy.clean_policy(getattr(spec, "tool_policy", None) or {})
     new_spec = dataclasses.replace(spec, tool_policy=cleaned)
     try:
         registry.add_agent(new_spec, note="tool policy")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    audit.record("agent.tool_policy", principal=principal, object_type="agent",
-                 object_id=agent_id, workspace=owner, ip=identity.client_ip(request),
-                 details={"before": before, "after": cleaned})
     return _payload(registry.get_agent(agent_id) or new_spec, workspace)
 
 
 @router.get("/api/tool-policy/decisions")
 async def list_tool_policy_decisions(
-    request: Request,
     run_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     workspace: Optional[str] = None,
@@ -147,29 +119,23 @@ async def list_tool_policy_decisions(
 ):
     """Recent tool policy decisions, newest first.
 
-    Filtered to what the caller may see. A run whose agent had no database
+    A run whose agent had no database
     access (a container run on the HTTP state transport) could not write the
     collection; its decisions still ride on the run record
     (``loop.tool_decisions``), so a query by run falls back to those.
     """
-    principal = _principal(request)
-    if workspace:
-        access.require_visible(principal, workspace)
-    visible = access.visible_workspaces(principal)
     rows = policy.list_decisions(run_id=run_id or None, agent_id=agent_id or None,
-                                 workspace=workspace or None, visible=visible, limit=limit)
+                                 workspace=workspace or None, limit=limit)
     if not rows and run_id:
-        rows = _from_run_record(principal, run_id, limit)
+        rows = _from_run_record(run_id, limit)
     return {"decisions": rows}
 
 
-def _from_run_record(principal: Any, run_id: str, limit: int) -> List[Dict[str, Any]]:
+def _from_run_record(run_id: str, limit: int) -> List[Dict[str, Any]]:
     from managers import run_manager
 
     run = run_manager.get_run_by_id(run_id)
     if not run:
-        return []
-    if not access.can_see_workspace(principal, run.get("workspace")):
         return []
     loop = run.get("loop") or {}
     entries = loop.get("tool_decisions") if isinstance(loop, dict) else None

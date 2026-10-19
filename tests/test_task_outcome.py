@@ -467,11 +467,6 @@ def client():
     return TestClient(app)
 
 
-def _audit_actions():
-    from common import db
-    rows = db.get_conn().execute("SELECT action FROM audit_log ORDER BY id").fetchall()
-    return [r["action"] for r in rows]
-
 
 def test_routes_set_read_and_remove_an_outcome(client):
     t = ts.create_task("work")
@@ -493,7 +488,6 @@ def test_routes_set_read_and_remove_an_outcome(client):
     resp = client.delete(f"/api/tasks/{t.id}/outcome")
     assert resp.status_code == 200 and resp.json()["outcome"] is None
     assert ts.get_task(t.id).outcome_evaluations == []
-    assert _audit_actions() == ["task.outcome.set", "task.outcome.delete"]
 
 
 @pytest.mark.parametrize("body", [
@@ -527,7 +521,6 @@ def test_grade_now_grades_the_latest_run_without_moving_the_task(client, fake_gr
     task = ts.get_task(t.id)
     assert task.status == TaskStatus.resolved and no_launch == []
     assert resp.json()["attempts"] == 0, "a manual grading is not an attempt"
-    assert "task.outcome.grade" in _audit_actions()
 
 
 def test_grade_now_without_a_run_is_a_400(client):

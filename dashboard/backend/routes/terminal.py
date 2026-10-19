@@ -135,7 +135,6 @@ async def terminal_socket(websocket: WebSocket, kind: str, target_id: str) -> No
         await websocket.close(code=4401, reason="a valid terminal ticket is required")
         return
     await websocket.accept()
-    ip = identity.client_ip(websocket)
     cols = _int(websocket.query_params.get("cols"), 80)
     rows = _int(websocket.query_params.get("rows"), 24)
     try:
@@ -146,7 +145,7 @@ async def terminal_socket(websocket: WebSocket, kind: str, target_id: str) -> No
             session = _session_for(principal, str(found["session"]), kind, target_id)
         else:
             session = await asyncio.to_thread(term.manager().open, principal, target,
-                                               cols=cols, rows=rows, ip=ip)
+                                               cols=cols, rows=rows)
     except term.TerminalRefused as exc:
         await _refuse(websocket, exc)
         return
@@ -163,8 +162,6 @@ async def terminal_socket(websocket: WebSocket, kind: str, target_id: str) -> No
             pass  # the loop is closed: this socket is gone, the reaper takes over
 
     replay = session.attach(sink)
-    if resumed:
-        term.manager().resumed(session, principal, ip=ip)
     await websocket.send_text(json.dumps({
         "type": "session", "session_id": session.id, "resumed": resumed,
         "container": session.target.container, "label": session.target.label,

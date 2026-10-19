@@ -96,7 +96,7 @@ function InstanceRow({ instance, showAgent, onStop, busy, t }) {
             <Link to={`/agents/${instance.agent_id}`} onClick={(e) => e.stopPropagation()}
                   className="text-xs text-gray-600 hover:text-indigo-600">{instance.agent_id}</Link>
           ) : (
-            <span className="text-xs text-gray-400">{t('instances.kinds.runner')}</span>
+            <span className="text-xs text-gray-300">—</span>
           )}
         </td>
       )}
@@ -139,7 +139,6 @@ function InstanceRow({ instance, showAgent, onStop, busy, t }) {
 
 export default function InstanceList({
   agentId = null,
-  serviceId = null,
   workspace = undefined,
   liveUpdates = true,
   showFilters = true,
@@ -170,19 +169,18 @@ export default function InstanceList({
   const paging = useListPaging('instances', {
     sorts: sortKeys,
     defaultSort: 'live',
-    resetOn: [workspace, agentId, serviceId, filterState, filterKind, liveOnly, query.trim()],
+    resetOn: [workspace, agentId, filterState, filterKind, liveOnly, query.trim()],
   });
 
   const params = useMemo(() => ({
     workspace,
     agent_id: agentId || undefined,
-    service_id: serviceId || undefined,
     state: filterState || undefined,
     kind: filterKind || undefined,
     live: liveOnly ? true : undefined,
     q: query.trim() || undefined,
     ...paging.params,
-  }), [workspace, agentId, serviceId, filterState, filterKind, liveOnly, query, paging.params]);
+  }), [workspace, agentId, filterState, filterKind, liveOnly, query, paging.params]);
 
   const fetchPage = useCallback(async () => {
     setLoading(true);
@@ -307,7 +305,7 @@ export default function InstanceList({
           <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)}
                   className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white">
             <option value="">{t('instances.filters.allKinds')}</option>
-            {Object.keys(KIND_ICONS).filter((k) => k !== 'runner' && k !== 'node').map((k) => (
+            {Object.keys(KIND_ICONS).map((k) => (
               <option key={k} value={k}>{t(`instances.kinds.${k}`)}</option>
             ))}
           </select>

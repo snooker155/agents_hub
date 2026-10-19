@@ -1,8 +1,8 @@
 """The per-call policy trail: every tool call of a run carries
 ``evaluated_permission`` and ``reason_code`` (tools/permission_policy.py), in
 the run payload's ``tool_calls``, on the live ``tool_end`` event and in the log
-marker the run views parse back; deny, ask and auto decisions write audit rows,
-a plain allow does not."""
+marker the run views parse back; deny, ask and auto decisions are stored for
+the Tool policy card, a plain allow is not."""
 from __future__ import annotations
 
 import pytest
@@ -14,7 +14,6 @@ from agents.callbacks.chat_stream import ChatStreamCallback
 from agents.callbacks.guards import ApprovalSignal
 from agents.callbacks.run_statistics import StatsCollectorCallback
 from agents.registry import AgentSpec
-from common import audit
 from tools import permission_policy as policy
 
 
@@ -69,9 +68,7 @@ def classifier(monkeypatch):
 
 
 def _rows():
-    rows = audit.query(action="tool.policy")
-    rows = rows.get("items", rows) if isinstance(rows, dict) else rows
-    return [r for r in rows if (r.get("details") or {}).get("agent_id") == "trail_agent"]
+    return policy.list_decisions(agent_id="trail_agent", limit=500)
 
 
 def _run(tools, calls, callbacks):
@@ -204,9 +201,9 @@ def test_unclear_classifier_reads_auto_unclear(settings, state, classifier):
     assert stats.tool_history[0]["evaluated_permission"] == "ask"
 
 
-# -------------------- audit --------------------
+# -------------------- stored decisions --------------------
 
-def test_audit_rows_for_deny_ask_and_auto_not_for_plain_allow(settings, state, classifier, monkeypatch):
+def test_stored_decisions_for_deny_ask_and_auto_not_for_plain_allow(settings, state, classifier, monkeypatch):
     before = len(_rows())
     spec = _spec({"read_file": "always_allow", "run_shell": "auto"})
     tools = hooks.guard_action_tools([fake_read_file, fake_run_shell], agent_id="trail_agent",
@@ -219,11 +216,11 @@ def test_audit_rows_for_deny_ask_and_auto_not_for_plain_allow(settings, state, c
     _run(tools, [("run_shell", {"command": "make"})], [stats])
     rows = _rows()
     assert len(rows) == before + 1
-    details = rows[0]["details"]
-    assert details["reason_code"] == "auto_run"
-    assert details["evaluated_permission"] == "allow"
+    assert rows[0]["decision"] == "run" and rows[0]["by"] == "auto"
+    assert stats.tool_history[-1]["reason_code"] == "auto_run"
+    assert stats.tool_history[-1]["evaluated_permission"] == "allow"
 
-    # A cached repeat of the same call is on the trail, not in the audit log.
+    # A cached repeat of the same call is on the trail, not in the store.
     _run(tools, [("run_shell", {"command": "make"})], [stats])
     assert len(_rows()) == before + 1
     assert stats.tool_history[-1]["reason_code"] == "auto_run"

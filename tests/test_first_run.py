@@ -6,7 +6,7 @@ What is promised: a fresh install is asked once; an install already in use is
 never stopped by an upgrade; the step, the language and the look survive a
 reload; it cannot be finished without a model and, once finished, stays
 finished until someone starts it again on purpose; a key is checked with the
-provider before it is saved and applies at once; each setup change is audited.
+provider before it is saved and applies at once.
 """
 from __future__ import annotations
 
@@ -268,11 +268,3 @@ def test_the_first_model_is_checked_before_it_is_saved(single, no_keys, ws, prob
     assert out["model"] == "claude-sonnet-5" and out["models"] == 2
     assert provider_env.live()["DEFAULT_PROVIDER"] == "anthropic"
     assert setup_ops.usable_providers() == ["anthropic"]
-
-
-def test_every_setup_change_is_audited(single, no_keys, ws, demo_defs):
-    from common import audit
-    setup_ops.perform("seed_demo")
-    result = audit.query(action="setup.seed_demo")
-    rows = result.get("items", result.get("entries", [])) if isinstance(result, dict) else result
-    assert rows and rows[0]["action"] == "setup.seed_demo"

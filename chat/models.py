@@ -90,8 +90,7 @@ class ChatRequest(BaseModel):
     instance_id: Optional[str] = None
     # A stored agent version this turn is built from (agents/versions.py),
     # instead of the live definition. Checked against the agent's history
-    # before the turn starts (400 for a version it does not have). A
-    # service's own pin (services/store.py) applies when this is empty.
+    # before the turn starts (400 for a version it does not have).
     agent_version: Optional[int] = None
     # Per-run overrides for this turn (agents/run_overrides.py): model,
     # provider, system, system_append, tools, skills, tool_policy,

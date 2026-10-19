@@ -43,7 +43,6 @@ ensure_initial_state()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 
 # Import route modules organized by domain
 from routes import connectors as connectors_router
@@ -149,61 +148,11 @@ app = FastAPI(
 )
 
 
-# ============================================================================
-# Identity: authentication and authorization
-# ============================================================================
-# One operator, no login (see common/identity.py): every request is allowed
-# and acts as the local operator. ``common.identity.authorize_request`` is
-# where that is decided; this function puts the principal on the request and
-# binds the current user for the stores that stamp an owner on new records.
-#
-# Registered BEFORE the CORS middleware on purpose. Starlette's add_middleware
-# inserts at the head of the list and the head is the outermost layer, so the
-# *last* registration wraps every earlier one — registering this guard after
-# CORS would put it outside CORSMiddleware, and its 401 would reach the browser
-# with no Access-Control-Allow-Origin header. The browser then reports a CORS
-# failure instead of the auth failure that actually happened.
-async def _api_token_guard(request, call_next):
-    from common import identity
-
-    allowed, principal = identity.authorize_request(request)
-    if not allowed:
-        from fastapi.responses import JSONResponse
-        if principal is None:
-            # Unchanged from before identity shipped: one ``detail`` string,
-            # whether the request carried no credential, a wrong token or an
-            # expired session. Which of the three it was is not information an
-            # unauthenticated caller has earned.
-            return JSONResponse(status_code=401,
-                                content={"detail": "Invalid or missing API token"})
-        # Authenticated, but not for this. 403 rather than 401 on purpose: the
-        # browser treats a 401 as "your session is gone" and signs itself out,
-        # so answering a workspace the caller simply is not a member of with
-        # 401 would log them out of the whole app.
-        return JSONResponse(status_code=403,
-                            content={"detail": "Not a member of this workspace"})
-
-    # Routes read the principal off the request; the stores that stamp an owner
-    # onto a new record read it off a contextvar instead, so they need no
-    # signature change (common.identity.current_user_id).
-    request.state.principal = principal
-
-    token = identity.set_current_user(principal.id if principal else None)
-    try:
-        return await call_next(request)
-    finally:
-        identity.reset_current_user(token)
-
-
 # Optimistic concurrency for agent edits (agents/revision.py): an If-Match or
 # expected_version that names an older definition is a 409 before the route
 # runs, and reads and writes of an agent carry its definition hash as ETag.
-# Registered before the guard so it sits inside it: only an authorised
-# request is ever checked or tagged.
 from agents.revision import AgentRevisionMiddleware
 app.add_middleware(AgentRevisionMiddleware)
-
-app.add_middleware(BaseHTTPMiddleware, dispatch=_api_token_guard)
 
 
 # A workspace name taken from a request that is not one ordinary path
@@ -238,8 +187,7 @@ def cors_options(env_value: Optional[str]) -> dict:
     ``*`` allows any origin without credentials: browsers refuse a wildcard
     with credentials anyway, and echoing any origin back with credentials
     (what a catch-all regex would do) lets every site on the web call the API
-    as the signed-in person. The doctor's ``cors`` check flags ``*`` in
-    ``multi`` mode. A comma-separated list, or the local dev defaults when
+    as the operator. A comma-separated list, or the local dev defaults when
     empty, keeps credentials and the loopback regex.
     """
     value = (env_value or "").strip()

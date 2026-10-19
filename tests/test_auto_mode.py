@@ -185,10 +185,8 @@ def test_workspace_policy_route_switches_auto_mode(settings, monkeypatch):
     assert workspaces._policy_payload("acme")["allow_auto_approve"] is True
 
     import asyncio
-    from starlette.requests import Request
-    request = Request({"type": "http", "headers": [], "client": ("127.0.0.1", 1)})
-    asyncio.run(workspaces.update_workspace_policy(request, "acme", {"allow_auto_approve": False}))
+    asyncio.run(workspaces.update_workspace_policy("acme", {"allow_auto_approve": False}))
     assert stored["settings"]["allow_auto_approve"] is False
     assert workspaces._policy_payload("acme")["allow_auto_approve"] is False
-    asyncio.run(workspaces.update_workspace_policy(request, "acme", {"allow_auto_approve": True}))
+    asyncio.run(workspaces.update_workspace_policy("acme", {"allow_auto_approve": True}))
     assert "allow_auto_approve" not in stored["settings"]

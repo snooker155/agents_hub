@@ -33,8 +33,7 @@ message is (pending, delivered at step N, expired, interrupted). A message
 the run never took before it finished is marked expired on the first read
 after the run ended.
 
-Access follows the other single-run routes: the one operator may steer any
-run. Every write lands in the audit log as ``run.steer``.
+The one operator may steer any run.
 """
 from __future__ import annotations
 
@@ -45,7 +44,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from common import access, audit, identity, steering
+from common import identity, steering
 from managers import run_manager
 
 log = logging.getLogger(__name__)
@@ -70,14 +69,6 @@ class SteerBody(BaseModel):
 # Background turns started here (an interrupted chat carried on from the run
 # page), kept referenced so they are not collected while they run.
 _TURNS: "set" = set()
-
-
-def _require_can_steer(request: Request, run: Dict[str, Any]):
-    """The caller's principal, once they may write to this run: visible like
-    any single-run route (``access.require_visible``)."""
-    principal = identity.request_principal(request)
-    access.require_visible(principal, run.get("workspace"))
-    return principal
 
 
 def _catalog_model(text: str) -> str:
@@ -271,7 +262,7 @@ def _steer_team(team_run: Any, body: SteerBody, request: Request) -> Dict[str, A
     the team, and the chat (or, with ``send``, this route) carries on with the
     message as the conversation's next turn."""
     run_id = team_run.team_run_id
-    principal = _require_can_steer(request, {"workspace": team_run.workspace})
+    principal = identity.request_principal(request)
     mode, text = _validated(body)
     if mode in steering.OPERATOR_MODES:
         raise HTTPException(status_code=400, detail=(
@@ -299,9 +290,6 @@ def _steer_team(team_run: Any, body: SteerBody, request: Request) -> Dict[str, A
             result["conversation_id"] = next_request.conversation_id
         else:
             result["next"] = "send"
-    audit.record("run.steer", principal=principal, object_type="team_run", object_id=run_id,
-                 workspace=team_run.workspace,
-                 details={"mode": mode, "msg_id": msg["msg_id"], "next": result.get("next")})
     return result
 
 
@@ -318,7 +306,7 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
         if team_run is None:
             raise HTTPException(status_code=404, detail="Run not found")
         return _steer_team(team_run, body, request)
-    principal = _require_can_steer(request, run)
+    principal = identity.request_principal(request)
     mode, text = _validated(body)
 
     status = str(run.get("status") or "")
@@ -336,7 +324,6 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
 
     author_name = getattr(principal, "username", "") or None
     msg = steering.post(run_id, text, mode=mode, author=principal)
-    workspace = run.get("workspace")
     result: Dict[str, Any] = {"message": msg, "run_id": run_id}
 
     if mode in steering.LOOP_MODES:
@@ -347,9 +334,6 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
         snapshot = _snapshot_continuations(str(task.id)) if task is not None else []
         if not _stop(run_id):
             steering.mark(msg["msg_id"], steering.STATUS_FAILED)
-            audit.record("run.steer", principal=principal, object_type="run", object_id=run_id,
-                         workspace=workspace, result="error",
-                         details={"mode": mode, "msg_id": msg["msg_id"], "error": "stop failed"})
             raise HTTPException(status_code=409, detail={
                 "message": "The run could not be stopped", "status": status})
         if is_chat:
@@ -367,9 +351,6 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
             except Exception as exc:  # noqa: BLE001 - any launch failure: the stop stands, the message is marked failed and the caller told
                 log.warning("steering: relaunch after interrupt failed for run %s", run_id, exc_info=True)
                 steering.mark(msg["msg_id"], steering.STATUS_FAILED)
-                audit.record("run.steer", principal=principal, object_type="run", object_id=run_id,
-                             workspace=workspace, result="error",
-                             details={"mode": mode, "msg_id": msg["msg_id"], "error": str(exc)})
                 raise HTTPException(status_code=500,
                                     detail=f"The run was stopped but could not be started again: {exc}")
             _restore_continuations(snapshot, str(task.id), new_run_id)
@@ -394,25 +375,19 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
             result["next"] = "none"
             result["message"] = steering.mark(msg["msg_id"], steering.STATUS_INTERRUPTED) or msg
 
-    audit.record("run.steer", principal=principal, object_type="run", object_id=run_id,
-                 workspace=workspace,
-                 details={"mode": mode, "msg_id": msg["msg_id"], "next": result.get("next"),
-                          "next_run_id": result.get("next_run_id")})
     return result
 
 
 @router.get("/api/runs/{run_id}/steer")
-async def list_run_steering(run_id: str, request: Request):
+async def list_run_steering(run_id: str):
     """The messages sent to a run (or a team run), oldest first, each with its state."""
     run = run_manager.get_run_by_id(run_id)
     if not run:
         team_run = _team_run(run_id)
         if team_run is None:
             raise HTTPException(status_code=404, detail="Run not found")
-        access.require_visible(identity.request_principal(request), team_run.workspace)
         return {"run_id": run_id, "status": team_run.status, "team": True,
                 "messages": steering.list_for_run(run_id)}
-    access.require_visible(identity.request_principal(request), run.get("workspace"))
     status = str(run.get("status") or "")
     if status not in _LIVE_STATUSES and str(run.get("session_type") or "") != "chat":
         # The run is over: whatever it never took will not be taken now. A
