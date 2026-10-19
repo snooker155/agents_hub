@@ -86,20 +86,23 @@ def _file_path(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:
     """Files live under a workspace, so a link needs the workspace name.
 
     Without one there is no page to point at, so the record is dropped: the
-    reply still shows the change in the file/diff panel. The link names the
-    file by its registry id (files/service.py), not by its name; a path the
-    registry does not follow yet is linked by the path.
+    reply still shows the change in the file/diff panel. The link opens the
+    file on the Artifacts page by its registry id (files/service.py), and a
+    file nothing registered yet is registered here. A path the registry does
+    not follow (a hidden folder) has no place there, so it keeps the Files
+    tab of its workspace, linked by the path.
     """
     workspace = (meta.get("workspace") or "").strip()
     if not workspace:
         return None
-    from files.service import FileError, file_at_path
+    from files.service import FileError, ensure_folder_record
     try:
-        record = file_at_path(workspace, entity_id)
+        record = ensure_folder_record(workspace, entity_id)
     except FileError:
         record = None
-    target = record["file_id"] if record else entity_id
-    return f"/workspaces/{quote(workspace)}?tab=files&file={quote(target)}"
+    if record:
+        return f"/artifacts?file={quote(record['file_id'])}"
+    return f"/workspaces/{quote(workspace)}?tab=files&file={quote(entity_id)}"
 
 
 def _workspace_file_label(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:
@@ -161,7 +164,7 @@ KINDS: Dict[str, KindSpec] = {
     "workspace_file": {
         "icon": "🗂️",
         "noun": "Workspace file",
-        "path": lambda eid, meta: f"/files?file={quote(eid)}",
+        "path": lambda eid, meta: f"/artifacts?file={quote(eid)}",
         "label": _workspace_file_label,
     },
 }

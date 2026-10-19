@@ -75,7 +75,8 @@ Deleting such a file on the Files page deletes it from the folder.
 An address names a folder file by its id too. The Files tab of a workspace
 (`/workspaces/<name>?tab=files&file=<id>`) and of a project
 (`/projects/<id>?file=<id>`) keep the open file that way, a chat link to a
-file an agent wrote carries the id, and the folder routes take `file_id`
+file an agent wrote opens it on the Artifacts page (`/artifacts?file=<id>`,
+registering the file first when nothing did), and the folder routes take `file_id`
 (below). The folder listings return `ids`, path to id for every registered
 file; a file nothing registered yet gets its id from the `file-id` route the
 first time it is opened. A link or a client that still sends a path, or a

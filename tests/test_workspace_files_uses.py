@@ -273,7 +273,7 @@ def test_the_agent_tools_list_read_and_save_in_the_run_workspace():
         assert record["source"] == "agent" and record["workspace"] == "acme"
         links = entity_payloads(sink.records())
         assert links == [{"kind": "workspace_file", "id": saved["file_id"], "action": "created",
-                          "title": "summary.md", "url": f"/files?file={saved['file_id']}",
+                          "title": "summary.md", "url": f"/artifacts?file={saved['file_id']}",
                           "icon": "🗂️", "noun": "Workspace file"}]
 
         listed = json.loads(list_workspace_files.invoke({"query": "summ"}))
