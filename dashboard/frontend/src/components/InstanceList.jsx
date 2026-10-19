@@ -316,7 +316,7 @@ export default function InstanceList({
           <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)}
                   className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white">
             <option value="">{t('instances.filters.allKinds')}</option>
-            {Object.keys(KIND_ICONS).map((k) => (
+            {Object.keys(KIND_ICONS).filter((k) => k !== 'runner' && k !== 'node').map((k) => (
               <option key={k} value={k}>{t(`instances.kinds.${k}`)}</option>
             ))}
           </select>

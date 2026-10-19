@@ -55,6 +55,11 @@ RESIDENT_KIND = "resident"
 RUNNER_KIND = "runner"
 CARRIER_KINDS = ("resident", "runner", "node", "container")
 
+#: Kinds this edition never creates: runners (service replicas), nodes and
+#: playground roles. A state directory the full edition also used holds such
+#: rows; listings and counts leave them out unless a kind is asked for by name.
+FOREIGN_KINDS = ("runner", "node", "sim_role")
+
 # Fields an update may set back to None explicitly. Anything else passed as
 # None is ignored, so a partial update never wipes a field by accident.
 CLEARABLE = (
@@ -156,6 +161,9 @@ def _where(
     if kinds:
         clauses.append(f"kind IN ({', '.join('?' * len(kinds))})")
         params.extend(kinds)
+    if not kind and not kinds:
+        clauses.append(f"kind NOT IN ({', '.join('?' * len(FOREIGN_KINDS))})")
+        params.extend(FOREIGN_KINDS)
     if state:
         clauses.append("state = ?")
         params.append(state)

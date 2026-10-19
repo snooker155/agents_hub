@@ -156,6 +156,22 @@ def test_counts_group_states_and_agents():
     assert by_agent["reviewer"] == {"live": 0, "total": 1}
 
 
+def test_rows_of_kinds_this_edition_never_makes_stay_out_of_listings():
+    """A full edition sharing the state directory leaves runner and playground
+    rows behind; the lists and counts here leave them out, a lookup by id or
+    by kind still finds them."""
+    mine = registry.ensure_instance("swe_agent", workspace="ws", state="finished")
+    runner = registry.ensure_instance("", kind="runner", workspace="ws", state="standby")
+    registry.ensure_instance("swe_agent", kind="sim_role", workspace="ws", state="finished")
+
+    page = store.list_instances(workspace="ws")
+    assert [i["instance_id"] for i in page["items"]] == [mine["instance_id"]]
+    assert store.counts_by_state(workspace="ws")["total"] == 1
+    assert "" not in store.counts_by_agent(workspace="ws")
+    assert store.get(runner["instance_id"])["kind"] == "runner"
+    assert store.list_instances(workspace="ws", kind="runner")["total"] == 1
+
+
 def test_retention_archives_old_copies_but_keeps_them_reachable():
     ids = [registry.ensure_instance("swe_agent", workspace="ws", state="finished")["instance_id"]
            for _ in range(5)]
