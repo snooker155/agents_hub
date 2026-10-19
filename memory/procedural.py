@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 
 from common import db
-from common import review as review_mod
 from common.docstore import DocStore
 from common.paths import PROCEDURES_FILE as _PROCEDURES_FILE
 from common.paths import WORKSPACES_ROOT, ensure_agents_hub_root
@@ -67,19 +66,10 @@ class Procedure(BaseModel):
     # and the version of that skill the copy holds (for "update available").
     origin_skill_id: Optional[str] = None
     origin_version: Optional[int] = None
-    # ── Registry: owner and review status (common/review.py) ────────────────
-    # The user id that authored it (stamped on first save, "local" outside a
-    # request). None for skills that predate the field.
+    # ── Registry: owner ─────────────────────────────────────────────────────
+    # Who authored it (stamped on first save, "local" outside a request).
+    # None for skills that predate the field.
     owner_user: Optional[str] = None
-    # draft: not published. in_review: shared, waiting on an admin. approved:
-    # listed on the skills catalog when AGENTS_HUB_REGISTRY_REQUIRE_REVIEW is
-    # on. rejected: an admin turned it down. A record loaded with no stored
-    # value defaults to "approved" when shared, "draft" otherwise (see
-    # ProcedureStore._load_all and common.review.default_status).
-    review_status: str = "draft"
-    review_note: Optional[str] = None
-    reviewed_by: Optional[str] = None
-    reviewed_at: Optional[str] = None
     # None for user-authored; tracked for agent-discovered procedures over time
     success_rate: Optional[float] = None
     use_count: int = 0
@@ -102,16 +92,22 @@ def _record_key(rec: Any) -> Optional[str]:
     return str(rec.get("id")) if isinstance(rec, dict) and rec.get("id") else None
 
 
-def _normalize_review(doc: Any) -> Any:
-    """A stored skill dict with ``review_status`` filled in, for one loaded
-    before the field existed: "approved" when it was already shared, "draft"
-    otherwise (common.review.default_status), so an upgrade never drops a
-    published skill out of the catalog. Non-dict input passes through
+#: Keys the registry review gate of the full edition wrote on a skill. This
+#: edition has no review: a skill is published when ``shared`` is on.
+_LEGACY_REVIEW_KEYS = ("review_status", "review_note", "reviewed_by", "reviewed_at")
+
+
+def _normalize_record(doc: Any) -> Any:
+    """A stored skill dict without the old review fields. A skill stored with
+    ``review_status: in_review`` was a publish waiting on an approval, so it
+    loads as published (``shared`` on). Non-dict input passes through
     unchanged (Procedure(**doc) will raise its own error on it)."""
     if not isinstance(doc, dict):
         return doc
-    return {**doc, "review_status": review_mod.default_status(
-        doc.get("review_status"), bool(doc.get("shared")))}
+    out = {k: v for k, v in doc.items() if k not in _LEGACY_REVIEW_KEYS}
+    if doc.get("review_status") == "in_review":
+        out["shared"] = True
+    return out
 
 
 _LEGACY_MIGRATED = False
@@ -196,7 +192,7 @@ class ProcedureStore:
         out: List[Procedure] = []
         for obj in self.docs.values():
             try:
-                out.append(Procedure(**_normalize_review(obj)))
+                out.append(Procedure(**_normalize_record(obj)))
             except (TypeError, ValueError, AttributeError):
                 continue
         return out
@@ -226,7 +222,7 @@ class ProcedureStore:
         if doc is None:
             return None
         try:
-            p = Procedure(**_normalize_review(doc))
+            p = Procedure(**_normalize_record(doc))
         except (TypeError, ValueError, AttributeError):
             return None
         return p if p.workspace == self.workspace else None
@@ -236,11 +232,8 @@ class ProcedureStore:
         """Store a new skill and record its first version. The version is
         stamped on ``procedure`` itself, so the caller sees the number.
 
-        Also stamps ``owner_user`` (the current request's user id, "local"
-        outside a request) when the caller did not set one, and applies the
-        review publish gate (common/review.py): a brand new skill created
-        already ``shared`` is held at ``in_review`` when the hub requires it,
-        the same as a brand new shared agent or flow.
+        Also stamps ``owner_user`` (the current user id, "local" outside a
+        request) when the caller did not set one.
         """
         from memory import skill_versions
 
@@ -249,12 +242,6 @@ class ProcedureStore:
         if not procedure.owner_user:
             from common import identity
             procedure.owner_user = identity.current_user_id()
-        gated = review_mod.gate_on_publish(False, procedure.shared, procedure.review_status)
-        if gated is not None:
-            procedure.review_status = gated
-            procedure.reviewed_by = None
-            procedure.reviewed_at = None
-            procedure.review_note = None
         with self.docs.transaction():
             number = skill_versions.record_if_changed(procedure, op=version_op, note=version_note)
             if number:
@@ -268,11 +255,6 @@ class ProcedureStore:
         becomes a new version; a bookkeeping change (use count, pin, sharing)
         does not. A skill saved before history existed gets its stored content
         recorded first, so the edit that follows is undoable.
-
-        Also the review gate's other half (common/review.py, see ``add`` for
-        the publish gate): a content change to an already approved, shared
-        skill moves it back to ``in_review``, using the same content fields
-        (``skill_versions.CONTENT_FIELDS``) versioning already tracks.
         """
         from memory import skill_versions
 
@@ -284,27 +266,12 @@ class ProcedureStore:
             if not isinstance(existing, dict) or existing.get("workspace") != self.workspace:
                 return False
 
-            prev_shared = bool(existing.get("shared"))
-            prev_status = review_mod.default_status(existing.get("review_status"), prev_shared)
-            current_status = review_mod.default_status(procedure.review_status, procedure.shared)
-            gated = review_mod.gate_on_publish(prev_shared, procedure.shared, current_status)
-            if gated is None:
-                changed = skill_versions.content_of(existing) != skill_versions.content_of(procedure)
-                gated = review_mod.gate_on_content_change(
-                    prev_status, current_status, procedure.shared, changed)
-            if gated is not None:
-                procedure.review_status = gated
-                procedure.reviewed_by = None
-                procedure.reviewed_at = None
-                procedure.review_note = None
-            else:
-                procedure.review_status = current_status
             if not procedure.owner_user:
                 procedure.owner_user = existing.get("owner_user")
 
             if skill_versions.latest(pid) is None:
                 try:
-                    before = Procedure(**_normalize_review(existing))
+                    before = Procedure(**_normalize_record(existing))
                 except Exception:  # noqa: BLE001 - an unreadable old record just has no baseline
                     before = None
                 if before is not None:

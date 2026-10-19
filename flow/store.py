@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from common import db, review as review_mod
+from common import db
 from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT
 
@@ -54,13 +54,11 @@ class FlowParseError(ValueError):
 
 # Flow-level keys that are NOT written to the YAML skeleton. ``id`` is the
 # store key; ``task_id`` is per-run state owned by the flow-run records
-# (``flow.run_store``), not part of the flow's logic definition. The review
-# fields (fourth-cycle stage 4, common/review.py) are registry bookkeeping,
-# the same reason ``AgentSpec.owner_user``/``review_status`` never appear in
-# an agent's markdown definition.
+# (``flow.run_store``), not part of the flow's logic definition. The owner is
+# registry bookkeeping, the same reason ``AgentSpec.owner_user`` never appears
+# in an agent's markdown definition.
 _NON_YAML_FLOW_FIELDS = {
-    "id", "task_id", "owner_user", "review_status", "review_note",
-    "reviewed_by", "reviewed_at",
+    "id", "task_id", "owner_user",
     # A temporary flow an agent built for one run (is_ephemeral): store-scoped,
     # an exported or imported copy is an ordinary flow.
     "ephemeral", "created_by_agent",
@@ -447,23 +445,27 @@ def _import_legacy_flows() -> None:
 
 # ── public API ───────────────────────────────────────────────────────────────
 
-# ── owner and review status (fourth-cycle stage 4, common/review.py) ───────
+# ── owner, and review fields left by older builds ─────────────────────────
 
-def _ensure_review_fields(flow: Dict[str, Any]) -> Dict[str, Any]:
-    """Fill in a flow's owner/review fields with their defaults in place.
+#: Keys the registry review gate of the full edition wrote on a flow. This
+#: edition has no review: a flow is published when ``shared`` is on.
+_LEGACY_REVIEW_KEYS = ("review_status", "review_note", "reviewed_by", "reviewed_at")
 
-    Applied on every read (so a flow stored before this feature existed still
-    shows a valid ``review_status``) and inside :func:`save_flow` (so every
-    write leaves a complete record on disk, not only a complete one in
-    memory). ``get``/``values`` on the underlying store deserialize a fresh
-    dict per call, so mutating what they return is safe.
+
+def _normalize_record(flow: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill in a flow's owner field and drop the old review fields, in place.
+
+    Applied on every read and inside :func:`save_flow`. A flow stored with
+    ``review_status: in_review`` was a publish waiting on an approval, so it
+    reads as published (``shared`` on). ``get``/``values`` on the underlying
+    store deserialize a fresh dict per call, so mutating what they return is
+    safe.
     """
-    flow["review_status"] = review_mod.default_status(
-        flow.get("review_status"), bool(flow.get("shared")))
+    if flow.get("review_status") == "in_review":
+        flow["shared"] = True
+    for key in _LEGACY_REVIEW_KEYS:
+        flow.pop(key, None)
     flow.setdefault("owner_user", None)
-    flow.setdefault("review_note", None)
-    flow.setdefault("reviewed_by", None)
-    flow.setdefault("reviewed_at", None)
     return flow
 
 
@@ -543,7 +545,7 @@ def list_flows(limit: Optional[int] = None, offset: Optional[int] = None, *,
                 _skip_logged.add((flow_id, str(e)))
                 print(f"[flow_store] skip {flow_id}: {e}")
             continue
-        out.append(_ensure_review_fields(flow))
+        out.append(_normalize_record(flow))
     return out
 
 
@@ -564,7 +566,7 @@ def get_flow(flow_id: str) -> Optional[Dict[str, Any]]:
     if flow is None:
         return None
     _check_entities_exist(flow_id, flow)  # raises FlowParseError on unknown entity
-    return _ensure_review_fields(flow)
+    return _normalize_record(flow)
 
 
 def _notify_flows_changed(flow_id: str | None = None) -> None:
@@ -579,47 +581,20 @@ def save_flow(flow: Dict[str, Any]) -> None:
     """Persist a combined flow dict as the store's document for its id.
 
     The single write chokepoint for every flow save (create, edit, sharing,
-    import), so it is where the review gate (common/review.py) and owner
-    stamping live rather than in any one route:
-
-    - A brand-new flow (no prior document) with no ``owner_user`` already set
-      gets the current request's user id (``common.identity.current_user_id``,
-      "local" outside a request).
-    - Publishing (``shared`` turning False -> True) holds the flow at
-      ``in_review`` instead of listing it, when the hub requires review.
-    - Editing the nodes or edges of an already-approved, shared flow moves it
-      back to ``in_review`` — what passed review may not describe what the
-      flow does any more.
-
-    Both gates are no-ops when ``AGENTS_HUB_REGISTRY_REQUIRE_REVIEW`` is off,
-    so a flow save behaves exactly as it did before this feature existed.
+    import), so it is where owner stamping lives rather than in any one route:
+    a brand-new flow (no prior document) with no ``owner_user`` already set
+    gets the current user id (``common.identity.current_user_id``, "local"
+    outside a request). Publishing (``shared`` on) lists the flow at once.
     """
     if not flow.get("id"):
         raise ValueError("flow must have an 'id'")
     _ensure_legacy_imported()
 
     prev = _FLOWS.get(flow["id"])
-    prev_shared = bool(prev.get("shared")) if isinstance(prev, dict) else False
-    next_shared = bool(flow.get("shared"))
-    current_status = review_mod.default_status(flow.get("review_status"), next_shared)
-
-    gated = review_mod.gate_on_publish(prev_shared, next_shared, current_status)
-    if gated is None and isinstance(prev, dict):
-        changed = (flow.get("nodes") != prev.get("nodes")
-                  or flow.get("edges") != prev.get("edges"))
-        prev_status = review_mod.default_status(prev.get("review_status"), prev_shared)
-        gated = review_mod.gate_on_content_change(prev_status, current_status, next_shared, changed)
-
-    if gated is not None:
-        flow["review_status"] = gated
-        flow["reviewed_by"] = None
-        flow["reviewed_at"] = None
-        flow["review_note"] = None
-    else:
-        flow["review_status"] = current_status
-        flow.setdefault("review_note", None)
-        flow.setdefault("reviewed_by", None)
-        flow.setdefault("reviewed_at", None)
+    if flow.get("review_status") == "in_review":
+        flow["shared"] = True
+    for key in _LEGACY_REVIEW_KEYS:
+        flow.pop(key, None)
 
     if prev is None and not flow.get("owner_user"):
         from common import identity

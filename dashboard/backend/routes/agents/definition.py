@@ -141,10 +141,6 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
     next_instructions = data.instructions if data.instructions is not None else prev_instructions
     next_capabilities = data.capabilities if data.capabilities is not None else prev_capabilities
     next_usage = data.usage if data.usage is not None else prev_usage
-    content_changed = (next_instructions != prev_instructions
-                       or next_capabilities != prev_capabilities
-                       or next_usage != prev_usage)
-
     # Capture the state this edit is about to replace, the same way
     # registry.add_agent does for a structured-field edit — this route never
     # calls add_agent (it only touches the markdown files), so it has to
@@ -177,17 +173,6 @@ async def update_agent_definition(agent_id: str, data: AgentInstructionsUpdate):
             prompt_assembly.write_usage(def_id, data.usage, definitions_dir=defs_dir)
         else:
             prompt_assembly.clear_part(def_id, prompt_assembly.USAGE_FILE, defs_dir)
-
-    # A published, approved agent's definition changing is exactly the case
-    # the review gate exists for: whatever passed review before may not
-    # describe what the agent does now. Re-review is automatic, not an
-    # accusation — the note says why, not that anything is wrong.
-    if (content_changed and spec.shared and spec.review_status == "approved"
-            and registry.registry_review_required()):
-        try:
-            registry.set_review_status(agent_id, "in_review", note="definition changed")
-        except ValueError:
-            pass
 
     return await get_agent_definition(agent_id)
 

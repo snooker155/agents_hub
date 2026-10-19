@@ -36,7 +36,7 @@ and setting it counts as the child overriding that key.
 
 **Never inherited, always the agent's own:** `id`, `name`, `description`,
 `domain`, `capacity`, `definition_id`, `memory_type`, `memory_data`,
-`owner_workspace`, `shared`, the review fields, `system`,
+`owner_workspace`, `shared`, `system`,
 `user_modified`, `is_default_chat_agent`, the `http_*` fields,
 `default_workspace_only`, and `capability_override`, a security exemption is
 granted per agent, reviewed on its own terms, never picked up from a parent.

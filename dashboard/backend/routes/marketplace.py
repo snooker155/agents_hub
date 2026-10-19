@@ -28,23 +28,12 @@ router = APIRouter(prefix="/api/marketplace", tags=["marketplace"])
 
 
 def _is_marketplace_agent(spec: registry.AgentSpec) -> bool:
-    """An agent is listed on the marketplace when explicitly published.
-
-    When the hub requires review (``AGENTS_HUB_REGISTRY_REQUIRE_REVIEW``,
-    agents/registry.py), a shared agent still needs ``review_status ==
-    "approved"`` to appear here; with the toggle off, sharing alone is enough,
-    exactly as before this feature existed — an install that never turns the
-    toggle on sees no change to what the marketplace lists.
-    """
+    """An agent is listed on the marketplace when explicitly published."""
     if is_system_agent(spec.id):
         return False
     if spec.default_workspace_only:
         return False
-    if not spec.shared:
-        return False
-    if registry.registry_review_required() and spec.review_status != "approved":
-        return False
-    return True
+    return bool(spec.shared)
 
 
 def _agent_in_workspace(spec: registry.AgentSpec, workspace: Optional[str]) -> bool:
@@ -102,15 +91,8 @@ async def list_marketplace_agents(workspace: Optional[str] = None):
 
 
 def _is_marketplace_flow(flow: Dict[str, Any]) -> bool:
-    """A flow is listed on the marketplace when shared and, if the hub
-    requires review (``AGENTS_HUB_REGISTRY_REQUIRE_REVIEW``, common/review.py,
-    shared with agents and skills), also approved. Off, sharing alone is
-    enough, exactly as before this feature existed."""
-    if not flow.get("shared"):
-        return False
-    if registry.registry_review_required() and flow.get("review_status") != "approved":
-        return False
-    return True
+    """A flow is listed on the marketplace when shared."""
+    return bool(flow.get("shared"))
 
 
 def _flow_in_workspace(
@@ -163,7 +145,6 @@ async def list_marketplace_flows(workspace: Optional[str] = None):
             "agents": agents,
             "updated_at": flow.get("updated_at"),
             "in_workspace": _flow_in_workspace(flow, workspace, all_flows),
-            "review_status": flow.get("review_status"),
         })
     items.sort(key=lambda f: (f["name"] or "").lower())
     return items
@@ -194,10 +175,6 @@ async def list_marketplace_skills(workspace: Optional[str] = None):
     for p in procedures:
         if not p.shared:
             continue
-        # Same review gate as agents and flows (common/review.py): off by
-        # default, so a skill lists as soon as it is shared, as before.
-        if registry.registry_review_required() and p.review_status != "approved":
-            continue
         attached = registry.get_agent(p.agent_id) if p.agent_id else None
         items.append({
             "id": str(p.id),
@@ -221,7 +198,6 @@ async def list_marketplace_skills(workspace: Optional[str] = None):
             "use_count": p.use_count,
             "updated_at": p.updated_at.isoformat(),
             "in_workspace": bool(ws) and (str(p.id) in local_ids or str(p.id) in local_origins),
-            "review_status": p.review_status,
         })
     items.sort(key=lambda s: (s["name"] or "").lower())
     return items

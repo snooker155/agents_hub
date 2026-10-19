@@ -36,7 +36,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 import json
 import logging
-from common import review as review_mod
 from common import snapshot
 from common.docstore import DocStore
 from common.paths import AGENTS_FILE
@@ -273,21 +272,11 @@ class AgentSpec:
     # and the last readiness report (``readiness``). Written by
     # ``agents.importer``, consumed by ``agents.remote_agent.RemoteAgent``.
     remote: Dict[str, Any] = field(default_factory=dict)
-    # ── Registry: owner and review status (fourth cycle, stage 4) ───────────
-    # The user id that created this agent (set once, at creation; None for
-    # agents that predate the field, or created outside a request such as
-    # bootstrap). Purely informational — it does not gate anything here.
+    # ── Registry: owner ─────────────────────────────────────────────────────
+    # Who created this agent (set once, at creation; None for agents that
+    # predate the field, or created outside a request such as bootstrap).
+    # Purely informational, it does not gate anything here.
     owner_user: Optional[str] = None
-    # draft: not published. in_review: shared, waiting on an admin. approved:
-    # listed on the marketplace when AGENTS_HUB_REGISTRY_REQUIRE_REVIEW is on.
-    # rejected: an admin turned it down; the owner may edit and resubmit.
-    # A record loaded with no stored value defaults to "approved" when shared
-    # (so an install upgrading into this feature keeps every agent it already
-    # listed) and "draft" otherwise. See _validate_agent_dict.
-    review_status: str = "draft"
-    review_note: Optional[str] = None
-    reviewed_by: Optional[str] = None
-    reviewed_at: Optional[str] = None
     # ── Default outcome ──────────────────────────────────────────────────────
     # What "done" looks like for this agent, in the absence of a task of its
     # own outcome (tasks/outcome.py): same shape as ``Task.outcome``, a
@@ -478,18 +467,8 @@ class AgentSpec:
         # built-in agents keep a clean JSON shape.
         if self.remote:
             d["remote"] = dict(self.remote)
-        # Registry: written always (not only when non-default), because the
-        # default itself depends on `shared` at load time (see
-        # _validate_agent_dict) and must not be re-derived on every save.
         if self.owner_user:
             d["owner_user"] = self.owner_user
-        d["review_status"] = self.review_status
-        if self.review_note:
-            d["review_note"] = self.review_note
-        if self.reviewed_by:
-            d["reviewed_by"] = self.reviewed_by
-        if self.reviewed_at:
-            d["reviewed_at"] = self.reviewed_at
         if self.default_outcome:
             d["default_outcome"] = dict(self.default_outcome)
         # Inheritance: only written on a child, so other records keep their shape.
@@ -658,12 +637,6 @@ essential_fields = ("id", "name", "type", "entrypoint")
 #: tools/permission_policy.py).
 TOOL_POLICY_MODES = ("always_allow", "always_ask", "auto")
 
-#: Valid values of ``AgentSpec.review_status`` (docs/registry.md). The single
-#: source is ``common.review``, shared with flows and skills; re-exported here
-#: under its historical name since every call site in this module already
-#: uses it.
-REVIEW_STATUSES = review_mod.STATUSES
-
 #: History filters of a conversation handoff (``AgentSpec.handoff_history``,
 #: applied by chat/handoff.py), widest first. ``last_n`` takes a count:
 #: ``last_n:<N>`` with N between 1 and HANDOFF_LAST_N_MAX.
@@ -748,7 +721,10 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     default_workspace_only = bool(ad.get("default_workspace_only", False))
     definition_id = ad.get("definition_id") or None
     owner_workspace = ad.get("owner_workspace") or None
-    shared = bool(ad.get("shared", False))
+    # A record saved by an older build may still carry ``review_status:
+    # in_review`` from the registry review gate this edition no longer has:
+    # it was a publish waiting on an approval, so it loads as published.
+    shared = bool(ad.get("shared", False)) or ad.get("review_status") == "in_review"
     provider = ad.get("provider") or None
     model = ad.get("model") or None
     base_url = ad.get("base_url") or None
@@ -854,14 +830,6 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     handoff_history = normalize_handoff_history(ad.get("handoff_history"))
 
     owner_user = ad.get("owner_user") or None
-    # common.review.default_status: a legacy record with no stored value
-    # loads as "approved" when already shared, "draft" otherwise, so an
-    # upgrade never drops something already on the marketplace out of the
-    # listing. Shared with flows and skills.
-    review_status = review_mod.default_status(ad.get("review_status"), shared)
-    review_note = ad.get("review_note") or None
-    reviewed_by = ad.get("reviewed_by") or None
-    reviewed_at = ad.get("reviewed_at") or None
 
     raw_default_outcome = ad.get("default_outcome")
     default_outcome: Optional[Dict[str, Any]] = None
@@ -952,10 +920,6 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         handoff_history=handoff_history,
         remote=remote,
         owner_user=owner_user,
-        review_status=review_status,
-        review_note=review_note,
-        reviewed_by=reviewed_by,
-        reviewed_at=reviewed_at,
         default_outcome=default_outcome,
         extends=extends,
         extends_version=extends_version,
@@ -1131,50 +1095,6 @@ def system_agent_ids() -> List[str]:
     return [spec.id for spec in specs if spec.system]
 
 
-def registry_review_required() -> bool:
-    """Whether publishing an agent must wait on an admin's approval.
-
-    Thin wrapper over ``common.review.required()``, kept under this name
-    since every call site (routes/marketplace.py, routes/agents.py,
-    routes/registry.py) already uses it. Flows and skills call the shared
-    function directly.
-    """
-    return review_mod.required()
-
-
-def set_review_status(
-    agent_id: str,
-    status: str,
-    *,
-    note: Optional[str] = None,
-    reviewed_by: Optional[str] = None,
-) -> AgentSpec:
-    """Record an admin's (or the system's) decision on a published agent.
-
-    Goes through :func:`add_agent` like any other edit, so it is still subject
-    to the capability guard and still snapshots version history — a review
-    decision never touches tools or the definition, so neither ever fires in
-    practice, but the record shows the same discipline as a manual edit
-    either way. Raises ``ValueError`` for an unknown agent or status.
-    """
-    if status not in REVIEW_STATUSES:
-        raise ValueError(f"'{status}' is not a valid review status")
-    spec = get_agent(agent_id)
-    if spec is None:
-        raise ValueError(f"Agent '{agent_id}' not found in registry")
-    from datetime import datetime, timezone
-    reviewed_at = datetime.now(timezone.utc).isoformat() if status in ("approved", "rejected") else spec.reviewed_at
-    new_spec = replace(
-        spec,
-        review_status=status,
-        review_note=note if note is not None else spec.review_note,
-        reviewed_by=reviewed_by if status in ("approved", "rejected") else spec.reviewed_by,
-        reviewed_at=reviewed_at,
-    )
-    add_agent(new_spec)
-    return new_spec
-
-
 def add_agent(
     spec: AgentSpec,
     *,
@@ -1238,7 +1158,7 @@ def save_raw(
     """Store ``spec`` exactly as given (its overrides and list deltas are kept,
     nothing is diffed), with the same checks as :func:`add_agent`: the
     inheritance rules, the capability guard on the effective result and on
-    every unpinned descendant, version history and the review gate. Used to
+    every unpinned descendant and version history. Used to
     change or repin a parent while keeping a child's own changes, and to reset
     one override to inherited."""
     from agents import inheritance
@@ -1304,19 +1224,6 @@ def _save_record(
     # Bootstrap itself writes with user_edit=False and leaves the flag alone.
     if user_edit and stored.system and not stored.user_modified:
         stored = replace(stored, user_modified=True)
-
-    # Registry review gate (common.review, shared with flows and skills).
-    # Publishing — going from not-shared to shared — is the moment an agent
-    # becomes somebody else's business; when the hub requires review it is
-    # held at in_review instead of appearing on the marketplace immediately.
-    # Any other save (a tool added, a description edited, an admin decision
-    # recorded through set_review_status) leaves review_status exactly as the
-    # caller set it, so this never fights an explicit approve/reject.
-    was_shared = bool(_prev.shared) if _prev is not None else False
-    gated = review_mod.gate_on_publish(was_shared, stored.shared, stored.review_status)
-    if gated is not None:
-        stored = replace(stored, review_status=gated, reviewed_by=None,
-                         reviewed_at=None, review_note=None)
 
     # Snapshot whatever is currently stored into version history before this
     # call replaces it, so history never has a gap. Only fires when the agent
