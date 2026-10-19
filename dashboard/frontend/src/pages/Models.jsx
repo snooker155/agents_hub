@@ -277,9 +277,7 @@ function CatalogTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-gray-500">
-          Curate which models are available per provider, star each provider's default model, and configure pricing (USD per 1M tokens) used to estimate cost.
-          The catalog and pricing are global; the model a workspace actually uses is set per workspace below, falling back to the global default.
-          Common cloud models are pre-priced with indicative list prices — verify and adjust to match your provider.
+          {t('models.catalogHint')}
         </p>
         <button
           onClick={save}
@@ -385,10 +383,13 @@ function CatalogTab() {
         const Chevron = isCollapsed ? ChevronRight : ChevronDown;
         return (
           <div key={provider} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
+            <div
+              onClick={() => setCollapsed((s) => ({ ...s, [provider]: !s[provider] }))}
+              className={`flex items-center justify-between gap-2 px-4 py-3 bg-gray-50 cursor-pointer select-none hover:bg-gray-100 ${isCollapsed ? '' : 'border-b border-gray-100'}`}
+            >
               <button
-                onClick={() => setCollapsed((s) => ({ ...s, [provider]: !s[provider] }))}
-                className="flex items-center gap-2 min-w-0 text-left"
+                aria-expanded={!isCollapsed}
+                className="flex items-center gap-2 min-w-0 flex-1 text-left"
               >
                 <Chevron className="w-4 h-4 text-gray-400 shrink-0" />
                 <span className={`px-2 py-0.5 rounded border text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
@@ -403,17 +404,17 @@ function CatalogTab() {
                   <span className={`text-xs flex items-center gap-1 ${probe.ok ? 'text-green-600' : 'text-red-500'}`}>
                     {probe.ok
                       ? <><CheckCircle className="w-3.5 h-3.5" /> {
-                          [probe.added > 0 ? `+${probe.added} new` : null,
-                           probe.priced > 0 ? `${probe.priced} priced` : null,
-                           probe.repriced > 0 ? `${probe.repriced} repriced` : null,
-                           probe.kept_manual > 0 ? `${probe.kept_manual} manual kept` : null]
-                            .filter(Boolean).join(', ') || 'up to date'
+                          [probe.added > 0 ? t('models.probe.added', { count: probe.added }) : null,
+                           probe.priced > 0 ? t('models.probe.priced', { count: probe.priced }) : null,
+                           probe.repriced > 0 ? t('models.probe.repriced', { count: probe.repriced }) : null,
+                           probe.kept_manual > 0 ? t('models.probe.keptManual', { count: probe.kept_manual }) : null]
+                            .filter(Boolean).join(', ') || t('models.probe.upToDate')
                         }</>
                       : <><AlertCircle className="w-3.5 h-3.5" /> {probe.error}</>}
                   </span>
                 )}
                 <button
-                  onClick={() => discover(provider)}
+                  onClick={(e) => { e.stopPropagation(); discover(provider); }}
                   disabled={discovering[provider]}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-medium transition-colors"
                 >
@@ -635,7 +636,7 @@ function UsageTab() {
       <div className="flex flex-wrap items-end gap-4 bg-white border border-gray-200 rounded-xl p-4">
         <label className="flex items-center gap-2 text-sm text-gray-600">
           <input type="checkbox" checked={scopeWorkspace} onChange={(e) => setScopeWorkspace(e.target.checked)} className="w-4 h-4 accent-indigo-600" />
-          Limit to current workspace {selectedWorkspace && selectedWorkspace !== 'default' ? `(${selectedWorkspace})` : '(all)'}
+          {t('models.limitToWorkspace', { scope: selectedWorkspace && selectedWorkspace !== 'default' ? selectedWorkspace : t('models.allWorkspaces') })}
         </label>
         <div className="flex flex-col">
           <span className="text-xs text-gray-400 mb-1">{t('models.from')}</span>
