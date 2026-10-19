@@ -557,7 +557,72 @@ def ensure_initial_state() -> dict[str, bool]:
     result["role_references_adopted"] = bool(_adopt_role_references())
     result["capabilities_grandfathered"] = bool(_grandfather_capability_violations())
     result["demo_workspace"] = _seed_demo_workspace()
+    result["removed_features_cleared"] = bool(_clear_removed_features())
     return result
+
+
+#: Built-in agents of features this edition does not have. A state directory
+#: that a full edition used still holds their records; they are dropped here.
+RETIRED_SYSTEM_AGENTS = (
+    "assistant", "support", "service_agent", "system_doctor", "system_engineer",
+    "eval_agent", "scenario_creator", "world_builder", "web_searcher", "sourcer",
+    "modeler_3d",
+)
+#: The full edition's own model runtime, registered as a custom backend.
+RETIRED_PROVIDERS = ("hub-local",)
+RETIRED_WORKSPACES = ("system",)
+
+
+def _clear_removed_features() -> list[str]:
+    """Drop what a full edition left in a shared state directory for features
+    this edition does not have: the built-in agents above, the model runtime's
+    provider and the service's own maintenance workspace. Only built-in
+    records go (an agent marked ``system``, a workspace marked ``system`` whose
+    folder is empty); anything the person made is left alone. Returns what was
+    removed. Never raising."""
+    removed: list[str] = []
+    try:
+        from agents.inheritance import AgentHasChildren
+        from agents.prompt_assembly import delete_definition
+        from agents.registry import load_all_raw, remove_agent
+        retired = set(RETIRED_SYSTEM_AGENTS)
+        for ad in load_all_raw():
+            agent_id = str(ad.get("id") or "")
+            if agent_id not in retired or not ad.get("system"):
+                continue
+            try:
+                if remove_agent(agent_id):
+                    delete_definition(agent_id)
+                    removed.append(f"agent:{agent_id}")
+            except AgentHasChildren:
+                log.warning("removed features: %r kept, other agents extend it", agent_id)
+    except Exception:  # noqa: BLE001 - startup must not fail on a cleanup
+        log.warning("removed features: agent cleanup failed", exc_info=True)
+
+    try:
+        from providers.registry import delete_backend, get_backend
+        for backend_id in RETIRED_PROVIDERS:
+            if get_backend(backend_id) is not None and delete_backend(backend_id):
+                removed.append(f"provider:{backend_id}")
+    except Exception:  # noqa: BLE001 - startup must not fail on a cleanup
+        log.warning("removed features: provider cleanup failed", exc_info=True)
+
+    try:
+        from workspace.storage import WORKSPACES_ROOT, delete_workspace_folder, get_workspace_metadata
+        for name in RETIRED_WORKSPACES:
+            meta = get_workspace_metadata(name) or {}
+            folder = WORKSPACES_ROOT / name
+            empty = not folder.exists() or (folder.is_dir() and not folder.is_symlink()
+                                            and not any(folder.iterdir()))
+            if meta.get("system") and empty:
+                delete_workspace_folder(name)
+                removed.append(f"workspace:{name}")
+    except Exception:  # noqa: BLE001 - startup must not fail on a cleanup
+        log.warning("removed features: workspace cleanup failed", exc_info=True)
+
+    if removed:
+        log.info("removed features: cleared %s", ", ".join(removed))
+    return removed
 
 
 #: Marks that :func:`_adopt_role_references` has run on this install.

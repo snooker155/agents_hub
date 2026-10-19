@@ -479,3 +479,36 @@ def test_bootstrap_writes_are_not_user_edits():
     add_agent(_validate_agent_dict(seed), user_edit=False)
 
     assert get_agent(seed["id"]).user_modified is False
+
+
+# ── what a full edition left behind ──────────────────────────────────────────
+
+def test_records_of_removed_features_are_cleared_and_custom_ones_kept(tmp_path, monkeypatch):
+    """A state directory a full edition used still holds its built-in agents,
+    its model runtime's provider and its maintenance workspace. Startup drops
+    those, and only those: a person's agent of the same name stays."""
+    from agents.registry import get_agent_raw, load_all_raw, replace_all_raw
+    from common import bootstrap
+    from providers.registry import get_backend, upsert_backend
+    from workspace import storage
+
+    seed = next(a for a in _seed_system_agents() if a["id"] == "researcher")
+    retired = {**seed, "id": "service_agent", "name": "Service Agent", "system": True}
+    mine = {**seed, "id": "web_searcher", "name": "My searcher", "system": False}
+    replace_all_raw([r for r in load_all_raw() if r["id"] not in ("service_agent", "web_searcher")]
+                    + [retired, mine])
+    upsert_backend({"id": "hub-local", "label": "Hub runtime", "adapter": "openai",
+                    "base_url": "http://models:8200/v1", "api_key": "x", "headers": {},
+                    "default_model": ""})
+    monkeypatch.setattr(storage, "WORKSPACES_ROOT", tmp_path)
+    storage.create_workspace_folder("system")
+    storage.update_workspace_metadata("system", {"system": True})
+
+    removed = bootstrap._clear_removed_features()
+
+    assert set(removed) == {"agent:service_agent", "provider:hub-local", "workspace:system"}
+    assert get_agent_raw("service_agent") is None
+    assert get_agent_raw("web_searcher") is not None
+    assert get_backend("hub-local") is None
+    assert not storage.get_workspace_metadata("system")
+    assert bootstrap._clear_removed_features() == []
