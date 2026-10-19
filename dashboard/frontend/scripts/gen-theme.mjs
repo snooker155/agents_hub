@@ -677,6 +677,62 @@ ${buttonSelectors.join(',\n')} { color: var(--brand-contrast); }
 :where(html.style-magenta.dark) .bg-white\\/60 { background-color: rgba(226, 0, 116, 0.60); }
 `;
 
+
+/* ── 5. neutral style ──────────────────────────────────────────────────────
+ * The palette preset "neutral" puts `style-neutral` on <html>: the same
+ * neutral surfaces with no brand color at all. Light: graphite buttons and
+ * accents. Dark: light buttons with dark labels. */
+const NEUTRAL_STYLE_DARK = {
+  brandVars: { 50: '#171717', 100: '#262626', 200: '#404040', 300: '#737373', 400: '#a3a3a3',
+    500: '#d4d4d4', 600: '#e5e5e5', 700: '#f5f5f5', 800: '#fafafa', 900: '#fafafa', 950: '#ffffff' },
+  brandBg: { 50: W(0.08), 100: W(0.12), 200: W(0.18), 300: '#a3a3a3', 400: '#d4d4d4', 500: '#e5e5e5',
+    600: '#f5f5f5', 700: '#d4d4d4', 800: '#a3a3a3', 900: W(0.20), 950: W(0.28) },
+  brandText: { 300: '#d4d4d4', 400: '#e5e5e5', 500: '#f5f5f5', 600: '#f5f5f5', 700: '#fafafa',
+    800: '#fafafa', 900: '#ffffff', 950: '#ffffff' },
+  brandBorder: { 50: W(0.14), 100: W(0.20), 200: W(0.28), 300: W(0.40), 400: '#d4d4d4', 500: '#e5e5e5',
+    600: '#e5e5e5', 700: '#e5e5e5', 800: '#e5e5e5', 900: '#e5e5e5' },
+};
+const NEUTRAL_LIGHT_BRAND = { 50: '#fafafa', 100: '#f0f0f0', 200: '#e5e5e5', 300: '#d4d4d4', 400: '#a3a3a3',
+  500: '#525252', 600: '#262626', 700: '#171717', 800: '#0a0a0a', 900: '#0a0a0a', 950: '#000000' };
+const neutralButtonSelectors = [];
+for (const hue of BRAND_HUES) {
+  for (const shade of [500, 600, 700, 800]) {
+    neutralButtonSelectors.push(`:where(html.style-neutral.dark) .bg-${hue}-${shade}.text-white`);
+  }
+}
+const NEUTRAL_STYLE = `
+/* ── 5. neutral style (palette preset "neutral") ─────────────────────── */
+html.style-neutral {
+${varLines('brand', NEUTRAL_LIGHT_BRAND)}
+  --brand:           #262626;
+  --brand-contrast:  #ffffff;
+  --brand-rgb:       38, 38, 38;
+  --info:            #262626;
+  --info-surface:    #f0f0f0;
+  --chart-accent:    #262626;
+  --chart-cat-1:     #262626;
+  --chart-track:     #e5e5e5;
+}
+
+html.style-neutral.dark {
+${varLines('brand', NEUTRAL_STYLE_DARK.brandVars)}
+  --brand:           #f5f5f5;
+  --brand-contrast:  #171717;
+  --brand-rgb:       245, 245, 245;
+${varLines('brand-bg', NEUTRAL_STYLE_DARK.brandBg)}
+${varLines('brand-text', NEUTRAL_STYLE_DARK.brandText)}
+${varLines('brand-border', NEUTRAL_STYLE_DARK.brandBorder)}
+  --info:            #f5f5f5;
+  --info-surface:    ${W(0.12)};
+  --chart-accent:    #f5f5f5;
+  --chart-cat-1:     #f5f5f5;
+  --chart-track:     ${W(0.16)};
+}
+
+/* A brand fill is light here, so the label on it turns dark. */
+${neutralButtonSelectors.join(',\n')} { color: var(--brand-contrast); }
+`;
+
 const out = [
   header,
   tokensBlock,
@@ -686,6 +742,7 @@ const out = [
   dark.lines.join('\n'),
   EXTRAS,
   MAGENTA_STYLE,
+  NEUTRAL_STYLE,
   '\n',
 ].join('\n');
 

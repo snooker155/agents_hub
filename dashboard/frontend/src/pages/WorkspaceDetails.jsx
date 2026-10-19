@@ -13,7 +13,7 @@ import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMe
 import WorkspaceRoles from '../components/workspace/WorkspaceRoles';
 import { useTheme, resolvePalette } from '../components/theme';
 import { invalidateWorkspaceSummary } from '../api/workspaceSummary';
-import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
+import { DEFAULT_PRESET, PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
 import { inputCls } from '../components/settingsUi';
 import {
   SaveWorkspaceSettingsButton, WorkspaceSettingsStatus,
@@ -1354,7 +1354,7 @@ function WorkspacePaletteDefault({ workspace }) {
   const visible = true;
 
   const [overrides, setOverrides] = useState(null);
-  const [draft, setDraft] = useState(PRESETS.neutral);
+  const [draft, setDraft] = useState(PRESETS[DEFAULT_PRESET]);
   const [enabled, setEnabled] = useState({ neutral: false, ok: false, danger: false });
   // Loading is derived from the workspace the overrides were fetched for.
   const [loadedFor, setLoadedFor] = useState(null);
@@ -1373,7 +1373,7 @@ function WorkspacePaletteDefault({ workspace }) {
         const all = data?.overrides && typeof data.overrides === 'object' ? data.overrides : {};
         setOverrides(all);
         const p = all.palette && typeof all.palette === 'object' && Object.keys(all.palette).length ? all.palette : null;
-        setDraft({ ...PRESETS.neutral, ...(p || {}) });
+        setDraft({ ...PRESETS[DEFAULT_PRESET], ...(p || {}) });
         setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
         setError('');
       } catch (err) {
@@ -1437,7 +1437,7 @@ function WorkspacePaletteDefault({ workspace }) {
       await updateWorkspaceSettingsOverrides(workspace, nextOverrides);
       delete nextOverrides.palette;
       setOverrides(nextOverrides);
-      setDraft(PRESETS.neutral);
+      setDraft(PRESETS[DEFAULT_PRESET]);
       setEnabled({ neutral: false, ok: false, danger: false });
       invalidateWorkspaceSummary(workspace);
       await resolvePalette(theme);

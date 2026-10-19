@@ -16,7 +16,7 @@
  * order instead of three separate copies of it.
  */
 import { createContext, useContext } from 'react';
-import { applyPalette, clearPalette } from '../lib/palette';
+import { applyPalette, DEFAULT_PRESET, PRESETS } from '../lib/palette';
 import { checkStoredWorkspace, loadWorkspaceSummary } from '../api/workspaceSummary';
 
 // A default value so a component that reads the theme outside the provider
@@ -94,15 +94,14 @@ async function workspacePalette() {
 
 /**
  * Resolve and apply the palette for the given theme setting: a personal
- * preference first, then the current workspace's default, then nothing (the
- * built-in palette baked into src/theme.css). Safe to call as often as
+ * preference first, then the current workspace's default, then the default
+ * preset (DEFAULT_PRESET in src/lib/palette.js). Safe to call as often as
  * needed — it is the single place this order is decided.
  */
 export async function resolvePalette(theme) {
   const mode = effectiveMode(theme);
   const personal = await personalPalette();
   const palette = hasAnyColor(personal) ? personal : await workspacePalette();
-  if (hasAnyColor(palette)) applyPalette(palette, mode);
-  else clearPalette();
+  applyPalette(hasAnyColor(palette) ? palette : PRESETS[DEFAULT_PRESET], mode);
   return { palette: hasAnyColor(palette) ? palette : null, mode };
 }

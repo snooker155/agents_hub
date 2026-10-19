@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   rampFromColor, contrastRatio, checkPalette, applyPalette, clearPalette, SHADES,
-  PRESETS, PRESET_ORDER, matchPreset,
+  PRESETS, PRESET_ORDER, DEFAULT_PRESET, matchPreset,
 } from '../palette';
 
 describe('rampFromColor', () => {
@@ -115,22 +115,23 @@ describe('applyPalette / clearPalette', () => {
   });
 });
 
-describe('the neutral and magenta presets', () => {
+describe('the magenta and neutral presets', () => {
   const root = document.documentElement;
   afterEach(() => clearPalette());
 
-  it('lists neutral first and magenta next to it', () => {
-    expect(PRESET_ORDER.slice(0, 2)).toEqual(['neutral', 'magenta']);
+  it('lists magenta first, neutral next, and magenta is the default', () => {
+    expect(PRESET_ORDER.slice(0, 2)).toEqual(['magenta', 'neutral']);
+    expect(DEFAULT_PRESET).toBe('magenta');
   });
 
-  it('tells the two apart by the style alone', () => {
+  it('tells each style apart from a custom palette', () => {
     expect(matchPreset(PRESETS.neutral)).toBe('neutral');
     expect(matchPreset(PRESETS.magenta)).toBe('magenta');
-    expect(matchPreset({ ...PRESETS.magenta, brand: '#000000' })).toBeNull();
+    expect(matchPreset({ ...PRESETS.magenta, style: undefined })).toBeNull();
   });
 
-  it('draws magenta from the stylesheet, not from computed ramps', () => {
-    applyPalette(PRESETS.neutral, 'dark');
+  it('draws a style from the stylesheet, not from computed ramps', () => {
+    applyPalette({ brand: '#e20074' }, 'dark');
     expect(root.style.getPropertyValue('--brand-600')).not.toBe('');
     applyPalette(PRESETS.magenta, 'dark');
     expect(root.classList.contains('style-magenta')).toBe(true);
@@ -138,10 +139,13 @@ describe('the neutral and magenta presets', () => {
     expect(checkPalette(PRESETS.magenta, 'dark')).toEqual([]);
   });
 
-  it('drops the style when another palette or none applies', () => {
+  it('keeps one style class at a time and none for a custom palette', () => {
     applyPalette(PRESETS.magenta, 'light');
     applyPalette(PRESETS.neutral, 'light');
     expect(root.classList.contains('style-magenta')).toBe(false);
+    expect(root.classList.contains('style-neutral')).toBe(true);
+    applyPalette({ brand: '#166534' }, 'light');
+    expect(root.classList.contains('style-neutral')).toBe(false);
     applyPalette(PRESETS.magenta, 'light');
     clearPalette();
     expect(root.classList.contains('style-magenta')).toBe(false);
