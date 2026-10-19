@@ -105,7 +105,7 @@ export default {
   youHaveUnsavedChanges: 'You have unsaved changes.',
   palette: {
     title: 'Default palette',
-    description: 'The palette everyone in this workspace sees unless they set their own in Account → Palette.',
+    description: 'The colors of the hub while this workspace is open. Magenta applies until another palette is saved.',
     loadFailed: 'Could not load the workspace palette.',
     saveFailed: 'Could not save the workspace palette.',
     brand: 'Brand',

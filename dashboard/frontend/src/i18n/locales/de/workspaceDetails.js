@@ -105,7 +105,7 @@ export default {
   youHaveUnsavedChanges: 'Es gibt ungespeicherte Änderungen.',
   palette: {
     title: 'Standardpalette',
-    description: 'Die Palette, die alle in diesem Arbeitsbereich sehen, sofern sie nicht unter Konto → Farbpalette ihre eigene wählen.',
+    description: 'Die Farben des Hubs, solange dieser Arbeitsbereich offen ist. Bis eine andere Palette gespeichert ist, gilt Magenta.',
     loadFailed: 'Die Palette des Arbeitsbereichs konnte nicht geladen werden.',
     saveFailed: 'Die Palette des Arbeitsbereichs konnte nicht gespeichert werden.',
     brand: 'Markenfarbe',

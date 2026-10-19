@@ -1348,6 +1348,9 @@ function WorkspaceSettingsTab({ workspace, agents }) {
  * operator and every distinction between "mine" and "the workspace's"
  * default palette blurs into "the same setting".
  */
+// Every optional color of a preset is on.
+const ALL_ON = { neutral: true, ok: true, danger: true };
+
 function WorkspacePaletteDefault({ workspace }) {
   const { t } = useI18n();
   const { theme, resolvedMode } = useTheme();
@@ -1355,7 +1358,12 @@ function WorkspacePaletteDefault({ workspace }) {
 
   const [overrides, setOverrides] = useState(null);
   const [draft, setDraft] = useState(PRESETS[DEFAULT_PRESET]);
-  const [enabled, setEnabled] = useState({ neutral: false, ok: false, danger: false });
+  const [enabled, setEnabled] = useState(ALL_ON);
+  // The person's own colors, kept while a preset is tried on, so "Custom"
+  // brings them back; and whether "Custom" was picked explicitly, which
+  // keeps it selected even when its colors happen to equal a preset's.
+  const [custom, setCustom] = useState(null);
+  const [customPicked, setCustomPicked] = useState(false);
   // Loading is derived from the workspace the overrides were fetched for.
   const [loadedFor, setLoadedFor] = useState(null);
   const loading = loadedFor !== workspace;
@@ -1373,8 +1381,14 @@ function WorkspacePaletteDefault({ workspace }) {
         const all = data?.overrides && typeof data.overrides === 'object' ? data.overrides : {};
         setOverrides(all);
         const p = all.palette && typeof all.palette === 'object' && Object.keys(all.palette).length ? all.palette : null;
-        setDraft({ ...PRESETS[DEFAULT_PRESET], ...(p || {}) });
-        setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
+        // Nothing saved: the default preset applies, so the editor shows it
+        // whole rather than as a partial palette that matches nothing.
+        const nextDraft = p ? { ...PRESETS[DEFAULT_PRESET], style: undefined, ...p } : PRESETS[DEFAULT_PRESET];
+        const nextEnabled = p ? { neutral: Boolean(p.neutral), ok: Boolean(p.ok), danger: Boolean(p.danger) } : ALL_ON;
+        setDraft(nextDraft);
+        setEnabled(nextEnabled);
+        setCustom(p && !matchPreset(p) ? { draft: nextDraft, enabled: nextEnabled } : null);
+        setCustomPicked(false);
         setError('');
       } catch (err) {
         if (!ignore) setError(err?.response?.data?.detail || t('workspaceDetails.palette.loadFailed'));
@@ -1390,7 +1404,37 @@ function WorkspacePaletteDefault({ workspace }) {
 
   const applyPreset = (name) => {
     setDraft(PRESETS[name]);
-    setEnabled({ neutral: true, ok: true, danger: true });
+    setEnabled(ALL_ON);
+    setCustomPicked(false);
+  };
+
+  // Back to the person's own colors, or, when there are none yet, the
+  // current ones without a preset's style so they can be edited.
+  const pickCustom = () => {
+    if (custom) {
+      setDraft(custom.draft);
+      setEnabled(custom.enabled);
+    } else {
+      setDraft((d) => ({ ...d, style: undefined }));
+    }
+    setCustomPicked(true);
+  };
+
+  // Any edit makes the palette the person's own: a preset's style no longer
+  // applies, and the result is remembered for "Custom".
+  const editColor = (key, value) => {
+    const next = { ...draft, [key]: value, style: undefined };
+    setDraft(next);
+    setCustom({ draft: next, enabled });
+    setCustomPicked(true);
+  };
+  const toggleColor = (key, on) => {
+    const nextEnabled = { ...enabled, [key]: on };
+    const next = { ...draft, style: undefined };
+    setDraft(next);
+    setEnabled(nextEnabled);
+    setCustom({ draft: next, enabled: nextEnabled });
+    setCustomPicked(true);
   };
 
   const activePalette = () => {
@@ -1438,7 +1482,8 @@ function WorkspacePaletteDefault({ workspace }) {
       delete nextOverrides.palette;
       setOverrides(nextOverrides);
       setDraft(PRESETS[DEFAULT_PRESET]);
-      setEnabled({ neutral: false, ok: false, danger: false });
+      setEnabled(ALL_ON);
+      setCustomPicked(false);
       invalidateWorkspaceSummary(workspace);
       await resolvePalette(theme);
     } catch (err) {
@@ -1448,7 +1493,7 @@ function WorkspacePaletteDefault({ workspace }) {
     }
   };
 
-  const preset = matchPreset(activePalette());
+  const preset = customPicked ? null : matchPreset(activePalette());
   const ramp = rampFromColor(draft.brand, { mode: resolvedMode });
   const warnings = checkPalette(activePalette(), resolvedMode);
   const hasDefault = Boolean(overrides?.palette && Object.keys(overrides.palette).length);
@@ -1480,25 +1525,26 @@ function WorkspacePaletteDefault({ workspace }) {
                 {t(`workspaceDetails.palette.presets.${name}`)}
               </button>
             ))}
-            <span className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-              preset ? 'text-gray-400' : 'border border-indigo-500 bg-indigo-50 text-indigo-700'
-            }`}>
+            <button type="button" onClick={pickCustom}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${
+                preset ? 'border-gray-200 text-gray-600 hover:bg-gray-50' : 'border-indigo-500 bg-indigo-50 text-indigo-700'
+              }`}>
               {t('workspaceDetails.palette.presets.custom')}
-            </span>
+            </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <PaletteColorField label={t('workspaceDetails.palette.brand')} value={draft.brand} required
-              onChange={(v) => setDraft((d) => ({ ...d, brand: v, style: undefined }))} />
+              onChange={(v) => editColor('brand', v)} />
             <PaletteColorField label={t('workspaceDetails.palette.neutral')} value={draft.neutral}
-              enabled={enabled.neutral} onToggle={(v) => setEnabled((e) => ({ ...e, neutral: v }))}
-              onChange={(v) => setDraft((d) => ({ ...d, neutral: v, style: undefined }))} />
+              enabled={enabled.neutral} onToggle={(v) => toggleColor('neutral', v)}
+              onChange={(v) => editColor('neutral', v)} />
             <PaletteColorField label={t('workspaceDetails.palette.ok')} value={draft.ok}
-              enabled={enabled.ok} onToggle={(v) => setEnabled((e) => ({ ...e, ok: v }))}
-              onChange={(v) => setDraft((d) => ({ ...d, ok: v, style: undefined }))} />
+              enabled={enabled.ok} onToggle={(v) => toggleColor('ok', v)}
+              onChange={(v) => editColor('ok', v)} />
             <PaletteColorField label={t('workspaceDetails.palette.danger')} value={draft.danger}
-              enabled={enabled.danger} onToggle={(v) => setEnabled((e) => ({ ...e, danger: v }))}
-              onChange={(v) => setDraft((d) => ({ ...d, danger: v, style: undefined }))} />
+              enabled={enabled.danger} onToggle={(v) => toggleColor('danger', v)}
+              onChange={(v) => editColor('danger', v)} />
           </div>
 
           <div>
