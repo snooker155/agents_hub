@@ -68,5 +68,6 @@ export default {
     inputContext: 'Input Context',
     response: 'Response',
     logs: 'Logs',
+    loadedTools: 'Loaded tools',
   },
 };

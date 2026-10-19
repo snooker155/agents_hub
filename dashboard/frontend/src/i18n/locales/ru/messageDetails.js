@@ -68,5 +68,6 @@ export default {
     inputContext: 'Входной контекст',
     response: 'Ответ',
     logs: 'Логи',
+    loadedTools: 'Загруженные инструменты',
   },
 };

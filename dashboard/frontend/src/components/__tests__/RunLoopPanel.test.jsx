@@ -83,8 +83,9 @@ describe('RunLoopPanel', () => {
     expect(screen.getByText('runLoop.answeredBy')).toBeInTheDocument();
     expect(screen.getByText('openai/gpt-5')).toBeInTheDocument();
     expect(screen.getByText('runLoop.fallback')).toBeInTheDocument();
-    expect(screen.getByText('runLoop.loadedTools')).toBeInTheDocument();
-    expect(screen.getByText('read_file')).toBeInTheDocument();
+    // Loaded tools have their own tab on the run page (LoadedTools).
+    expect(screen.queryByText('runLoop.loadedTools')).toBeNull();
+    expect(screen.queryByText('read_file')).toBeNull();
     expect(screen.queryByText('runLoop.compactions')).toBeNull();
     expect(screen.queryByText('runLoop.guardrails')).toBeNull();
     expect(screen.queryByText('runLoop.structured')).toBeNull();

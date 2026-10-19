@@ -94,7 +94,7 @@ function DelegationCard({ entry, defaultOpen = true }) {
         {open ? <ChevronUp className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" /> : <ChevronDown className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" />}
       </button>
       {open && (
-        <div className="px-3 pb-2.5 pt-0.5 ml-2 border-l-2 border-indigo-100 space-y-1.5">
+        <div className="px-3 pb-2.5 pt-0.5 space-y-1.5">
           {nested.length === 0 && !answer ? (
             <div className="text-[11px] text-gray-400 italic">{running ? t('chat.working') : t('chat.noOutput')}</div>
           ) : (
