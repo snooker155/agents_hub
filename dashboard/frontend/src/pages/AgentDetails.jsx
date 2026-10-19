@@ -305,7 +305,7 @@ const AgentDetails = () => {
   // opening and hands the page back what its tab renders.
   const docker = useAgentDocker({ id, activeTab, t, toast });
   const model = useAgentModel({ id, t });
-  const skills = useAgentSkills({ id, agent, activeTab, selectedWorkspace, t, toast });
+  const agentSkills = useAgentSkills({ id, agent, activeTab, selectedWorkspace, t, toast });
   const versions = useAgentVersions({ id, activeTab, onRolledBack: fetchData, t });
   usePageChat(definitionChat);
 
@@ -792,7 +792,7 @@ const AgentDetails = () => {
 
   // Published once for the tabs and the overlays; see `agent/context.js`.
   const page = {
-    ...docker, ...model, ...skills, ...versions,
+    ...docker, ...model, ...agentSkills, ...versions,
     PLAN_FORMATS, THINKING_LEVELS, THINK_MODES, activeRun, addExtraPool, agent,
     agentDefinition, agentTasks, allAgents, availableTools,
     capabilityOverridden, capabilityViolation, capabilityOverride, capabilityOverrideSaving,
@@ -816,7 +816,7 @@ const AgentDetails = () => {
     setMemoryType, setPrimaryPool, setReasoningSettings, setResponseFormat,
     setResponseFormatSaving, setSelectedTools, setSelfDelegation, setSelfDelegationSaving,
     setToolsSaving, setWsCapacityEdits, shared, sharedMemories, sharingMessage, sharingSaving,
-    skills, t, tasks, toast, toggleDelegate, toggleTool, toolCategories, toolsDirty,
+    t, tasks, toast, toggleDelegate, toggleTool, toolCategories, toolsDirty,
     toolsMessage, toolsMeta, toolsSaving, workspaceFilter, workspaces, wsCapacities,
     wsCapacityEdits, wsCapacitySaving, wsServiceLimit,
   };
