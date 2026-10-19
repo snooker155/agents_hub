@@ -1,12 +1,9 @@
 import { useI18n } from '../i18n';
 
 /*
- * The one loading indicator: the project mark (public/logo.svg) that unfolds
- * into three orbits, with an optional line of text under it. It mounts as
- * the mark, a core with three satellites on one radius and a spoke to each,
- * holds for a moment, then the spokes fade and every satellite glides to its
- * own orbit while the orbits start turning; every mount replays that
- * entrance. `size` picks the footprint: "lg" for a whole page (the route
+ * The one loading indicator: a core with three satellites that glide out to
+ * their own orbits while the orbits start turning, with an optional line of
+ * text under it; every mount replays that entrance. `size` picks the footprint: "lg" for a whole page (the route
  * fallback and a page whose data is not there yet), "md" for a card or a
  * tab, "sm" for a small panel. The geometry, timing and keyframes are in
  * src/index.css (.ah-loader). Colours come from the theme tokens, so the

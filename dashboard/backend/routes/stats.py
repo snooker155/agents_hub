@@ -1,12 +1,11 @@
 """
-Statistics and system settings API routes.
+Runs, logs and orchestrator settings API routes.
 """
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from typing import Optional
 from pathlib import Path
 
 from tasks import service as tasks_service
-from agents import registry
 from managers import run_manager
 from models import OrchestratorSettings
 from workspace import create_workspace_folder, get_workspace_metadata, update_workspace_metadata
@@ -19,74 +18,6 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["stats"])
 _DEFAULT_ORCHESTRATOR_SETTINGS = {"enabled": False, "assignment_mode": "manual", "followup_mode": "single", "wait_for_completion": False, "execution_mode": "subprocess", "max_retries": 0}
-
-
-@router.get("/api/stats")
-async def get_stats(workspace: Optional[str] = None):
-    all_tasks = tasks_service.list_tasks()
-    if workspace:
-        tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
-    else:
-        tasks = all_tasks
-
-    runs = run_manager.load_runs()
-    agents = registry.list_agents()
-
-    total_tasks = len(tasks)
-    completed_tasks = 0
-    for t in tasks:
-        # handle both enum and string status
-        status = str(getattr(t, "status", ""))
-        if "done" in status.lower() or "completed" in status.lower():
-            completed_tasks += 1
-
-    # Active runs
-    active_runs = [r for r in runs if r.get("status") == "running"]
-
-    # Agent usage distribution
-    agent_usage = {}
-    for r in runs:
-        aid = r.get("agent_id")
-        agent_usage[aid] = agent_usage.get(aid, 0) + 1
-
-    # Domain usage distribution
-    domain_usage = {}
-    agent_map = {a.id: a for a in agents}
-    for r in runs:
-        aid = r.get("agent_id")
-        agent = agent_map.get(aid) if aid else None
-        domain = agent.domain if agent else "unknown"
-        domain_usage[domain] = domain_usage.get(domain, 0) + 1
-
-    # Resource availability (capacity vs active)
-    total_capacity = sum(getattr(a, "capacity", 1) for a in agents)
-    active_count = len(active_runs)
-
-    # Recent runs
-    recent_runs = sorted(runs, key=lambda r: r.get("started_at") or "", reverse=True)[:10]
-
-    return {
-        "total_tasks": total_tasks,
-        "completed_tasks": completed_tasks,
-        "completion_rate": round((completed_tasks / total_tasks * 100), 2) if total_tasks > 0 else 0,
-        "active_runs": active_count,
-        "total_capacity": total_capacity,
-        "available_slots": max(0, total_capacity - active_count),
-        "agent_usage": agent_usage,
-        "domain_usage": domain_usage,
-        "recent_runs": recent_runs,
-        "total_agents": len(agents)
-    }
-
-
-@router.get("/api/stats/overview")
-def get_overview(request: Request, workspace: Optional[str] = None, days: int = 14):
-    """The Dashboard's load and spend widgets (common/dashboard_overview.py)."""
-    from common import identity
-    from common.dashboard_overview import overview
-
-    principal = identity.request_principal(request)
-    return overview(normalize_workspace_name(workspace) or None, days=days, principal=principal)
 
 
 @router.get("/api/runs")

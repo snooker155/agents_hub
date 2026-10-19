@@ -4,7 +4,6 @@
  */
 import { useState } from 'react';
 import { Compass, MessageSquare } from 'lucide-react';
-import LiveMark from '../../liveMark/LiveMark';
 import { LANGUAGES, useI18n } from '../../../i18n';
 import { useTheme } from '../../theme';
 import { ErrorLine, PrimaryButton } from '../ui';
@@ -45,8 +44,7 @@ export default function DoneStep({ ctx, onFinish }) {
     <section className="w-full max-w-xl mx-auto flex flex-col justify-center flex-1 min-h-0" data-testid="first-run-done">
       <div className="min-h-0 overflow-y-auto px-1">
         <div className="flex flex-col items-center text-center pt-2 sm:pt-6">
-          <LiveMark state="idle" size={80} frame="logo" label="Agents Hub" />
-          <h1 className="mt-6 text-3xl font-semibold tracking-tight text-gray-900">{t('firstRun.done.title')}</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-gray-900">{t('firstRun.done.title')}</h1>
           <p className="mt-3 text-base text-gray-500 max-w-md">{t('firstRun.done.subtitle')}</p>
         </div>
         <div className="mt-8 rounded-2xl border border-gray-200 bg-white px-5 py-1">

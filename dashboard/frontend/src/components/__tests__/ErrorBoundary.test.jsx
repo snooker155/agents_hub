@@ -34,10 +34,10 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('the page exploded')).toBeInTheDocument();
   });
 
-  it('offers a way out: reload, or leave for the dashboard', () => {
+  it('offers a way out: reload, or leave for the chat', () => {
     show(<Boom />);
     expect(screen.getByRole('button', { name: /Reload page/ })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Back to dashboard/ })).toHaveAttribute('href', '/dashboard');
+    expect(screen.getByRole('link', { name: /Back to chat/ })).toHaveAttribute('href', '/chat');
   });
 
   it('logs the failure so it is not swallowed', () => {

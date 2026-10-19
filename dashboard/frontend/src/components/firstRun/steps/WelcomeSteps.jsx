@@ -4,7 +4,6 @@
  */
 import { useEffect, useState } from 'react';
 import { Languages, Monitor, Moon, Palette, Sun } from 'lucide-react';
-import LiveMark from '../../liveMark/LiveMark';
 import { LANGUAGES, useI18n } from '../../../i18n';
 import { useTheme } from '../../theme';
 import { ChoiceCard, PrimaryButton, StepFrame } from '../ui';
@@ -22,8 +21,7 @@ export function HelloStep({ next }) {
   }, []);
   return (
     <section className="flex-1 flex flex-col items-center justify-center text-center" data-testid="first-run-hello">
-      <LiveMark state="speak" size={112} frame="logo" label="Agents Hub" />
-      <h1 key={i} className="mt-10 text-5xl sm:text-6xl font-semibold tracking-tight text-gray-900 first-run-fade">
+      <h1 key={i} className="text-5xl sm:text-6xl font-semibold tracking-tight text-gray-900 first-run-fade">
         {HELLOS[i]}
       </h1>
       <p className="mt-4 text-lg text-gray-500 max-w-sm">{t('firstRun.hello.subtitle')}</p>

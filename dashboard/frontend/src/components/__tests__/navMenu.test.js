@@ -52,12 +52,6 @@ describe('navMenu', () => {
     }
   });
 
-  it('dashboard sits with the administration under settings', () => {
-    const groups = buildMenu({ t });
-    const lit = (pathname) => visibleGroups(groups, SIMPLE).flatMap((g) => g.items).filter((it) => isItemActive(it, pathname)).map((it) => it.path);
-    expect(lit('/dashboard')).toEqual(['/settings']);
-  });
-
   it('full menu shows everything', () => {
     const groups = buildMenu({ t });
     expect(visibleGroups(groups, FULL)).toBe(groups);
@@ -75,6 +69,7 @@ describe('navMenu', () => {
     const all = paths(buildMenu({ t }));
     expect(all).not.toContain('/evals');
     expect(all).not.toContain('/playground');
+    expect(all).not.toContain('/dashboard');
   });
 
   it('starts in the simple menu', () => {
@@ -90,7 +85,6 @@ describe('navMenu', () => {
   });
 
   it('matches the active row like the sidebar did', () => {
-    expect(isItemActive({ path: '/dashboard' }, '/dashboard/x')).toBe(false);
     expect(isItemActive({ path: '/agents' }, '/agents/a1')).toBe(true);
     expect(isItemActive({ path: '/artifacts', also: ['/studio'] }, '/studio')).toBe(true);
   });

@@ -13,7 +13,6 @@ export default {
     hint: 'Das einfache Menü zeigt, was Sie für den Einstieg brauchen; das vollständige zeigt jede Seite. Die Seiten bleiben gleich, nur die Übersicht ändert sich.',
   },
   chat: 'Chat',
-  dashboard: 'Dashboard',
   workspaces: 'Workspaces',
   projects: 'Projekte',
   tasks: 'Aufgaben',

@@ -2,9 +2,7 @@
  * The sidebar's map: five groups along the object tree of docs/overview.md,
  * and two ways of showing it.
  *
- * - conversation: where a person talks (the chat) and the
- *   overview of what is going on (the Dashboard, full menu only: a person
- *   using the hub for themselves has little to watch there).
+ * - conversation: where a person talks (the chat).
  * - work: what gets done and when (projects, tasks, flows and the other
  *   forms of joined work, their schedules and what they produced).
  * - agents: who does it and what they know (agents and their live copies,
@@ -16,8 +14,8 @@
  * and the two pages nobody can do without, Settings and Docs); the full menu
  * shows everything. No page is removed in either mode: only the map
  * changes. Every other item names its `home`, the simple row it belongs to
- * (Deployments under Plan, Loops under Agent Flows, Connectors and the
- * Dashboard under Settings), and a page reached by a link lights that row up, so the menu
+ * (Deployments under Plan, Loops under Agent Flows, Connectors under
+ * Settings), and a page reached by a link lights that row up, so the menu
  * never changes shape under the person (see visibleGroups).
  *
  * Kept apart from Layout.jsx so the map can be tested without rendering the
@@ -25,7 +23,7 @@
  * one place to ask.
  */
 import {
-  LayoutDashboard, CheckSquare, Folder, Database, Factory, Wrench, Users,
+  CheckSquare, Folder, Database, Factory, Wrench, Users,
   Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, FolderGit2, Box, Store,
   CalendarClock, BookOpen, Brain, Images, Repeat, UsersRound,
   GraduationCap, Globe, Link2, Layers, Rocket, ShieldCheck,
@@ -66,7 +64,6 @@ export function buildMenu({ t }) {
       key: 'conversation',
       items: [
         { name: t('nav.chat'), path: '/chat', icon: MessageCircle, simple: true },
-        { name: t('nav.dashboard'), path: '/dashboard', icon: LayoutDashboard, home: '/settings' },
       ],
     },
     {
@@ -117,8 +114,7 @@ export function buildMenu({ t }) {
     {
       key: 'records',
       items: [
-        // What happened: the Dashboard is their summary, and
-        // like it they sit under Settings in the simple menu.
+        // What happened: they sit under Settings in the simple menu.
         { name: t('nav.sessions'), path: '/sessions', icon: PlayCircle, home: '/settings' },
         { name: t('nav.messages'), path: '/messages', icon: ScrollText, home: '/settings' },
         { name: t('nav.runGroups'), path: '/run-groups', icon: Layers, home: '/settings' },
@@ -143,8 +139,7 @@ export function buildMenu({ t }) {
 /** Whether `item` is the row of the page at `pathname`. */
 export function isItemActive(item, pathname) {
   const under = (path) => pathname === path || pathname.startsWith(path + '/');
-  const own = item.path === '/dashboard' ? pathname === item.path : under(item.path);
-  return own || (item.also || []).some(under);
+  return under(item.path) || (item.also || []).some(under);
 }
 
 /**

@@ -3,6 +3,6 @@ export default {
   description: 'The rest of the app is fine. Reload the page to try again, or go back to the dashboard.',
   detailsLabel: 'Error',
   reload: 'Reload page',
-  backToDashboard: 'Back to dashboard',
+  backToChat: 'Back to chat',
   loading: 'Loading…',
 };

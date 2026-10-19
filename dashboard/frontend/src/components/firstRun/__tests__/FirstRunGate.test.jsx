@@ -14,7 +14,6 @@ const firstRunApi = vi.hoisted(() => ({
 }));
 vi.mock('../../../api/firstRun', () => firstRunApi);
 vi.mock('../../docs/WelcomeTour', () => ({ useWelcomeTour: () => ({ start: vi.fn() }) }));
-vi.mock('../../liveMark/LiveMark', () => ({ default: () => null }));
 
 const renderGate = (auth = {}) => render(
   <I18nProvider>

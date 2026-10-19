@@ -309,16 +309,15 @@ html.dark .react-flow__minimap-mask {
 }
 
 /* ── PageLoader (src/components/PageLoader.jsx) ─────────────────────────────
- * The loading indicator starts as the project mark (public/logo.svg: a core,
- * three satellites on one radius 120° apart, a spoke to each) and unfolds
- * into three orbits: the mark holds for --ah-hold, then the spokes fade,
- * the ring appears and every satellite glides from the mark's radius
- * (--ah-r0) to its own orbit (--ah-r) while the orbits start turning.
- * The mark is drawn at the size the icon has elsewhere, 64px wide (core
- * r≈10.4px, satellites r≈6.7px at 28px from the centre), inside a 96px box.
- * The middle satellite moves a little out from the mark's radius, shrinks
- * a little and starts to turn; the outer one rides the ring outside the mark, the inner
- * one shrinks more and tucks in near the core.
+ * The loading indicator starts as a core with three satellites on one radius
+ * 120° apart, a spoke to each, and unfolds into three orbits: it holds for
+ * --ah-hold, then the spokes fade, the ring appears and every satellite
+ * glides from the starting radius (--ah-r0) to its own orbit (--ah-r) while
+ * the orbits start turning. It is 64px wide at the start (core r≈10.4px,
+ * satellites r≈6.7px at 28px from the centre), inside a 96px box. The
+ * middle satellite moves a little out, shrinks a little and starts to turn;
+ * the outer one rides the ring, the inner one shrinks more and tucks in near
+ * the core.
  */
 .ah-loader {
   position: relative;

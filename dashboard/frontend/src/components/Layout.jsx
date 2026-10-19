@@ -14,7 +14,6 @@ import { routeTitleKey } from './routeTitles';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
-const LOGO_URL = `${import.meta.env.BASE_URL}logo.svg`;
 
 const PROVIDER_CONFIG = {
   openai:    { label: 'OpenAI',    color: 'text-green-700 bg-green-50 border-green-200' },
@@ -319,10 +318,9 @@ const Layout = ({ children }) => {
             : `${sidebarCollapsed ? 'w-16' : 'w-64'} h-full transition-[width] duration-200`
         } bg-white shadow-md border-r border-gray-200 overflow-y-auto overflow-x-hidden flex flex-col shrink-0`}
       >
-        {/* The mark and the name, centred; folded, the mark alone. The fold
-            button itself is in the top bar, left of the workspace. */}
-        <div className={`flex items-center gap-2 py-6 ${sidebarCollapsed ? 'justify-center px-2' : 'px-6'}`}>
-          <img src={LOGO_URL} alt={sidebarCollapsed ? t('layout.serviceName') : ''} className={`${sidebarCollapsed ? 'w-9 h-9' : 'w-8 h-8'} shrink-0`} />
+        {/* The name; folded, nothing. The fold button itself is in the top
+            bar, left of the workspace. */}
+        <div className={`flex items-center gap-2 ${sidebarCollapsed ? 'justify-center px-2 py-3' : 'px-6 py-6'}`}>
           {!sidebarCollapsed && (
             <h1 className="text-2xl font-bold leading-none text-indigo-600 truncate min-w-0">{t('layout.serviceName')}</h1>
           )}

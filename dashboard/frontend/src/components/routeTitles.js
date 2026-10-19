@@ -3,7 +3,6 @@
 export const ROUTE_TITLES = [
   { match: /^\/$/, titleKey: 'layout.titles.chat' },
   { match: /^\/chat(\/.*)?$/, titleKey: 'layout.titles.chat' },
-  { match: /^\/dashboard$/, titleKey: 'layout.titles.dashboard' },
   { match: /^\/orchestrator$/, titleKey: 'layout.titles.orchestrator' },
   { match: /^\/tasks$/, titleKey: 'layout.titles.tasks' },
   { match: /^\/tasks\/.+$/, titleKey: 'layout.titles.taskDetails' },

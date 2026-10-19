@@ -18,7 +18,6 @@ const demoApi = vi.hoisted(() => ({ setDemo: vi.fn() }));
 vi.mock('../../../api/demo', () => demoApi);
 const wsApi = vi.hoisted(() => ({ getWorkspacePersonalMemory: vi.fn(), updateWorkspacePersonalMemory: vi.fn() }));
 vi.mock('../../../api/workspaces', () => wsApi);
-vi.mock('../../liveMark/LiveMark', () => ({ default: () => null }));
 
 const EMPTY = {
   providers: [], default_model: { provider: 'openai', model: '', usable: false },

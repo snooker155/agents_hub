@@ -13,7 +13,6 @@ export default {
     hint: 'The simple menu keeps what you need to start; the full menu shows every page. Pages stay the same, only the map changes.',
   },
   chat: 'Chat',
-  dashboard: 'Dashboard',
   workspaces: 'Workspaces',
   projects: 'Projects',
   tasks: 'Tasks',

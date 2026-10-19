@@ -17,7 +17,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { ExternalRunBadge } from '../components/RunOriginBadges';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
-import { fmtRunUsd } from '../components/dashboard/format';
+import { fmtRunUsd } from '../lib/runCost';
 // One label and one value style for every field of the metadata card, so an
 // id, a date and a name read at the same size.
 const META_LABEL = 'text-gray-500';

@@ -523,7 +523,7 @@ def uvicorn_options(argv: Optional[List[str]] = None) -> Dict[str, Any]:
     options: Dict[str, Any] = {"host": args.host, "port": args.port, "reload": args.reload}
     if args.reload:
         options["reload_dirs"] = RELOAD_DIRS
-        # An open stream (a chat, the live mark's events) would hold the old
+        # An open stream (a chat) would hold the old
         # process forever: uvicorn waits for every connection to close before
         # the new code starts. The browser reconnects to the new one.
         options["timeout_graceful_shutdown"] = RELOAD_GRACE_SECONDS

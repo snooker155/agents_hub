@@ -38,7 +38,6 @@ export default {
   titles: {
     health: 'Статус',
     chat: 'Чат',
-    dashboard: 'Дашборд',
     orchestrator: 'Оркестратор',
     tasks: 'Задачи',
     taskDetails: 'Детали задачи',

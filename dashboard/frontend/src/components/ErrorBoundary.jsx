@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, RefreshCw, LayoutDashboard } from 'lucide-react';
+import { AlertTriangle, RefreshCw, MessageCircle } from 'lucide-react';
 import { I18nContext } from '../i18n';
 
 /**
@@ -81,11 +81,11 @@ class ErrorBoundary extends React.Component {
               {t('errorBoundary.reload')}
             </button>
             <Link
-              to="/dashboard"
+              to="/chat"
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors"
             >
-              <LayoutDashboard className="w-4 h-4" />
-              {t('errorBoundary.backToDashboard')}
+              <MessageCircle className="w-4 h-4" />
+              {t('errorBoundary.backToChat')}
             </Link>
           </div>
         </div>

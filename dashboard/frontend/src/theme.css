@@ -327,8 +327,7 @@ html.dark {
 :where(html) .bg-fuchsia-500,
 :where(html) .bg-indigo-500,
 :where(html) .bg-purple-500,
-:where(html) .bg-violet-500,
-:where(html) .hover\:bg-indigo-500:hover { background-color: var(--brand-500); }
+:where(html) .bg-violet-500 { background-color: var(--brand-500); }
 :where(html) .bg-fuchsia-600,
 :where(html) .bg-indigo-600,
 :where(html) .bg-purple-600,
@@ -478,11 +477,6 @@ html.dark {
 :where(html) .ring-indigo-500,
 :where(html) .ring-purple-500,
 :where(html) .ring-violet-500 { --tw-ring-color: var(--brand-500); }
-:where(html) .group:hover .group-hover\:text-indigo-400,
-:where(html) .text-fuchsia-400,
-:where(html) .text-indigo-400,
-:where(html) .text-purple-400,
-:where(html) .text-violet-400 { color: var(--brand-400); }
 :where(html) .group:hover .group-hover\:text-indigo-500,
 :where(html) .hover\:text-indigo-500:hover,
 :where(html) .text-fuchsia-500,
@@ -558,6 +552,10 @@ html.dark {
 :where(html) .text-indigo-300,
 :where(html) .text-purple-300,
 :where(html) .text-violet-300 { color: var(--brand-300); }
+:where(html) .text-fuchsia-400,
+:where(html) .text-indigo-400,
+:where(html) .text-purple-400,
+:where(html) .text-violet-400 { color: var(--brand-400); }
 :where(html) .text-fuchsia-50,
 :where(html) .text-indigo-50,
 :where(html) .text-purple-50,
@@ -628,8 +626,7 @@ html.dark {
 :where(html.dark) .bg-fuchsia-500,
 :where(html.dark) .bg-indigo-500,
 :where(html.dark) .bg-purple-500,
-:where(html.dark) .bg-violet-500,
-:where(html.dark) .hover\:bg-indigo-500:hover { background-color: var(--brand-bg-500); }
+:where(html.dark) .bg-violet-500 { background-color: var(--brand-bg-500); }
 :where(html.dark) .bg-fuchsia-600,
 :where(html.dark) .bg-indigo-600,
 :where(html.dark) .bg-purple-600,
@@ -1147,7 +1144,6 @@ html.dark {
 :where(html.dark) .text-stone-500,
 :where(html.dark) .text-zinc-500 { color: var(--neutral-text-500); }
 :where(html) .dark .dark\:text-indigo-400,
-:where(html.dark) .group:hover .group-hover\:text-indigo-400,
 :where(html.dark) .text-fuchsia-400,
 :where(html.dark) .text-indigo-400,
 :where(html.dark) .text-purple-400,

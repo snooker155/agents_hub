@@ -47,6 +47,4 @@ export const getOrchestratorRoutingLog = (workspace) =>
   api.get('/orchestrator/routing-log', { params: workspace ? { workspace } : {} });
 
 // Stats
-export const getStats = (workspace) => api.get('/stats', { params: { workspace } });
-export const getStatsOverview = (workspace, days = 14) => api.get('/stats/overview', { params: { workspace, days } });
 
