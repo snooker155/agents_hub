@@ -413,8 +413,10 @@ source pool unchanged. See
   the agents that declare them; a secret bound to hosts is checked in the
   process that uses it.
 - **Isolation.** `AGENT_EXECUTION_MODE=docker` runs agents in containers, and
-  `CAPABILITY_OVERRIDE_REQUIRES_CONTAINER` (on by default) requires that
-  isolation behind any per-agent capability override. Mounting the Docker socket into
+  `CAPABILITY_OVERRIDE_REQUIRES_CONTAINER` (off by default) requires that
+  isolation behind any per-agent capability override. The main agent ships
+  with `run_shell` under such an override, and every call waits for an
+  approval card in the chat. Mounting the Docker socket into
   the backend container gives it control of the host daemon; drop that line in
   `docker-compose.yml` if you do not need agent containers.
 
