@@ -248,8 +248,8 @@ function hueTokensFromAccent(hex, mode) {
 // comparison, this module just ships the five). Magenta and Neutral are
 // styles rather than sets of ramps: each carries `style`, applyPalette() then
 // puts `style-<name>` on <html> and the colors come from src/theme.css.
-// Magenta: white page and magenta buttons in the light theme, a magenta page
-// with white buttons in the dark one. Neutral: no brand color, graphite
+// Magenta: white page and magenta buttons in the light theme, the dark page
+// with magenta fills in the dark one. Neutral: no brand color, graphite
 // buttons in the light theme and light ones in the dark. Magenta is what
 // applies when nothing was chosen (DEFAULT_PRESET), and index.html starts
 // with its class so the first paint already has it.
