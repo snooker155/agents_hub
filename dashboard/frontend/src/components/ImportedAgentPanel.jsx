@@ -45,7 +45,7 @@ export default function ImportedAgentPanel({ agent, workspace = '', onUpdated })
 
   // Docker mode: the hub builds the image and runs a container per workspace.
   // Only an agent whose manifest ships a Dockerfile can be switched to it.
-  const dockerCapable = !!remote?.dockerfile && remote?.kind !== 'a2a';
+  const dockerCapable = !!remote?.dockerfile;
   const [mode, setMode] = useState(remote?.runtime_mode === 'docker' ? 'docker' : 'url');
   const [docker, setDocker] = useState(null);
   const [dockerBusy, setDockerBusy] = useState('');

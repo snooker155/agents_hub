@@ -260,7 +260,7 @@ export default {
     mountFilesIntro: 'Mit gesetztem Häkchen steht dem Snippet der Ordner des Arbeitsbereichs dieser Unterhaltung zur Verfügung; seine Dateien, Artefakte eingeschlossen, werden über den Pfad gelesen.',
     mountFilesDocker: 'Docker: der Ordner ist schreibgeschützt unter /work eingebunden. Ergebnisse gehen nach stdout, dort schreiben geht nicht.',
     mountFilesLocal: 'Lokaler Prozess: keine Einbindung, der Ordner liegt wo er liegt und ist beschreibbar. In beiden Fällen steht sein Pfad in $WORK, so läuft ein Snippet hier wie dort:',
-    mountFilesRule: 'Ein Snippet bekommt entweder den Arbeitsbereich oder das Netz, nie beides; e2b und Modal können keinen Arbeitsbereich einbinden.',
+    mountFilesRule: 'Ein Snippet bekommt entweder den Arbeitsbereich oder das Netz, nie beides.',
     runHint: 'Führt das Snippet in der run_code-Sandbox aus: ohne Netz und ohne Dateien, sofern der Arbeitsbereich nicht eingebunden ist. Nur Python, Node/JavaScript und Bash.',
     mountWorkspaceHint: 'Gibt dem Snippet den Arbeitsbereich der Unterhaltung schreibgeschützt unter /work, für Skripte, die dessen Dateien lesen. Ein Snippet bekommt entweder den Arbeitsbereich oder das Netz, nie beides.',
     fromReplies: 'Aus Antworten',

@@ -51,12 +51,6 @@ export function GettingStarted() {
       />
 
       <H2>{t('docs.installRun')}</H2>
-      <H3>{t('docs.dockerForOne')}</H3>
-      <CodeBlock label={t('docs.terminal')}>{`mkdir agents-hub && cd agents-hub
-curl -fsSLO https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/docker-compose.yml
-curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/env.example -o .env
-docker compose up -d`}</CodeBlock>
-      <P><Rich>{t('docs.dockerForOneBody')}</Rich></P>
       <P>{t('docs.ifTheBackendIsntOnline')}</P>
       <H3>{t('docs.backendFastapi')}</H3>
       <CodeBlock label={t('docs.terminal')}>{`python -m venv .venv

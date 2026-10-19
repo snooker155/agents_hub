@@ -259,7 +259,7 @@
     {
       "id": "installation",
       "title": "Installing and running the service",
-      "summary": "Four ways to run the service on your machine, Docker first: the published images (nothing to clone or build), Docker Compose from a checkout, the installer, and by hand. Then configuration, where state lives, upgrading, and what to check when it will not start.",
+      "summary": "Three ways to run the service on your machine: Docker Compose from a checkout, the installer, and by hand. Then configuration, where state lives, upgrading, and what to check when it will not start.",
       "surface": null,
       "related": [
         "cli",
@@ -275,10 +275,9 @@
       ],
       "headings": [
         "Prerequisites",
-        "Path A: Docker, from the published images",
-        "Path B: Docker Compose from a checkout",
-        "Path C: the installer",
-        "Path D: by hand",
+        "Path A: Docker Compose from a checkout",
+        "Path B: the installer",
+        "Path C: by hand",
         "The first run in the browser",
         "Configuration",
         "Checking it worked",
@@ -1031,7 +1030,7 @@
       "id": "security",
       "path": "SECURITY.md",
       "title": "Security policy: reporting a vulnerability",
-      "summary": "How to report a vulnerability privately (GitHub private reporting or email), how fast it is answered, which versions get fixes, what counts as a vulnerability and what is a documented choice, and the hardening list: the API has no login, so keep the hub on localhost or a private network.",
+      "summary": "How to report a vulnerability privately (a confidential GitLab issue or email), how fast it is answered, which versions get fixes, what counts as a vulnerability and what is a documented choice, and the hardening list: the API has no login, so keep the hub on localhost or a private network.",
       "surface": "Product",
       "related": [
         "service-health"

@@ -9,8 +9,8 @@ reports are welcome and are answered first.
 
 Please report privately, not in a public issue:
 
-- through GitHub's private vulnerability reporting on this repository
-  (Security tab, "Report a vulnerability"), or
+- through a confidential issue on the GitLab project
+  (https://github.com/snooker155/agents_hub/-/issues, tick "This issue is confidential"), or
 - by email to izub.anton@gmail.com, with "Agents Hub security" in the subject.
 
 Include what you found, the version or commit, the execution mode
@@ -25,7 +25,7 @@ What happens next:
 | First assessment (accepted, needs more, or not a vulnerability) | 10 working days |
 | Fix released for a confirmed high or critical issue | 30 days, sooner when it is exploited |
 
-A confirmed issue gets a GitHub security advisory and a line in
+A confirmed issue gets a line in
 `CHANGELOG.md` when the fix ships. You are credited unless you
 ask not to be. There is no bug bounty.
 

@@ -23,7 +23,7 @@ REPO_ROOT = Path(SPECPATH).resolve().parent
 # silently do the wrong thing, so excluding them costs nothing this build
 # actually does.
 SERVICE_EXCLUDES = [
-    "agents", "a2a", "bootstrap", "chat", "clients", "connections", "connectors",
+    "agents", "bootstrap", "chat", "connectors",
     "dashboard", "evals", "flow", "instances", "loops", "managers",
     "memory", "notify", "plans", "projects", "providers",
     "reasoning", "runtime", "tasks", "teams", "tools", "views", "workspace",

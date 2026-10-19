@@ -9,11 +9,11 @@ import typer
 
 def setup_command(
     shape: Optional[str] = typer.Option(
-        None, "--shape", help="local or docker. Asked when omitted."),
+        None, "--shape", help="How the hub runs: local (this checkout), the only shape in this edition."),
     answers: Optional[str] = typer.Option(
         None, "--answers", help="A JSON file with the answers, for an unattended install. Nothing is asked."),
     directory: Optional[str] = typer.Option(
-        None, "--dir", help="The docker shape: the folder for docker-compose.yml and .env."),
+        None, "--dir", help="Not used by the local shape; kept so older answers files still parse."),
     advanced: bool = typer.Option(False, "--advanced", help="Skip the QuickStart question and ask everything."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Stop after the review; write nothing."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Apply without the final confirmation."),

@@ -260,7 +260,7 @@ export default {
     mountFilesIntro: 'With the box ticked, the workspace folder of this conversation is available to the snippet; its files, the artifacts included, are read by path.',
     mountFilesDocker: 'Docker: the folder is mounted read-only at /work. Results go to stdout, nothing can be written there.',
     mountFilesLocal: 'Local process: no mount, the folder is where it is and is writable. Either way $WORK holds its path, so one snippet works in both:',
-    mountFilesRule: 'A snippet gets either the workspace or the network, never both; e2b and Modal cannot mount a workspace.',
+    mountFilesRule: 'A snippet gets either the workspace or the network, never both.',
     runHint: 'Runs the snippet in the run_code sandbox: no network and no files unless the workspace is mounted. Only Python, Node/JavaScript and Bash.',
     mountWorkspaceHint: 'Give the snippet the conversation\'s workspace folder read-only at /work, for scripts that read its files. A snippet gets either the workspace or the network, never both.',
     fromReplies: 'From replies',

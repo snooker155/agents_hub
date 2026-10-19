@@ -1,13 +1,12 @@
 # Den Dienst installieren und starten
 
-Es gibt vier Wege, den Dienst zum Laufen zu bringen. Der erste ist für eine Person, die ihn in einer Minute starten will und nur Docker braucht. Die letzten beiden sind für die Arbeit am Code. Alle erzeugen denselben Dienst, und der Rest dieser Seite (Konfiguration, wo der Zustand liegt, Aktualisieren, was bei einem Fehlstart zu prüfen ist) gilt für jeden von ihnen.
+Es gibt drei Wege, den Dienst zum Laufen zu bringen. Der erste ist Docker Compose aus einem Checkout, die letzten beiden sind für die Arbeit am Code. Alle erzeugen denselben Dienst, und der Rest dieser Seite (Konfiguration, wo der Zustand liegt, Aktualisieren, was bei einem Fehlstart zu prüfen ist) gilt für jeden von ihnen.
 
 | Weg | Sie brauchen | Sie erhalten |
 | --- | --- | --- |
-| [A. Docker, aus den veröffentlichten Images](#weg-a-docker-aus-den-veröffentlichten-images) | Docker | Das Dashboard auf `:8080`, den Zustand auf einem Volume, Agenten als Subprozesse. Nichts zu klonen oder zu bauen. |
-| [B. Docker Compose aus einem Checkout](#weg-b-docker-compose-aus-einem-checkout) | Docker, git | Dasselbe, aus dem Quellcode gebaut, dazu Container pro Agent |
-| [C. Das Installationsprogramm](#weg-c-das-installationsprogramm) | Python 3.11+, Node 22+ | Eine virtuelle Umgebung, den Befehl `ah` in Ihrem PATH, das Dashboard mit Hot Reload |
-| [D. Von Hand](#weg-d-von-hand) | Python 3.11+, Node 22+ | Weg C in seine Einzelteile zerlegt, für eine andere Form |
+| [A. Docker Compose aus einem Checkout](#weg-a-docker-compose-aus-einem-checkout) | Docker, git | Das Dashboard auf `:8080` und die API auf `:8000`, aus dem Quellcode gebaut, dazu Container pro Agent |
+| [B. Das Installationsprogramm](#weg-b-das-installationsprogramm) | Python 3.11+, Node 22+ | Eine virtuelle Umgebung, den Befehl `ah` in Ihrem PATH, das Dashboard mit Hot Reload |
+| [C. Von Hand](#weg-c-von-hand) | Python 3.11+, Node 22+ | Weg B in seine Einzelteile zerlegt, für eine andere Form |
 
 Jeder der Wege A bis C lässt sich auch einrichten, indem Sie Fragen beantworten: siehe die [geführte Einrichtung](#geführte-einrichtung-ah-setup) weiter unten.
 
@@ -15,56 +14,31 @@ Jeder der Wege A bis C lässt sich auch einrichten, indem Sie Fragen beantworten
 
 | Werkzeug | Version | Nötig für |
 | --- | --- | --- |
-| Docker + Compose | jede aktuelle | Wege A und B sowie die Agentenausführung in Docker bei C und D |
-| Python | 3.11+ | Wege C und D: Backend, CLI, Agent-Runner |
-| Node.js + npm | 22+ | Wege C und D: das Dashboard |
+| Docker + Compose | jede aktuelle | Weg A sowie die Agentenausführung in Docker bei B und C |
+| Python | 3.11+ | Wege B und C: Backend, CLI, Agent-Runner |
+| Node.js + npm | 22+ | Wege B und C: das Dashboard |
 | Ein Anbieterschlüssel | | OpenAI, Anthropic, Google oder ein lokales Ollama / LM Studio. Lässt sich nach dem Start in den Einstellungen hinzufügen |
 
-## Weg A: Docker, aus den veröffentlichten Images
-
-Jedes Release veröffentlicht das Backend und das Dashboard als Images auf GHCR (`ghcr.io/snooker155/agents-hub-backend`, `ghcr.io/snooker155/agents-hub-frontend`). Das Verzeichnis `deploy/quickstart/` im Repository enthält eine Compose-Datei, die beide für eine Person startet, ohne dass Sie etwas klonen oder bauen müssen:
+## Weg A: Docker Compose aus einem Checkout
 
 ```bash
-mkdir agents-hub && cd agents-hub
-curl -fsSLO https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/docker-compose.yml
-curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/env.example -o .env
-docker compose up -d
-```
-
-Öffnen Sie `http://localhost:8080`, tragen Sie in den Einstellungen einen Anbieterschlüssel ein (oder entkommentieren Sie ihn vor dem Start in der `.env`), wählen Sie im Chat einen Agenten und senden Sie etwas.
-
-Was läuft: das Backend, in dem jeder Agent als Subprozess läuft (`AGENT_EXECUTION_MODE=local`), und das Dashboard hinter nginx, der auch `/api` weiterleitet. Der Zustand liegt im benannten Volume `agents_hub_data`: `docker compose down` behält ihn, `docker compose down -v` löscht ihn. Die `.env` ist als die Datei, in die die Einstellungen schreiben, in das Backend eingebunden, sodass Schlüssel, die Sie auf dieser Seite eingeben, den Container überdauern. `WEB_PORT` in der `.env` verschiebt das Dashboard. `AGENTS_HUB_TAG` legt ein Release fest, statt `latest` zu folgen (`0.8` für den neuesten Patch dieser Minor-Version, `0.8.0` für genau diese, `0.8.0-rag` für die Variante mit dem RAG-Stack, siehe [deployment](deployment.md), "Releases"). `DEMO_WORKSPACE=1` legt beim ersten Start den [Demo-Workspace](demo.md) an.
-
-```bash
-docker compose pull && docker compose up -d                     # aktualisieren
-docker compose exec backend ah db backup --to /data/backups
-docker compose logs -f backend
-```
-
-Auf dem Host gibt es bei diesem Weg keinen Befehl `ah`: Er liegt im Backend-Container, und ein Client auf dem Host ist ein eigener Schritt, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
-
-Was diese Form weglässt: Der Docker-Socket ist nicht eingebunden, daher können Agenten keine eigenen Container bekommen ([containers](containers.md)). Der Sandbox-Anbieter `docker` braucht Weg B. Das Image ohne das Suffix `-rag` enthält keinen Embedding-Stack, deshalb bleibt `RAG_VECTOR_DB` auf `none`, solange Sie nicht das Tag mit `-rag` festlegen.
-
-## Weg B: Docker Compose aus einem Checkout
-
-```bash
-git clone https://github.com/snooker155/agents_hub.git
+git clone -b lite https://github.com/snooker155/agents_hub.git
 cd agents_hub
 docker compose up --build              # Backend :8000, Dashboard :8080
 ```
 
 Die `.env` ist hier optional: Der Stack startet ohne Anbieterschlüssel, und Sie fügen sie in den Einstellungen hinzu. `BACKEND_PORT` und `WEB_PORT` verschieben die veröffentlichten Ports, und das Dashboard folgt ihnen, weil es mit seinem eigenen Origin spricht. Der Checkout ist in das Backend eingebunden, daher landet der Zustand wie bei einer lokalen Installation in `.agents_hub/` darunter. Aktualisieren heißt `git pull`, gefolgt von `docker compose up -d --build`. Der Docker-Socket ist eingebunden, daher können Agenten in eigenen Containern laufen (`AGENT_EXECUTION_MODE=docker`, [containers](containers.md)). `WITH_RAG=true` in der `.env` baut das Image mit dem RAG-Stack.
 
-Auch Compose legt `ah` nicht auf den Host: `docker compose exec backend ah ...` führt ihn im Container aus, und ein Client auf dem Host ist derselbe eigene Schritt wie bei Weg A, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
+Auch Compose legt `ah` nicht auf den Host: `docker compose exec backend ah ...` führt ihn im Container aus, und ein Client auf dem Host ist ein eigener Schritt, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
 
 Das Dashboard ist das gebaute Bundle hinter nginx, der auch `/api` weiterleitet.
 
-Compose hat keinen Vite-Dienst: Für eine HMR-Schleife beim Bearbeiten von Frontend-Code starten Sie `npm run dev` auf dem Host wie bei Weg C. Das Image bauen Sie neu (`docker compose up --build frontend`), wenn die Änderung im Container ankommen soll.
+Compose hat keinen Vite-Dienst: Für eine HMR-Schleife beim Bearbeiten von Frontend-Code starten Sie `npm run dev` auf dem Host wie bei Weg B. Das Image bauen Sie neu (`docker compose up --build frontend`), wenn die Änderung im Container ankommen soll.
 
-## Weg C: Das Installationsprogramm
+## Weg B: Das Installationsprogramm
 
 ```bash
-git clone https://github.com/snooker155/agents_hub.git
+git clone -b lite https://github.com/snooker155/agents_hub.git
 cd agents_hub
 ./install.sh
 ```
@@ -79,7 +53,7 @@ Danach, in einem neuen Terminal:
 ah up                       # API auf :8000, Dashboard auf :5173
 ```
 
-## Weg D: Von Hand
+## Weg C: Von Hand
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -107,12 +81,11 @@ cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 
 | Weg | `ah` auf dem Host | `ah` im Backend-Container |
 | --- | --- | --- |
-| A. Veröffentlichte Images | Nicht installiert. Client hinzufügen (unten), REST zu `http://localhost:8080` | `docker compose exec backend ah ...`, direkt |
-| B. Compose aus einem Checkout | Nicht installiert. Client hinzufügen (unten), REST zu `http://localhost:8080` oder `:8000` | `docker compose exec backend ah ...`, direkt |
-| C. Installationsprogramm | Im PATH in einem neuen Terminal, direkt | |
-| D. Von Hand | In der aktivierten venv nach `pip install -e ...`, direkt; ohne Installation `python -m cli` aus dem Checkout | |
+| A. Compose aus einem Checkout | Nicht installiert. Client hinzufügen (unten), REST zu `http://localhost:8080` oder `:8000` | `docker compose exec backend ah ...`, direkt |
+| B. Installationsprogramm | Im PATH in einem neuen Terminal, direkt | |
+| C. Von Hand | In der aktivierten venv nach `pip install -e ...`, direkt; ohne Installation `python -m cli` aus dem Checkout | |
 
-Der direkte Modus auf dem Host erreicht keine Docker-Installation. Bei Weg A liegt der Zustand auf einem benannten Volume, das der Host nicht öffnen kann. Bei Weg B gehört die Datenbank im eingebundenen Checkout dem Backend im Container: Ein zweiter Prozess auf dem Host bräuchte dieselben Abhängigkeiten und Einstellungen, und unter macOS und Windows halten die Sperren von SQLite über die Dateifreigabe von Docker Desktop nicht. Auf A und B spricht der Host deshalb REST, und die Befehle, die nur direkt funktionieren, laufen im Container: `ah db ...`. `ah up` und `ah server start` starten einen Dienst auf diesem Rechner und sind für eine Docker-Installation nicht gedacht.
+Der direkte Modus auf dem Host erreicht keine Docker-Installation. Bei Weg A gehört die Datenbank im eingebundenen Checkout dem Backend im Container: Ein zweiter Prozess auf dem Host bräuchte dieselben Abhängigkeiten und Einstellungen, und unter macOS und Windows halten die Sperren von SQLite über die Dateifreigabe von Docker Desktop nicht. Bei Weg A spricht der Host deshalb REST, und die Befehle, die nur direkt funktionieren, laufen im Container: `ah db ...`. `ah up` und `ah server start` starten einen Dienst auf diesem Rechner und sind für eine Docker-Installation nicht gedacht.
 
 ### `ah` zu einer Docker-Installation hinzufügen
 
@@ -126,10 +99,10 @@ alias ah='docker compose -f ~/agents-hub/docker-compose.yml exec backend ah'
 
 Mit diesem Alias bedeutet `ah` in jedem Ordner des Hosts den Befehl im Container; Pfade, die er bekommt, sind dann Pfade im Container.
 
-**Auf dem Host** braucht ein Client über REST einen Checkout (Weg B hat schon einen) und Python 3.11+, aber keine der Abhängigkeiten des Dienstes:
+**Auf dem Host** braucht ein Client über REST einen Checkout (Weg A hat schon einen) und Python 3.11+, aber keine der Abhängigkeiten des Dienstes:
 
 ```bash
-git clone https://github.com/snooker155/agents_hub.git && cd agents_hub
+git clone -b lite https://github.com/snooker155/agents_hub.git && cd agents_hub
 ./install.sh --cli-only        # .venv mit ah und seinen drei Abhängigkeiten, der Shell-Hook
 export AGENTS_HUB_URL=http://localhost:8080
 ah config                      # nennt den Dienst, mit dem er spricht
@@ -144,26 +117,13 @@ Ohne Python auf dem Host baut `scripts/build_cli_binary.sh` auf einem Rechner, d
 
 `ah setup` fragt sich durch die ganze Installation, so wie der erste Start von OpenClaw, und schreibt nichts, bis Sie eine Übersicht über jeden Wert bestätigt haben:
 
-1. **Installation**: dieser Checkout (Weg C), Docker aus den veröffentlichten Images (Weg A, in einen Ordner Ihrer Wahl) oder Compose aus diesem Checkout (Weg B). Danach QuickStart (nur, was sich nicht erraten lässt) oder Advanced.
+1. **Installation**: dieser Checkout (Weg B) oder Compose aus diesem Checkout (Weg A). Danach QuickStart (nur, was sich nicht erraten lässt) oder Advanced.
 2. **Anbieter und Modelle**: OpenAI, Anthropic, Google, Ollama, LM Studio. Jeder Schlüssel und jede Adresse wird geprüft, indem der Anbieter nach seiner Modellliste gefragt wird. Das Standardmodell wird aus Voreinstellungen gewählt, die gegen diese Liste abgeglichen werden (ausgewogen, stärkstes, schnellstes), aus der ganzen Liste oder per Eingabe. Auf diesem Rechner werden die Voreinstellungen außerdem im Katalog von [Modelle](models.md) aktiviert, das Standardmodell mit einem Stern.
 3. **Funktionen**: in Advanced der Demo-Workspace, der Dashboard-Port, wo die Agenten laufen und RAG.
 4. **Übersicht** über jede Einstellung, die geschrieben wird (Geheimnisse maskiert), und jede Aktion, die ausgeführt wird.
 5. **Anwenden**: installiert fehlende Python-Extras, schreibt die `.env` (die vorherige bleibt als `.env.bak-<time>` erhalten), füllt den Katalog und bietet an, den Hub zu starten (`ah up` oder `docker compose up -d`).
 
 Eine Antwortdatei, die `demo` nennt, wendet es auch in QuickStart an.
-
-### Einrichtung aus Docker
-
-Ohne Python auf dem Host läuft das Setup aus dem Backend-Image. In einem leeren Ordner:
-
-```bash
-docker run -it --rm --user 0:0 \
-  -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:$PWD" -w "$PWD" \
-  --add-host host.docker.internal:host-gateway \
-  ghcr.io/snooker155/agents-hub-backend:latest setup
-```
-
-In einem Ordner, der schon eine `docker-compose.yml` enthält (ein Checkout oder die QuickStart-Dateien), erledigt `docker compose run --rm setup` dasselbe: Der Dienst `setup` liegt in einem eigenen Profil, daher startet ihn `docker compose up` nie. Der Ordner wird am selben Pfad eingebunden, sodass der Stack, den das Setup über den Socket startet, dieselben Host-Pfade einbindet. Es bietet die veröffentlichten Images (und Compose, wenn der Ordner ein Checkout ist) an, nie die lokale Form, und was es schreibt, Sicherungskopien eingeschlossen, wird dem Besitzer des Ordners zurückgegeben, obwohl der Container als root lief, um den Socket zu nutzen.
 
 ### Der erste Start im Browser
 
@@ -230,20 +190,19 @@ ah config                               # mit welchem Dienst die CLI spricht
 ah agent list                           # die mitgelieferten System-Agenten
 ```
 
-Unter Docker (Wege A und B) liegt die API auch hinter dem nginx des Dashboards, daher antwortet `curl http://localhost:8080/api/health` genauso. Öffnen Sie `http://localhost:5173` (unter Docker `http://localhost:8080`), wählen Sie im Chat einen Agenten und senden Sie etwas. Eine Antwort bedeutet, dass der Anbieterschlüssel, der Modellkatalog und die gesamte Run-Pipeline funktionieren. Schlägt der Run stattdessen fehl, sagt Ihnen [service-health](service-health.md), welcher Teil schuld ist.
+Unter Docker (Weg A) liegt die API auch hinter dem nginx des Dashboards, daher antwortet `curl http://localhost:8080/api/health` genauso. Öffnen Sie `http://localhost:5173` (unter Docker `http://localhost:8080`), wählen Sie im Chat einen Agenten und senden Sie etwas. Eine Antwort bedeutet, dass der Anbieterschlüssel, der Modellkatalog und die gesamte Run-Pipeline funktionieren. Schlägt der Run stattdessen fehl, sagt Ihnen [service-health](service-health.md), welcher Teil schuld ist.
 
 ## Wo der Zustand liegt
 
-Alles, was der Dienst schreibt, landet unter `.agents_hub/` im Checkout: `agents_hub.db` (SQLite, WAL: das Agentenregister, der Modellkatalog, Flows, Runs, Aufgaben, Sessions, Speicherpools und jeder andere Datensatz), die Workspace-Ordner, Run-Logs und erzeugte Ansichten. Löschen Sie diesen Ordner, wird die Installation zurückgesetzt. Es ist auch der Ordner, den Sie sichern ([backup](backup.md)). Bei Weg A liegt derselbe Baum auf dem Volume `agents_hub_data`, das unter `/data` eingebunden ist (`AGENTS_HUB_ROOT`). Die Prompts der Agenten sind genauso getrennt: Der ausgelieferte Text der Systemagenten liegt in `agents/definitions/<id>/` im Repository, so wie git ihn verfolgt, und der Dienst schreibt dort nie. Die `instructions.md` (mit `capabilities.md` und `usage.md`) jedes eigenen Agenten und jede Änderung am Prompt eines Systemagenten landen in `.agents_hub/definitions/<id>/`. Eine Datei dort überdeckt die gleichnamige ausgelieferte Datei. Eine Änderung an einem Systemagenten übersteht so ein Update. **Ausgelieferten Text wiederherstellen** im Tab Config des Agenten (`DELETE /api/agents/<id>/definition/edits`) bringt den ausgelieferten Text zurück und behält den geänderten unter Versionen.
+Alles, was der Dienst schreibt, landet unter `.agents_hub/` im Checkout: `agents_hub.db` (SQLite, WAL: das Agentenregister, der Modellkatalog, Flows, Runs, Aufgaben, Sessions, Speicherpools und jeder andere Datensatz), die Workspace-Ordner, Run-Logs und erzeugte Ansichten. Löschen Sie diesen Ordner, wird die Installation zurückgesetzt. Es ist auch der Ordner, den Sie sichern ([backup](backup.md)). Die Prompts der Agenten sind genauso getrennt: Der ausgelieferte Text der Systemagenten liegt in `agents/definitions/<id>/` im Repository, so wie git ihn verfolgt, und der Dienst schreibt dort nie. Die `instructions.md` (mit `capabilities.md` und `usage.md`) jedes eigenen Agenten und jede Änderung am Prompt eines Systemagenten landen in `.agents_hub/definitions/<id>/`. Eine Datei dort überdeckt die gleichnamige ausgelieferte Datei. Eine Änderung an einem Systemagenten übersteht so ein Update. **Ausgelieferten Text wiederherstellen** im Tab Config des Agenten (`DELETE /api/agents/<id>/definition/edits`) bringt den ausgelieferten Text zurück und behält den geänderten unter Versionen.
 
 ## Aktualisieren
 
 | Weg | Aktualisieren |
 | --- | --- |
-| A | `docker compose pull && docker compose up -d` |
-| B | `git pull && docker compose up -d --build` |
-| C | `git pull && ./install.sh` (übernimmt neue Abhängigkeiten; die `.env` bleibt unberührt) |
-| D | `git pull && pip install -e ".[backend,agents]"`, `npm install` im Dashboard |
+| A | `git pull && docker compose up -d --build` |
+| B | `git pull && ./install.sh` (übernimmt neue Abhängigkeiten; die `.env` bleibt unberührt) |
+| C | `git pull && pip install -e ".[backend,agents]"`, `npm install` im Dashboard |
 
 Eine editierbare Installation braucht für Code-Änderungen keine Neuinstallation. Schema-Änderungen wenden sich von selbst an: Die erste Verbindung in einem beliebigen Prozess stellt das Schema sicher, daher kann ebenso gut das Backend oder ein CLI-Befehl sie ausführen. Eine SQLite-Datenbank wird vor der Migration archiviert, und ein Release mit Migrationen lässt sich ohne dieses Archiv nicht zurückrollen: Lesen Sie zuerst die **Upgrade notes** des Releases im [changelog](changelog.md) und für das vollständige Vorgehen [deployment](deployment.md) ("Upgrading", "Rolling back").
 
@@ -252,6 +211,4 @@ Eine editierbare Installation braucht für Code-Änderungen keine Neuinstallatio
 - **Das Backend beendet sich sofort.** Die virtuelle Umgebung ist nicht aktiv, oder die Extras sind nicht installiert. Führen Sie `pip install -e ".[backend,agents]"` noch einmal aus und lesen Sie die Ausgabe.
 - **Das Dashboard erreicht die API nicht.** Es zielt auf `http://localhost:8000/api`. Prüfen Sie, ob das Backend auf diesem Port läuft und keine lokale CORS-Überschreibung es blockiert.
 - **Runs schlagen sofort nach dem Start fehl.** Ein fehlender oder falscher Anbieterschlüssel, ein Modell, das auf der Seite [Modelle](models.md) nicht aktiviert ist, oder `AGENT_EXECUTION_MODE=docker` ohne erreichbaren Docker-Daemon.
-- **`ah` wird nicht gefunden.** Die venv liegt nicht im PATH, und der Shell-Hook ist nicht installiert. Führen Sie `ah shell-init --install` aus der venv aus oder rufen Sie das Skript mit seinem absoluten Pfad auf. Siehe [cli](cli.md). Auf den Wegen A und B hat der Host keinen `ah`, bis Sie einen hinzufügen, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
-- **Weg A: `unable to open database file`.** Der Schritt `init`, der das Volume an den Benutzer des Backends übergibt, ist nicht gelaufen. `docker compose up -d` führt ihn erneut aus (er ist idempotent), und `docker compose logs init` zeigt, warum er fehlgeschlagen ist.
-- **Weg A: `.env` ist ein Verzeichnis.** Docker hat es angelegt, weil die Datei beim ersten Start des Stacks fehlte. Führen Sie `docker compose down` aus, dann `rmdir .env`, speichern Sie die Vorlage als `.env` und starten Sie noch einmal.
+- **`ah` wird nicht gefunden.** Die venv liegt nicht im PATH, und der Shell-Hook ist nicht installiert. Führen Sie `ah shell-init --install` aus der venv aus oder rufen Sie das Skript mit seinem absoluten Pfad auf. Siehe [cli](cli.md). Bei Weg A hat der Host keinen `ah`, bis Sie einen hinzufügen, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).

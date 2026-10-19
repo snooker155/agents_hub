@@ -1,17 +1,15 @@
 # Installing and running the service
 
-Four ways to get the service running. The first is for one person who wants
-it up in a minute and needs nothing but Docker; the last two are for working
-on the code. They all produce the same service, and the rest of this page
+Three ways to get the service running. The first is Docker Compose from a
+checkout; the last two are for working on the code. They all produce the same service, and the rest of this page
 (configuration, where state lives, upgrading, what to check when it will not
 start) applies to every one of them.
 
 | Path | You need | What you get |
 | --- | --- | --- |
-| [A. Docker, from the published images](#path-a-docker-from-the-published-images) | Docker | The dashboard on `:8080`, state on a volume, agents as subprocesses. Nothing to clone or build. |
-| [B. Docker Compose from a checkout](#path-b-docker-compose-from-a-checkout) | Docker, git | The same, built from source, plus per-agent containers |
-| [C. The installer](#path-c-the-installer) | Python 3.11+, Node 22+ | A virtualenv, the `ah` command on your PATH, the dashboard with hot reload |
-| [D. By hand](#path-d-by-hand) | Python 3.11+, Node 22+ | Path C taken apart, for a different shape |
+| [A. Docker Compose from a checkout](#path-a-docker-compose-from-a-checkout) | Docker, git | The dashboard on `:8080` and the API on `:8000`, built from source, plus per-agent containers |
+| [B. The installer](#path-b-the-installer) | Python 3.11+, Node 22+ | A virtualenv, the `ah` command on your PATH, the dashboard with hot reload |
+| [C. By hand](#path-c-by-hand) | Python 3.11+, Node 22+ | Path B taken apart, for a different shape |
 
 Any of A to C can also be set up by answering questions instead:
 [guided setup](#guided-setup-ah-setup) below.
@@ -20,60 +18,15 @@ Any of A to C can also be set up by answering questions instead:
 
 | Tool | Version | Needed for |
 | --- | --- | --- |
-| Docker + Compose | any recent | Paths A and B, and Docker agent execution on C and D |
-| Python | 3.11+ | Paths C and D: backend, CLI, agent runners |
-| Node.js + npm | 22+ | Paths C and D: the dashboard |
+| Docker + Compose | any recent | Path A, and Docker agent execution on B and C |
+| Python | 3.11+ | Paths B and C: backend, CLI, agent runners |
+| Node.js + npm | 22+ | Paths B and C: the dashboard |
 | A provider key | | OpenAI, Anthropic, Google, or a local Ollama / LM Studio. Can be added from Settings after the start |
 
-## Path A: Docker, from the published images
-
-Every release publishes the backend and the dashboard as images on GHCR
-(`ghcr.io/snooker155/agents-hub-backend`, `ghcr.io/snooker155/agents-hub-frontend`),
-and `deploy/quickstart/` in the repository holds a compose file that runs the
-two for one person, with nothing to clone or build:
+## Path A: Docker Compose from a checkout
 
 ```bash
-mkdir agents-hub && cd agents-hub
-curl -fsSLO https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/docker-compose.yml
-curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/env.example -o .env
-docker compose up -d
-```
-
-Open `http://localhost:8080`, put a provider key in Settings (or uncomment
-it in `.env` before the start), pick an agent in Chat and send something.
-
-What is running: the backend, with every agent as a subprocess of it
-(`AGENT_EXECUTION_MODE=local`), and the dashboard behind nginx, which also
-proxies `/api`. State lives in the named volume `agents_hub_data`, so
-`docker compose down` keeps it and `docker compose down -v` deletes it.
-`.env` is bind mounted into the backend as the file Settings writes, so
-keys entered on that page outlive the container. `WEB_PORT` in `.env`
-moves the dashboard, `AGENTS_HUB_TAG` pins a release instead of following
-`latest` (`0.8` for the newest patch of that minor, `0.8.0` for exactly that
-one, `0.8.0-rag` for the flavour with the RAG stack, see
-[deployment](deployment.md), "Releases"), and `DEMO_WORKSPACE=1` seeds the
-[demo workspace](demo.md) on the first start.
-
-```bash
-docker compose pull && docker compose up -d                     # upgrade
-docker compose exec backend ah db backup --to /data/backups
-docker compose logs -f backend
-```
-
-Nothing on the host gets an `ah` command on this path: it is inside the
-backend container, and a client on the host is a separate step, see
-[the `ah` command on each path](#the-ah-command-on-each-path).
-
-What this shape leaves out: the Docker socket is not mounted, so agents
-cannot get containers of their own ([containers](containers.md)), the
-`docker` sandbox provider need Path B, and the
-image without the `-rag` suffix has no embedding stack, so
-`RAG_VECTOR_DB` stays `none` unless you pin the `-rag` tag.
-
-## Path B: Docker Compose from a checkout
-
-```bash
-git clone https://github.com/snooker155/agents_hub.git
+git clone -b lite https://github.com/snooker155/agents_hub.git
 cd agents_hub
 docker compose up --build              # backend :8000, dashboard :8080
 ```
@@ -88,21 +41,20 @@ containers of their own (`AGENT_EXECUTION_MODE=docker`,
 [containers](containers.md)); `WITH_RAG=true` in `.env` builds the image
 with the RAG stack.
 
-Compose does not put `ah` on the host either: `docker compose exec backend
-ah ...` runs it in the container, and a client on the host is the same
-separate step as on Path A, see
-[the `ah` command on each path](#the-ah-command-on-each-path).
+Compose does not put `ah` on the host: `docker compose exec backend
+ah ...` runs it in the container, and a client on the host is a separate
+step, see [the `ah` command on each path](#the-ah-command-on-each-path).
 
 The dashboard is the built bundle behind nginx, which also proxies `/api`.
 
 Compose has no Vite service: for an HMR loop while editing frontend code, run
-`npm run dev` on the host as in Path C, and rebuild the image (`docker compose
+`npm run dev` on the host as in Path B, and rebuild the image (`docker compose
 up --build frontend`) when the change has to land in the container.
 
-## Path C: the installer
+## Path B: the installer
 
 ```bash
-git clone https://github.com/snooker155/agents_hub.git
+git clone -b lite https://github.com/snooker155/agents_hub.git
 cd agents_hub
 ./install.sh
 ```
@@ -129,7 +81,7 @@ Then, in a new terminal:
 ah up                       # API on :8000, dashboard on :5173
 ```
 
-## Path D: by hand
+## Path C: by hand
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -170,17 +122,15 @@ path:
 
 | Path | `ah` on the host | `ah` in the backend container |
 | --- | --- | --- |
-| A. Published images | Not installed. Add a client (below), REST to `http://localhost:8080` | `docker compose exec backend ah ...`, direct |
-| B. Compose from a checkout | Not installed. Add a client (below), REST to `http://localhost:8080` or `:8000` | `docker compose exec backend ah ...`, direct |
-| C. The installer | On PATH in a new terminal, direct | |
-| D. By hand | In the activated venv after `pip install -e ...`, direct; `python -m cli` from the checkout without any install | |
+| A. Compose from a checkout | Not installed. Add a client (below), REST to `http://localhost:8080` or `:8000` | `docker compose exec backend ah ...`, direct |
+| B. The installer | On PATH in a new terminal, direct | |
+| C. By hand | In the activated venv after `pip install -e ...`, direct; `python -m cli` from the checkout without any install | |
 
-Direct mode on the host does not reach a Docker install. On Path A the
-state sits on a named volume the host cannot open. On Path B the database
+Direct mode on the host does not reach a Docker install. On Path A the database
 under the bind mounted checkout belongs to the backend in the container: a
 second process on the host would need the same dependencies and settings,
 and on macOS and Windows SQLite's locking does not hold across Docker
-Desktop's file share. So on A and B the host talks REST, and the commands
+Desktop's file share. So on Path A the host talks REST, and the commands
 that only work direct run in the container: `ah db ...`. `ah up`
 and `ah server start` start a service on this machine and are not for a
 Docker install at all.
@@ -200,11 +150,11 @@ alias ah='docker compose -f ~/agents-hub/docker-compose.yml exec backend ah'
 The alias makes `ah` in any folder of the host mean the one in the
 container; paths it is given are then the container's paths.
 
-**On the host**, a client over REST needs a checkout (Path B already has
+**On the host**, a client over REST needs a checkout (Path A already has
 one) and Python 3.11+, but none of the service's dependencies:
 
 ```bash
-git clone https://github.com/snooker155/agents_hub.git && cd agents_hub
+git clone -b lite https://github.com/snooker155/agents_hub.git && cd agents_hub
 ./install.sh --cli-only        # .venv with ah and its three dependencies, the shell hook
 export AGENTS_HUB_URL=http://localhost:8080
 ah config                      # names the service it talks to
@@ -224,9 +174,8 @@ file REST-only `ah` on a machine that has it, to copy anywhere ([cli](cli.md),
 `ah setup` asks its way through the whole install, the way OpenClaw's first
 run does, and writes nothing until you confirm a review of every value:
 
-1. **Install**: this checkout (Path C), Docker from the published images
-   (Path A, into a folder of your choice) or Compose from this checkout
-   (Path B). Then QuickStart (only what cannot be guessed) or
+1. **Install**: this checkout (Path B) or Compose from this checkout
+   (Path A). Then QuickStart (only what cannot be guessed) or
    Advanced.
 2. **Providers and models**: OpenAI, Anthropic, Google, Ollama, LM Studio.
    Each key or address is checked by asking the provider for its model list,
@@ -243,27 +192,6 @@ run does, and writes nothing until you confirm a review of every value:
    (`ah up`, or `docker compose up -d`).
 
 An answers file that names `demo` still applies it in QuickStart.
-
-### Setup from Docker
-
-Without Python on the host, the setup runs from the backend image. In an
-empty folder:
-
-```bash
-docker run -it --rm --user 0:0 \
-  -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:$PWD" -w "$PWD" \
-  --add-host host.docker.internal:host-gateway \
-  ghcr.io/snooker155/agents-hub-backend:latest setup
-```
-
-In a folder that already holds a `docker-compose.yml` (a checkout, or the
-quickstart files), `docker compose run --rm setup` does the same: the
-`setup` service is under its own profile, so `docker compose up` never
-starts it. The folder is mounted at the same path inside, so the stack the
-setup starts through the socket mounts the same host paths; it offers the
-published images (and Compose when the folder is a checkout), never the local
-shape; and what it writes, backups included, is handed back to the folder's
-owner, although the container ran as root to use the socket.
 
 ### The first run in the browser
 
@@ -337,7 +265,7 @@ ah config                               # which service the CLI is talking to
 ah agent list                           # the seeded system agents
 ```
 
-Under Docker (Paths A and B) the API is behind the dashboard's nginx too, so
+Under Docker (Path A) the API is behind the dashboard's nginx too, so
 `curl http://localhost:8080/api/health` answers the same. Open
 `http://localhost:5173` (`http://localhost:8080` under Docker), pick an
 agent in Chat, and send something. A reply means the provider key, the model
@@ -351,8 +279,7 @@ Everything the service writes goes under `.agents_hub/` in the checkout:
 runs, tasks, sessions, memory pools and every other record), the workspace
 folders, run logs and generated views. Deleting that folder resets
 the installation; it is also the folder to back up ([backup](backup.md)).
-On Path A the same tree lives on the `agents_hub_data` volume, mounted at
-`/data` (`AGENTS_HUB_ROOT`). Agent prompts are split the same way: the system agents' shipped
+Agent prompts are split the same way: the system agents' shipped
 text lives in `agents/definitions/<id>/` in the repository, as git tracks it,
 and the hub never writes there. Every custom agent's `instructions.md`
 (with `capabilities.md` and `usage.md`) and every edit to a system agent's
@@ -366,10 +293,9 @@ keeps the edited one in Versions.
 
 | Path | Upgrade |
 | --- | --- |
-| A | `docker compose pull && docker compose up -d` |
-| B | `git pull && docker compose up -d --build` |
-| C | `git pull && ./install.sh` (picks up new dependencies; the `.env` is left alone) |
-| D | `git pull && pip install -e ".[backend,agents]"`, `npm install` in the dashboard |
+| A | `git pull && docker compose up -d --build` |
+| B | `git pull && ./install.sh` (picks up new dependencies; the `.env` is left alone) |
+| C | `git pull && pip install -e ".[backend,agents]"`, `npm install` in the dashboard |
 
 An editable install needs no reinstall for code changes. Schema changes apply
 themselves: the first connection in any process ensures the schema, so the
@@ -390,12 +316,5 @@ notes** in the [changelog](changelog.md) first, and [deployment](deployment.md)
   `AGENT_EXECUTION_MODE=docker` with no reachable Docker daemon.
 - **`ah` is not found.** The venv is not on PATH and the shell hook is not
   installed. Run `ah shell-init --install` from the venv, or call the script by
-  its absolute path. See [cli](cli.md). On Paths A and B the host has no `ah`
+  its absolute path. See [cli](cli.md). On Path A the host has no `ah`
   until you add one, see [the `ah` command on each path](#the-ah-command-on-each-path).
-- **Path A: `unable to open database file`.** The `init` step that hands the
-  volume to the backend's user did not run; `docker compose up -d` again
-  runs it (it is idempotent), and `docker compose logs init` says why it
-  failed.
-- **Path A: `.env` is a directory.** Docker created it because the file was
-  missing when the stack first started. `docker compose down`, `rmdir .env`,
-  save the template as `.env`, and start again.

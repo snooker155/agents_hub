@@ -98,9 +98,7 @@ tests; never lower them to get a change through.
 **Dependencies:** `requirements.lock` is the pinned resolution CI and the
 backend image install. Refresh it with `scripts/refresh_lock.sh` (pins that
 still fit stay), `scripts/refresh_lock.sh --upgrade-package <name>` for one
-package, or `--upgrade` for everything; a weekly workflow
-(`.github/workflows/lock-refresh.yml`) does the last and opens a PR to `dev`.
-Dependabot covers npm, GitHub Actions and Docker base images. CI runs
+package, or `--upgrade` for everything. CI runs
 `scripts/ci/audit_lock.py`, which fails on a known vulnerability in the lock
 unless `scripts/ci/audit_ignore.txt` accepts it with a reason, and on an
 accepted one that has gone away.

@@ -20,18 +20,8 @@ export function Installation() {
         <li><Rich>{t('docs.installDoc.prereqKey')}</Rich></li>
       </ul>
 
-      <H3>{t('docs.installDoc.quickstartTitle')}</H3>
-      <P><Rich>{t('docs.installDoc.quickstartLead')}</Rich></P>
-      <CodeBlock label={t('docs.terminal')}>{`mkdir agents-hub && cd agents-hub
-curl -fsSLO https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/docker-compose.yml
-curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/env.example -o .env
-docker compose up -d`}</CodeBlock>
-      <P><Rich>{t('docs.installDoc.quickstartBody')}</Rich></P>
-      <CodeBlock label={t('docs.terminal')}>{`docker compose pull && docker compose up -d`}</CodeBlock>
-      <P><Rich>{t('docs.installDoc.quickstartLimits')}</Rich></P>
-
       <H3>{t('docs.installDoc.dockerTitle')}</H3>
-      <CodeBlock label={t('docs.terminal')}>{`git clone https://github.com/snooker155/agents_hub.git
+      <CodeBlock label={t('docs.terminal')}>{`git clone -b lite https://github.com/snooker155/agents_hub.git
 cd agents_hub
 docker compose up --build`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.dockerBody')}</Rich></P>
@@ -39,7 +29,7 @@ docker compose up --build`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.dockerProfiles')}</Rich></P>
 
       <H3>{t('docs.installDoc.installerTitle')}</H3>
-      <CodeBlock label={t('docs.terminal')}>{`git clone https://github.com/snooker155/agents_hub.git
+      <CodeBlock label={t('docs.terminal')}>{`git clone -b lite https://github.com/snooker155/agents_hub.git
 cd agents_hub
 ./install.sh`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.installerBody')}</Rich></P>
@@ -73,8 +63,7 @@ ah agent list`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.stateBody')}</Rich></P>
 
       <H3>{t('docs.installDoc.upgradeTitle')}</H3>
-      <CodeBlock label={t('docs.terminal')}>{`docker compose pull && docker compose up -d      # the published images
-git pull && docker compose up -d --build           # compose from a checkout
+      <CodeBlock label={t('docs.terminal')}>{`git pull && docker compose up -d --build           # compose from a checkout
 git pull && ./install.sh                           # the installer`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.upgradeBody')}</Rich></P>
 

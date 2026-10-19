@@ -1,8 +1,8 @@
 # Running with Docker Compose
 
 Agents Hub is one backend, one dashboard and, if you want it, one browser
-service, all on your machine. This page covers the compose files, the
-published images, and how to upgrade and roll back. State is SQLite and files
+service, all on your machine. This page covers the compose files,
+and how to upgrade and roll back. State is SQLite and files
 on disk, so there is nothing else to run.
 
 ## The shapes
@@ -11,13 +11,8 @@ Every way of running it is the same code and the same records.
 
 | Shape | Start it | Made of | For |
 | --- | --- | --- | --- |
-| **Published images** | `deploy/quickstart/docker-compose.yml` ([installation](installation.md), Path A) | `ghcr.io/snooker155/agents-hub-backend` and `-frontend`, a named volume, agents as subprocesses | Nothing to clone or build |
-| **Compose from a checkout** | `docker compose up --build` (Path B) | The same two images built from source, the checkout bind mounted, the Docker socket for per-agent containers | Containers for agents and the sandbox |
-| **Local install** | `./install.sh`, then `ah up` (Paths C and D) | A virtualenv and the Vite dev server | Working on the code |
-
-The release workflow publishes the images for amd64 and arm64 in two flavours
-("Releases" below). The quickstart compose file pulls them by tag. Only the
-checkout-based shapes build.
+| **Compose from a checkout** | `docker compose up --build` ([installation](installation.md), Path A) | The backend and dashboard images built from source, the checkout bind mounted, the Docker socket for per-agent containers | Containers for agents and the sandbox |
+| **Local install** | `./install.sh`, then `ah up` (Paths B and C) | A virtualenv and the Vite dev server | Working on the code |
 
 ## The compose file
 
@@ -45,7 +40,7 @@ docker compose restart backend                  # picks up code changes
 
 A release is a semver version (`X.Y.Z`, or `X.Y.Z-rc.1` for a prerelease)
 that names the same thing everywhere: `pyproject.toml`, the dashboard's
-`package.json`, the images and
+`package.json` and
 the git tag `vX.Y.Z`. While the major version is 0, a minor release may change
 the API or configuration and says so in `CHANGELOG.md` under **Changed**; a
 patch release never does. A release that adds schema migrations lists them
@@ -65,26 +60,14 @@ When nobody wrote anything under **Unreleased** in `CHANGELOG.md`, it fills the
 section from the commit subjects since the previous tag, so edit the commit
 before pushing if the notes need words.
 
-Pushing the tag starts `.github/workflows/release.yml`: it checks that the tag
-matches the files and has a CHANGELOG section, runs the whole CI suite on the
-tagged commit, builds the backend, frontend, agents and browser images
-for amd64 and arm64, pushes them to GHCR as
-`ghcr.io/<owner>/agents-hub-<image>:X.Y.Z` (and `:X.Y` and `:latest` for a
-final release), and creates the GitHub release from the CHANGELOG section. A
-tag that fails the check or the tests publishes nothing.
-
-Each platform is built natively, on an amd64 and an arm64 runner, and the two
-results are joined into one multi-platform manifest per tag; nothing runs
-under QEMU. The backend and agents images come in two flavours from the one
-`Dockerfile`: the default leaves out the RAG stack (torch,
-sentence-transformers, chromadb and the remote vector stores, a gigabyte of
-wheels that only the embedding features import, docs/memory.md), and
-`:X.Y.Z-rag` (`:X.Y-rag`, `:latest-rag`) carries it. Pick the `-rag` tag when
-`RAG_VECTOR_DB` is anything but `none`; a local build gets the same with
-`WITH_RAG=true` in `.env` (docker-compose.yml passes it to the image).
+The `Dockerfile` leaves out the RAG stack (torch, sentence-transformers,
+chromadb and the remote vector stores, a gigabyte of wheels that only the
+embedding features import, docs/memory.md). Build with it when `RAG_VECTOR_DB`
+is anything but `none`: `WITH_RAG=true` in `.env` (docker-compose.yml passes it
+to the image).
 
 Which release is running: `ah version` or `GET /api/system/version`, which also names
-the newest schema migration the build knows. Images carry the version and
+the newest schema migration the build knows. Images built from the checkout carry the version and
 commit as `AGENTS_HUB_VERSION` and `AGENTS_HUB_GIT_SHA`, and as OCI labels.
 
 ## Upgrading
@@ -109,7 +92,7 @@ runner refuses a ledger that names versions it does not know, on purpose,
 since old code writing to a newer schema is how data goes quietly wrong. So a
 rollback over a release with migrations is a restore, and anything written
 after the upgrade is lost. A rollback over a release without migrations is
-only the checkout or the image tag.
+only the checkout.
 
 The copy to restore:
 
@@ -120,7 +103,7 @@ Before a process applies new migrations, it writes
   newest five are kept. `AGENTS_HUB_BACKUP_BEFORE_MIGRATE=0` turns it off. A
   failed copy is logged and the upgrade goes on.
 
-Then, with the previous release's build (checked out, or its image):
+Then, with the previous release's build (checked out):
 
 ```bash
 docker compose down                      

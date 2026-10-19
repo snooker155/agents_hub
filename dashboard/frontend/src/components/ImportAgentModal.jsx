@@ -168,8 +168,6 @@ export default function ImportAgentModal({ workspace = '', onClose, onDone }) {
                 onKeyDown={(e) => e.key === 'Enter' && runCheck()}
                 placeholder={t('importAgentModal.httpsGithubComOwnerMy')}
               />
-              {/* An A2A agent is already running and describes itself, so its
-                  card replaces the repository entirely. */}
               <p className="text-xs text-gray-500 mt-1 leading-relaxed">
                 {t('importAgentModal.sourceUrlHint')}
               </p>

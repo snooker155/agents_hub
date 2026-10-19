@@ -422,7 +422,6 @@ export default {
   contentPreview: 'Inhaltsvorschau',
   noContent: 'Kein Inhalt',
   copy: 'Kopieren',
-  a2aCardHint: 'Richten Sie einen beliebigen Agent2Agent-Client auf diese URL, um den Agenten von außerhalb des Hubs auszuführen.',
   copied: 'Kopiert',
   none: 'Keine',
   none2: 'Keine',

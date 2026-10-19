@@ -1,7 +1,7 @@
 """`ah setup`: install and configure the hub from the terminal.
 
-A guided first run in five steps: how to run it (this checkout, or Docker from
-the published images), the model providers and their default models, a few
+A guided first run in five steps: how to run it (this checkout), the model
+providers and their default models, a few
 features, a review, and then the work itself.
 
 Nothing is written until the review is confirmed. Every question is asked

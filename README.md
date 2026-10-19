@@ -6,9 +6,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/snooker155/agents_hub/releases"><img alt="Release" src="https://img.shields.io/github/v/release/snooker155/agents_hub?display_name=tag&sort=semver&color=3f66d8"></a>
-  <a href="https://github.com/snooker155/agents_hub/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/snooker155/agents_hub/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/snooker155/agents_hub/pkgs/container/agents-hub-backend"><img alt="Images on GHCR" src="https://img.shields.io/badge/images-ghcr.io-3f66d8"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3f66d8"></a>
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-personal%20evaluation-1d3680"></a>
 </p>
@@ -34,36 +31,12 @@ login: whoever can open the page can do everything. Keep it on `localhost`
 
 ## Getting started
 
-### 1. Docker
-
-The published images, two files in an empty folder, one command. Nothing to
-clone or build.
-
-```bash
-mkdir agents-hub && cd agents-hub
-curl -fsSLO https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/docker-compose.yml
-curl -fsSL  https://raw.githubusercontent.com/snooker155/agents_hub/main/deploy/quickstart/env.example -o .env
-docker compose up -d
-```
-
-Open **http://localhost:8080**. The first run asks for the language, the look
-and one model key (or uncomment one in `.env` first).
-
-- State lives on the `agents_hub_data` volume; `.env` is mounted into the
-  backend, so keys entered in Settings survive an upgrade.
-- `docker compose pull && docker compose up -d` upgrades to the newest release.
-  `AGENTS_HUB_TAG=0.8` in `.env` pins one.
-- `DEMO_WORKSPACE=1` in `.env` seeds a demo workspace on the first start, so
-  every page has something to look at.
-- Agents run as subprocesses of the backend in this shape. Containers per
-  agent and the sandbox need the checkout below.
-
-### 2. From source
+### 1. From source
 
 For working on the code, or for the shape with per-agent containers.
 
 ```bash
-git clone https://github.com/snooker155/agents_hub.git
+git clone -b lite https://github.com/snooker155/agents_hub.git
 cd agents_hub
 ./install.sh                    # venv, service, dashboard, the `ah` command, the shell hook
 ```
@@ -86,7 +59,7 @@ Prerequisites for the local install are Python 3.11+ and Node.js 22+. The
 long form of every path, including what to check when it will not start, is in
 [docs/installation.md](./docs/installation.md).
 
-### 3. First run
+### 2. First run
 
 ```bash
 cd ~/code/myapp
@@ -111,15 +84,10 @@ run into an eval case and sweep it.
 
 | Shape | Start it | Made of | For |
 | --- | --- | --- | --- |
-| **Published images** | [`deploy/quickstart/docker-compose.yml`](./deploy/quickstart/docker-compose.yml) | Backend and dashboard images from GHCR, a named volume, agents as subprocesses | One person on one machine, nothing to clone or build |
 | **Compose from a checkout** | `docker compose up --build` | The same two images built from source, the checkout bind mounted, the Docker socket for per-agent containers | One machine, with containers for agents and the sandbox |
 | **Local install** | `./install.sh`, then `ah up` | A virtualenv and the Vite dev server | Working on the code |
 
-Every release publishes `agents-hub-backend`, `agents-hub-frontend`
-and `agents-hub-agents` to GHCR for amd64 and arm64, the
-backend and agents images in two flavours: plain, and `-rag` with the
-embedding stack. Upgrades, rollbacks and the release process are in
-[docs/deployment.md](./docs/deployment.md).
+Upgrades and rollbacks are in [docs/deployment.md](./docs/deployment.md).
 
 ## Documentation
 
@@ -132,7 +100,7 @@ shipped documentation.
 
 | | |
 | --- | --- |
-| [Installation](./docs/installation.md) | Docker from the published images, Compose from a checkout, the installer, by hand; upgrading |
+| [Installation](./docs/installation.md) | Compose from a checkout, the installer, by hand; upgrading |
 | [Deploying](./docs/deployment.md) | Every shape, releases, upgrades and rollbacks |
 | [What this service is](./docs/overview.md) | How the objects nest, and the two things worth knowing early |
 | [The CLI](./docs/cli.md) | `ah`, workspace selection, the shell integration |

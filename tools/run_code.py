@@ -87,7 +87,7 @@ def _truncate(text: str) -> str:
 def format_result(exit_code: int, duration_ms: int, runtime: str,
                   stdout: str = "", stderr: str = "", error: str = "") -> str:
     """Same shape as run_shell's result, plus timing and which provider ran
-    it (``runtime``: ``docker``, ``local``, ``e2b``, ``modal``, or ``none``
+    it (``runtime``: ``docker``, ``local``, or ``none``
     when nothing ran at all)."""
     parts = [f"exit_code: {exit_code}", f"duration_ms: {duration_ms}", f"runtime: {runtime}"]
     if error:
@@ -170,7 +170,7 @@ def run_snippet(
     snippet run from the Chat code panel gets exactly the isolation an agent's
     ``run_code`` call gets. Returns ``{"ok", "exit_code", "duration_ms",
     "stdout", "stderr", "runtime", "language", "sandbox": "docker"|"local"|
-    "e2b"|"modal"|"unavailable", "error"}``; never raises — any failure (bad
+    "unavailable", "error"}``; never raises: any failure (bad
     language, no provider available, a timeout, a crashed interpreter) comes
     back as ``ok: False`` with ``error`` set.
 
