@@ -66,14 +66,14 @@ def test_legal_pairs_stay_legal():
 
 
 def test_ingest_plus_exfiltrate_is_blocked_without_private_reads():
-    v = check_combination(["read_file", "notify_user"], {INGESTS_UNTRUSTED: "channel:telegram"})
+    v = check_combination(["read_file", "notify_user"], {INGESTS_UNTRUSTED: "channel:webhook"})
     assert v is not None
     # The trifecta rule wins over the pair rule when all three are present.
     assert v.rule_id == "lethal_trifecta"
 
 
 def test_pair_rule_fires_when_private_reads_are_absent():
-    v = check_combination(["notify_user"], {INGESTS_UNTRUSTED: "channel:telegram"})
+    v = check_combination(["notify_user"], {INGESTS_UNTRUSTED: "channel:webhook"})
     assert v is not None
     assert v.rule_id == "exfiltration_path"
 

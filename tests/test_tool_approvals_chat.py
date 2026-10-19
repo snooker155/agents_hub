@@ -122,9 +122,9 @@ def test_only_a_dashboard_chat_turn_with_a_stream_holds_a_call():
     token = stream_sink.set_emitter(lambda e: None)
     try:
         assert tool_approvals.chat_context(run_id)["run_id"] == run_id
-        telegram = _rid()
-        _open_run(telegram, origin="telegram")
-        assert tool_approvals.chat_context(telegram) is None
+        other = _rid()
+        _open_run(other, origin="slack")
+        assert tool_approvals.chat_context(other) is None
         assert tool_approvals.chat_context("") is None
     finally:
         stream_sink.reset_emitter(token)
@@ -215,7 +215,7 @@ def test_stop_ends_the_wait(chat_turn):
 
 def test_a_chat_with_nobody_at_a_card_keeps_the_advisory_refusal(gate_on, monkeypatch):
     run_id = _rid()
-    _open_run(run_id, origin="telegram")
+    _open_run(run_id, origin="slack")
     monkeypatch.setattr(hooks.ToolGuard, "_run_id", staticmethod(lambda: run_id))
     token = stream_sink.set_emitter(lambda e: None)
     try:

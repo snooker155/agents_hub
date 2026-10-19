@@ -14,8 +14,7 @@ Shape
 The row stores the conversation **as the UI renders it**: metadata (title,
 target, workspace, project) plus the ordered bubbles, each with the extras a
 bubble carries (run id, token tallies, tool calls, touched files, a rich view).
-That is deliberate. A transcript is reconstructible from the runs table (the
-Telegram thread is rebuilt exactly that way), but only as bare user/assistant
+That is deliberate. A transcript is reconstructible from the runs table, but only as bare user/assistant
 text — the reconstruction loses which bubble a view belonged to and what the
 user saw. The runs table remains the ledger of what executed; this table is the
 record of the conversation that executed it.
@@ -211,8 +210,8 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
     completed and been recorded.
 
     Two guards keep it from fighting the browser. A chat that does not exist is
-    left alone, because a conversation the dashboard never created (a Telegram
-    thread, an instance delivery) should not appear in the sidebar. A run whose
+    left alone, because a conversation the dashboard never created (an instance
+    delivery) should not appear in the sidebar. A run whose
     id is already on a finished message is skipped, so whichever writer got
     there first holds the turn and the other does not duplicate it. A bubble the
     page saved while the turn was still being written (no ``duration_ms`` and

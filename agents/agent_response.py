@@ -2,7 +2,7 @@
 Structured agent responses.
 
 An agent normally replies with plain text. When it wants a richer surface — a
-set of buttons, a Telegram-native inline keyboard, … — it appends a structured
+set of buttons, a rich view, … — it appends a structured
 block to its output:
 
     Some normal prose the user reads.
@@ -17,13 +17,12 @@ it into an :class:`AgentResponse` subclass instance. The structured object then
 travels alongside the plain text through the chat pipeline's ``done`` event, and
 each surface renders what it understands:
 
-- the web chat renders ``buttons`` / ``telegram`` as clickable buttons;
-- the Telegram connector maps them onto an ``inline_keyboard``;
+- the web chat renders ``buttons`` as clickable buttons;
 - any surface that doesn't understand a ``kind`` falls back to ``fallback_text``.
 
 ``AgentResponse`` is the base every concrete format inherits from; ``kind`` is the
-discriminator surfaces dispatch on. ``TelegramResponse`` is just one concrete
-format (Telegram-native layout); ``ButtonsResponse`` is a surface-agnostic one.
+discriminator surfaces dispatch on. ``ButtonsResponse`` is a surface-agnostic
+concrete format.
 New formats are added by subclassing and registering with ``@register_response``.
 """
 from __future__ import annotations
@@ -103,7 +102,7 @@ class AgentResponse(BaseModel):
     fallback_text: str = ""
 
     def to_payload(self) -> dict:
-        """Serialize for transport in the chat ``done`` event / SSE / Telegram.
+        """Serialize for transport in the chat ``done`` event / SSE.
 
         ``kind`` is a ClassVar (not a model field), so it is injected explicitly
         here and stripped again by :func:`parse_agent_response` on the way back.
@@ -126,19 +125,6 @@ class ButtonsResponse(AgentResponse):
     text: str = ""
     buttons: list[Button] = []
     columns: int = 1
-
-
-@register_response
-class TelegramResponse(AgentResponse):
-    """Telegram-native response: explicit inline-keyboard rows + parse mode.
-
-    Use this when the agent wants full control of the Telegram layout; for
-    portable UI that also renders on the web, prefer :class:`ButtonsResponse`.
-    """
-    kind: ClassVar[str] = "telegram"
-    text: str = ""
-    parse_mode: Optional[str] = None
-    inline_keyboard: list[list[Button]] = []
 
 
 @register_response
@@ -182,7 +168,7 @@ class ViewResponse(AgentResponse):
 # injected into the system prompt by agent_factory, the same way reasoning /
 # delegation guidance is. "none" injects nothing.
 
-RESPONSE_FORMAT_CHOICES = ("none", "buttons", "telegram", "views")
+RESPONSE_FORMAT_CHOICES = ("none", "buttons", "views")
 
 _BUTTONS_PROMPT = """## Interactive replies
 
@@ -208,31 +194,6 @@ Rules:
   sent back to you when it is tapped — both must be real, concrete text.
 - A button has EITHER `value` OR `url` (a link) — never both.
 - `columns` lays the buttons out in a grid that many wide.
-- Output at most one block, and only when concrete choices genuinely help."""
-
-_TELEGRAM_PROMPT = """## Interactive replies (Telegram inline keyboard)
-
-When the user has a clear set of choices, end your reply with a Telegram inline
-keyboard so they can act with one tap. Append it as the very last thing in your
-reply.
-
-The example below shows the STRUCTURE only. Always write your own real labels
-and values for the current reply — never copy the example text, and never output
-angle brackets or placeholder words:
-
-<<<ui>>>
-{"kind": "telegram", "text": "Choose your path:", "parse_mode": null,
- "inline_keyboard": [[{"label": "Fight the dragon", "value": "Fight the dragon"},
-                      {"label": "Sneak past", "value": "Sneak past it"}],
-                     [{"label": "Open guide", "url": "https://example.com/guide"}]]}
-<<<end>>>
-
-Rules:
-- Write your normal answer BEFORE the block; it is shown to the user as usual.
-- `inline_keyboard` is a list of rows; each row is a list of buttons. Each
-  `label`/`value` must be real, concrete text for this reply.
-- A button has EITHER `value` (sent back to you) OR `url` (a link), never both.
-- `parse_mode` may be null, "Markdown", or "HTML"; leave it null unless needed.
 - Output at most one block, and only when concrete choices genuinely help."""
 
 _VIEWS_PROMPT = """## Rich views
@@ -274,8 +235,7 @@ Rules:
   block.
 - Output at most one block, and only when a view genuinely helps."""
 
-_FORMAT_PROMPTS = {"buttons": _BUTTONS_PROMPT, "telegram": _TELEGRAM_PROMPT,
-                   "views": _VIEWS_PROMPT}
+_FORMAT_PROMPTS = {"buttons": _BUTTONS_PROMPT, "views": _VIEWS_PROMPT}
 
 
 def build_response_format_prompt(response_format: Optional[str]) -> str:
@@ -333,7 +293,6 @@ __all__ = [
     "Button",
     "TextResponse",
     "ButtonsResponse",
-    "TelegramResponse",
     "ViewResponse",
     "register_response",
     "parse_agent_response",

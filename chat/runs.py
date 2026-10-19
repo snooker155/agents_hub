@@ -136,7 +136,7 @@ def build_conversation_history(conversation_id: str, *, max_turns: int = 20):
     """Reconstruct a conversation's prior turns as ``ChatHistoryMessage`` list.
 
     The web Chat page posts its history from the browser, but non-web surfaces
-    (e.g. the Telegram connector) hold no client-side transcript, so they would
+    (e.g. an instance delivery) hold no client-side transcript, so they would
     otherwise run every turn context-free. Rebuild it server-side from this
     conversation's completed chat runs: each run stores that exchange's
     ``user_message`` and ``response`` under ``process.llm_input_context``, so a
@@ -306,13 +306,13 @@ def create_chat_run(request: ChatRequest, **run_extra):
     ])
     _write_log(log_file, log_lines)
 
-    channel = "telegram" if request.source == "telegram" else "chat"
+    channel = "chat"
 
-    # Capability guard, run level. Telegram inbound is attacker-controllable
-    # text entering agent context without any tool grant saying so, so the
-    # agent's tool set is re-checked with `ingests_untrusted` folded in. This is
-    # warn-only by design — an agent that is safe on its own tools must not stop
-    # working because a message arrived over Telegram — but the exposure lands
+    # Capability guard, run level. Some channels carry attacker-controllable
+    # text into agent context without any tool grant saying so, so the
+    # agent's tool set is re-checked with that channel's capabilities folded in.
+    # This is warn-only by design: an agent that is safe on its own tools must
+    # not stop working because of the channel, but the exposure lands
     # in the log instead of being invisible.
     try:
         from agents.capability_guard import check_run_channel

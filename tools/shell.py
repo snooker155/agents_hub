@@ -29,7 +29,6 @@ _SECRET_NAMES = frozenset({
     "ANTHROPIC_API_KEY",
     "GOOGLE_API_KEY",
     "AGENTS_HUB_API_TOKEN",
-    "TELEGRAM_BOT_TOKEN",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_ACCESS_KEY_ID",
     "GITHUB_TOKEN",
@@ -114,7 +113,7 @@ def _resolve_shell_cwd() -> str:
     1. Subprocess launchers (task / continuation runs) already start with cwd set
        to the exact workspace/project folder — trust it when it lies under the
        workspaces root (never the application repo).
-    2. In-process runs (chat, Telegram) share the backend cwd, so derive the
+    2. In-process runs (chat) share the backend cwd, so derive the
        directory from the active workspace/project context vars instead.
     3. Fall back to the workspaces root — anywhere but the application's own repo.
     """

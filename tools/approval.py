@@ -26,7 +26,7 @@ Where a call is *held* depends on the surface, and that split is the whole point
   with Approve and Deny, and the same turn runs it or reads the refusal
   (common/tool_approvals.py). :func:`chat_answer_text` is what a refused,
   timed out or stopped wait hands back.
-- Everywhere else in chat (Telegram, the widget, channels, ``/v1``) nobody is
+- Everywhere else in chat (the widget, channels, ``/v1``) nobody is
   in front of a card, so the gate refuses the call and tells the agent to say
   what it wanted to run. That is advisory.
 """

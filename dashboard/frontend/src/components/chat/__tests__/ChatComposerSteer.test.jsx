@@ -25,14 +25,14 @@ function Page({ loading, input = '', setInput = () => {}, extra = {} }) {
   const base = {
     addReferences: () => {}, attachMenuOpen: false, attachmentError: '', commandMenuIndex: 0,
     commandMenuOpen: false, commandSuggestions: [], composerPlaceholder: 'Message', contextKinds: [],
-    contextUsage: null, currentTelegramBinding: null, fileInputRef: { current: null },
+    contextUsage: null, fileInputRef: { current: null },
     handleKeyDown: vi.fn(), hasTarget: true, input, loading, onPickFiles: () => {},
     pendingAttachments: [], pendingReferences: [], pickerKind: null, removeAttachment: () => {},
     removeReference: () => {}, resizeTextarea: () => {}, selectCommand: () => {},
     selectedProject: '', selectedWorkspace: 'ws', sendAsBot: () => {}, sendMessage: vi.fn(),
     setAttachMenuOpen: () => {}, setCommandMenuIndex: () => {}, setCommandMenuOpen: () => {},
-    setInput, setPickerKind: () => {}, stopGeneration: vi.fn(), t, telegramError: '',
-    telegramReplyAllowed: false, telegramSending: false, textareaRef: { current: null },
+    setInput, setPickerKind: () => {}, stopGeneration: vi.fn(), t,
+    textareaRef: { current: null },
     toggleAttachmentStore: () => {}, targetMode: 'agent', currentConvId: 'c1',
     conversations: [{ id: 'c1', messages: [
       { id: 'u1', role: 'user', content: 'go' },

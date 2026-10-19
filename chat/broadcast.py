@@ -15,7 +15,7 @@ following it.
 
 Three points are deliberate:
 
-* **It wraps the pipelines, not the routes.** Telegram, the instance inbox and
+* **It wraps the pipelines, not the routes.** The instance inbox and
   the CLI drive the same generators; wrapping here means a turn started from any
   of them streams into an open chat page, rather than only turns typed into one.
 * **The originating client is named on every event** (``origin_client``), which
@@ -108,11 +108,9 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> bool:
     """Record a completed turn in the stored chat, unless the browser did.
 
     Only for the web chat, and only for a conversation the dashboard already
-    keeps. A Telegram thread is a mirror of a transcript that lives on Telegram
-    and is rebuilt from the runs behind it; an instance delivery has no
-    conversation page at all. Writing either into the chat store would fill the
-    sidebar with conversations nothing opens, or append a second copy of a
-    transcript that is reconstructed anyway. Returns whether anything was written.
+    keeps. An instance delivery has no conversation page at all. Writing it
+    into the chat store would fill the sidebar with conversations nothing
+    opens. Returns whether anything was written.
     """
     from common import chat_store
 

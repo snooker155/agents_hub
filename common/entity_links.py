@@ -7,7 +7,7 @@ every surface needs the same answer in a different shape:
 
 * the web chat renders the records as clickable chips under the reply
   (:func:`entity_payloads`),
-* Telegram and any other text-only surface append one markdown link per record
+* any text-only surface appends one markdown link per record
   to the reply text (:func:`append_entity_links`).
 
 Label resolution is best-effort and lazy: a tool that just created a task
@@ -185,8 +185,8 @@ def public_base() -> str:
     """Absolute-URL prefix when the hub knows its own address, else empty.
 
     The web chat wants site-relative links (it is already on the origin);
-    Telegram needs absolute ones. ``AGENTS_HUB_PUBLIC_URL`` is the same knob the
-    Telegram connector uses for its Studio deep-links.
+    text-only surfaces need absolute ones. ``AGENTS_HUB_PUBLIC_URL`` is the knob
+    for the public origin.
     """
     return (os.environ.get("AGENTS_HUB_PUBLIC_URL") or "").rstrip("/")
 
@@ -253,7 +253,7 @@ def entity_link_lines(items, *, seen_text: str = "") -> List[str]:
     """One markdown link line per entity payload, for surfaces that carry only text.
 
     ``items`` are :func:`entity_payloads` results. Their site-relative URLs are
-    made absolute when ``AGENTS_HUB_PUBLIC_URL`` is set, so a Telegram link is
+    made absolute when ``AGENTS_HUB_PUBLIC_URL`` is set, so a link is
     clickable. Entities already linked in ``seen_text`` are skipped — when the
     agent wrote the link itself, repeating it is noise.
     """

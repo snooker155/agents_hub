@@ -97,7 +97,7 @@ def test_file_raw_via_http_rejects_the_one_level_escape_the_route_shape_allows()
     normalization and reaches Starlette as a literal ".." — the maximum
     traversal this route's single-dynamic-segment shape admits. Before the
     fix this would resolve to AGENTS_HUB_ROOT and serve whatever `path` named
-    inside it (e.g. the Telegram bot token file); after the fix it 404s."""
+    inside it (e.g. a bot token file); after the fix it 404s."""
     from routes import workspaces
     from common.paths import AGENTS_HUB_ROOT
 

@@ -11,7 +11,7 @@ const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 
 /**
  * The conversations being answered right now, whoever started the turn: this
- * tab, another tab or device, Telegram, an agent's inbox. The server keeps
+ * tab, another tab or device, an agent's inbox. The server keeps
  * them (GET /api/chats/running) and says when the set changes
  * (`chat_turns.changed` on the app channel); this follows both.
  *

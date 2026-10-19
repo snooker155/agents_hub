@@ -11,8 +11,7 @@ itself:
 Stateful lifecycle managers (``run_manager``, ``container_manager``) live in
 the ``managers`` package; a resident instance's own carrier lives in
 ``instances.carrier``; the task-run launcher (``agent_launcher``) lives in the
-``agents`` package; external channel integrations (Telegram) live under
-``connectors``.
+``agents`` package.
 
 These depend on the ``agents`` package (factory, registry, base) but not the
 reverse.

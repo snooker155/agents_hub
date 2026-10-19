@@ -137,7 +137,7 @@ class WorkspaceRoleUpdate(BaseModel):
 
 
 class AgentResponseFormatUpdate(BaseModel):
-    # Structured response the agent may emit: "none" | "buttons" | "telegram".
+    # Structured response the agent may emit: "none" | "buttons" | "views".
     response_format: str = "none"
 
 

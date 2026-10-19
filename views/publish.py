@@ -8,7 +8,7 @@ through the view store and replaced with a lightweight ``view_ref`` — so the
 client and the run record carry a reference, never the full spec.
 
 Kept out of ``agents.agent_response`` (a pure parsing module) and out of the
-chat pipeline (called from several surfaces: web chat, flow nodes, Telegram).
+chat pipeline (called from several surfaces: web chat, flow nodes).
 """
 from __future__ import annotations
 

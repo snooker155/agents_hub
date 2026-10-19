@@ -439,7 +439,7 @@ function handleAgentEvent(event, ctx) {
                     // using them as-is can repeat the answer. Fall back to the
                     // streamed content only when no final response was sent.
                     content: (event.response || '').trim() || (event.response_obj ? '' : stripUiBlock(m.content)) || '',
-                    // Structured response (buttons / Telegram keyboard / …); rendered
+                    // Structured response (buttons / views / …); rendered
                     // as interactive UI under the bubble. null for plain replies.
                     response_obj: event.response_obj || null,
                     // Service entities this turn touched, rendered as links

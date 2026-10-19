@@ -3,7 +3,7 @@ Health & liveness endpoint.
 
 ``GET /api/health`` reports whether the database is reachable, the row counts of
 the core stores, the liveness of every background service (plan scheduler, run
-watchdog, Telegram poller, external-state publisher), and on-disk state sizes.
+watchdog, external-state publisher), and on-disk state sizes.
 Gives operators one place to see that the moving parts are alive and how large
 local state has grown, instead of inferring it from logs.
 

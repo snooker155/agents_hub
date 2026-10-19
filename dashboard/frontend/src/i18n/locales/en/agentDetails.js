@@ -232,6 +232,7 @@ export default {
   preSelectThisAgentFor: 'Pre-select this agent for the current workspace when opening Chat or starting a new conversation.',
   defaultCleared: 'Default cleared.',
   responseFormat: 'Response format',
+  responseFormatHelp: 'Let this agent reply with interactive UI (buttons or rich views) instead of plain text. When enabled, the agent is taught a structured-reply convention; surfaces that understand it render the result, others fall back to text.',
   responseFormats: {
     none: {
       label: 'Plain text',
@@ -239,11 +240,7 @@ export default {
     },
     buttons: {
       label: 'Buttons',
-      desc: 'Portable buttons — render on web chat and Telegram.',
-    },
-    telegram: {
-      label: 'Telegram keyboard',
-      desc: 'Telegram-native inline keyboard with row layout.',
+      desc: 'Portable buttons, rendered in the web chat.',
     },
     views: {
       label: 'Rich views',

@@ -206,7 +206,7 @@ BUILD_COUNTS_FRESH_SECONDS = 120.0
 def _replica_build_counts() -> Dict[str, int]:
     """The agent build counts every live instance sent with its last
     heartbeat (runtime/instance_run.py ``_build_counts``), summed. The builds
-    live in each replica's memory, where chat, /v1, widget and Telegram turns
+    live in each replica's memory, where chat, /v1 and widget turns
     run, so they are only seen through what each replica reports."""
     from datetime import datetime, timezone
     from instances.store import LIVE_STATES

@@ -11,7 +11,7 @@ event dicts:
   frontend expects.
 
 Both are consumed by the ``/api/chat/stream`` SSE endpoint and directly by the
-Telegram adapter, so they form the single execution path for chat.
+pipelines, so they form the single execution path for chat.
 """
 import asyncio
 import logging
@@ -386,13 +386,13 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
                 "tool_calls": callback.tool_calls,
                 "duration_ms": duration_ms,
             }
-            # Structured response (buttons / Telegram keyboard / view_ref / …)
+            # Structured response (buttons / view_ref / …)
             # travels next to the plain text; surfaces that don't understand it
             # ignore it.
             if structured_payload is not None:
                 done_event["response_obj"] = structured_payload
             # Links to the service entities the run touched. The web chat renders
-            # them under the reply; text-only surfaces (Telegram) append them to
+            # them under the reply; text-only surfaces append them to
             # the text via ``common.entity_links.append_entity_links``.
             if drive.entities:
                 done_event["entities"] = drive.entities
@@ -514,8 +514,8 @@ async def _run_chat_pipeline(request: ChatRequest):
     Validates the request, materializes attachments, builds the prompt,
     records a run, executes the agent with streaming callbacks, and emits
     the same events that the SSE endpoint forwards to the browser. The
-    Telegram adapter consumes the dict stream directly to assemble its
-    own reply, so both surfaces share one execution path.
+    dict stream can be consumed directly by any non-web surface, so all
+    surfaces share one execution path.
 
     A turn may hold several agents: when the agent hands the conversation over
     (tools/handoff.py), the agent it names answers in the same turn, as a run
@@ -960,7 +960,7 @@ async def _run_chat_team_pipeline(request: ChatRequest):
 # ---------------------------------------------------------------------------
 # Public entry points
 # ---------------------------------------------------------------------------
-# Every consumer — the web routes, the Telegram adapter, an instance delivery,
+# Every consumer — the web routes, an instance delivery,
 # the CLI — goes through these, so a turn started anywhere is visible to anyone
 # with that conversation open. The wrapper only passes events along on their way
 # out (see chat.broadcast); the generators above are unchanged by it.

@@ -130,7 +130,7 @@ def test_user_approved_gates_pass_and_are_recorded(chat_turn):
 def test_only_interactive_chats_in_allowing_workspaces(settings):
     assert auto_mode.allowed_for("acme", None)
     assert not auto_mode.allowed_for("acme", "assistant-chat")
-    assert not auto_mode.allowed_for("acme", "telegram")
+    assert not auto_mode.allowed_for("acme", "slack")
     assert not auto_mode.allowed_for("acme", "widget")
     settings["allow_auto_approve"] = False
     assert not auto_mode.allowed_for("acme", "chat")
@@ -165,7 +165,7 @@ def test_a_turn_from_elsewhere_runs_without_auto_mode(settings, monkeypatch):
         return [e async for e in pipelines.execute_locally(request, "agent")]
 
     asyncio.run(_drive(ChatRequest(agent_id="swe_agent", message="hi", auto_approve=True,
-                                   source="telegram", workspace="acme")))
+                                   source="slack", workspace="acme")))
     assert seen == {"flag": False, "turn": False}
     asyncio.run(_drive(ChatRequest(agent_id="swe_agent", message="hi", auto_approve=True,
                                    workspace="acme")))

@@ -41,7 +41,6 @@ export default {
     chat: 'Chat',
     chat_flow: 'Chat-Flow',
     chat_delegate: 'Delegiert',
-    telegram: 'Telegram',
     flow: 'Flow',
     http: 'Extern',
     external: 'Externe API',

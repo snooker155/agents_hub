@@ -903,7 +903,7 @@ class ToolGuard:
             held = self._hold_in_chat(call, reason, by=by, hook=hook)
             if held is not None:
                 return held
-            # Nobody in front of a card (Telegram, the widget, a channel,
+            # Nobody in front of a card (the widget, a channel,
             # /v1): there is nothing to park and nobody to answer a parked
             # call, so the gate stays advisory.
             return _Verdict(refusal=gate_refusal_text(call.tool, call.input, reason))

@@ -3,7 +3,7 @@ How the backend starts itself: `python dashboard/backend/main.py`.
 
 The reloader is a development tool and nothing else. It restarts the process on
 any write under the trees it watches, and the backend owns singletons — the plan
-scheduler, the run watchdog, the Telegram poller — that a restart interrupts
+scheduler, the run watchdog — that a restart interrupts
 mid-flight. So it is off unless asked for, here and in every packaged start:
 the Dockerfile and the compose service run plain uvicorn.
 """

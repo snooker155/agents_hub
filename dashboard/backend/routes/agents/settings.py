@@ -316,11 +316,11 @@ async def get_agent_response_format(agent_id: str):
 
 @router.post("/{agent_id}/response-format")
 async def update_agent_response_format(agent_id: str, data: AgentResponseFormatUpdate):
-    """Set the structured response format the agent may emit (none/buttons/telegram).
+    """Set the structured response format the agent may emit (none/buttons/views).
 
     When not "none", agent_factory injects a system-prompt snippet teaching the
-    <<<ui>>> block convention so the agent can produce buttons / a Telegram
-    inline keyboard.
+    <<<ui>>> block convention so the agent can produce buttons or a rich
+    view.
     """
     from agents.agent_response import RESPONSE_FORMAT_CHOICES
     spec = registry.get_agent(agent_id)

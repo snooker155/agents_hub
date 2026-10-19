@@ -208,7 +208,7 @@ async def drive_streaming_run(
         # the model's cached rate rather than its input rate.
         "cached_tokens": getattr(callback, "cached_prompt_tokens", 0),
         # How full the model's context was at this turn's largest call, so a
-        # surface that missed the streamed usage events (a reload, Telegram)
+        # surface that missed the streamed usage events (a reload)
         # still knows where the conversation stands.
         **callback.context_usage(),
     }

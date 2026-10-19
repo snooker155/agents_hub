@@ -30,8 +30,7 @@ function groupTurns(messages) {
 }
 
 /**
- * The transcript itself, in whichever of the two views is selected, plus the
- * banner that appears when the open conversation is a Telegram thread.
+ * The transcript itself, in whichever of the two views is selected.
  */
 export default function ChatMessageList() {
   const {

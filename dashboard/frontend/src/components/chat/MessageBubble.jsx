@@ -158,7 +158,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
             <MessageEntities entities={entities} />
             {/* The sources the reply cites as [n] (a memory search's passages). */}
             <Citations citations={msg.citations} anchor={msg.id} />
-            {/* Structured response UI (buttons / Telegram keyboard) under the text. */}
+            {/* Structured response UI (buttons / views) under the text. */}
             <ResponseButtons response={msg.response_obj} onAction={onAction} disabled={isStreaming} />
             {/* A rich view (chart / table / diagram / …) the reply is. */}
             {msg.response_obj?.kind === 'view_ref' && <ViewCard viewRef={msg.response_obj} />}

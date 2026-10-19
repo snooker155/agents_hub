@@ -272,33 +272,33 @@ async def _body_test_the_browsers_own_version_of_a_turn_is_not_duplicated():
 
 
 async def _body_test_a_conversation_the_dashboard_never_kept_is_not_invented():
-    """A Telegram thread or an instance delivery has no chat row; writing one
+    """An instance delivery has no chat row; writing one
     would put conversations in the sidebar that nothing ever opens."""
     from chat.broadcast import broadcast_turn
     from common import chat_store
 
-    async for _ in broadcast_turn(FakeRequest(conversation_id="tg-77", source="telegram"),
+    async for _ in broadcast_turn(FakeRequest(conversation_id="inst-77", source="instance"),
                                   _pipeline([{"type": "done", "ok": True,
                                               "response": "hi", "run_id": "run-2"}])):
         pass
 
-    assert chat_store.get_chat("tg-77") is None
+    assert chat_store.get_chat("inst-77") is None
 
 
-async def _body_test_a_telegram_turn_does_not_append_to_its_mirror_row():
-    """The dashboard does keep a row for a Telegram thread, but its transcript
+async def _body_test_a_non_chat_turn_does_not_append_to_its_mirror_row():
+    """The dashboard may keep a row for a non-chat thread, but its transcript
     is rebuilt from the runs; appending here would be a second copy."""
     from chat.broadcast import broadcast_turn
     from common import chat_store
 
-    chat_store.save_chat({"id": "tg-77", "origin": "telegram", "messages": []})
+    chat_store.save_chat({"id": "inst-77", "origin": "instance", "messages": []})
 
-    async for _ in broadcast_turn(FakeRequest(conversation_id="tg-77", source="telegram"),
+    async for _ in broadcast_turn(FakeRequest(conversation_id="inst-77", source="instance"),
                                   _pipeline([{"type": "done", "ok": True,
                                               "response": "hi", "run_id": "run-2"}])):
         pass
 
-    assert chat_store.get_chat("tg-77")["messages"] == []
+    assert chat_store.get_chat("inst-77")["messages"] == []
 
 
 async def _body_test_a_failed_turn_is_not_written():
@@ -427,8 +427,8 @@ def test_a_conversation_the_dashboard_never_kept_is_not_invented():
     asyncio.run(_body_test_a_conversation_the_dashboard_never_kept_is_not_invented())
 
 
-def test_a_telegram_turn_does_not_append_to_its_mirror_row():
-    asyncio.run(_body_test_a_telegram_turn_does_not_append_to_its_mirror_row())
+def test_a_non_chat_turn_does_not_append_to_its_mirror_row():
+    asyncio.run(_body_test_a_non_chat_turn_does_not_append_to_its_mirror_row())
 
 def test_a_failed_turn_is_not_written():
     asyncio.run(_body_test_a_failed_turn_is_not_written())

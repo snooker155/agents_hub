@@ -110,7 +110,7 @@ async def list_chats(
 async def list_running_chats(request: Request):
     """The stored conversations the caller can see that are being answered now.
 
-    Whoever started the turn: this tab, another tab or device, Telegram, an
+    Whoever started the turn: this tab, another tab or device, an
     agent writing to its inbox. The Chat page marks them in its list and asks
     again on every ``chat_turns.changed`` (chat/broadcast.py
     announce_running_change).

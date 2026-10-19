@@ -389,10 +389,10 @@ def enforce_built_tools(
 def check_run_channel(agent_id: str, tools: Sequence[str], channel: Optional[str]) -> Optional[Violation]:
     """Warn-only check folding the run *channel*'s ingest into the tool set.
 
-    Telegram inbound and imported git issues carry attacker-controllable text
-    into agent context without any tool grant saying so. This never blocks — an
+    Webhooks and imported git issues carry attacker-controllable text
+    into agent context without any tool grant saying so. This never blocks: an
     agent that is safe on its own tools should not stop working because a
-    message arrived over Telegram — but it makes the real exposure visible and
+    message arrived over such a channel, but it makes the real exposure visible and
     puts it in the run log.
     """
     if guard_mode() == "off":

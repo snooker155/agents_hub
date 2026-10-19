@@ -156,7 +156,7 @@ const AgentDetails = () => {
   }));
   const [reasoningSettings, setReasoningSettings] = useState(defaultReasoningSettings);
 
-  // Structured response format (none | buttons | telegram) — seeded from the
+  // Structured response format (none | buttons | views) — seeded from the
   // loaded agent record, persisted via updateAgentResponseFormat.
   const [responseFormat, setResponseFormat] = useState('none');
   const [responseFormatSaving, setResponseFormatSaving] = useState(false);

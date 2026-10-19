@@ -441,7 +441,7 @@ def add_asset(view_id: str, src_abs: str, dest_name: Optional[str] = None) -> st
 def set_snapshot(view_id: str, png_bytes: bytes) -> Optional[str]:
     """Store a PNG snapshot for a view and set it as ``fallback.image``.
 
-    Feeds non-visual surfaces (a Telegram photo, a gallery thumbnail) a static
+    Feeds non-visual surfaces (a gallery thumbnail) a static
     preview. Returns the ``asset://snapshot.png`` ref, or None for an unknown id.
     """
     row = _row(view_id)

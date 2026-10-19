@@ -46,12 +46,6 @@ vi.mock('../../api', () => ({
   updateWorkspaceSettingsOverrides: () => ok({}),
   getWorkspacePolicy: () => ok({ require_tool_approval: false, hooks: {} }),
   updateWorkspacePolicy: () => ok({ require_tool_approval: true, hooks: {} }),
-  getTelegramConfig: () => ok({ enabled: false, has_token: false, running: false }),
-  updateTelegramConfig: () => ok({}),
-  testTelegramToken: () => ok({ ok: true }),
-  getTelegramStatus: () => ok({}),
-  getTelegramBindings: () => ok([]),
-  deleteTelegramBinding: () => ok({}),
   getGitConfig: () => ok({
     gitlab: { has_token: false, base_url: 'https://gitlab.com' },
   }),
@@ -66,7 +60,7 @@ vi.mock('../../api', () => ({
   updateSettings: () => ok({}),
 }));
 
-// telegram / git / blender are not here any more: they are the Connectors page
+// git / blender are not here any more: they are the Connectors page
 // now, and Connectors.i18n.test.jsx carries the same coverage for them.
 const SECTIONS = [
   'providers', 'local', 'custom',

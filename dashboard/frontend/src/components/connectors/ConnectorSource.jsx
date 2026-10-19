@@ -3,8 +3,8 @@ import { useI18n } from '../../i18n';
 // A connector lives in the workspace that defines it; the default
 // workspace's definition is visible everywhere else (connectors/channels/
 // store.py, docs/workspaces.md). Every card on the Connectors page that
-// reads its config from that store (credential connectors, chat channels,
-// Telegram) shares this badge plus the "define here" / "remove, use the
+// reads its config from that store (credential connectors and chat
+// channels) shares this badge plus the "define here" / "remove, use the
 // default's" switch, so the three stay in sync by construction.
 
 /** "Defined in this workspace" or "From the default workspace", from the

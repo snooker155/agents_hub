@@ -119,10 +119,10 @@ describe('the stream handler', () => {
 describe('the transcript', () => {
   const page = (messages) => ({
     agentName: 'Front desk', agents: [{ id: 'front', name: 'Front desk' }, { id: 'billing', name: 'Billing' }],
-    artifacts: {}, currentTelegramBinding: null, flows: [], jumpToArtifact: vi.fn(), liveMessages: [],
+    artifacts: {}, flows: [], jumpToArtifact: vi.fn(), liveMessages: [],
     liveTurn: null, loading: false, messages, messagesEndRef: { current: null }, renderedMessages: messages,
     runTimelineByRunId: {}, selectedFlow: '', selectedTeam: '', selectedWorkspace: 'default',
-    sendMessage: vi.fn(), t: (k) => k, targetMode: 'agent', teams: [], telegramReplyAllowed: false,
+    sendMessage: vi.fn(), t: (k) => k, targetMode: 'agent', teams: [],
     viewMode: 'chat',
   });
 

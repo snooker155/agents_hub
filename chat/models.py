@@ -21,8 +21,7 @@ class ChatAttachment(BaseModel):
     filename: str = ""
     content: str = ""
     # Optional base64-encoded binary payload. When set, the materializer writes
-    # bytes to disk instead of UTF-8 text — used for Telegram photo/document
-    # uploads and any future binary web uploads.
+    # bytes to disk instead of UTF-8 text — used for binary web uploads.
     content_b64: Optional[str] = None
     mime_type: Optional[str] = None
     store_to_workspace: bool = False
@@ -68,7 +67,7 @@ class ChatRequest(BaseModel):
     # composer. Rendered into the prompt for this turn only.
     references: List[ChatReference] = []
     # Where this exchange originated, recorded as the run's ``message_origin`` so
-    # the Messages list can distinguish e.g. Telegram runs from web chat. None
+    # the Messages list can distinguish e.g. flow runs from web chat. None
     # defaults to "chat" (the web Chat page) at run-record time.
     source: Optional[str] = None
     # For the multiplexed transport (POST /api/chat/stream-sse): the caller's SSE

@@ -34,7 +34,6 @@ const CHANNEL_META = {
   chat:          { icon: MessageSquare, bg: 'bg-indigo-100',  text: 'text-indigo-700' },
   chat_flow:     { icon: Workflow,      bg: 'bg-violet-100',  text: 'text-violet-700' },
   chat_delegate: { icon: Send,          bg: 'bg-blue-100',    text: 'text-blue-700' },
-  telegram:      { icon: Send,          bg: 'bg-sky-100',     text: 'text-sky-700' },
   flow:          { icon: Workflow,      bg: 'bg-violet-100',  text: 'text-violet-700' },
   http:          { icon: Globe,         bg: 'bg-cyan-100',    text: 'text-cyan-700' },
   external:      { icon: Globe,         bg: 'bg-cyan-100',    text: 'text-cyan-700' },

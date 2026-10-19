@@ -41,7 +41,7 @@ class AgentResult(BaseModel):
     # is parked on (shape documented on ``tasks.models.Task``). The runner
     # hands it to ``park_task_awaiting_approval``.
     pending_approval: Optional[Dict[str, Any]] = None
-    # Optional structured response (buttons, Telegram inline keyboard, …) parsed
+    # Optional structured response (buttons, a rich view, …) parsed
     # from a <<<ui>>> block in the agent's output. ``agent_output`` always holds
     # the plain-text fallback, so surfaces that ignore this keep working.
     # SerializeAsAny preserves subclass fields when AgentResult is serialized.

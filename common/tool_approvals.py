@@ -14,7 +14,7 @@ turn, the history does not move.
 
 Who answers: the run's owner or an admin, the rule steering's ``system`` mode
 follows (dashboard/backend/routes/tool_approvals.py checks it). Surfaces with
-nobody in the dashboard to answer (Telegram, the widget, channels, ``/v1``)
+nobody in the dashboard to answer (the widget, channels, ``/v1``)
 keep the advisory refusal: :func:`chat_context` returns None for them.
 
 Rows live in ``tool_approvals`` (migration 0035). The waiting process reaches

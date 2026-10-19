@@ -285,14 +285,11 @@ export default function BehaviorTab() {
               {t('agentDetails.responseFormat')}
             </h3>
             <p className="text-xs text-gray-500 mb-4">
-              Let this agent reply with interactive UI (buttons / a Telegram inline keyboard)
-              instead of plain text. When enabled, the agent is taught a structured-reply
-              convention; surfaces that understand it (web chat, Telegram) render the buttons,
-              others fall back to text.
+              {t('agentDetails.responseFormatHelp')}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               {[
-                ...['none', 'buttons', 'telegram', 'views'].map((value) => ({
+                ...['none', 'buttons', 'views'].map((value) => ({
                   value,
                   label: t(`agentDetails.responseFormats.${value}.label`),
                   desc: t(`agentDetails.responseFormats.${value}.desc`),

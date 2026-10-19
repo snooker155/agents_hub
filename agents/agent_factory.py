@@ -1021,7 +1021,7 @@ class AgentFactory:
                 + reasoning_prompt
             )
 
-        # Structured response format (buttons / Telegram keyboard). When selected
+        # Structured response format (buttons / views). When selected
         # on the agent, teach the <<<ui>>> block convention; the parser in
         # agents.agent_response turns the emitted block into an AgentResponse that
         # surfaces render. instructions.md can't carry this — it's toggled per

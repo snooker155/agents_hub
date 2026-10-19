@@ -36,8 +36,7 @@ log = logging.getLogger(__name__)
 _CATALOG_KEY = "catalog"
 
 # models.json is one dict of providers, not a collection, so it is imported by
-# hand below as a single document under the "catalog" key (like
-# connectors/telegram/telegram_store.py's "state" document) rather than through
+# hand below as a single document under the "catalog" key rather than through
 # DocStore's own per-key legacy import.
 _store = DocStore("models")
 

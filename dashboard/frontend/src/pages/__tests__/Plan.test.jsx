@@ -22,7 +22,6 @@ const getNotifications = vi.fn(() => ok([]));
 const getAgents = vi.fn(() => ok([{ id: 'agent-1', name: 'Scout' }]));
 const listFlows = vi.fn(() => ok([{ id: 'flow-1', name: 'Onboarding' }]));
 const getSharedMemories = vi.fn(() => ok([{ id: 'pool-1', name: 'Team pool' }, { id: 'pool-2', name: 'Other pool' }]));
-const getTelegramConfig = vi.fn(() => ok({ enabled: false, has_token: false }));
 // CronHint (under the recurrence field once it is not 'none') debounces a
 // call to this; never resolving keeps every existing assertion exactly as
 // it was before the hint existed, since nothing here asserts on it.
@@ -42,7 +41,6 @@ vi.mock('../../api', () => ({
   markAllNotificationsRead: vi.fn(() => ok({})),
   deleteNotification: vi.fn(() => ok({})),
   getAgents: (...args) => getAgents(...args),
-  getTelegramConfig: (...args) => getTelegramConfig(...args),
   listFlows: (...args) => listFlows(...args),
   getSharedMemories: (...args) => getSharedMemories(...args),
   previewCron: (...args) => previewCron(...args),

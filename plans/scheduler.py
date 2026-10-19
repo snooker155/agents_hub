@@ -1,7 +1,7 @@
 """
 Asyncio scheduler loop for plan jobs.
 
-Started once at FastAPI startup (same pattern as the Telegram poller). Each
+Started once at FastAPI startup. Each
 tick claims due jobs from the plans store (plans/storage.py, in the database)
 and fires them in a worker thread so database waits and subprocess launches
 never block the event loop.

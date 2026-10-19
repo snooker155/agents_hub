@@ -26,7 +26,7 @@ from managers.run_manager import get_run_by_id
 
 def _fake_agent_spec():
     """Stand-in AgentSpec: just enough surface for validate_chat_request,
-    agent_overrides and the Telegram capability guard to not blow up."""
+    agent_overrides and the capability guard to not blow up."""
     return SimpleNamespace(tools=[], model_overrides=lambda: {})
 
 

@@ -12,8 +12,8 @@ import { Link } from 'react-router-dom';
 // ---------------------------------------------------------------------------
 // Message bubble
 // ---------------------------------------------------------------------------
-// Interactive buttons from a structured AgentResponse (kind "buttons" or the
-// Telegram-native "telegram"). Clicking a button either opens its url or sends
+// Interactive buttons from a structured AgentResponse (kind "buttons"; the old
+// "telegram" kind kept in stored history renders the same way). Clicking a button either opens its url or sends
 // its value back as the user's next message via onAction. Unknown kinds render
 // nothing here — the bubble's fallback_text/content already covers them.
 function ResponseButtons({ response, onAction, disabled }) {
@@ -26,6 +26,7 @@ function ResponseButtons({ response, onAction, disabled }) {
     const items = response.buttons || [];
     for (let i = 0; i < items.length; i += cols) rows.push(items.slice(i, i + cols));
   } else if (kind === 'telegram') {
+    // Messages saved before the Telegram keyboard format was removed.
     rows = response.inline_keyboard || [];
   } else {
     return null;
@@ -131,8 +132,8 @@ function MessageEntities({ entities }) {
         {t('chat.entitiesTouched')}
       </span>
       {items.map((e) => {
-        // The payload carries English noun/action for text-only surfaces
-        // (Telegram); the UI prefers localized wording and falls back to those.
+        // The payload carries English noun/action for text-only surfaces;
+        // the UI prefers localized wording and falls back to those.
         const noun = t(`chat.entityKind.${e.kind}`, { defaultValue: e.noun || e.kind });
         const action = t(`chat.entityAction.${e.action}`, { defaultValue: e.action });
         const external = /^https?:\/\//i.test(e.url || '');

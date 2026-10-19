@@ -647,7 +647,7 @@ def up(
     if dev:
         backend_cmd.append("--reload")
     # No `--workers` counterpart in production: the backend starts singletons of
-    # its own (the plan scheduler, the run watchdog, the Telegram poller), and a
+    # its own (the plan scheduler, the run watchdog), and a
     # second worker would run a second copy of each. Scaling out is the compose
     # prod profile's job, where replicas sit behind nginx.
 

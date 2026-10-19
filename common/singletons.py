@@ -4,8 +4,7 @@ Supervisor for background services that may run on one replica only.
 Some of the backend's background work is a loop that can check a lease on
 every tick itself (the plan scheduler, the run watchdog:
 each calls ``common.leases.hold`` and skips the tick when another replica
-holds the role). The Telegram poller is not like that: it is a long-poll on
-``getUpdates`` that must not run twice on one bot token, and it is started
+holds the role). A chat-bot poller is not like that: it is a long-poll that must not run twice on one bot token, and it is started
 and stopped as a whole. This supervisor owns that shape: every few seconds
 it tries to hold the role's lease, starts the service when it gets it, and
 stops the service when it loses it (a database outage long enough for the
@@ -16,7 +15,7 @@ startup rather than during it, which the health page shows the same way.
 
 Services can come and go while the backend runs: a workspace that defines
 its own chat bot gets a service of its own (role ``channel_slack@team-a``,
-``telegram@team-a``). A discoverer (:meth:`SingletonSupervisor.add_discoverer`)
+``channel_discord@team-a``). A discoverer (:meth:`SingletonSupervisor.add_discoverer`)
 runs at the start of every tick and adds or removes those, so a bot defined
 on another replica is picked up here too.
 """

@@ -1,6 +1,6 @@
 """A chat turn that changes hands: the streaming pipeline, the blocking send
 path and the surfaces that consume them (chat/pipelines.py, chat/send.py,
-chat/broadcast.py, connectors/telegram/telegram_runner.py).
+chat/broadcast.py).
 
 The agents are stubs: each one's ``arun``/``run`` plays a script, and a
 handing agent calls the real ``handoff_to_agent`` tool (tools/handoff.py) the
@@ -292,7 +292,7 @@ def test_the_web_chat_record_follows_the_handoff(agents, monkeypatch):
 
 
 def test_a_rebuilt_transcript_skips_the_receiving_runs_prompt(agents, monkeypatch):
-    """Telegram rebuilds its history from the runs; the receiving run's prompt
+    """A surface without a browser transcript rebuilds its history from the runs; the receiving run's prompt
     is the user's message behind a handoff note, not a second user turn."""
     from chat.runs import build_conversation_history
     _install(monkeypatch, {

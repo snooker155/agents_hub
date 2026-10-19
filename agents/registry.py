@@ -189,8 +189,8 @@ class AgentSpec:
     max_concurrent_delegates: int = 6
     # Reasoning capability settings — keyed by tool id (e.g. "think", "plan")
     reasoning: Dict[str, Any] = field(default_factory=dict)
-    # Structured response format this agent may emit (rendered as buttons / a
-    # Telegram inline keyboard). One of "none" (default), "buttons", "telegram".
+    # Structured response format this agent may emit (rendered as buttons or a
+    # rich view). One of "none" (default), "buttons", "views".
     # When not "none", agent_factory injects a system-prompt snippet teaching the
     # <<<ui>>> block convention, the same way reasoning guidance is injected.
     response_format: str = "none"
@@ -783,7 +783,10 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         reasoning = {}
 
     response_format = ad.get("response_format") or "none"
-    if response_format not in ("none", "buttons", "telegram"):
+    if response_format == "telegram":
+        # Records saved before the Telegram keyboard format was removed.
+        response_format = "buttons"
+    if response_format not in ("none", "buttons", "views"):
         response_format = "none"
 
     clarify_gate = bool(ad.get("clarify_gate", False))

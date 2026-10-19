@@ -232,6 +232,7 @@ export default {
   preSelectThisAgentFor: 'Diesen Agenten im aktuellen Workspace beim Öffnen des Chats oder einer neuen Unterhaltung vorauswählen.',
   defaultCleared: 'Standard zurückgesetzt.',
   responseFormat: 'Antwortformat',
+  responseFormatHelp: 'Lassen Sie diesen Agenten mit interaktiver Oberfläche (Schaltflächen oder Rich Views) statt mit reinem Text antworten. Ist das Format aktiv, lernt der Agent eine Konvention für strukturierte Antworten; Oberflächen, die sie verstehen, zeigen das Ergebnis, andere fallen auf Text zurück.',
   responseFormats: {
     none: {
       label: 'Reiner Text',
@@ -239,11 +240,7 @@ export default {
     },
     buttons: {
       label: 'Schaltflächen',
-      desc: 'Portable Schaltflächen — funktionieren im Web-Chat und in Telegram.',
-    },
-    telegram: {
-      label: 'Telegram-Tastatur',
-      desc: 'Telegram-eigene Inline-Tastatur mit Zeilenlayout.',
+      desc: 'Portable Schaltflächen, die der Web-Chat darstellt.',
     },
     views: {
       label: 'Rich Views',

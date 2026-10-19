@@ -59,7 +59,6 @@ describe('ChatSidebar', () => {
       visibleConversations: [
         { id: 'a', title: 'mine' }, { id: 'b', title: 'elsewhere' }, { id: 'c', title: 'idle' },
       ],
-      visibleTelegramBindings: [],
     };
     render(<ChatPageContext.Provider value={page}><ChatSidebar /></ChatPageContext.Provider>);
     await waitFor(() => expect(screen.getAllByTestId('chat-conv-running')).toHaveLength(2));

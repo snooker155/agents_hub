@@ -13,7 +13,7 @@
  * Same contract as `streamChat`: `onEvent` gets the turn's events, the promise
  * settles when the turn is over (`chat_stream_end`), and an aborted `signal`
  * rejects it with an AbortError. The channel also carries other turns of the
- * same conversation (another tab, Telegram), saves, and the last events of a
+ * same conversation (another tab), saves, and the last events of a
  * turn this tab stopped; `client_turn_id` (stamped by chat/broadcast.py) is
  * what picks out this one.
  */

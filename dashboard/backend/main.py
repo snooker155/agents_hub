@@ -511,7 +511,7 @@ def uvicorn_options(argv: Optional[List[str]] = None) -> Dict[str, Any]:
     The reloader is opt-in. It restarts the process on any write under the
     watched trees, which is what you want while editing and never what you want
     anywhere else: the backend owns singletons (the plan scheduler, the run
-    watchdog, the Telegram poller) that a restart interrupts mid-flight.
+    watchdog) that a restart interrupts mid-flight.
     """
     parser = argparse.ArgumentParser(description="Run the Agents Hub API.")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind to.")

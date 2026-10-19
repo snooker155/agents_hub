@@ -290,7 +290,7 @@ export default function Chat() {
   }, [currentMessages]);
 
   // A turn someone else is running in this same conversation — another tab,
-  // another device, Telegram, an agent writing to its own inbox. It is mirrored
+  // another device, an agent writing to its own inbox. It is mirrored
   // live and never saved: the tab that ran it writes the transcript, and this
   // mirror steps aside as soon as that lands (hence the run ids above).
   // `muted` while this tab is the one sending: it renders its own stream and

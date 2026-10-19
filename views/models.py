@@ -443,7 +443,7 @@ class ViewOwner(BaseModel):
 
 
 class ViewFallback(BaseModel):
-    """What a non-visual surface (Telegram/email/CLI) shows for this view."""
+    """What a non-visual surface (email/CLI) shows for this view."""
     text: str = ""
     image: str = ""       # optional preview asset path (server snapshot, later)
 
@@ -559,7 +559,7 @@ def normalize_envelope(data: Dict[str, Any], *, validate_spec_body: bool = True)
         else:
             raise ViewValidationError(
                 "a view needs a non-empty 'summary' or 'fallback.text' so it can "
-                "be shown on non-visual surfaces (Telegram/email/CLI)"
+                "be shown on non-visual surfaces (email/CLI)"
             )
     return env
 

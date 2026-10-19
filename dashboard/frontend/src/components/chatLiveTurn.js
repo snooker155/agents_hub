@@ -10,7 +10,7 @@ import { toolOutcome } from './toolStatus';
  * A chat turn used to be visible only in the window that asked for it: the
  * events came down that one request's response body. So the same conversation,
  * open in a second tab or on a second device, sat still until the answer was
- * over, and a turn started from Telegram or from an agent's inbox never showed
+ * over, and a turn started from an agent's inbox never showed
  * at all. The pipeline now puts every event on `chat:<conversation_id>`
  * (chat/broadcast.py); this is the consumer.
  *

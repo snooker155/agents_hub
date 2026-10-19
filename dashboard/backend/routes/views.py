@@ -449,7 +449,7 @@ async def apply_user_ops(view_id: str, payload: ApplyOpsRequest):
 async def save_snapshot(view_id: str, payload: SnapshotRequest):
     """Store a client-captured PNG snapshot as the view's fallback image.
 
-    Feeds a static preview to non-visual surfaces (Telegram photo, gallery
+    Feeds a static preview to non-visual surfaces (gallery
     thumbnail). Body is a ``data:image/png;base64,…`` data URL.
     """
     raw = payload.data_url or ""
