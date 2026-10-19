@@ -14,5 +14,5 @@ export const setWorkspaceSecretHosts = (name, secret, data) =>
   api.put(`/workspaces/${name}/secrets/${encodeURIComponent(secret)}/hosts`, data);
 // An agent's allowlist: the secret names a run of it may receive.
 export const getAgentSecrets = (id) => api.get(`/agents/${id}/secrets`);
-export const updateAgentSecrets = (id, secrets, extra = {}) =>
-  api.put(`/agents/${id}/secrets`, { secrets, ...extra });
+export const updateAgentSecrets = (id, secrets) =>
+  api.put(`/agents/${id}/secrets`, { secrets });

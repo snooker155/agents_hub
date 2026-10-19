@@ -324,9 +324,7 @@ export default function ProjectManager() {
                       onChange={e => setForm(f => ({ ...f, repo_type: e.target.value }))}
                     >
                       <option value="none">{t('projectManager.none')}</option>
-                      <option value="github">{t('projectManager.github')}</option>
                       <option value="gitlab">{t('projectManager.gitlab')}</option>
-                      <option value="bitbucket">{t('projectManager.bitbucket')}</option>
                       <option value="local">{t('projectManager.local')}</option>
                     </select>
                   </div>
@@ -346,7 +344,7 @@ export default function ProjectManager() {
                       <label className="block text-xs text-gray-500 mb-1">{t('projectManager.repoUrl')}</label>
                       <input
                         className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                        placeholder="https://github.com/org/repo.git"
+                        placeholder="https://gitlab.com/org/repo.git"
                         value={form.repo_url}
                         onChange={e => setForm(f => ({ ...f, repo_url: e.target.value }))}
                       />

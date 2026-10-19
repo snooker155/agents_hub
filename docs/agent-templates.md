@@ -9,7 +9,7 @@ adjust first.
 
 | Template | What it does | Connectors (optional in brackets) |
 |---|---|---|
-| `sre_agent`: SRE agent | Investigates an incident from logs, manifests and runbooks, names the root cause with evidence, proposes the fix as a pull request a person approves | none; a project with a git token |
+| `sre_agent`: SRE agent | Investigates an incident from logs, manifests and runbooks, names the root cause with evidence, proposes the fix as a merge request a person approves | none; a project with a git token |
 | `ai_teammate`: AI teammate | Answers from the team's docs and notes with sources, turns requests into tasks, remembers decisions | none |
 | `gitlab_issue_agent`: GitLab issue agent | Takes an issue synced as a task from GitLab or Jira, finds the cause, writes a focused fix with a test, opens a merge request | none; a project with issue sync |
 | `invoice_agent`: Invoice agent | Extracts invoice fields, checks arithmetic, duplicates and purchase orders, prepares records for approval | none |

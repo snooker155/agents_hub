@@ -178,12 +178,14 @@ def test_git_status_raises_a_404_service_error_when_the_repo_is_missing(tmp_path
     assert exc.value.status == 404
 
 
-def test_repo_provider_only_names_github_and_gitlab():
+def test_repo_provider_only_names_gitlab():
     from projects.git_service import repo_provider
 
     assert repo_provider(_project("ws", "repo")) is None  # RepoType default: none
     assert repo_provider(Project(name="p", workspace="ws",
-                                 repo=RepoConfig(type="github"))) == "github"
+                                 repo=RepoConfig(type="gitlab"))) == "gitlab"
+    assert repo_provider(Project(name="p", workspace="ws",
+                                 repo=RepoConfig(type="github"))) is None
     assert repo_provider(Project(name="p", workspace="ws",
                                  repo=RepoConfig(type="local"))) is None
 

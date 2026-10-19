@@ -4,7 +4,7 @@
  *
  * What lives here:
  *   1. :root / html.dark design tokens (surfaces, text tiers, brand ramp).
- *   2. Brand remap  — indigo/violet/purple/fuchsia utilities repainted navy.
+ *   2. Brand remap  — indigo/violet/purple/fuchsia utilities repainted magenta.
  *   3. Dark theme   — a dark counterpart for every color utility, so panels
  *      sit on one surface ladder and colored badges stay readable.
  *
@@ -16,49 +16,49 @@
 :root {
   color-scheme: light;
 
-  --surface-page:    #f4f6fb;
-  --surface-sunken:  #f8fafc;
+  --surface-page:    #f4f4f4;
+  --surface-sunken:  #fafafa;
   --surface-card:    #ffffff;
-  --surface-raised:  #f1f5f9;
-  --surface-hover:   #eef2f7;
-  --surface-inverse: #0d1526;
+  --surface-raised:  #f2f2f2;
+  --surface-hover:   #ededed;
+  --surface-inverse: #1b1b1b;
 
-  --border-subtle:   #e8edf4;
-  --border-default:  #e2e8f0;
-  --border-strong:   #cbd5e1;
+  --border-subtle:   #ebebeb;
+  --border-default:  #e0e0e0;
+  --border-strong:   #cccccc;
 
-  --text-primary:    #0f172a;
-  --text-secondary:  #334155;
-  --text-muted:      #64748b;
-  --text-faint:      #94a3b8;
-  --text-inverse:    #f8fafc;
+  --text-primary:    #1b1b1b;
+  --text-secondary:  #3d3d3d;
+  --text-muted:      #6b6b6b;
+  --text-faint:      #9b9b9b;
+  --text-inverse:    #fafafa;
 
-  --brand-50: #eef3ff;
-  --brand-100: #dbe6ff;
-  --brand-200: #bdd0fb;
-  --brand-300: #93b0f5;
-  --brand-400: #6389ea;
-  --brand-500: #3f66d8;
-  --brand-600: #2a4fbd;
-  --brand-700: #21409c;
-  --brand-800: #1d3680;
-  --brand-900: #1a2c63;
-  --brand-950: #101c40;
-  --brand:           #2a4fbd;
+  --brand-50: #fef1f8;
+  --brand-100: #fde1ef;
+  --brand-200: #fac4df;
+  --brand-300: #f598c6;
+  --brand-400: #f063a8;
+  --brand-500: #ea3390;
+  --brand-600: #e20074;
+  --brand-700: #c00063;
+  --brand-800: #9e0052;
+  --brand-900: #7a0040;
+  --brand-950: #4a0027;
+  --brand:           #e20074;
   --brand-contrast:  #ffffff;
-  --brand-rgb:       63, 102, 216;
+  --brand-rgb:       226, 0, 116;
 
-  --neutral-50: #f8fafc;
-  --neutral-100: #f1f5f9;
-  --neutral-200: #e2e8f0;
-  --neutral-300: #cbd5e1;
-  --neutral-400: #94a3b8;
-  --neutral-500: #64748b;
-  --neutral-600: #475569;
-  --neutral-700: #334155;
-  --neutral-800: #1e293b;
-  --neutral-900: #0f172a;
-  --neutral-950: #020617;
+  --neutral-50: #fafafa;
+  --neutral-100: #f5f5f5;
+  --neutral-200: #e5e5e5;
+  --neutral-300: #d4d4d4;
+  --neutral-400: #a3a3a3;
+  --neutral-500: #737373;
+  --neutral-600: #525252;
+  --neutral-700: #404040;
+  --neutral-800: #262626;
+  --neutral-900: #171717;
+  --neutral-950: #0a0a0a;
 
   --hue-red-rgb: 239, 68, 68;
   --hue-red-400: #f87171;
@@ -103,144 +103,144 @@
   --ok:      #15803d;
   --warn:    #b45309;
   --danger:  #b91c1c;
-  --info:    #2a4fbd;
+  --info:    #e20074;
 
   --ok-surface:     #dcfce7;
   --warn-surface:   #fef08a;
   --danger-surface: #fee2e2;
-  --info-surface:   #dbe6ff;
+  --info-surface:   #fde1ef;
 
   /* Chart marks (validated with the dataviz palette checks for this surface):
      the accent series, the de-emphasised rest, three categorical slots,
      gridlines and the unfilled track of a meter. */
-  --chart-accent:   #2a4fbd;
-  --chart-muted:    #cbd5e1;
-  --chart-cat-1:    #2a4fbd;
-  --chart-cat-2:    #eb6834;
+  --chart-accent:   #e20074;
+  --chart-muted:    #d4d4d4;
+  --chart-cat-1:    #e20074;
+  --chart-cat-2:    #2f6fd0;
   --chart-cat-3:    #1baf7a;
-  --chart-grid:     #e8edf4;
-  --chart-track:    #dbe6ff;
+  --chart-grid:     #ebebeb;
+  --chart-track:    #fde1ef;
 }
 
 html.dark {
   color-scheme: dark;
 
-  --surface-page:    #070d18;
-  --surface-sunken:  #0c1322;
-  --surface-card:    #121a2b;
-  --surface-raised:  #18223a;
-  --surface-hover:   #1e2943;
-  --surface-inverse: #eef2fa;
+  --surface-page:    #0a0a0a;
+  --surface-sunken:  #121212;
+  --surface-card:    #1b1b1b;
+  --surface-raised:  #232323;
+  --surface-hover:   #2a2a2a;
+  --surface-inverse: #f2f2f2;
 
-  --border-subtle:   #1a2440;
-  --border-default:  #25314c;
-  --border-strong:   #31405e;
+  --border-subtle:   #262626;
+  --border-default:  #2f2f2f;
+  --border-strong:   #3d3d3d;
 
-  --text-primary:    #eef2fa;
-  --text-secondary:  #ccd5e3;
-  --text-muted:      #9aa7bd;
-  --text-faint:      #8b98ae;
-  --text-inverse:    #0d1526;
+  --text-primary:    #f2f2f2;
+  --text-secondary:  #d6d6d6;
+  --text-muted:      #a8a8a8;
+  --text-faint:      #9a9a9a;
+  --text-inverse:    #1b1b1b;
 
-  --chart-accent:   #5b82e6;
-  --chart-muted:    #3a4a6b;
-  --chart-cat-1:    #5b82e6;
-  --chart-cat-2:    #d95926;
+  --chart-accent:   #f0389a;
+  --chart-muted:    #4a4a4a;
+  --chart-cat-1:    #f0389a;
+  --chart-cat-2:    #5b9bf0;
   --chart-cat-3:    #199e70;
-  --chart-grid:     #1f2a44;
-  --chart-track:    #1a3068;
+  --chart-grid:     #262626;
+  --chart-track:    #57003a;
 
-  --brand-50: #0c1730;
-  --brand-100: #12224a;
-  --brand-200: #1a3068;
-  --brand-300: #264aa8;
-  --brand-400: #3159cc;
-  --brand-500: #3f66d8;
-  --brand-600: #5b82e6;
-  --brand-700: #8fb2ff;
-  --brand-800: #bcd2ff;
-  --brand-900: #d2e0ff;
-  --brand-950: #e4ecff;
-  --brand:           #3f66d8;
+  --brand-50: #2b0019;
+  --brand-100: #3d0024;
+  --brand-200: #57003a;
+  --brand-300: #a3005a;
+  --brand-400: #c9006a;
+  --brand-500: #e20074;
+  --brand-600: #f0389a;
+  --brand-700: #ff8fc6;
+  --brand-800: #ffc2e1;
+  --brand-900: #ffd9ec;
+  --brand-950: #ffeaf4;
+  --brand:           #e20074;
   --brand-contrast:  #ffffff;
-  --brand-rgb:       63, 102, 216;
+  --brand-rgb:       226, 0, 116;
 
   /* The three brand/neutral roles the dark-theme matrix below paints with:
      bg (tint fills), text (labels on a dark page) and border (rings, dividers).
      Defaults are exactly BRAND_DARK / NEUTRAL_DARK above — this just gives
      each entry a custom property so applyPalette() can move it at runtime. */
-  --brand-bg-50: rgba(63, 102, 216, 0.16);
-  --brand-bg-100: rgba(63, 102, 216, 0.26);
-  --brand-bg-200: rgba(63, 102, 216, 0.34);
-  --brand-bg-300: #3a5cc4;
-  --brand-bg-400: #3a5cc4;
-  --brand-bg-500: #3f66d8;
-  --brand-bg-600: #3159cc;
-  --brand-bg-700: #264aa8;
-  --brand-bg-800: #1e3c85;
-  --brand-bg-900: #16294f;
-  --brand-bg-950: #0c1730;
-  --brand-text-300: #a8c4ff;
-  --brand-text-400: #9dbaff;
-  --brand-text-500: #8cb0ff;
-  --brand-text-600: #8fb2ff;
-  --brand-text-700: #a8c4ff;
-  --brand-text-800: #bcd2ff;
-  --brand-text-900: #d2e0ff;
-  --brand-text-950: #e4ecff;
-  --brand-border-50: rgba(63, 102, 216, 0.22);
-  --brand-border-100: rgba(63, 102, 216, 0.30);
-  --brand-border-200: rgba(63, 102, 216, 0.40);
-  --brand-border-300: rgba(63, 102, 216, 0.52);
-  --brand-border-400: #4a72e6;
-  --brand-border-500: #3f66d8;
-  --brand-border-600: #3159cc;
-  --brand-border-700: #264aa8;
-  --brand-border-800: #1e3c85;
-  --brand-border-900: #16294f;
+  --brand-bg-50: rgba(226, 0, 116, 0.16);
+  --brand-bg-100: rgba(226, 0, 116, 0.26);
+  --brand-bg-200: rgba(226, 0, 116, 0.34);
+  --brand-bg-300: #b8005f;
+  --brand-bg-400: #b8005f;
+  --brand-bg-500: #e20074;
+  --brand-bg-600: #c9006a;
+  --brand-bg-700: #a3005a;
+  --brand-bg-800: #800048;
+  --brand-bg-900: #4d002c;
+  --brand-bg-950: #2b0019;
+  --brand-text-300: #ffa8d4;
+  --brand-text-400: #ff9dcd;
+  --brand-text-500: #ff8cc4;
+  --brand-text-600: #ff8fc6;
+  --brand-text-700: #ffa8d4;
+  --brand-text-800: #ffc2e1;
+  --brand-text-900: #ffd9ec;
+  --brand-text-950: #ffeaf4;
+  --brand-border-50: rgba(226, 0, 116, 0.22);
+  --brand-border-100: rgba(226, 0, 116, 0.30);
+  --brand-border-200: rgba(226, 0, 116, 0.40);
+  --brand-border-300: rgba(226, 0, 116, 0.52);
+  --brand-border-400: #f0389a;
+  --brand-border-500: #e20074;
+  --brand-border-600: #c9006a;
+  --brand-border-700: #a3005a;
+  --brand-border-800: #800048;
+  --brand-border-900: #4d002c;
 
-  --neutral-bg-50: #0c1322;
-  --neutral-bg-100: #18223a;
-  --neutral-bg-200: #1e2943;
-  --neutral-bg-300: #25314c;
-  --neutral-bg-400: #3a4867;
-  --neutral-bg-500: #4c5b7c;
-  --neutral-bg-600: #5d6c8d;
-  --neutral-bg-700: #16203a;
-  --neutral-bg-800: #101828;
-  --neutral-bg-900: #080f1c;
-  --neutral-bg-950: #050a14;
-  --neutral-text-300: #8e9bb1;
-  --neutral-text-400: #8b98ae;
-  --neutral-text-500: #9aa7bd;
-  --neutral-text-600: #b6c1d4;
-  --neutral-text-700: #ccd5e3;
-  --neutral-text-800: #dfe6f0;
-  --neutral-text-900: #eef2fa;
-  --neutral-text-950: #f8fafc;
-  --neutral-border-50: #151e33;
-  --neutral-border-100: #1a2440;
-  --neutral-border-200: #25314c;
-  --neutral-border-300: #31405e;
-  --neutral-border-400: #3d4d6e;
-  --neutral-border-500: #4a5a7d;
-  --neutral-border-600: #33415f;
-  --neutral-border-700: #2a3654;
-  --neutral-border-800: #202b45;
-  --neutral-border-900: #18213a;
-  --neutral-border-950: #111a2e;
+  --neutral-bg-50: #121212;
+  --neutral-bg-100: #1e1e1e;
+  --neutral-bg-200: #252525;
+  --neutral-bg-300: #2c2c2c;
+  --neutral-bg-400: #424242;
+  --neutral-bg-500: #555555;
+  --neutral-bg-600: #666666;
+  --neutral-bg-700: #1a1a1a;
+  --neutral-bg-800: #161616;
+  --neutral-bg-900: #0d0d0d;
+  --neutral-bg-950: #080808;
+  --neutral-text-300: #9e9e9e;
+  --neutral-text-400: #9a9a9a;
+  --neutral-text-500: #a8a8a8;
+  --neutral-text-600: #c2c2c2;
+  --neutral-text-700: #d6d6d6;
+  --neutral-text-800: #e6e6e6;
+  --neutral-text-900: #f2f2f2;
+  --neutral-text-950: #fafafa;
+  --neutral-border-50: #1c1c1c;
+  --neutral-border-100: #222222;
+  --neutral-border-200: #2c2c2c;
+  --neutral-border-300: #383838;
+  --neutral-border-400: #454545;
+  --neutral-border-500: #555555;
+  --neutral-border-600: #3b3b3b;
+  --neutral-border-700: #313131;
+  --neutral-border-800: #272727;
+  --neutral-border-900: #1f1f1f;
+  --neutral-border-950: #171717;
 
-  --neutral-50: #f8fafc;
-  --neutral-100: #f1f5f9;
-  --neutral-200: #e2e8f0;
-  --neutral-300: #cbd5e1;
-  --neutral-400: #94a3b8;
-  --neutral-500: #64748b;
-  --neutral-600: #475569;
-  --neutral-700: #334155;
-  --neutral-800: #1e293b;
-  --neutral-900: #0f172a;
-  --neutral-950: #020617;
+  --neutral-50: #fafafa;
+  --neutral-100: #f5f5f5;
+  --neutral-200: #e5e5e5;
+  --neutral-300: #d4d4d4;
+  --neutral-400: #a3a3a3;
+  --neutral-500: #737373;
+  --neutral-600: #525252;
+  --neutral-700: #404040;
+  --neutral-800: #262626;
+  --neutral-900: #171717;
+  --neutral-950: #0a0a0a;
 
   --hue-red-rgb: 239, 68, 68;
   --hue-red-400: #f87171;
@@ -285,12 +285,12 @@ html.dark {
   --ok:      #6ee7b7;
   --warn:    #fcd34d;
   --danger:  #fca5a5;
-  --info:    #8fb2ff;
+  --info:    #ff8fc6;
 
   --ok-surface:     rgba(34, 197, 94, 0.24);
   --warn-surface:   rgba(234, 179, 8, 0.28);
   --danger-surface: rgba(239, 68, 68, 0.24);
-  --info-surface:   rgba(63, 102, 216, 0.28);
+  --info-surface:   rgba(226, 0, 116, 0.28);
 }
 
 
@@ -354,15 +354,15 @@ html.dark {
 :where(html) .bg-purple-950,
 :where(html) .bg-violet-950 { background-color: var(--brand-950); }
 :where(html) .bg-indigo-50\/30,
-:where(html) .bg-purple-50\/30 { background-color: rgba(238, 243, 255, 0.30); }
+:where(html) .bg-purple-50\/30 { background-color: rgba(254, 241, 248, 0.30); }
 :where(html) .bg-indigo-50\/40,
 :where(html) .bg-violet-50\/40,
-:where(html) .hover\:bg-indigo-50\/40:hover { background-color: rgba(238, 243, 255, 0.40); }
+:where(html) .hover\:bg-indigo-50\/40:hover { background-color: rgba(254, 241, 248, 0.40); }
 :where(html) .bg-indigo-50\/50,
-:where(html) .bg-violet-50\/50 { background-color: rgba(238, 243, 255, 0.50); }
-:where(html) .bg-indigo-50\/60 { background-color: rgba(238, 243, 255, 0.60); }
-:where(html) .bg-indigo-50\/70 { background-color: rgba(238, 243, 255, 0.70); }
-:where(html) .bg-indigo-50\/90 { background-color: rgba(238, 243, 255, 0.90); }
+:where(html) .bg-violet-50\/50 { background-color: rgba(254, 241, 248, 0.50); }
+:where(html) .bg-indigo-50\/60 { background-color: rgba(254, 241, 248, 0.60); }
+:where(html) .bg-indigo-50\/70 { background-color: rgba(254, 241, 248, 0.70); }
+:where(html) .bg-indigo-50\/90 { background-color: rgba(254, 241, 248, 0.90); }
 :where(html) .border-fuchsia-100,
 :where(html) .border-indigo-100,
 :where(html) .border-purple-100,
@@ -667,7 +667,7 @@ html.dark {
 :where(html.dark) .bg-stone-200,
 :where(html.dark) .bg-zinc-200,
 :where(html.dark) .hover\:bg-gray-200:hover { background-color: var(--neutral-bg-200); }
-:where(html.dark) .bg-gray-200\/70 { background-color: rgba(30, 41, 67, 0.70); }
+:where(html.dark) .bg-gray-200\/70 { background-color: rgba(37, 37, 37, 0.70); }
 :where(html.dark) .bg-gray-300,
 :where(html.dark) .bg-neutral-300,
 :where(html.dark) .bg-slate-300,
@@ -686,8 +686,8 @@ html.dark {
 :where(html.dark) .disabled\:bg-gray-50:disabled,
 :where(html.dark) .hover\:bg-gray-50:hover,
 :where(html.dark) .hover\:bg-slate-50:hover { background-color: var(--neutral-bg-50); }
-:where(html.dark) .bg-gray-50\/50 { background-color: rgba(12, 19, 34, 0.50); }
-:where(html.dark) .bg-gray-50\/70 { background-color: rgba(12, 19, 34, 0.70); }
+:where(html.dark) .bg-gray-50\/50 { background-color: rgba(18, 18, 18, 0.50); }
+:where(html.dark) .bg-gray-50\/70 { background-color: rgba(18, 18, 18, 0.70); }
 :where(html.dark) .bg-gray-500,
 :where(html.dark) .bg-neutral-500,
 :where(html.dark) .bg-slate-500,
@@ -737,15 +737,15 @@ html.dark {
 :where(html.dark) .hover\:bg-green-50:hover { background-color: rgba(var(--hue-green-rgb), 0.14); }
 :where(html.dark) .bg-green-50\/50 { background-color: rgba(34, 197, 94, 0.070); }
 :where(html.dark) .bg-indigo-50\/30,
-:where(html.dark) .bg-purple-50\/30 { background-color: rgba(63, 102, 216, 0.048); }
+:where(html.dark) .bg-purple-50\/30 { background-color: rgba(226, 0, 116, 0.048); }
 :where(html.dark) .bg-indigo-50\/40,
 :where(html.dark) .bg-violet-50\/40,
-:where(html.dark) .hover\:bg-indigo-50\/40:hover { background-color: rgba(63, 102, 216, 0.064); }
+:where(html.dark) .hover\:bg-indigo-50\/40:hover { background-color: rgba(226, 0, 116, 0.064); }
 :where(html.dark) .bg-indigo-50\/50,
-:where(html.dark) .bg-violet-50\/50 { background-color: rgba(63, 102, 216, 0.080); }
-:where(html.dark) .bg-indigo-50\/60 { background-color: rgba(63, 102, 216, 0.096); }
-:where(html.dark) .bg-indigo-50\/70 { background-color: rgba(63, 102, 216, 0.112); }
-:where(html.dark) .bg-indigo-50\/90 { background-color: rgba(63, 102, 216, 0.144); }
+:where(html.dark) .bg-violet-50\/50 { background-color: rgba(226, 0, 116, 0.080); }
+:where(html.dark) .bg-indigo-50\/60 { background-color: rgba(226, 0, 116, 0.096); }
+:where(html.dark) .bg-indigo-50\/70 { background-color: rgba(226, 0, 116, 0.112); }
+:where(html.dark) .bg-indigo-50\/90 { background-color: rgba(226, 0, 116, 0.144); }
 :where(html.dark) .bg-lime-100 { background-color: rgba(var(--hue-lime-rgb), 0.22); }
 :where(html.dark) .bg-lime-200 { background-color: rgba(var(--hue-lime-rgb), 0.30); }
 :where(html.dark) .bg-lime-50 { background-color: rgba(var(--hue-lime-rgb), 0.14); }
@@ -1100,11 +1100,11 @@ html.dark {
 :where(html.dark) .divide-yellow-300 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-yellow-rgb), 0.46); }
 :where(html.dark) .border-yellow-50,
 :where(html.dark) .divide-yellow-50 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-yellow-rgb), 0.18); }
-:where(html) .dark .dark\:bg-gray-800\/50 { background-color: rgba(16, 24, 40, 0.50); }
-:where(html) .dark .dark\:bg-gray-800\/95 { background-color: rgba(16, 24, 40, 0.95); }
-:where(html) .dark .dark\:bg-indigo-900\/20 { background-color: rgba(22, 41, 79, 0.20); }
-:where(html) .dark .dark\:bg-indigo-900\/30 { background-color: rgba(22, 41, 79, 0.30); }
-:where(html) .dark .dark\:bg-slate-800\/60 { background-color: rgba(16, 24, 40, 0.60); }
+:where(html) .dark .dark\:bg-gray-800\/50 { background-color: rgba(22, 22, 22, 0.50); }
+:where(html) .dark .dark\:bg-gray-800\/95 { background-color: rgba(22, 22, 22, 0.95); }
+:where(html) .dark .dark\:bg-indigo-900\/20 { background-color: rgba(77, 0, 44, 0.20); }
+:where(html) .dark .dark\:bg-indigo-900\/30 { background-color: rgba(77, 0, 44, 0.30); }
+:where(html) .dark .dark\:bg-slate-800\/60 { background-color: rgba(22, 22, 22, 0.60); }
 :where(html) .dark .dark\:hover\:text-indigo-300:hover,
 :where(html) .dark .dark\:text-indigo-300,
 :where(html.dark) .text-fuchsia-300,
@@ -1190,7 +1190,7 @@ html.dark {
 :where(html.dark) .text-indigo-600,
 :where(html.dark) .text-purple-600,
 :where(html.dark) .text-violet-600 { color: var(--brand-text-600); }
-:where(html.dark) .hover\:bg-gray-100\/70:hover { background-color: rgba(24, 34, 58, 0.70); }
+:where(html.dark) .hover\:bg-gray-100\/70:hover { background-color: rgba(30, 30, 30, 0.70); }
 :where(html.dark) .hover\:ring-indigo-100:hover,
 :where(html.dark) .ring-fuchsia-100,
 :where(html.dark) .ring-indigo-100,
@@ -1471,10 +1471,10 @@ html.dark {
 :where(html.dark) .hover\:bg-white:hover,
 :where(html.dark) .focus\:bg-white:focus { background-color: var(--surface-card); }
 
-:where(html.dark) .bg-white\/95 { background-color: rgba(18, 26, 43, 0.95); }
-:where(html.dark) .bg-white\/80 { background-color: rgba(18, 26, 43, 0.80); }
-:where(html.dark) .bg-white\/70 { background-color: rgba(18, 26, 43, 0.70); }
-:where(html.dark) .bg-white\/60 { background-color: rgba(18, 26, 43, 0.60); }
+:where(html.dark) .bg-white\/95 { background-color: rgba(27, 27, 27, 0.95); }
+:where(html.dark) .bg-white\/80 { background-color: rgba(27, 27, 27, 0.80); }
+:where(html.dark) .bg-white\/70 { background-color: rgba(27, 27, 27, 0.70); }
+:where(html.dark) .bg-white\/60 { background-color: rgba(27, 27, 27, 0.60); }
 :where(html.dark) .bg-white\/20,
 :where(html.dark) .hover\:bg-white\/20:hover { background-color: rgba(255, 255, 255, 0.12); }
 :where(html.dark) .bg-white\/10 { background-color: rgba(255, 255, 255, 0.07); }

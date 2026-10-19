@@ -1,16 +1,15 @@
 """
-Git connector API (GitHub / GitLab / Bitbucket Cloud / Gitea).
+Git connector API (GitLab).
 
 Endpoints, each for one workspace (``?workspace=``, the default workspace
 when omitted):
-- GET    /api/git/config   — per-provider public config (has_token flags, plus
-                             base_url for gitlab/gitea, username for
-                             bitbucket) in effect there, and per provider
-                             whether the workspace defines it (``sources``)
-- PUT    /api/git/config   — set/clear a provider token, set gitlab/gitea
-                             base_url, set the bitbucket username; on a
-                             workspace other than the default this defines
-                             the provider there
+- GET    /api/git/config   — per-provider public config (has_token flag and
+                             base_url for gitlab) in effect there, and per
+                             provider whether the workspace defines it
+                             (``sources``)
+- PUT    /api/git/config   — set/clear a provider token, set the gitlab
+                             base_url; on a workspace other than the default
+                             this defines the provider there
 - DELETE /api/git/config   — ``?provider=``: drop a workspace's own entry, so
                              it uses the default workspace's again
 - POST   /api/git/test     — verify the token in effect there, returns the login
@@ -48,8 +47,7 @@ class GitConfigUpdate(BaseModel):
     provider: str
     token: Optional[str] = None   # write-only; None = keep existing
     clear_token: bool = False
-    base_url: Optional[str] = None  # gitlab, gitea
-    username: Optional[str] = None  # bitbucket
+    base_url: Optional[str] = None  # gitlab
 
 
 class GitTestRequest(BaseModel):
@@ -87,10 +85,8 @@ async def update_config(payload: GitConfigUpdate, workspace: Optional[str] = Non
         git_store.set_token(provider, "", ws)
     elif payload.token is not None and payload.token.strip():
         git_store.set_token(provider, payload.token, ws)
-    if payload.base_url is not None and provider in ("gitlab", "gitea"):
+    if payload.base_url is not None and provider == "gitlab":
         git_store.set_base_url(provider, payload.base_url, ws)
-    if payload.username is not None and provider == "bitbucket":
-        git_store.set_username("bitbucket", payload.username, ws)
     notify_change("connector_git", workspace=ws)
     return git_store.public_config(ws)
 

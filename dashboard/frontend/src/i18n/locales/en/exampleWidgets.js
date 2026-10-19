@@ -35,7 +35,7 @@ export default {
   active: 'active',
   reworkTheCheckoutFunnelAnd: 'Rework the checkout funnel and add new payment methods.',
   repo: 'Repo',
-  githubComAcmeWeb: 'github.com/acme/web',
+  gitlabComAcmeWeb: 'gitlab.com/acme/web',
   preview: 'Preview',
   localhost5173: 'localhost:5173',
   stack: 'Stack',

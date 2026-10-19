@@ -27,7 +27,7 @@ body {
 html.dark body {
   background:
     radial-gradient(circle at top, rgba(var(--brand-rgb), 0.16), transparent 34%),
-    linear-gradient(180deg, #070d18 0%, #0a1120 100%);
+    linear-gradient(180deg, #0a0a0a 0%, #111111 100%);
 }
 
 #root {
@@ -198,7 +198,7 @@ html.dark .vega-embed summary {
    without re-styling every node. Dark values are tinted hues on the dark
    surface, mirroring how theme.css repaints the colored utilities. */
 :root {
-  --graph-frontend-bg:   #eef3ff;  --graph-frontend-border:  #3f66d8;
+  --graph-frontend-bg:   #fef1f8;  --graph-frontend-border:  #ea3390;
   --graph-backend-bg:    #ecfeff;  --graph-backend-border:   #06b6d4;
   --graph-datastore-bg:  #f0fdf4;  --graph-datastore-border: #22c55e;
   --graph-external-bg:   #f8fafc;  --graph-external-border:  #64748b;
@@ -214,7 +214,7 @@ html.dark .vega-embed summary {
 html.dark {
   --graph-dot:           #1b2740;
 
-  --graph-frontend-bg:   rgba(63, 102, 216, 0.22);   --graph-frontend-border:  #6389ea;
+  --graph-frontend-bg:   rgba(226, 0, 116, 0.22);   --graph-frontend-border:  #f063a8;
   --graph-backend-bg:    rgba(6, 182, 212, 0.20);    --graph-backend-border:   #22d3ee;
   --graph-datastore-bg:  rgba(34, 197, 94, 0.20);    --graph-datastore-border: #4ade80;
   --graph-external-bg:   rgba(100, 116, 139, 0.22);  --graph-external-border:  #94a3b8;
@@ -329,7 +329,7 @@ html.dark .react-flow__minimap-mask {
   position: absolute;
   inset: 0;
   border-radius: 9999px;
-  border: 2px solid var(--brand-100, #dbe6ff);
+  border: 2px solid var(--brand-100, #fde1ef);
   opacity: 0;
   animation: ah-fade-in var(--ah-unfold) var(--ah-hold) ease-in-out forwards;
 }
@@ -340,8 +340,8 @@ html.dark .react-flow__minimap-mask {
   --ah-r0: 28px;
   --ah-r: 47px;
   --ah-scale: 1;
-  --ah-bg: var(--brand-500, #3f66d8);
-  --ah-glow: 0 0 0 3px color-mix(in srgb, var(--brand-500, #3f66d8) 18%, transparent);
+  --ah-bg: var(--brand-500, #ea3390);
+  --ah-glow: 0 0 0 3px color-mix(in srgb, var(--brand-500, #ea3390) 18%, transparent);
   transform: rotate(var(--ah-a0));
   animation: ah-orbit 2.8s var(--ah-hold) linear infinite;
   animation-direction: reverse;
@@ -350,7 +350,7 @@ html.dark .react-flow__minimap-mask {
   --ah-a0: 120deg;
   --ah-r: 32px;
   --ah-scale: 0.85;
-  --ah-bg: var(--brand-300, #93b0f5);
+  --ah-bg: var(--brand-300, #f598c6);
   --ah-glow: 0 0 0 0 transparent;
   animation-direction: normal;
 }
@@ -358,7 +358,7 @@ html.dark .react-flow__minimap-mask {
   --ah-a0: 240deg;
   --ah-r: 19px;
   --ah-scale: 0.7;
-  --ah-bg: var(--brand-400, #6389ea);
+  --ah-bg: var(--brand-400, #f063a8);
   --ah-glow: 0 0 0 0 transparent;
 }
 /* The two inner orbits draw a thin track of their own, appearing with the
@@ -369,7 +369,7 @@ html.dark .react-flow__minimap-mask {
   position: absolute;
   inset: calc(50% - var(--ah-r));
   border-radius: 9999px;
-  border: 1px solid var(--brand-100, #dbe6ff);
+  border: 1px solid var(--brand-100, #fde1ef);
   opacity: 0;
   animation: ah-fade-in var(--ah-unfold) var(--ah-hold) ease-in-out forwards;
 }
@@ -407,7 +407,7 @@ html.dark .react-flow__minimap-mask {
   width: 3.5px;
   height: 18.5px;
   margin-left: -1.75px;
-  background: var(--brand-500, #3f66d8);
+  background: var(--brand-500, #ea3390);
   opacity: 0.55;
   transform: translateY(-22.5px);
   animation: ah-spoke calc(var(--ah-unfold) * 0.4) var(--ah-hold) ease-out forwards;
@@ -416,7 +416,7 @@ html.dark .react-flow__minimap-mask {
   position: absolute;
   inset: 39.2%;
   border-radius: 9999px;
-  background: var(--brand-600, #2a4fbd);
+  background: var(--brand-600, #e20074);
   animation:
     ah-core-in var(--ah-unfold) var(--ah-hold) ease-in-out both,
     ah-core 1.4s calc(var(--ah-hold) + var(--ah-unfold)) ease-in-out infinite;
@@ -432,7 +432,7 @@ html.dark .react-flow__minimap-mask {
 @keyframes ah-resize {
   from {
     transform: scale(1);
-    background: var(--brand-500, #3f66d8);
+    background: var(--brand-500, #ea3390);
     opacity: 0.75;
     box-shadow: 0 0 0 3px transparent;
   }

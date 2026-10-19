@@ -12,7 +12,6 @@ export default {
     temperature: 'Temperatur',
     telegram: 'Telegram',
     git: 'Git',
-    blender: 'Blender',
     execution: 'Agentenausführung',
     webAccess: 'Webzugriff',
     rag: 'RAG & Vektoren',
@@ -257,7 +256,7 @@ export default {
     intro: 'Der Level, mit dem der Backend-Prozess und jeder Agenten-Subprozess loggen. Eine Workspace-Überschreibung hat Vorrang vor dem globalen Wert aus .env.',
     hint: 'Das Speichern wendet den Level sofort auf das laufende Backend an. Agentenprozesse übernehmen ihn beim nächsten Start.',
   },
-  connectorsMoved: 'Telegram, GitHub/GitLab und Blender sind jetzt unter Verbinden → Konnektoren.',
+  connectorsMoved: 'GitLab und Jira richten Sie unter Verbinden → Konnektoren ein.',
   demo: {
     title: 'Demo-Workspace',
     intro: 'Legt einen Workspace namens demo mit Agenten, einem Projekt, einem Flow, einem Team, Ansichten und aufgezeichneten Läufen an, damit es etwas zu entdecken gibt, bevor Ihre eigene Arbeit eingerichtet ist.',

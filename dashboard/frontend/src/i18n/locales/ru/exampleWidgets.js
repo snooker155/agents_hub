@@ -35,7 +35,7 @@ export default {
   active: 'активен',
   reworkTheCheckoutFunnelAnd: 'Переработать воронку оформления заказа и добавить новые способы оплаты.',
   repo: 'Репозиторий',
-  githubComAcmeWeb: 'github.com/acme/web',
+  gitlabComAcmeWeb: 'gitlab.com/acme/web',
   preview: 'Превью',
   localhost5173: 'localhost:5173',
   stack: 'Стек',

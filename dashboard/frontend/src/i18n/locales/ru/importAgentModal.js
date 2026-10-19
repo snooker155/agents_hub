@@ -24,7 +24,7 @@ export default {
   workedExampleBefore: 'Разобранный пример-обёртка над Aider лежит в',
   workedExampleAfter: ', он разобран в разделе «Документация → Импорт агентов».',
   cancel: 'Отмена',
-  httpsGithubComOwnerMy: 'https://github.com/owner/my-agent  (или абсолютный локальный путь)',
+  httpsGitlabComOwnerMy: 'https://gitlab.com/owner/my-agent  (или абсолютный локальный путь)',
   sourceUrl: 'URL репозитория',
   sourceUrlHint: 'URL репозитория (или абсолютный локальный путь). Хаб клонирует его и читает агента оттуда.',
 };

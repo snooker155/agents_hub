@@ -114,7 +114,7 @@ export default {
     danger: 'Danger accent',
     preview: 'Preview',
     presets: {
-      navy: 'Navy',
+      magenta: 'Magenta',
       forest: 'Forest',
       slate: 'Slate',
       sunset: 'Sunset',

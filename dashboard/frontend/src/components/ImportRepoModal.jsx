@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react';
-import { GitBranch, Github, Gitlab, Loader, Lock, RefreshCw, Search, X } from 'lucide-react';
+import { GitBranch, Loader, Lock, RefreshCw, Search, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getGitConfig, listGitRepos, importProjectFromRepo, connectProjectRepo } from '../api';
 import { useI18n } from '../i18n';
 import PageLoader from './PageLoader';
 
-// The git providers the Connectors page can hold a token for (connectors/git/store.py).
-const PROVIDERS = ['github', 'gitlab', 'bitbucket', 'gitea'];
-const PROVIDER_LABELS = { github: 'GitHub', gitlab: 'GitLab', bitbucket: 'Bitbucket', gitea: 'Gitea' };
+// The one git provider this edition holds a token for (connectors/git/store.py).
+const PROVIDER = 'gitlab';
 
 const inputCls = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none";
 
@@ -20,7 +19,7 @@ const inputCls = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm foc
 export default function ImportRepoModal({ mode = 'import', project = null, workspaces = [], defaultWorkspace = '', onClose, onDone }) {
   const { t } = useI18n();
   const [gitConfig, setGitConfig] = useState(null);
-  const [provider, setProvider] = useState('');
+  const provider = PROVIDER;
   const [search, setSearch] = useState('');
   const [repos, setRepos] = useState([]);
   const [loadingRepos, setLoadingRepos] = useState(false);
@@ -45,18 +44,16 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
       try {
         const { data } = await getGitConfig(effectiveWorkspace);
         setGitConfig(data);
-        const first = PROVIDERS.find((p) => data[p]?.has_token);
-        if (first) setProvider(first);
       } catch (e) {
         setError(e.response?.data?.detail || e.message);
-        setGitConfig({ github: { has_token: false }, gitlab: { has_token: false } });
+        setGitConfig({ gitlab: { has_token: false } });
       }
     })();
   }, [effectiveWorkspace]);
 
-  // Load repos when the provider changes or the search is submitted (debounced).
+  // Load repos once the token is known and when the search changes (debounced).
   useEffect(() => {
-    if (!provider) return;
+    if (!gitConfig?.[provider]?.has_token) return;
     let cancelled = false;
     const timer = setTimeout(async () => {
       setLoadingRepos(true);
@@ -74,7 +71,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
       }
     }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [provider, search, effectiveWorkspace]);
+  }, [provider, gitConfig, search, effectiveWorkspace]);
 
   const selectRepo = (repo) => {
     setSelectedRepo(repo);
@@ -115,7 +112,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
     }
   };
 
-  const availableProviders = PROVIDERS.filter((p) => gitConfig?.[p]?.has_token);
+  const hasProvider = !!gitConfig?.[PROVIDER]?.has_token;
   const canSubmit = selectedRepo && !submitting && (mode === 'connect' || workspace);
 
   return (
@@ -133,29 +130,13 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
 
           {gitConfig === null ? (
             <PageLoader size="sm" />
-          ) : availableProviders.length === 0 ? (
+          ) : !hasProvider ? (
             <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-4 py-3 text-sm">
-              No git connector is configured yet. Add a GitHub or GitLab personal access token in{' '}
+              No git connector is configured yet. Add a GitLab personal access token in{' '}
               <Link to="/settings/git" className="font-medium underline" onClick={onClose}>{t('importRepoModal.settingsGit')}</Link>.
             </div>
           ) : (
             <>
-              <div className="flex gap-2">
-                {availableProviders.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => { setProvider(p); setSelectedRepo(null); }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border ${
-                      provider === p ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    {p === 'github' ? <Github className="w-4 h-4" /> : p === 'gitlab' ? <Gitlab className="w-4 h-4" /> : <GitBranch className="w-4 h-4" />}
-                    {PROVIDER_LABELS[p]}
-                  </button>
-                ))}
-              </div>
-
               <div className="relative">
                 <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input

@@ -245,12 +245,12 @@ function hueTokensFromAccent(hex, mode) {
 
 // Four starting points plus "Custom" (any set of colors that isn't one of
 // these, including a partial one — the palette editor decides that by
-// comparison, this module just ships the four). Navy matches the shipped
+// comparison, this module just ships the four). Magenta matches the shipped
 // default almost exactly, so picking it back after customizing is a safe
 // "undo".
-export const PRESET_ORDER = ['navy', 'forest', 'slate', 'sunset'];
+export const PRESET_ORDER = ['magenta', 'forest', 'slate', 'sunset'];
 export const PRESETS = {
-  navy: { brand: '#3f66d8', neutral: '#64748b', ok: '#16a34a', danger: '#dc2626' },
+  magenta: { brand: '#e20074', neutral: '#737373', ok: '#16a34a', danger: '#dc2626' },
   forest: { brand: '#166534', neutral: '#57534e', ok: '#65a30d', danger: '#b91c1c' },
   slate: { brand: '#334155', neutral: '#64748b', ok: '#059669', danger: '#e11d48' },
   sunset: { brand: '#c2410c', neutral: '#78716c', ok: '#16a34a', danger: '#be123c' },
@@ -387,8 +387,8 @@ export function contrastRatio(hexA, hexB) {
 }
 
 const DEFAULT_SURFACE = {
-  light: { page: '#f4f6fb', text: '#0f172a' },
-  dark: { page: '#070d18', text: '#eef2fa' },
+  light: { page: '#f4f4f4', text: '#1b1b1b' },
+  dark: { page: '#0a0a0a', text: '#f2f2f2' },
 };
 
 /**

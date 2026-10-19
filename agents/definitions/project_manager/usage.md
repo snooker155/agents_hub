@@ -2,7 +2,7 @@ Use this agent to maintain the project registry.
 
 Good fits:
 - "Create a research project called Pricing Study in this workspace"
-- "Point the hrms project at github.com/acme/hrms, branch develop"
+- "Point the hrms project at gitlab.com/acme/hrms, branch develop"
 - "Archive every project that has no open tasks"
 - "Which projects are in this workspace and how much work is attached to each?"
 - "Mark the migration project completed and tag it legacy"

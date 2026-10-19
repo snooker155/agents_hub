@@ -24,11 +24,6 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
   const { selectedWorkspace } = useWorkspace();
   const [names, setNames] = useState([]);
   const [saved, setSaved] = useState([]);
-  // Who a GITHUB_TOKEN handed out by the GitHub App belongs to: the app's
-  // bot ("app") or the person who launched the run ("user"). Only shown when
-  // GITHUB_TOKEN is declared (docs/github-app.md).
-  const [identity, setIdentity] = useState('app');
-  const [savedIdentity, setSavedIdentity] = useState('app');
   const [available, setAvailable] = useState([]);
   const [draft, setDraft] = useState('');
   // Derived from the agent the names were fetched for, not set in the effect.
@@ -46,9 +41,6 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
         const list = Array.isArray(data?.secrets) ? data.secrets : [];
         setNames(list);
         setSaved(list);
-        const who = data?.github_identity === 'user' ? 'user' : 'app';
-        setIdentity(who);
-        setSavedIdentity(who);
       })
       .catch(() => { if (!cancelled) { setNames([]); setSaved([]); } })
       .finally(() => { if (!cancelled) setLoadedFor(agentId); });
@@ -66,9 +58,8 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
   }, [selectedWorkspace]);
 
   const dirty = useMemo(
-    () => names.length !== saved.length || names.some((n, i) => n !== saved[i])
-      || identity !== savedIdentity,
-    [names, saved, identity, savedIdentity],
+    () => names.length !== saved.length || names.some((n, i) => n !== saved[i]),
+    [names, saved],
   );
 
   const add = useCallback((raw) => {
@@ -90,13 +81,10 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
     setMessage('');
     setError('');
     try {
-      const { data } = await updateAgentSecrets(agentId, names, { github_identity: identity });
+      const { data } = await updateAgentSecrets(agentId, names);
       const list = Array.isArray(data?.secrets) ? data.secrets : names;
       setNames(list);
       setSaved(list);
-      const who = data?.github_identity === 'user' ? 'user' : identity;
-      setIdentity(who);
-      setSavedIdentity(who);
       setMessage(t('agentDetails.secretsSaved'));
     } catch (err) {
       setError(err?.response?.data?.detail || t('agentDetails.secretsSaveFailed'));
@@ -170,22 +158,6 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
                 <Plus className="w-3.5 h-3.5" /> {t('common.add')}
               </button>
             </form>
-          )}
-
-          {names.includes('GITHUB_TOKEN') && (
-            <label className="flex items-center gap-2 text-sm text-gray-700 mb-3">
-              <span>{t('agentDetails.githubIdentity')}</span>
-              <select
-                value={identity}
-                disabled={readOnly}
-                onChange={(e) => setIdentity(e.target.value)}
-                aria-label={t('agentDetails.githubIdentity')}
-                className="border border-gray-200 rounded-lg px-2 py-1 text-sm focus:outline-none"
-              >
-                <option value="app">{t('agentDetails.githubIdentityApp')}</option>
-                <option value="user">{t('agentDetails.githubIdentityUser')}</option>
-              </select>
-            </label>
           )}
 
           {!readOnly && suggestions.length > 0 && (

@@ -1,5 +1,5 @@
 """
-Git hosting connectors (GitHub / GitLab).
+Git hosting connectors (GitLab).
 
 Provides:
   - store        — file-backed token/config storage (.agents_hub/git_connectors.json)

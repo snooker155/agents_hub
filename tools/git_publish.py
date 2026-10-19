@@ -4,7 +4,7 @@ request whose description comes from the task the agent is working on.
 
 Read and write are asymmetric here on purpose. connectors/git/providers.py can
 already read issues and PRs with a token; this module is the one place a push
-leaves the workspace and lands on GitHub or GitLab, so it carries the
+leaves the workspace and lands on GitLab, so it carries the
 capability grant and the approval gate the read path never needed:
 
   - tools/capabilities.py classifies "git_publish" CAN_EXFILTRATE — a push is
@@ -182,7 +182,7 @@ def run_git_publish(
     provider_name = str(getattr(proj.repo.type, "value", proj.repo.type) or "")
     has_provider = provider_name == "gitlab"
 
-    # A project on one of the four providers opens a pull/merge request, so
+    # A GitLab project opens a merge request, so
     # it needs the remote resolved to an owner/repo and a working provider
     # client before anything touches the working tree. Anything else (a
     # plain git remote, a repo attached with no provider at all) still gets
@@ -316,7 +316,7 @@ def git_publish(
 ) -> str:
     """Commit the project's working tree, push a branch, and open a pull/merge request.
 
-    This is the only tool that sends workspace content to GitHub, GitLab or a
+    This is the only tool that sends workspace content to GitLab or a
     plain git remote. It never force pushes, and it never pushes to the repo's
     default branch: a change always lands on its own branch
     (agent/<task>-<slug> unless you name one), so whatever review already
@@ -325,7 +325,7 @@ def git_publish(
     is never staged, even if it falls inside the change. Refuses outright when
     there is nothing to commit.
 
-    When the project has no GitHub/GitLab provider configured, this commits
+    When the project has no GitLab provider configured, this commits
     and pushes the branch to the remote and stops there: no pull/merge
     request is possible without a provider, so `body`, `base`, `draft` and
     `open_pr` are ignored and the result carries `pushed`, `branch` and

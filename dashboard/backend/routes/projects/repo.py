@@ -78,7 +78,7 @@ def _check_attach_allowed(target: Path) -> None:
 
 @router.post("/import-from-repo")
 async def import_from_repo(payload: ProjectImportFromRepo):
-    """Import a GitHub/GitLab repo as a new project: clone + optional issue import."""
+    """Import a GitLab repo as a new project: clone + optional issue import."""
     ws_folder = get_workspace_folder(payload.workspace)
     if ws_folder is None:
         raise HTTPException(status_code=404, detail=f"Workspace '{payload.workspace}' not found")
@@ -137,7 +137,7 @@ async def import_from_repo(payload: ProjectImportFromRepo):
 
 @router.post("/{project_id}/connect-repo")
 async def connect_repo(project_id: str, payload: ProjectConnectRepo):
-    """Connect an existing project to a GitHub/GitLab repo: clone + optional issue import."""
+    """Connect an existing project to a GitLab repo: clone + optional issue import."""
     project = store().get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")

@@ -32,7 +32,7 @@ describe('AgentSecretsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'SLACK_TOKEN' }));
     fireEvent.click(screen.getByRole('button', { name: 'agentDetails.saveSecrets' }));
     await waitFor(() => expect(api.updateAgentSecrets).toHaveBeenCalledWith(
-      'a1', ['GITHUB_TOKEN', 'SLACK_TOKEN'], { github_identity: 'app' }));
+      'a1', ['GITHUB_TOKEN', 'SLACK_TOKEN']));
     expect(await screen.findByText('agentDetails.secretsSaved')).toBeInTheDocument();
   });
 
@@ -53,22 +53,5 @@ describe('AgentSecretsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'SLACK_TOKEN' }));
     fireEvent.click(screen.getByRole('button', { name: 'agentDetails.saveSecrets' }));
     expect(await screen.findByText('lethal trifecta')).toBeInTheDocument();
-  });
-
-  it('offers the GitHub identity choice only when GITHUB_TOKEN is declared', async () => {
-    render(<AgentSecretsCard agentId="a1" />);
-    await waitFor(() => expect(screen.getByText('GITHUB_TOKEN')).toBeInTheDocument());
-    const select = screen.getByLabelText('agentDetails.githubIdentity');
-    fireEvent.change(select, { target: { value: 'user' } });
-    fireEvent.click(screen.getByRole('button', { name: 'agentDetails.saveSecrets' }));
-    await waitFor(() => expect(api.updateAgentSecrets).toHaveBeenCalledWith(
-      'a1', ['GITHUB_TOKEN'], { github_identity: 'user' }));
-  });
-
-  it('hides the GitHub identity choice without GITHUB_TOKEN', async () => {
-    api.getAgentSecrets.mockResolvedValueOnce({ data: { secrets: ['SLACK_TOKEN'] } });
-    render(<AgentSecretsCard agentId="a1" />);
-    await waitFor(() => expect(screen.getByText('SLACK_TOKEN')).toBeInTheDocument());
-    expect(screen.queryByLabelText('agentDetails.githubIdentity')).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 """Git operations for a project: status, pull, clone, issue sync, publish.
 
 Split out of ``routes/projects.py``: these are the parts of the projects API
-that shell out to git or call a provider (GitHub/GitLab) — everything else
+that shell out to git or call a provider (GitLab) — everything else
 (project CRUD, the workspace symlink, the store) stays a route concern. Every
 function here is synchronous plain Python; the routes are the ones that know
 about ``asyncio.to_thread`` and ``HTTPException``.
@@ -47,7 +47,7 @@ def repo_provider(project) -> Optional[str]:
     is one a provider is registered for."""
     repo_type = str(project.repo.type.value if hasattr(project.repo.type, "value")
                     else project.repo.type)
-    return repo_type if repo_type in ("github", "gitlab", "bitbucket", "gitea") else None
+    return repo_type if repo_type in ("gitlab",) else None
 
 
 def run_issue_sync(project) -> Dict[str, Any]:
@@ -62,7 +62,7 @@ def run_issue_sync(project) -> Dict[str, Any]:
 def sync_issues(project) -> Dict[str, Any]:
     """``POST /{project_id}/sync-issues``: import/refresh issues as tasks."""
     if repo_provider(project) is None or not project.repo.remote_id:
-        raise ServiceError(400, "Project is not connected to a GitHub/GitLab repo")
+        raise ServiceError(400, "Project is not connected to a GitLab repo")
     try:
         return _sync_project_issues(project)
     except (GitProviderError, ValueError) as e:

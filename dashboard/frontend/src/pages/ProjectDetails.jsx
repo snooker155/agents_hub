@@ -16,7 +16,7 @@ import { frameType, hasSourceView, isHtmlFile, isPdfFile, needsBytes, objectUrl 
 import { saveBlobAs } from '../api/files';
 import { useWorkspace } from '../components/workspace';
 import {
-  FolderGit2, Globe, Server, GitBranch, Github, Gitlab, ChevronLeft,
+  FolderGit2, Globe, Server, GitBranch, ChevronLeft,
   RefreshCw, Play, Download, ExternalLink, CheckSquare, AlertCircle,
   Edit3, Save, X, Send, Code2, BookOpen, FileText, Tag, Clock,
   ArrowUpDown, Terminal, Folder, FolderOpen, ChevronRight, ChevronDown,
@@ -136,7 +136,7 @@ export default function ProjectDetails() {
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState('');
   const [prUrl, setPrUrl] = useState('');
-  // Set instead of prUrl when the repo has a remote but no GitHub/GitLab
+  // Set instead of prUrl when the repo has a remote but no GitLab
   // provider configured: publish still commits and pushes, it just has no
   // provider API to ask for a pull/merge request afterwards.
   const [pushResult, setPushResult] = useState(null);
@@ -384,8 +384,8 @@ export default function ProjectDetails() {
     }
   };
 
-  const isConnectedRepo = ['github', 'gitlab', 'bitbucket', 'gitea'].includes(project?.repo?.type) && project?.repo?.remote_id;
-  // A repo attached with a remote but no GitHub/GitLab provider still has
+  const isConnectedRepo = project?.repo?.type === 'gitlab' && project?.repo?.remote_id;
+  // A repo attached with a remote but no GitLab provider still has
   // somewhere to push; it just cannot open a pull/merge request, so the
   // publish modal offers a reduced, push-only path instead of hiding the
   // button entirely.
@@ -570,7 +570,7 @@ export default function ProjectDetails() {
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">URL</label>
                   <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                    value={editForm.repo_url} onChange={e => setEditForm(f => ({ ...f, repo_url: e.target.value }))} placeholder="https://github.com/org/repo.git" />
+                    value={editForm.repo_url} onChange={e => setEditForm(f => ({ ...f, repo_url: e.target.value }))} placeholder="https://gitlab.com/org/repo.git" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">{t('projectDetails.branch')}</label>

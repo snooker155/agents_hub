@@ -12,7 +12,6 @@ export default {
     temperature: 'Temperature',
     telegram: 'Telegram',
     git: 'Git',
-    blender: 'Blender',
     execution: 'Agent execution',
     webAccess: 'Web access',
     rag: 'RAG & vectors',
@@ -257,7 +256,7 @@ export default {
     intro: 'The level the backend process and every agent subprocess log at. A workspace override wins over the global .env value.',
     hint: 'Saving applies it to the running backend straight away. Agent processes pick it up when they next start.',
   },
-  connectorsMoved: 'Telegram, GitHub/GitLab and Blender moved to Connect → Connectors.',
+  connectorsMoved: 'GitLab and Jira are set up under Connect → Connectors.',
   demo: {
     title: 'Demo workspace',
     intro: 'Seeds a workspace named demo with agents, a project, a flow, a team, views and recorded runs, so there is something to explore before your own work is set up.',

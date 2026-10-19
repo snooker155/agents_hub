@@ -53,7 +53,6 @@ vi.mock('../../api', () => ({
   getTelegramBindings: () => ok([]),
   deleteTelegramBinding: () => ok({}),
   getGitConfig: () => ok({
-    github: { has_token: false },
     gitlab: { has_token: false, base_url: 'https://gitlab.com' },
   }),
   updateGitConfig: () => ok({}),

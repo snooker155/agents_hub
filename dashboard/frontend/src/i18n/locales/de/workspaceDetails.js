@@ -114,7 +114,7 @@ export default {
     danger: 'Gefahrenakzent',
     preview: 'Vorschau',
     presets: {
-      navy: 'Marineblau',
+      magenta: 'Magenta',
       forest: 'Wald',
       slate: 'Schiefer',
       sunset: 'Sonnenuntergang',

@@ -3,7 +3,7 @@
  * Generates src/theme.css — the single source of truth for app colors.
  *
  *  1. Brand remap: indigo / violet / purple / fuchsia utilities are repainted
- *     with a deep-navy ramp, in BOTH themes (no purple anywhere).
+ *     with the magenta ramp, in BOTH themes (no purple anywhere).
  *  2. Dark theme: every Tailwind color utility used in the app gets a dark
  *     counterpart, so panels share one surface ladder and colored badges
  *     (green / amber / red …) stay readable instead of staying light-on-light.
@@ -23,39 +23,40 @@ const SRC = join(ROOT, 'src');
 
 /* ── palettes ───────────────────────────────────────────────────────────── */
 
-// Deep navy brand ramp — replaces indigo/violet/purple/fuchsia in light mode.
+// Magenta brand ramp, 600 is the brand colour itself (#E20074).
+// Replaces indigo/violet/purple/fuchsia in light mode.
 const BRAND_LIGHT = {
-  50: '#eef3ff', 100: '#dbe6ff', 200: '#bdd0fb', 300: '#93b0f5', 400: '#6389ea',
-  500: '#3f66d8', 600: '#2a4fbd', 700: '#21409c', 800: '#1d3680', 900: '#1a2c63',
-  950: '#101c40',
+  50: '#fef1f8', 100: '#fde1ef', 200: '#fac4df', 300: '#f598c6', 400: '#f063a8',
+  500: '#ea3390', 600: '#e20074', 700: '#c00063', 800: '#9e0052', 900: '#7a0040',
+  950: '#4a0027',
 };
-const BRAND_RGB = '63, 102, 216'; // #3f66d8
+const BRAND_RGB = '226, 0, 116'; // #e20074
 
 // Brand in dark mode: text tiers lighten, tint backgrounds become translucent.
 const BRAND_DARK = {
   bg: {
     50: `rgba(${BRAND_RGB}, 0.16)`, 100: `rgba(${BRAND_RGB}, 0.26)`,
-    200: `rgba(${BRAND_RGB}, 0.34)`, 300: '#3a5cc4', 400: '#3a5cc4',
-    500: '#3f66d8', 600: '#3159cc', 700: '#264aa8', 800: '#1e3c85',
-    900: '#16294f', 950: '#0c1730',
+    200: `rgba(${BRAND_RGB}, 0.34)`, 300: '#b8005f', 400: '#b8005f',
+    500: '#e20074', 600: '#c9006a', 700: '#a3005a', 800: '#800048',
+    900: '#4d002c', 950: '#2b0019',
   },
   text: {
-    300: '#a8c4ff', 400: '#9dbaff', 500: '#8cb0ff', 600: '#8fb2ff',
-    700: '#a8c4ff', 800: '#bcd2ff', 900: '#d2e0ff', 950: '#e4ecff',
+    300: '#ffa8d4', 400: '#ff9dcd', 500: '#ff8cc4', 600: '#ff8fc6',
+    700: '#ffa8d4', 800: '#ffc2e1', 900: '#ffd9ec', 950: '#ffeaf4',
   },
   border: {
     50: `rgba(${BRAND_RGB}, 0.22)`, 100: `rgba(${BRAND_RGB}, 0.30)`,
     200: `rgba(${BRAND_RGB}, 0.40)`, 300: `rgba(${BRAND_RGB}, 0.52)`,
-    400: '#4a72e6', 500: '#3f66d8', 600: '#3159cc', 700: '#264aa8',
-    800: '#1e3c85', 900: '#16294f',
+    400: '#f0389a', 500: '#e20074', 600: '#c9006a', 700: '#a3005a',
+    800: '#800048', 900: '#4d002c',
   },
 };
 
 // Same ramp inverted, for inline styles that read var(--brand-N) directly.
 const BRAND_DARK_VARS = {
-  50: '#0c1730', 100: '#12224a', 200: '#1a3068', 300: '#264aa8', 400: '#3159cc',
-  500: '#3f66d8', 600: '#5b82e6', 700: '#8fb2ff', 800: '#bcd2ff', 900: '#d2e0ff',
-  950: '#e4ecff',
+  50: '#2b0019', 100: '#3d0024', 200: '#57003a', 300: '#a3005a', 400: '#c9006a',
+  500: '#e20074', 600: '#f0389a', 700: '#ff8fc6', 800: '#ffc2e1', 900: '#ffd9ec',
+  950: '#ffeaf4',
 };
 
 const BRAND_HUES = ['indigo', 'violet', 'purple', 'fuchsia'];
@@ -66,30 +67,31 @@ const NEUTRAL_HUES = ['gray', 'slate', 'zinc', 'neutral', 'stone'];
 // itself). Not consumed by the matrix below — the neutral *utility* classes
 // (bg-gray-100 and friends) go through their own bg/text/border ladders,
 // unchanged in light mode and NEUTRAL_DARK-derived in dark mode, same as
-// before this ramp existed. It ships as Tailwind's own slate scale so a
-// default install and a person who has never touched Settings → Account see
-// the same grays either way.
+// before this ramp existed. It ships as Tailwind's neutral scale, the same
+// grays tailwind.config.js puts behind the gray utilities, so a default
+// install and a person who has never touched Settings → Account see the same
+// grays either way. The magenta palette has no blue in its grays.
 const NEUTRAL_LIGHT = {
-  50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1', 400: '#94a3b8',
-  500: '#64748b', 600: '#475569', 700: '#334155', 800: '#1e293b', 900: '#0f172a',
-  950: '#020617',
+  50: '#fafafa', 100: '#f5f5f5', 200: '#e5e5e5', 300: '#d4d4d4', 400: '#a3a3a3',
+  500: '#737373', 600: '#525252', 700: '#404040', 800: '#262626', 900: '#171717',
+  950: '#0a0a0a',
 };
 
-// Navy-tinted neutral ladder. Backgrounds go page < sunken < card < raised.
+// Pure neutral dark ladder, no tint. Backgrounds go page < sunken < card < raised.
 const NEUTRAL_DARK = {
   bg: {
-    50: '#0c1322', 100: '#18223a', 200: '#1e2943', 300: '#25314c',
-    400: '#3a4867', 500: '#4c5b7c', 600: '#5d6c8d', 700: '#16203a',
-    800: '#101828', 900: '#080f1c', 950: '#050a14',
+    50: '#121212', 100: '#1e1e1e', 200: '#252525', 300: '#2c2c2c',
+    400: '#424242', 500: '#555555', 600: '#666666', 700: '#1a1a1a',
+    800: '#161616', 900: '#0d0d0d', 950: '#080808',
   },
   text: {
-    300: '#8e9bb1', 400: '#8b98ae', 500: '#9aa7bd', 600: '#b6c1d4',
-    700: '#ccd5e3', 800: '#dfe6f0', 900: '#eef2fa', 950: '#f8fafc',
+    300: '#9e9e9e', 400: '#9a9a9a', 500: '#a8a8a8', 600: '#c2c2c2',
+    700: '#d6d6d6', 800: '#e6e6e6', 900: '#f2f2f2', 950: '#fafafa',
   },
   border: {
-    50: '#151e33', 100: '#1a2440', 200: '#25314c', 300: '#31405e',
-    400: '#3d4d6e', 500: '#4a5a7d', 600: '#33415f', 700: '#2a3654',
-    800: '#202b45', 900: '#18213a', 950: '#111a2e',
+    50: '#1c1c1c', 100: '#222222', 200: '#2c2c2c', 300: '#383838',
+    400: '#454545', 500: '#555555', 600: '#3b3b3b', 700: '#313131',
+    800: '#272727', 900: '#1f1f1f', 950: '#171717',
   },
 };
 
@@ -387,10 +389,10 @@ const EXTRAS = `
 :where(html.dark) .hover\\:bg-white:hover,
 :where(html.dark) .focus\\:bg-white:focus { background-color: var(--surface-card); }
 
-:where(html.dark) .bg-white\\/95 { background-color: rgba(18, 26, 43, 0.95); }
-:where(html.dark) .bg-white\\/80 { background-color: rgba(18, 26, 43, 0.80); }
-:where(html.dark) .bg-white\\/70 { background-color: rgba(18, 26, 43, 0.70); }
-:where(html.dark) .bg-white\\/60 { background-color: rgba(18, 26, 43, 0.60); }
+:where(html.dark) .bg-white\\/95 { background-color: rgba(27, 27, 27, 0.95); }
+:where(html.dark) .bg-white\\/80 { background-color: rgba(27, 27, 27, 0.80); }
+:where(html.dark) .bg-white\\/70 { background-color: rgba(27, 27, 27, 0.70); }
+:where(html.dark) .bg-white\\/60 { background-color: rgba(27, 27, 27, 0.60); }
 :where(html.dark) .bg-white\\/20,
 :where(html.dark) .hover\\:bg-white\\/20:hover { background-color: rgba(255, 255, 255, 0.12); }
 :where(html.dark) .bg-white\\/10 { background-color: rgba(255, 255, 255, 0.07); }
@@ -442,7 +444,7 @@ const header = `/* =============================================================
  *
  * What lives here:
  *   1. :root / html.dark design tokens (surfaces, text tiers, brand ramp).
- *   2. Brand remap  — indigo/violet/purple/fuchsia utilities repainted navy.
+ *   2. Brand remap  — indigo/violet/purple/fuchsia utilities repainted magenta.
  *   3. Dark theme   — a dark counterpart for every color utility, so panels
  *      sit on one surface ladder and colored badges stay readable.
  *
@@ -455,22 +457,22 @@ const tokensBlock = `
 :root {
   color-scheme: light;
 
-  --surface-page:    #f4f6fb;
-  --surface-sunken:  #f8fafc;
+  --surface-page:    #f4f4f4;
+  --surface-sunken:  #fafafa;
   --surface-card:    #ffffff;
-  --surface-raised:  #f1f5f9;
-  --surface-hover:   #eef2f7;
-  --surface-inverse: #0d1526;
+  --surface-raised:  #f2f2f2;
+  --surface-hover:   #ededed;
+  --surface-inverse: #1b1b1b;
 
-  --border-subtle:   #e8edf4;
-  --border-default:  #e2e8f0;
-  --border-strong:   #cbd5e1;
+  --border-subtle:   #ebebeb;
+  --border-default:  #e0e0e0;
+  --border-strong:   #cccccc;
 
-  --text-primary:    #0f172a;
-  --text-secondary:  #334155;
-  --text-muted:      #64748b;
-  --text-faint:      #94a3b8;
-  --text-inverse:    #f8fafc;
+  --text-primary:    #1b1b1b;
+  --text-secondary:  #3d3d3d;
+  --text-muted:      #6b6b6b;
+  --text-faint:      #9b9b9b;
+  --text-inverse:    #fafafa;
 
 ${SHADES.map((s) => `  --brand-${s}: ${BRAND_LIGHT[s]};`).join('\n')}
   --brand:           ${BRAND_LIGHT[600]};
@@ -494,45 +496,45 @@ ${Object.entries(HUES).map(([name, h]) => `  --hue-${name}-rgb: ${h.rgb};\n  --h
   /* Chart marks (validated with the dataviz palette checks for this surface):
      the accent series, the de-emphasised rest, three categorical slots,
      gridlines and the unfilled track of a meter. */
-  --chart-accent:   #2a4fbd;
-  --chart-muted:    #cbd5e1;
-  --chart-cat-1:    #2a4fbd;
-  --chart-cat-2:    #eb6834;
+  --chart-accent:   #e20074;
+  --chart-muted:    #d4d4d4;
+  --chart-cat-1:    #e20074;
+  --chart-cat-2:    #2f6fd0;
   --chart-cat-3:    #1baf7a;
-  --chart-grid:     #e8edf4;
-  --chart-track:    #dbe6ff;
+  --chart-grid:     #ebebeb;
+  --chart-track:    #fde1ef;
 }
 
 html.dark {
   color-scheme: dark;
 
-  --surface-page:    #070d18;
-  --surface-sunken:  #0c1322;
-  --surface-card:    #121a2b;
-  --surface-raised:  #18223a;
-  --surface-hover:   #1e2943;
-  --surface-inverse: #eef2fa;
+  --surface-page:    #0a0a0a;
+  --surface-sunken:  #121212;
+  --surface-card:    #1b1b1b;
+  --surface-raised:  #232323;
+  --surface-hover:   #2a2a2a;
+  --surface-inverse: #f2f2f2;
 
-  --border-subtle:   #1a2440;
-  --border-default:  #25314c;
-  --border-strong:   #31405e;
+  --border-subtle:   #262626;
+  --border-default:  #2f2f2f;
+  --border-strong:   #3d3d3d;
 
-  --text-primary:    #eef2fa;
-  --text-secondary:  #ccd5e3;
-  --text-muted:      #9aa7bd;
-  --text-faint:      #8b98ae;
-  --text-inverse:    #0d1526;
+  --text-primary:    #f2f2f2;
+  --text-secondary:  #d6d6d6;
+  --text-muted:      #a8a8a8;
+  --text-faint:      #9a9a9a;
+  --text-inverse:    #1b1b1b;
 
-  --chart-accent:   #5b82e6;
-  --chart-muted:    #3a4a6b;
-  --chart-cat-1:    #5b82e6;
-  --chart-cat-2:    #d95926;
+  --chart-accent:   #f0389a;
+  --chart-muted:    #4a4a4a;
+  --chart-cat-1:    #f0389a;
+  --chart-cat-2:    #5b9bf0;
   --chart-cat-3:    #199e70;
-  --chart-grid:     #1f2a44;
-  --chart-track:    #1a3068;
+  --chart-grid:     #262626;
+  --chart-track:    #57003a;
 
 ${Object.entries(BRAND_DARK_VARS).map(([s, v]) => `  --brand-${s}: ${v};`).join('\n')}
-  --brand:           #3f66d8;
+  --brand:           #e20074;
   --brand-contrast:  #ffffff;
   --brand-rgb:       ${BRAND_RGB};
 
@@ -555,12 +557,12 @@ ${Object.entries(HUES).map(([name, h]) => `  --hue-${name}-rgb: ${h.rgb};\n  --h
   --ok:      #6ee7b7;
   --warn:    #fcd34d;
   --danger:  #fca5a5;
-  --info:    #8fb2ff;
+  --info:    #ff8fc6;
 
   --ok-surface:     rgba(34, 197, 94, 0.24);
   --warn-surface:   rgba(234, 179, 8, 0.28);
   --danger-surface: rgba(239, 68, 68, 0.24);
-  --info-surface:   rgba(63, 102, 216, 0.28);
+  --info-surface:   rgba(226, 0, 116, 0.28);
 }
 `;
 

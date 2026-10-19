@@ -133,7 +133,7 @@ def test_sync_reads_project_repositories(workspace):
 
     ws, folder = workspace
     project = Project(name="Site", workspace=ws,
-                      repo=RepoConfig(type="github", url="https://example.com/r.git",
+                      repo=RepoConfig(type="gitlab", url="https://example.com/r.git",
                                       local_path="site-repo"))
     ProjectStore().add(project)
     _write_skill(folder / "site-repo", folder="lint")

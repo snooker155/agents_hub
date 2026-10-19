@@ -1,7 +1,7 @@
 """
 Workspace secrets: encrypted at rest, handed to a run only by name.
 
-Before this module, a provider key or a GitHub token lived either in ``.env``
+Before this module, a provider key or a git token lived either in ``.env``
 (one value for every workspace and every agent) or in a workspace's
 ``env_vars`` metadata (plain text in the database, readable by anyone who can
 read a backup). Neither can say "this token belongs to *this* agent", and both

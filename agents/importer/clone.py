@@ -7,7 +7,7 @@ permanent home — so an inspection that reveals problems leaves no half-importe
 agent behind, and confirming does not pay for a second clone.
 
 Authentication is delegated to :mod:`connectors.git.git_ops`, which injects the
-configured GitHub/GitLab token per invocation so it never lands in ``.git/config``
+configured GitLab token per invocation so it never lands in ``.git/config``
 or in error output. Public repositories need no token at all.
 """
 from __future__ import annotations
@@ -45,11 +45,9 @@ def detect_provider(repo_url: str) -> Optional[str]:
     """
     host = (urlparse(repo_url).hostname or "").lower()
     if not host:
-        # scp-style remotes (git@github.com:owner/repo.git) have no URL scheme.
+        # scp-style remotes (git@gitlab.com:owner/repo.git) have no URL scheme.
         match = re.match(r"^[^@]+@([^:]+):", repo_url.strip())
         host = match.group(1).lower() if match else ""
-    if "github" in host:
-        return "github"
     if "gitlab" in host:
         return "gitlab"
     return None

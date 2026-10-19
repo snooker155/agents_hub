@@ -424,7 +424,7 @@ class Task(BaseModel):
         default=None, description="Project subfolder name within the workspace (agents read/write here)"
     )
 
-    # Origin issue when imported from a git provider (GitHub/GitLab):
+    # Origin issue when imported from a git provider (GitLab):
     # {provider, remote_id, number, url, state, labels, synced_at}
     external_source: Optional[Dict[str, Any]] = Field(
         default=None, description="Source issue metadata when imported from a git provider"

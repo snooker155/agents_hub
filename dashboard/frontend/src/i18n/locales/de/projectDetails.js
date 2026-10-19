@@ -15,9 +15,9 @@ export default {
     optional: 'Optional',
     draft: 'Als Entwurf öffnen',
     publishing: 'Wird veröffentlicht…',
-    opened: 'Pull Request geöffnet:',
+    opened: 'Merge Request geöffnet:',
     pushed: 'Branch gepusht.',
-    noProviderNotice: 'Für dieses Repository ist kein GitHub- oder GitLab-Provider konfiguriert. Dies committet und pusht Ihren Branch zum Remote, es wird kein Pull Request geöffnet.',
+    noProviderNotice: 'Für dieses Repository ist kein GitLab-Provider konfiguriert. Dies committet und pusht Ihren Branch zum Remote, es wird kein Merge Request geöffnet.',
     pushedBranch: '{{branch}} zu {{remote}} gepusht.',
   },
   tabs: {

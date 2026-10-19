@@ -14,7 +14,7 @@ export default {
     alsoDefinedIn: 'Auch festgelegt in: {{list}}',
   },
   tabs: {
-    git: 'GitHub und GitLab',
+    git: 'GitLab',
     alerts: 'Alarmregeln',
     trackers: "Jira und Linear",
   },

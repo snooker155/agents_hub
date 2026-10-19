@@ -24,7 +24,7 @@ export default {
   workedExampleBefore: 'Ein ausgearbeitetes Beispiel rund um Aider liegt in',
   workedExampleAfter: ' und wird unter Dokumentation → Agenten importieren erklärt.',
   cancel: 'Abbrechen',
-  httpsGithubComOwnerMy: 'https://github.com/owner/my-agent  (oder ein absoluter lokaler Pfad)',
+  httpsGitlabComOwnerMy: 'https://gitlab.com/owner/my-agent  (oder ein absoluter lokaler Pfad)',
   sourceUrl: 'Repository-URL',
   sourceUrlHint: 'Eine Repository-URL (oder ein absoluter lokaler Pfad). Der Hub klont sie und liest den Agenten von dort.',
 };

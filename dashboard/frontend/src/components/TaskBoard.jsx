@@ -5,7 +5,7 @@ import { useLiveRefetch } from './stream';
 import {
   Plus, CheckCircle, Clock, AlertCircle, StopCircle, Loader,
   ExternalLink, Trash2, List, Columns, UserPlus, ChevronRight,
-  GitBranch, User, X, ThumbsUp, ThumbsDown, Github, Gitlab, Workflow, Folder, HelpCircle, ShieldQuestion,
+  GitBranch, User, X, ThumbsUp, ThumbsDown, Gitlab, Workflow, Folder, HelpCircle, ShieldQuestion,
   Users, RotateCw
 } from 'lucide-react';
 import { getTasks, deleteTask, getAgents, assignAgent, approveAssignment, rejectAssignment, updateTask, listFlows, runFlow, getProjects } from '../api';
@@ -122,10 +122,10 @@ function StatusBadge({ status }) {
   );
 }
 
-// Badge linking a task back to its source GitHub/GitLab issue
+// Badge linking a task back to its source GitLab issue
 function IssueSourceBadge({ source }) {
   if (!source?.number) return null;
-  const Icon = source.provider === 'gitlab' ? Gitlab : Github;
+  const Icon = Gitlab;
   const label = `#${source.number}`;
   const cls = "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-gray-50 text-gray-600 border border-gray-200";
   if (!source.url) return <span className={cls}><Icon className="w-3 h-3" /> {label}</span>;

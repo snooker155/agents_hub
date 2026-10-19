@@ -175,7 +175,7 @@ export function ProjectCardExample() {
         </div>
         <p className="text-sm text-gray-500 mt-1">{t('exampleWidgets.reworkTheCheckoutFunnelAnd')}</p>
         <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
-          <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.repo')}</span><br /><span className="font-mono text-gray-700">{t('exampleWidgets.githubComAcmeWeb')}</span></div>
+          <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.repo')}</span><br /><span className="font-mono text-gray-700">{t('exampleWidgets.gitlabComAcmeWeb')}</span></div>
           <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.preview')}</span><br /><span className="font-mono text-gray-700">{t('exampleWidgets.localhost5173')}</span></div>
           <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.stack')}</span><br /><span className="text-gray-700">{t('exampleWidgets.reactFastapi')}</span></div>
           <div className="rounded-lg bg-gray-50 p-2"><span className="text-gray-400">{t('exampleWidgets.tasks')}</span><br /><span className="text-gray-700">{t('exampleWidgets.k5Open12Done')}</span></div>

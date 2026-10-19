@@ -51,10 +51,6 @@ class SecretHostsPut(BaseModel):
 
 class AgentSecretsPut(BaseModel):
     secrets: List[str]
-    # Whose identity a declared GITHUB_TOKEN falls back to when no secret
-    # holds one (connectors/git/github_app.py): "app" or "user". None keeps
-    # the agent's current choice.
-    github_identity: Optional[str] = None
 
 
 def _principal(request: Request):
@@ -166,8 +162,7 @@ def _require_agent_admin(principal, spec) -> None:
 @router.get("/api/agents/{agent_id}/secrets")
 async def get_agent_secrets(agent_id: str) -> dict:
     spec = _agent_or_404(agent_id)
-    return {"secrets": list(spec.secrets or []),
-            "github_identity": getattr(spec, "github_identity", "app") or "app"}
+    return {"secrets": list(spec.secrets or [])}
 
 
 @router.put("/api/agents/{agent_id}/secrets")
@@ -186,20 +181,13 @@ async def put_agent_secrets(request: Request, agent_id: str, payload: AgentSecre
                 names.append(name)
     except secret_store.SecretsError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    github_identity = getattr(spec, "github_identity", "app") or "app"
-    if payload.github_identity is not None:
-        github_identity = payload.github_identity.strip().lower()
-        if github_identity not in ("app", "user"):
-            raise HTTPException(status_code=400,
-                                detail="github_identity must be 'app' or 'user'")
     try:
-        registry.add_agent(dataclasses.replace(spec, secrets=names,
-                                               github_identity=github_identity),
+        registry.add_agent(dataclasses.replace(spec, secrets=names),
                            actor=getattr(principal, "username", None) or "dashboard",
                            note="secrets allowlist")
     except ValueError as exc:  # CapabilityViolation included
         raise HTTPException(status_code=400, detail=str(exc))
     audit.record("agent.secrets", principal=principal, object_type="agent", object_id=agent_id,
                  ip=identity.client_ip(request),
-                 details={"secrets": names, "github_identity": github_identity})
-    return {"secrets": names, "github_identity": github_identity}
+                 details={"secrets": names})
+    return {"secrets": names}

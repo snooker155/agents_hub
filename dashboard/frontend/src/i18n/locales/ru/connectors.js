@@ -14,7 +14,7 @@ export default {
     alsoDefinedIn: 'Также задан в: {{list}}',
   },
   tabs: {
-    git: 'GitHub и GitLab',
+    git: 'GitLab',
     alerts: 'Правила алертов',
     trackers: "Jira и Linear",
   },

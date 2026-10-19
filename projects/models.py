@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
 from uuid import uuid4
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ProjectType(str, Enum):
@@ -21,10 +21,7 @@ class ProjectStatus(str, Enum):
 
 
 class RepoType(str, Enum):
-    github = "github"
     gitlab = "gitlab"
-    bitbucket = "bitbucket"
-    gitea = "gitea"
     local = "local"
     none = "none"
 
@@ -35,6 +32,15 @@ class RepoConfig(BaseModel):
     branch: Optional[str] = "main"
     local_path: Optional[str] = None   # Path within workspace (relative)
     remote_id: Optional[str] = None    # Provider repo id ("owner/repo" / path_with_namespace)
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _retired_host_is_plain_git(cls, value):
+        # A project saved by a full edition may name a host this edition has
+        # no connector for; it stays a plain remote, with no provider API.
+        if value in ("github", "bitbucket", "gitea"):
+            return RepoType.none
+        return value
 
 
 class TrackerConfig(BaseModel):

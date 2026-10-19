@@ -8,7 +8,7 @@ import { cssVar } from '../../lib/themeColors';
 // reactive version components use). The fallbacks are the literal defaults
 // this module always shipped, so nothing changes for anyone who never
 // touches Account -> Palette. 'design' has no dedicated hue token (violet is
-// a brand hue, remapped navy elsewhere, not one of the standalone chromatic
+// a brand hue, remapped magenta elsewhere, not one of the standalone chromatic
 // hues gen-theme.mjs exposes) and stays a plain constant.
 export const DOMAIN_COLORS = {
   management: cssVar('--hue-cyan-400', '#22d3ee'),

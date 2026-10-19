@@ -32,7 +32,7 @@ export default {
   items: {
     sre_agent: {
       name: 'SRE Agent',
-      description: 'Untersucht einen Vorfall anhand von Logs, Manifesten und Runbooks, benennt die Ursache mit Belegen und schlägt die Korrektur als Pull Request zur Freigabe vor.',
+      description: 'Untersucht einen Vorfall anhand von Logs, Manifesten und Runbooks, benennt die Ursache mit Belegen und schlägt die Korrektur als Merge Request zur Freigabe vor.',
     },
     ai_teammate: {
       name: 'KI Teamkollege',

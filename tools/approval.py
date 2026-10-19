@@ -62,7 +62,7 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     # is only detached). tools/workspace_management.py.
     "delete_workspace",
     # Sends workspace content outside the system: a push, plus a PR/MR opened
-    # from it. Not reversible from in here once GitHub/GitLab has it.
+    # from it. Not reversible from in here once GitLab has it.
     "git_publish",
     # Acts on a live website: a click can submit a form, buy, post or delete,
     # and typed text leaves the system. Opening and reading pages stay free.

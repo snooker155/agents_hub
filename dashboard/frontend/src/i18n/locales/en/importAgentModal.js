@@ -24,7 +24,7 @@ export default {
   workedExampleBefore: 'A worked example wrapping Aider lives in',
   workedExampleAfter: ', and is walked through under Docs → Importing agents.',
   cancel: 'Cancel',
-  httpsGithubComOwnerMy: 'https://github.com/owner/my-agent  (or an absolute local path)',
+  httpsGitlabComOwnerMy: 'https://gitlab.com/owner/my-agent  (or an absolute local path)',
   sourceUrl: 'Repository URL',
   sourceUrlHint: 'A repository URL (or an absolute local path). The hub clones it and reads the agent from there.',
 };

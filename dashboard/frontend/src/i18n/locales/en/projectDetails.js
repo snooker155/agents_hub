@@ -15,9 +15,9 @@ export default {
     optional: 'Optional',
     draft: 'Open as a draft',
     publishing: 'Publishing…',
-    opened: 'Pull request opened:',
+    opened: 'Merge request opened:',
     pushed: 'Branch pushed.',
-    noProviderNotice: 'No GitHub or GitLab provider is configured for this repository. This will commit and push your branch to the remote; no pull request will be opened.',
+    noProviderNotice: 'No GitLab provider is configured for this repository. This will commit and push your branch to the remote; no merge request will be opened.',
     pushedBranch: 'Pushed {{branch}} to {{remote}}.',
   },
   tabs: {

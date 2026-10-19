@@ -3,9 +3,8 @@ A signed, short-lived browser round trip: the public URL of the hub, whether
 its cookies are Secure, a safe post-login path, and an HMAC-signed cookie
 payload.
 
-Single sign-on (``ee/oidc.py``) and the GitHub user connection
-(``dashboard/backend/routes/github_app.py``) both send the browser to another
-site and need what they started to survive the trip back. Each puts it in one
+Browser round trips to another site (single sign-on, connecting an account)
+need what they started to survive the trip back. Each puts it in one
 cookie signed here, rather than in a server-side table: nothing to clean up,
 and any replica that shares the signing key can finish a flow another one
 started. A payload carries its own ``exp`` and, where two flows could be

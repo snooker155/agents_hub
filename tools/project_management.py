@@ -136,7 +136,7 @@ class CreateProjectInput(BaseModel):
     repo: Optional[Dict[str, Any]] = Field(
         None,
         description=(
-            "Git repo the project is backed by: {'type': 'github|gitlab|bitbucket|local|none', "
+            "Git repo the project is backed by: {'type': 'gitlab|local|none', "
             "'url': '<remote url>', 'branch': 'main', 'local_path': '<path in workspace>', "
             "'remote_id': 'owner/repo'}. Records the link only — nothing is cloned."
         ),

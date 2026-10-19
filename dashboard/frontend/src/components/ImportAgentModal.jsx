@@ -166,7 +166,7 @@ export default function ImportAgentModal({ workspace = '', onClose, onDone }) {
                 value={repoUrl}
                 onChange={(e) => setRepoUrl(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && runCheck()}
-                placeholder={t('importAgentModal.httpsGithubComOwnerMy')}
+                placeholder={t('importAgentModal.httpsGitlabComOwnerMy')}
               />
               <p className="text-xs text-gray-500 mt-1 leading-relaxed">
                 {t('importAgentModal.sourceUrlHint')}

@@ -1,5 +1,5 @@
 import {
-  FolderGit2, Code2, BookOpen, FileText, GitBranch, Github, Gitlab,
+  FolderGit2, Code2, BookOpen, FileText, Gitlab,
 } from 'lucide-react';
 
 export const TYPE_CONFIG = {
@@ -16,9 +16,7 @@ export const STATUS_CONFIG = {
 };
 
 export const REPO_ICONS = {
-  github:    Github,
   gitlab:    Gitlab,
-  bitbucket: GitBranch,
   local:     FolderGit2,
 };
 

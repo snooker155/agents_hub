@@ -32,7 +32,7 @@ export default {
   items: {
     sre_agent: {
       name: 'SRE agent',
-      description: 'Investigates an incident from logs, manifests and runbooks, names the root cause with evidence, and proposes the fix as a pull request a person approves.',
+      description: 'Investigates an incident from logs, manifests and runbooks, names the root cause with evidence, and proposes the fix as a merge request a person approves.',
     },
     ai_teammate: {
       name: 'AI teammate',

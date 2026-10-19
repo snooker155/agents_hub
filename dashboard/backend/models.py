@@ -456,7 +456,7 @@ class ProjectUpdate(BaseModel):
 
 
 class ProjectImportFromRepo(BaseModel):
-    provider: str                      # "github" | "gitlab"
+    provider: str                      # "gitlab"
     remote_id: str                     # "owner/repo" / GitLab path_with_namespace
     workspace: str
     name: Optional[str] = None         # defaults to the repo name

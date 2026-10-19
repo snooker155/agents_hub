@@ -1354,7 +1354,7 @@ function WorkspacePaletteDefault({ workspace }) {
   const visible = true;
 
   const [overrides, setOverrides] = useState(null);
-  const [draft, setDraft] = useState(PRESETS.navy);
+  const [draft, setDraft] = useState(PRESETS.magenta);
   const [enabled, setEnabled] = useState({ neutral: false, ok: false, danger: false });
   // Loading is derived from the workspace the overrides were fetched for.
   const [loadedFor, setLoadedFor] = useState(null);
@@ -1373,7 +1373,7 @@ function WorkspacePaletteDefault({ workspace }) {
         const all = data?.overrides && typeof data.overrides === 'object' ? data.overrides : {};
         setOverrides(all);
         const p = all.palette && typeof all.palette === 'object' && Object.keys(all.palette).length ? all.palette : null;
-        setDraft({ ...PRESETS.navy, ...(p || {}) });
+        setDraft({ ...PRESETS.magenta, ...(p || {}) });
         setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
         setError('');
       } catch (err) {
@@ -1436,7 +1436,7 @@ function WorkspacePaletteDefault({ workspace }) {
       await updateWorkspaceSettingsOverrides(workspace, nextOverrides);
       delete nextOverrides.palette;
       setOverrides(nextOverrides);
-      setDraft(PRESETS.navy);
+      setDraft(PRESETS.magenta);
       setEnabled({ neutral: false, ok: false, danger: false });
       invalidateWorkspaceSummary(workspace);
       await resolvePalette(theme);
