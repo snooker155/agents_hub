@@ -70,7 +70,7 @@ def _brief(record: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "file_id": record["file_id"], "name": record["name"], "mime_type": record["mime_type"],
         "size": record["size"], "source": record["source"], "created_at": record["created_at"],
-        "url": f"/files?file={record['file_id']}",
+        "url": f"/artifacts?file={record['file_id']}",
     }
 
 

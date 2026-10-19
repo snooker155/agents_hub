@@ -166,7 +166,7 @@ def test_a_chat_link_to_a_registered_file_carries_its_id(root):
     record = {"kind": "file", "id": "src/api.py", "action": "updated", "label": "src/api.py",
               "meta": {"workspace": WS}}
     item = entity_payloads([record])[0]
-    assert item["url"] == f"/workspaces/{WS}?tab=files&file={rec['file_id']}"
+    assert item["url"] == f"/artifacts?file={rec['file_id']}"
     assert item["title"] == "src/api.py"
 
 
