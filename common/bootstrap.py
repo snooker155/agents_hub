@@ -185,9 +185,13 @@ def ensure_system_agent(agent_id: str) -> bool:
 # assignment, workspace ownership) is the operator's and is never touched.
 # Tools are handled separately, and are merged rather than replaced (see below).
 _SEED_OWNED_FIELDS = ("description", "system", "delegates", "handoffs",
-                      # A shipped child (``assistant``): its parent and its
-                      # own list deltas are part of its design too.
-                      "extends", "list_deltas")
+                      # A shipped child: its parent and its own list
+                      # deltas are part of its design too.
+                      "extends", "list_deltas",
+                      # A shipped exception to the capability guard (the main
+                      # agent's run_shell) comes with the tool that needs it,
+                      # and so does the approval that keeps it bounded.
+                      "capability_override", "tool_policy")
 
 
 def _is_system_seed(ad: dict) -> bool:
@@ -282,6 +286,7 @@ def _sync_system_agents() -> list[str]:
             )
             extra = [t for t in extra if t not in retired]
         effective = seed_tools + extra
+        overridden = bool(updates.get("capability_override", ad.get("capability_override")))
 
         # The merged set is checked even when it is identical to what is already
         # on disk: a record can already hold a blocked combination (the guard
@@ -293,7 +298,7 @@ def _sync_system_agents() -> list[str]:
         # private data and reach the web is exactly what the guard exists to
         # prevent, so keeping the grant is not an option. Only when the seed
         # itself is blocked does the record go untouched.
-        if check_combination is not None and not ad.get("capability_override"):
+        if check_combination is not None and not overridden:
             violation = check_combination(effective)
             if violation is not None and violation.blocking:
                 seed_violation = check_combination(seed_tools)
@@ -328,7 +333,7 @@ def _sync_system_agents() -> list[str]:
         # private data and reach the web is exactly what the guard exists to
         # prevent, so keeping the local grant is not an option. Only when the
         # seed itself is blocked does the record go untouched.
-        if "tools" in updates and check_combination is not None and not ad.get("capability_override"):
+        if "tools" in updates and check_combination is not None and not overridden:
             violation = check_combination(updates["tools"])
             if violation is not None and violation.blocking:
                 seed_tools = list(seed.get("tools") or [])

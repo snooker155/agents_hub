@@ -660,6 +660,7 @@
         "create_file",
         "write_file",
         "delete_file",
+        "run_shell",
         "run_flow_tool",
         "run_new_flow_tool",
         "run_agent_tool",
@@ -709,6 +710,10 @@
         "transcribe_audio",
         "ask_special_model"
       ],
+      "capability_override": true,
+      "tool_policy": {
+        "run_shell": "always_ask"
+      },
       "commands": [],
       "capacity": 1,
       "memory_type": "none",

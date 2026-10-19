@@ -449,6 +449,45 @@ def test_the_web_agent_holds_no_private_data():
     assert combined is not None and combined.blocking, (
         "the split is pointless if one agent could hold both tool sets"
     )
+def test_main_agent_ships_run_shell_behind_an_override_and_an_approval():
+    """The main agent runs shell commands itself. run_shell is the whole
+    trifecta, so the seed carries the override that lets it through the guard
+    and a policy that asks for a yes on every call."""
+    seed = next(a for a in _seed_system_agents() if a["id"] == "main-agent")
+    assert "run_shell" in seed["tools"]
+    assert seed["capability_override"] is True
+    assert seed["tool_policy"] == {"run_shell": "always_ask"}
+
+
+def test_main_agent_builds_with_run_shell_in_block_mode(monkeypatch):
+    from agents.capability_guard import enforce_built_tools
+    from common.config import settings
+
+    monkeypatch.setattr(settings, "capability_guard", "block")
+    monkeypatch.setattr(settings, "capability_override_requires_container", False)
+    monkeypatch.setattr("common.config.live_setting", lambda name, default="": default)
+    seed = next(a for a in _seed_system_agents() if a["id"] == "main-agent")
+
+    enforce_built_tools("main-agent", seed["tools"], override=True, delegates=seed["delegates"])
+
+
+def test_sync_gives_an_unedited_main_agent_its_shell():
+    """An install from before the change holds main-agent without run_shell,
+    the override or the policy; the sync brings all three together, so the
+    tool never arrives without the approval that bounds it."""
+    from common.bootstrap import _sync_system_agents
+
+    seed = next(a for a in _seed_system_agents() if a["id"] == "main-agent")
+    stale = {k: v for k, v in seed.items() if k not in ("capability_override", "tool_policy")}
+    stale["tools"] = [t for t in seed["tools"] if t != "run_shell"]
+    _write_registry([stale])
+
+    assert "main-agent" in _sync_system_agents()
+
+    after = _read_registry()["main-agent"]
+    assert "run_shell" in after["tools"]
+    assert after["capability_override"] is True
+    assert after["tool_policy"] == {"run_shell": "always_ask"}
 
 
 def test_sync_is_idempotent(seeded_system_agent):
