@@ -7,7 +7,7 @@ grid and with the same palette (views/slide_themes.json) as the browser
 renderer (dashboard/frontend/src/views/renderers/SlidesView.jsx), so what the
 user saw is what they download: a cover on the hero gradient, section
 dividers, markdown bodies with real bullets, two columns, images around or
-under the text, quotes, big numbers, cards and a timeline, plus the footer,
+under the text, quotes, big numbers, cards, a timeline and native charts, plus the footer,
 slide numbers and speaker notes.
 
 Geometry is written in the renderer's pixels (1280 x 720) and converted here;
@@ -804,10 +804,181 @@ def _timeline(c: _Ctx):
     c.footer()
 
 
+_CHART_EXTRA = ["#10b981", "#ef4444", "#8b5cf6", "#64748b"]
+
+
+def _chart_palette(c: _Ctx) -> List[str]:
+    """Series colours: the slide accent, the theme's second accent, then fixed ones (cycled)."""
+    return [c.accent, c.t["accent2"], *_CHART_EXTRA]
+
+
+def _chart_font(font, size: float, color: str, bold: bool = False) -> None:
+    from pptx.util import Pt
+    font.name = FONT
+    font.size = Pt(size)
+    font.bold = bold
+    font.color.rgb = _rgb(color)
+
+
+def _nice_ticks(lo: float, hi: float, count: int = 5) -> List[float]:
+    """Round axis ticks (1, 2, 2.5, 5 x 10^n), as the browser picks them
+    (dashboard/frontend/src/views/slides/chartMath.js niceTicks)."""
+    if not hi > lo:
+        v = hi if isinstance(hi, (int, float)) else 0
+        return [0, 1] if v == 0 else ([0, v] if v > 0 else [v, 0])
+    raw = (hi - lo) / count
+    mag = 10 ** math.floor(math.log10(raw))
+    step = next((m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw), 10 * mag)
+    start, end = math.floor(lo / step) * step, math.ceil(hi / step) * step
+    ticks, v = [], start
+    while v <= end + step / 2:
+        ticks.append(round(v, 10))
+        v += step
+    return ticks
+
+
+def _value_range(series: List[Dict[str, Any]], n: int, stacked: bool) -> Tuple[float, float]:
+    """The values the axis has to show: stacked series add up per category."""
+    lo = hi = 0.0
+    nums = [[v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+             for v in (s.get("values") or [])] for s in series]
+    if stacked:
+        for i in range(n):
+            col = [vals[i] for vals in nums if i < len(vals) and vals[i] is not None]
+            hi = max(hi, sum(v for v in col if v >= 0))
+            lo = min(lo, sum(v for v in col if v < 0))
+    else:
+        for vals in nums:
+            for v in vals:
+                if v is not None:
+                    hi, lo = max(hi, v), min(lo, v)
+    return lo, hi
+
+
+def _no_frame(chart) -> None:
+    """No fill and no outline around the chart: it sits on the slide like the
+    browser's, not in a box."""
+    from lxml import etree
+    ns = "http://schemas.openxmlformats.org/drawingml/2006/chart"
+    space = chart._chartSpace
+    old = space.find(f"{{{ns}}}spPr")
+    if old is not None:
+        space.remove(old)
+    sp = etree.fromstring(
+        '<c:spPr xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>')
+    # spPr goes after c:chart in the chartSpace sequence.
+    space.find(f"{{{ns}}}chart").addnext(sp)
+
+
+def _chart(c: _Ctx):
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_AXIS_CROSSES, XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
+    from pptx.util import Pt
+
+    c.bg()
+    top = c.header()
+    ch = c.s.get("chart") or {}
+    kind = ch.get("type") or "bar"
+    stacked, horizontal = bool(ch.get("stacked")), bool(ch.get("horizontal"))
+    xl = {
+        "bar": (XL_CHART_TYPE.BAR_STACKED if horizontal and stacked else XL_CHART_TYPE.BAR_CLUSTERED if horizontal
+                else XL_CHART_TYPE.COLUMN_STACKED if stacked else XL_CHART_TYPE.COLUMN_CLUSTERED),
+        "line": XL_CHART_TYPE.LINE_MARKERS,
+        "area": XL_CHART_TYPE.AREA_STACKED if stacked else XL_CHART_TYPE.AREA,
+        "pie": XL_CHART_TYPE.PIE,
+    }[kind]
+    data = CategoryChartData()
+    data.categories = [str(x) for x in ch.get("categories") or []]
+    series = ch.get("series") or []
+    for ser in series:
+        data.add_series(str(ser.get("name") or ""), list(ser.get("values") or []))
+    body = (c.s.get("body") or "").strip()
+    cw = 720 if body else 1120
+    y, h = top + 8, 650 - (top + 8)
+    gframe = c.slide.shapes.add_chart(xl, _emu(80), _emu(y), _emu(cw), _emu(h), data)
+    chart = gframe.chart
+    t, palette = c.t, _chart_palette(c)
+    unit = str(ch.get("unit") or "").replace('"', "")
+    # As the browser labels them (chartMath.js formatValue): percent and
+    # degrees hug the number, a currency or a word sits after a space.
+    suffix = unit if unit in ("%", "°", "‰") else f" {unit}"
+    fmt = f'General"{suffix}"' if unit else "General"
+    chart.has_title = False
+    _no_frame(chart)
+    chart.font.name = FONT
+    chart.font.size = Pt(14)
+    chart.font.color.rgb = _rgb(t["text"])
+    chart.has_legend = len(series) > 1 or kind == "pie"
+    if chart.has_legend:
+        chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+        chart.legend.include_in_layout = False
+        _chart_font(chart.legend.font, 14, t["text"])
+    plot = chart.plots[0]
+    if kind == "pie":
+        plot.vary_by_categories = True
+        for i in range(len(data.categories)):
+            pt = plot.series[0].points[i]
+            pt.format.fill.solid()
+            pt.format.fill.fore_color.rgb = _rgb(palette[i % len(palette)])
+        # Shares on the slices, as in the browser.
+        plot.has_data_labels = True
+        labels = plot.data_labels
+        labels.show_value, labels.show_percentage = False, True
+        labels.number_format, labels.number_format_is_linked = "0%", False
+        _chart_font(labels.font, 16, "#ffffff", bold=True)
+    else:
+        for i, ser in enumerate(plot.series):
+            col = _rgb(palette[i % len(palette)])
+            if kind == "line":
+                ser.format.line.color.rgb = col
+                ser.format.line.width = Pt(2.5)
+                ser.smooth = False
+                ser.marker.format.fill.solid()
+                ser.marker.format.fill.fore_color.rgb = col
+                ser.marker.format.line.color.rgb = col
+            else:
+                ser.format.fill.solid()
+                ser.format.fill.fore_color.rgb = col
+        for axis, label in ((chart.category_axis, ch.get("x_label")), (chart.value_axis, ch.get("y_label"))):
+            _chart_font(axis.tick_labels.font, 14, t["text"])
+            axis.format.line.color.rgb = _rgb(t["border"])
+            if label:
+                axis.has_title = True
+                tf = axis.axis_title.text_frame
+                tf.text = str(label)
+                _chart_font(tf.paragraphs[0].runs[0].font, 14, t["muted"])
+            else:
+                axis.has_title = False
+        va = chart.value_axis
+        va.has_major_gridlines = True
+        va.major_gridlines.format.line.color.rgb = _rgb(t["border"])
+        va.tick_labels.number_format = fmt
+        va.tick_labels.number_format_is_linked = False
+        # The browser's scale: the same round ticks, so both show one chart.
+        ticks = _nice_ticks(*_value_range(series, len(data.categories), stacked and kind != "line"))
+        va.minimum_scale, va.maximum_scale = ticks[0], ticks[-1]
+        va.major_unit = ticks[1] - ticks[0]
+        if kind == "bar" and horizontal:
+            # PowerPoint lists bar categories bottom up; the browser top down.
+            chart.category_axis.reverse_order = True
+            chart.category_axis.crosses = XL_AXIS_CROSSES.MAXIMUM
+        if kind == "bar" and not stacked and len(data.categories) * len(series) <= 16:
+            plot.has_data_labels = True
+            labels = plot.data_labels
+            labels.number_format, labels.number_format_is_linked = fmt, False
+            labels.position = XL_LABEL_POSITION.OUTSIDE_END
+            _chart_font(labels.font, 13, t["text"])
+    if body:
+        _markdown(c.slide, 840, y, 360, h, body, t, c.accent, base=20, minimum=12)
+    c.footer()
+
+
 _LAYOUTS: Dict[str, Callable[[_Ctx], None]] = {
     "title": _title, "section": _section, "content": _content, "two_column": _two_column,
     "image_left": _image_left, "image_right": _image_right, "image_full": _image_full,
-    "quote": _quote, "stats": _stats, "cards": _cards, "timeline": _timeline,
+    "quote": _quote, "stats": _stats, "cards": _cards, "timeline": _timeline, "chart": _chart,
 }
 
 __all__ = ["build_pptx", "pptx_filename", "parse_markdown", "inline_runs", "ordered_slides", "theme_for"]

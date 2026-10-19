@@ -183,7 +183,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
             {/* Structured response UI (buttons / Telegram keyboard) under the text. */}
             <ResponseButtons response={msg.response_obj} onAction={onAction} disabled={isStreaming} />
             {/* A rich view (chart / table / diagram / …) the reply is. */}
-            {msg.response_obj?.kind === 'view_ref' && <ViewCard viewRef={msg.response_obj} />}
+            {msg.response_obj?.kind === 'view_ref' && <ViewCard viewRef={msg.response_obj} inChat />}
           </>
         )}
       </div>

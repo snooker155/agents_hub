@@ -167,7 +167,7 @@ function MessageViews({ views }) {
   if (!views?.length) return null;
   return (
     <div className="space-y-2" data-testid="message-views">
-      {views.map((v) => <ViewCard key={v.view_id} viewRef={v} />)}
+      {views.map((v) => <ViewCard key={v.view_id} viewRef={v} inChat />)}
     </div>
   );
 }

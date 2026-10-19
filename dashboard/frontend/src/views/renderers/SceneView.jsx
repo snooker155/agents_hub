@@ -317,7 +317,7 @@ export default function SceneView({ view, theme }) {
           card body's height is auto (h-full/100% would collapse there) */}
       <div className="relative w-full h-full min-h-[360px]">
         <div className="absolute inset-0">
-        <Canvas shadows camera={{ position: camera.position || [4, 4, 6], fov: camera.fov || 50 }} style={{ background: bg }}>
+        <Canvas shadows gl={{ preserveDrawingBuffer: true }} camera={{ position: camera.position || [4, 4, 6], fov: camera.fov || 50 }} style={{ background: bg }}>
           <CameraRig camera={camera} controlsRef={controlsRef} />
           <Lights lights={spec.lights} />
           {env.grid === false ? null : <gridHelper args={[20, 20, colors.gridMajor, colors.gridMinor]} />}

@@ -68,6 +68,10 @@ lists them in its panel next to the changed files.
   in prose. See [Code](#code) below.
 - **Slide decks** with layouts and themes, shown full screen and downloaded as
   PDF or PowerPoint. See [Slides](#slides) below.
+- **Image export**: the Image button in a view's header turns any view into a
+  PNG (twice the screen resolution), downloaded or saved to the workspace
+  files. A deck gives the current slide alone, 2560x1440. An html view runs in an
+  isolated frame and cannot be exported.
 
 ## Kind guides and specialists
 
@@ -140,7 +144,8 @@ when left empty.
 
 A `slides` view is a deck on a 16:9 stage. The Visualizer builds it one slide at
 a time: `slides_style` sets the look, `slides_add` adds or replaces a slide, and
-`slides_export` writes the deck into the workspace as a .pptx file.
+`slides_export` writes the deck into the workspace as a .pptx file; a PDF is
+downloaded from the view, so a `.pdf` path is refused.
 
 Each slide has a `layout`, and each layout draws specific fields:
 
@@ -154,6 +159,7 @@ Each slide has a `layout`, and each layout draws specific fields:
 | `cards` | a grid of cards | `items` with `icon`, `title`, `text`, 1 to 6 |
 | `timeline` | steps or dates on a line | `items` with `value`, `title`, `text`, 1 to 8 |
 | `quote` | a large quotation | `body`, the attribution in `subtitle` |
+| `chart` | a bar, line, area or pie chart, an optional takeaway beside it | `title`, `chart` |
 | `image_left`, `image_right` | a picture beside the text | `image` |
 | `image_full` | a full-bleed picture with the title over it | `image` |
 
@@ -162,6 +168,14 @@ code, links and tables. `icon` is one emoji. `image` is a view asset
 (`asset://name`, added with `view_add_asset`) or an https URL. `notes` are
 speaker notes, shown under the slide and carried into the .pptx. `accent`
 overrides the colour for one slide.
+
+`chart` is `{type, categories, series, stacked, horizontal, x_label, y_label,
+unit}`: `type` is `bar`, `line`, `area` or `pie`, `categories` holds 1 to 24
+labels and `series` 1 to 6 entries `{name, values}`, one value per category
+(`null` for a gap; a pie takes exactly one series). The browser draws it as
+SVG on the slide and the .pptx carries it as a native PowerPoint chart, on the
+same scale and in the same colours: the slide accent, the theme's second
+accent, then a fixed set.
 
 The deck's `theme` is one of `light`, `dark`, `corporate`, `ocean`, `sunset`,
 `forest` or `mono`; `accent` replaces the theme's accent colour, `footer` is
