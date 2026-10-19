@@ -1,6 +1,6 @@
 """``ah apply``: declarative files in a repository into hub entities.
 
-Agents, environments, deployments and memory pools are declared in files
+Agents, deployments and memory pools are declared in files
 (docs/apply.md); ``ah apply <paths>`` prints a plan of what would be created,
 updated, left alone or deleted, and then makes the hub match. ``ah.lock``
 records the hub id each declared resource got, so a second apply updates it
@@ -83,7 +83,7 @@ def _export(refs: List[str], out: str, lock_path: Optional[str], workspace: Opti
     from declarative.errors import ValidationError
 
     if not refs:
-        _fail("name what to export: agent ids, or environment:<id>, memory_pool:<id>, deployment:<id>")
+        _fail("name what to export: agent ids, or memory_pool:<id>, deployment:<id>")
     out_dir = Path(out)
     request = hub().request
     try:
@@ -108,7 +108,7 @@ def _export(refs: List[str], out: str, lock_path: Optional[str], workspace: Opti
 def apply_command(
     paths: List[str] = typer.Argument(
         None, help="Files or folders to apply (default: the current folder). With --export: "
-                   "agent ids, or environment:<id>, memory_pool:<id>, deployment:<id>."),
+                   "agent ids, or memory_pool:<id>, deployment:<id>."),
     lock_path: Optional[str] = typer.Option(
         None, "--lock", help="Lock file (default: ah.lock in the folder of the first path)."),
     workspace: Optional[str] = typer.Option(
@@ -124,10 +124,10 @@ def apply_command(
         False, "--export", help="Write declarative files from hub records instead of applying."),
     out: str = typer.Option(".", "--out", "-o", help="With --export: the folder to write into."),
 ) -> None:
-    """Apply declarative files (agents, environments, deployments, memory pools).
+    """Apply declarative files (agents, deployments, memory pools).
 
     PATHS are files or folders (default: the current folder). With --export they
-    are agent ids, or environment:ID, memory_pool:ID, deployment:ID. The file
+    are agent ids, or memory_pool:ID, deployment:ID. The file
     format is in docs/apply.md.
     """
     from declarative import DEFAULT_LOCK_NAME, Lock, LockError, apply, load_bundle, plan
