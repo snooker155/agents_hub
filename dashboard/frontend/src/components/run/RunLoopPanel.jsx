@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import {
-  History, Bot, Layers, MessageSquareText, Wrench,
+  History, Bot, Layers, MessageSquareText,
   ShieldCheck, ShieldAlert, FileJson, KeySquare, Cpu, ScrollText, FileOutput, Box, Repeat,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
@@ -53,7 +53,8 @@ export default function RunLoopPanel({ run, onChanged, showVersion = true }) {
   })();
   const hasContainerProfile = containerHours != null && (containerSize || containerCpus);
 
-  const hasLoop = !!loop && Object.keys(loop).length > 0;
+  // The loaded tools have a tab of their own on the run page (LoadedTools).
+  const hasLoop = !!loop && Object.keys(loop).some((k) => k !== 'loaded_tools');
   if (!hasVersion && !hasLoop && !hasContainerProfile) return null;
 
   return (
@@ -166,18 +167,6 @@ export default function RunLoopPanel({ run, onChanged, showVersion = true }) {
               </li>
             ))}
           </ul>
-        </Section>
-      )}
-
-      {hasLoop && loop.loaded_tools?.length > 0 && (
-        <Section icon={Wrench} title={t('runLoop.loadedTools')}>
-          <div className="flex flex-wrap gap-1.5">
-            {loop.loaded_tools.map((name) => (
-              <span key={name} className="text-xs font-mono px-2 py-0.5 rounded bg-gray-100 text-gray-700">
-                {name}
-              </span>
-            ))}
-          </div>
         </Section>
       )}
 

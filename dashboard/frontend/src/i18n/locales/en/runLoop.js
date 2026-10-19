@@ -27,6 +27,7 @@ export default {
   toolSpills: 'Tool outputs saved to files',
   spillChars: '{{chars}} characters',
   loadedTools: 'Loaded tools',
+  loadedToolsHint: 'Tools this run was given beyond the ones it saw from the start: found with search_tools when the agent has more tools than the search threshold, or shown when a view of their kind became the run\'s target. Loaded does not mean called: the calls are in the Insights steps.',
   guardrails: 'Guardrail checks',
   structured: 'Structured output',
   structuredSummary: '{{attempts}} attempt(s), valid: {{valid}}',

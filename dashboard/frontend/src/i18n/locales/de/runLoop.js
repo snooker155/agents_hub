@@ -27,6 +27,7 @@ export default {
   toolSpills: 'In Dateien gespeicherte Werkzeugausgaben',
   spillChars: '{{chars}} Zeichen',
   loadedTools: 'Geladene Werkzeuge',
+  loadedToolsHint: 'Werkzeuge, die dieser Lauf über die anfangs sichtbaren hinaus erhalten hat: mit search_tools gefunden, wenn der Agent mehr Werkzeuge als die Suchschwelle hat, oder gezeigt, sobald eine Ansicht ihrer Art zum Ziel des Laufs wurde. Geladen heißt nicht aufgerufen: die Aufrufe stehen in den Schritten der Analyse.',
   guardrails: 'Guardrail Prüfungen',
   structured: 'Strukturierte Ausgabe',
   structuredSummary: '{{attempts}} Versuch(e), gültig: {{valid}}',

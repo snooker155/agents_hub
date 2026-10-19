@@ -13,9 +13,10 @@ import { useI18n } from '../i18n';
 //
 // `children` is the content, shown clamped on the card and in full in the
 // modal; `detail` replaces it in the modal when the full form differs; `hint`
-// stands in on the card when there are no children.
+// stands in on the card when there are no children. `flush` draws it edge to
+// edge, with no rounded corners or side lines (a step inside a delegation card).
 export default function ProcessNode({
-  label, labelColor, borderColor, bgColor, hint, children, detail, tool,
+  label, labelColor, borderColor, bgColor, hint, children, detail, tool, flush = false,
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -48,7 +49,7 @@ export default function ProcessNode({
         onClick={(e) => { if (!e.target.closest('a, button')) setOpen(true); }}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); } }}
         title={t('processGraph.openFull')}
-        className={`group rounded-lg border ${borderColor} ${bgColor} px-2.5 py-2 cursor-pointer transition-shadow hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300`}
+        className={`group ${flush ? 'border-y' : 'rounded-lg border'} ${borderColor} ${bgColor} px-2.5 py-2 cursor-pointer transition-shadow hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300`}
         data-testid="process-node"
       >
         <div className="flex items-center justify-between gap-2">

@@ -1,11 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical, SquareTerminal } from 'lucide-react';
+import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical, SquareTerminal, Wrench } from 'lucide-react';
 
 import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
 import Citations from '../components/chat/Citations';
 import RunLoopPanel from '../components/run/RunLoopPanel';
+import LoadedTools from '../components/run/LoadedTools';
+import { loadedToolsOf } from '../components/run/loadedToolsOf';
 import AgentVersion from '../components/run/AgentVersion';
 import RunOverrides from '../components/run/RunOverrides';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
@@ -787,6 +789,10 @@ export default function MessageDetails() {
             { id: 'input_context', icon: MessageSquare, label: t('messageDetails.tabs.inputContext') },
             { id: 'response', icon: Bot, label: t('messageDetails.tabs.response') },
             { id: 'logs', icon: FileText, label: t('messageDetails.tabs.logs') },
+            // Only a run that loaded tools beyond its first set has this tab.
+            ...(loadedToolsOf(message).length
+              ? [{ id: 'loaded_tools', icon: Wrench, label: t('messageDetails.tabs.loadedTools') }]
+              : []),
           ].map(tab => (
             <button
               key={tab.id}
@@ -841,6 +847,12 @@ export default function MessageDetails() {
               {JSON.stringify(responseJson, null, 2)}
             </pre>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'loaded_tools' && (
+        <div className="flex-1 min-h-0 overflow-y-auto pb-6">
+          <LoadedTools run={message} />
         </div>
       )}
 

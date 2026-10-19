@@ -74,5 +74,6 @@ export default {
     inputContext: 'Eingabekontext',
     response: 'Antwort',
     logs: 'Logs',
+    loadedTools: 'Geladene Werkzeuge',
   },
 };
