@@ -576,10 +576,10 @@ RETIRED_WORKSPACES = ("system",)
 def _clear_removed_features() -> list[str]:
     """Drop what a full edition left in a shared state directory for features
     this edition does not have: the built-in agents above, the model runtime's
-    provider and the service's own maintenance workspace. Only built-in
-    records go (an agent marked ``system``, a workspace marked ``system`` whose
-    folder is empty); anything the person made is left alone. Returns what was
-    removed. Never raising."""
+    provider, the service's own maintenance workspace and tool ids that no
+    longer exist. Only built-in records go (an agent marked ``system``, a
+    workspace marked ``system`` whose folder is empty); anything else the
+    person made is left alone. Returns what was removed. Never raising."""
     removed: list[str] = []
     try:
         from agents.inheritance import AgentHasChildren
@@ -598,6 +598,27 @@ def _clear_removed_features() -> list[str]:
                 log.warning("removed features: %r kept, other agents extend it", agent_id)
     except Exception:  # noqa: BLE001 - startup must not fail on a cleanup
         log.warning("removed features: agent cleanup failed", exc_info=True)
+
+    # Tool ids of removed features grant nothing and resolve to nothing; the
+    # system agent sync drops them only from records nobody edited, so an
+    # edited or custom agent would carry them and log an unknown id on every
+    # build. They go from every record.
+    try:
+        from agents.registry import load_all_raw, replace_all_raw
+        from tools.capabilities import is_recognised_tool_id
+        records = load_all_raw()
+        touched = False
+        for ad in records:
+            tools = list(ad.get("tools") or [])
+            kept = [t for t in tools if is_recognised_tool_id(t)]
+            if len(kept) != len(tools):
+                ad["tools"] = kept
+                touched = True
+                removed.append(f"tools:{ad.get('id')}:{len(tools) - len(kept)}")
+        if touched:
+            replace_all_raw(records)
+    except Exception:  # noqa: BLE001 - startup must not fail on a cleanup
+        log.warning("removed features: tool cleanup failed", exc_info=True)
 
     try:
         from providers.registry import delete_backend, get_backend

@@ -4,7 +4,7 @@ export default {
     work: 'Arbeit',
     agents: 'Agenten und Bibliothek',
     integrations: 'Integrationen',
-    records: 'Protokolle und Verwaltung',
+    records: 'Protokolle',
   },
   mode: {
     showFull: 'Vollständiges Menü',

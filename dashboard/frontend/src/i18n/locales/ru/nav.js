@@ -4,7 +4,7 @@ export default {
     work: 'Работа',
     agents: 'Агенты и библиотека',
     integrations: 'Интеграции',
-    records: 'Записи и администрирование',
+    records: 'Записи',
   },
   mode: {
     showFull: 'Полное меню',

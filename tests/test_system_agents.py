@@ -512,3 +512,22 @@ def test_records_of_removed_features_are_cleared_and_custom_ones_kept(tmp_path, 
     assert get_backend("hub-local") is None
     assert not storage.get_workspace_metadata("system")
     assert bootstrap._clear_removed_features() == []
+
+
+def test_tool_ids_that_no_longer_exist_leave_every_record():
+    """An edited system agent or a custom one keeps its own grants, but a tool
+    id of a removed feature goes: it grants nothing and only logs noise."""
+    from agents.registry import get_agent_raw, load_all_raw, replace_all_raw
+    from common import bootstrap
+
+    seed = next(a for a in _seed_system_agents() if a["id"] == "researcher")
+    edited = {**seed, "id": "my_edited", "system": False, "user_modified": True,
+              "tools": list(seed["tools"]) + ["run_scenario_tool"]}
+    replace_all_raw([r for r in load_all_raw() if r["id"] != "my_edited"] + [edited])
+
+    removed = bootstrap._clear_removed_features()
+
+    assert "tools:my_edited:1" in removed
+    assert get_agent_raw("my_edited").tools == list(seed["tools"])
+    assert not any(r.startswith("tools:") for r in bootstrap._clear_removed_features())
+

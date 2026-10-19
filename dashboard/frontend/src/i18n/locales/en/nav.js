@@ -4,7 +4,7 @@ export default {
     work: 'Work',
     agents: 'Agents and library',
     integrations: 'Integrations',
-    records: 'Records and admin',
+    records: 'Records',
   },
   mode: {
     showFull: 'Full menu',
