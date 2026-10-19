@@ -1354,7 +1354,7 @@ function WorkspacePaletteDefault({ workspace }) {
   const visible = true;
 
   const [overrides, setOverrides] = useState(null);
-  const [draft, setDraft] = useState(PRESETS.magenta);
+  const [draft, setDraft] = useState(PRESETS.neutral);
   const [enabled, setEnabled] = useState({ neutral: false, ok: false, danger: false });
   // Loading is derived from the workspace the overrides were fetched for.
   const [loadedFor, setLoadedFor] = useState(null);
@@ -1373,7 +1373,7 @@ function WorkspacePaletteDefault({ workspace }) {
         const all = data?.overrides && typeof data.overrides === 'object' ? data.overrides : {};
         setOverrides(all);
         const p = all.palette && typeof all.palette === 'object' && Object.keys(all.palette).length ? all.palette : null;
-        setDraft({ ...PRESETS.magenta, ...(p || {}) });
+        setDraft({ ...PRESETS.neutral, ...(p || {}) });
         setEnabled({ neutral: Boolean(p?.neutral), ok: Boolean(p?.ok), danger: Boolean(p?.danger) });
         setError('');
       } catch (err) {
@@ -1395,6 +1395,7 @@ function WorkspacePaletteDefault({ workspace }) {
 
   const activePalette = () => {
     const payload = { brand: draft.brand };
+    if (draft.style) payload.style = draft.style;
     if (enabled.neutral) payload.neutral = draft.neutral;
     if (enabled.ok) payload.ok = draft.ok;
     if (enabled.danger) payload.danger = draft.danger;
@@ -1436,7 +1437,7 @@ function WorkspacePaletteDefault({ workspace }) {
       await updateWorkspaceSettingsOverrides(workspace, nextOverrides);
       delete nextOverrides.palette;
       setOverrides(nextOverrides);
-      setDraft(PRESETS.magenta);
+      setDraft(PRESETS.neutral);
       setEnabled({ neutral: false, ok: false, danger: false });
       invalidateWorkspaceSummary(workspace);
       await resolvePalette(theme);
@@ -1488,16 +1489,16 @@ function WorkspacePaletteDefault({ workspace }) {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <PaletteColorField label={t('workspaceDetails.palette.brand')} value={draft.brand} required
-              onChange={(v) => setDraft((d) => ({ ...d, brand: v }))} />
+              onChange={(v) => setDraft((d) => ({ ...d, brand: v, style: undefined }))} />
             <PaletteColorField label={t('workspaceDetails.palette.neutral')} value={draft.neutral}
               enabled={enabled.neutral} onToggle={(v) => setEnabled((e) => ({ ...e, neutral: v }))}
-              onChange={(v) => setDraft((d) => ({ ...d, neutral: v }))} />
+              onChange={(v) => setDraft((d) => ({ ...d, neutral: v, style: undefined }))} />
             <PaletteColorField label={t('workspaceDetails.palette.ok')} value={draft.ok}
               enabled={enabled.ok} onToggle={(v) => setEnabled((e) => ({ ...e, ok: v }))}
-              onChange={(v) => setDraft((d) => ({ ...d, ok: v }))} />
+              onChange={(v) => setDraft((d) => ({ ...d, ok: v, style: undefined }))} />
             <PaletteColorField label={t('workspaceDetails.palette.danger')} value={draft.danger}
               enabled={enabled.danger} onToggle={(v) => setEnabled((e) => ({ ...e, danger: v }))}
-              onChange={(v) => setDraft((d) => ({ ...d, danger: v }))} />
+              onChange={(v) => setDraft((d) => ({ ...d, danger: v, style: undefined }))} />
           </div>
 
           <div>

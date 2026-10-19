@@ -243,14 +243,19 @@ function hueTokensFromAccent(hex, mode) {
 
 // ── presets ──────────────────────────────────────────────────────────────
 
-// Four starting points plus "Custom" (any set of colors that isn't one of
-// these, including a partial one — the palette editor decides that by
-// comparison, this module just ships the four). Magenta matches the shipped
+// Five starting points plus "Custom" (any set of colors that isn't one of
+// these, including a partial one: the palette editor decides that by
+// comparison, this module just ships the five). Neutral matches the shipped
 // default almost exactly, so picking it back after customizing is a safe
-// "undo".
-export const PRESET_ORDER = ['magenta', 'forest', 'slate', 'sunset'];
+// "undo". Magenta is a style rather than a set of ramps: it carries
+// `style: 'magenta'`, applyPalette() then puts `style-magenta` on <html> and
+// the colors come from src/theme.css (white page and magenta buttons in the
+// light theme, a magenta page with white buttons in the dark one).
+export const MAGENTA_STYLE = 'magenta';
+export const PRESET_ORDER = ['neutral', 'magenta', 'forest', 'slate', 'sunset'];
 export const PRESETS = {
-  magenta: { brand: '#e20074', neutral: '#737373', ok: '#16a34a', danger: '#dc2626' },
+  neutral: { brand: '#e20074', neutral: '#737373', ok: '#16a34a', danger: '#dc2626' },
+  magenta: { brand: '#e20074', neutral: '#737373', ok: '#16a34a', danger: '#dc2626', style: MAGENTA_STYLE },
   forest: { brand: '#166534', neutral: '#57534e', ok: '#65a30d', danger: '#b91c1c' },
   slate: { brand: '#334155', neutral: '#64748b', ok: '#059669', danger: '#e11d48' },
   sunset: { brand: '#c2410c', neutral: '#78716c', ok: '#16a34a', danger: '#be123c' },
@@ -263,7 +268,8 @@ export function matchPreset(palette) {
   const keys = ['brand', 'neutral', 'ok', 'danger'];
   for (const name of PRESET_ORDER) {
     const preset = PRESETS[name];
-    if (keys.every((k) => (palette[k] || '').toLowerCase() === preset[k].toLowerCase())) {
+    if ((palette.style || '') === (preset.style || '')
+        && keys.every((k) => (palette[k] || '').toLowerCase() === preset[k].toLowerCase())) {
       return name;
     }
   }
@@ -305,7 +311,20 @@ function allPropertyNames() {
 export function applyPalette(palette, mode = 'light') {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  const { brand, neutral, ok, danger } = palette || {};
+  const { brand, neutral, ok, danger, style } = palette || {};
+
+  // The magenta style is drawn by src/theme.css under `html.style-magenta`;
+  // any computed override left inline would cover it, so they all go.
+  root.classList.toggle('style-magenta', style === MAGENTA_STYLE);
+  if (style === MAGENTA_STYLE) {
+    for (const name of allPropertyNames()) root.style.removeProperty(name);
+    try {
+      window.dispatchEvent(new CustomEvent(PALETTE_EVENT));
+    } catch {
+      // A test DOM without CustomEvent support: harmless, nothing reacts.
+    }
+    return;
+  }
 
   if (brand) {
     const ramp = rampFromColor(brand, { mode });
@@ -360,6 +379,7 @@ export function applyPalette(palette, mode = 'light') {
 export function clearPalette() {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
+  root.classList.remove('style-magenta');
   for (const name of allPropertyNames()) root.style.removeProperty(name);
   try {
     window.dispatchEvent(new CustomEvent(PALETTE_EVENT));
@@ -407,6 +427,8 @@ const DEFAULT_SURFACE = {
  * would otherwise have hidden the problem from them.
  */
 export function checkPalette(palette, mode = 'light') {
+  // The magenta style is a fixed design, checked when it was made.
+  if (palette?.style) return [];
   const { brand, neutral } = palette || {};
   const surface = neutral
     ? surfaceTokensFromNeutral(neutral, mode)

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   rampFromColor, contrastRatio, checkPalette, applyPalette, clearPalette, SHADES,
+  PRESETS, PRESET_ORDER, matchPreset,
 } from '../palette';
 
 describe('rampFromColor', () => {
@@ -111,5 +112,38 @@ describe('applyPalette / clearPalette', () => {
     expect(root.style.getPropertyValue('--surface-page')).toBe('');
     expect(root.style.getPropertyValue('--hue-green-rgb')).toBe('');
     expect(root.style.getPropertyValue('--danger')).toBe('');
+  });
+});
+
+describe('the neutral and magenta presets', () => {
+  const root = document.documentElement;
+  afterEach(() => clearPalette());
+
+  it('lists neutral first and magenta next to it', () => {
+    expect(PRESET_ORDER.slice(0, 2)).toEqual(['neutral', 'magenta']);
+  });
+
+  it('tells the two apart by the style alone', () => {
+    expect(matchPreset(PRESETS.neutral)).toBe('neutral');
+    expect(matchPreset(PRESETS.magenta)).toBe('magenta');
+    expect(matchPreset({ ...PRESETS.magenta, brand: '#000000' })).toBeNull();
+  });
+
+  it('draws magenta from the stylesheet, not from computed ramps', () => {
+    applyPalette(PRESETS.neutral, 'dark');
+    expect(root.style.getPropertyValue('--brand-600')).not.toBe('');
+    applyPalette(PRESETS.magenta, 'dark');
+    expect(root.classList.contains('style-magenta')).toBe(true);
+    expect(root.style.getPropertyValue('--brand-600')).toBe('');
+    expect(checkPalette(PRESETS.magenta, 'dark')).toEqual([]);
+  });
+
+  it('drops the style when another palette or none applies', () => {
+    applyPalette(PRESETS.magenta, 'light');
+    applyPalette(PRESETS.neutral, 'light');
+    expect(root.classList.contains('style-magenta')).toBe(false);
+    applyPalette(PRESETS.magenta, 'light');
+    clearPalette();
+    expect(root.classList.contains('style-magenta')).toBe(false);
   });
 });

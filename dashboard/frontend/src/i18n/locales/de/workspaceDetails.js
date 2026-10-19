@@ -114,6 +114,7 @@ export default {
     danger: 'Gefahrenakzent',
     preview: 'Vorschau',
     presets: {
+      neutral: 'Neutral',
       magenta: 'Magenta',
       forest: 'Wald',
       slate: 'Schiefer',

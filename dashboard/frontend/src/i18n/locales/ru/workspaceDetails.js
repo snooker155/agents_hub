@@ -114,6 +114,7 @@ export default {
     danger: 'Акцент опасности',
     preview: 'Предпросмотр',
     presets: {
+      neutral: 'Нейтральный',
       magenta: 'Маджента',
       forest: 'Лесной',
       slate: 'Сланцевый',

@@ -1520,3 +1520,178 @@ html.dark {
 :where(html.dark) option { background-color: var(--surface-raised); color: var(--text-primary); }
 
 
+/* ── 4. magenta style (palette preset "magenta") ─────────────────────── */
+html.style-magenta {
+  --surface-page:    #ffffff;
+  --surface-sunken:  #fafafa;
+  --surface-raised:  #f5f5f5;
+  --surface-hover:   #f0f0f0;
+  --border-subtle:   #ececec;
+  --border-default:  #e0e0e0;
+}
+
+html.style-magenta.dark {
+  --surface-page:    #c8006a;
+  --surface-sunken:  #bd0063;
+  --surface-card:    #e20074;
+  --surface-raised:  #b0005c;
+  --surface-hover:   #cc0069;
+  --surface-inverse: #ffffff;
+
+  --border-subtle:   rgba(255, 255, 255, 0.16);
+  --border-default:  rgba(255, 255, 255, 0.24);
+  --border-strong:   rgba(255, 255, 255, 0.36);
+
+  --text-primary:    #ffffff;
+  --text-secondary:  #fff0f7;
+  --text-muted:      #ffd6ea;
+  --text-faint:      #ffc4df;
+  --text-inverse:    #e20074;
+
+  --brand-50: #b5005d;
+  --brand-100: #c40065;
+  --brand-200: #d1006b;
+  --brand-300: #ffd6ea;
+  --brand-400: #ffe6f2;
+  --brand-500: #ffffff;
+  --brand-600: #ffffff;
+  --brand-700: #ffffff;
+  --brand-800: #ffffff;
+  --brand-900: #ffffff;
+  --brand-950: #ffffff;
+  --brand:           #ffffff;
+  --brand-contrast:  #e20074;
+  --brand-rgb:       255, 255, 255;
+  --brand-bg-50: rgba(255, 255, 255, 0.16);
+  --brand-bg-100: rgba(255, 255, 255, 0.24);
+  --brand-bg-200: rgba(255, 255, 255, 0.32);
+  --brand-bg-300: #ffd6ea;
+  --brand-bg-400: #ffe6f2;
+  --brand-bg-500: #ffffff;
+  --brand-bg-600: #ffffff;
+  --brand-bg-700: #ffe6f2;
+  --brand-bg-800: #ffd6ea;
+  --brand-bg-900: rgba(255, 255, 255, 0.28);
+  --brand-bg-950: rgba(255, 255, 255, 0.36);
+  --brand-text-300: #ffe6f2;
+  --brand-text-400: #ffffff;
+  --brand-text-500: #ffffff;
+  --brand-text-600: #ffffff;
+  --brand-text-700: #ffffff;
+  --brand-text-800: #ffffff;
+  --brand-text-900: #ffffff;
+  --brand-text-950: #ffffff;
+  --brand-border-50: rgba(255, 255, 255, 0.22);
+  --brand-border-100: rgba(255, 255, 255, 0.3);
+  --brand-border-200: rgba(255, 255, 255, 0.4);
+  --brand-border-300: rgba(255, 255, 255, 0.52);
+  --brand-border-400: #ffffff;
+  --brand-border-500: #ffffff;
+  --brand-border-600: #ffffff;
+  --brand-border-700: #ffffff;
+  --brand-border-800: #ffffff;
+  --brand-border-900: #ffffff;
+  --neutral-bg-50: #d1006b;
+  --neutral-bg-100: #c40065;
+  --neutral-bg-200: #b5005d;
+  --neutral-bg-300: #a60056;
+  --neutral-bg-400: rgba(255, 255, 255, 0.35);
+  --neutral-bg-500: rgba(255, 255, 255, 0.45);
+  --neutral-bg-600: rgba(255, 255, 255, 0.55);
+  --neutral-bg-700: #a00052;
+  --neutral-bg-800: #8f004a;
+  --neutral-bg-900: #7a0040;
+  --neutral-bg-950: #5e0031;
+  --neutral-text-300: #ffc4df;
+  --neutral-text-400: #ffcce4;
+  --neutral-text-500: #ffd6ea;
+  --neutral-text-600: #ffe3f0;
+  --neutral-text-700: #fff0f7;
+  --neutral-text-800: #ffffff;
+  --neutral-text-900: #ffffff;
+  --neutral-text-950: #ffffff;
+  --neutral-border-50: rgba(255, 255, 255, 0.12);
+  --neutral-border-100: rgba(255, 255, 255, 0.16);
+  --neutral-border-200: rgba(255, 255, 255, 0.22);
+  --neutral-border-300: rgba(255, 255, 255, 0.3);
+  --neutral-border-400: rgba(255, 255, 255, 0.38);
+  --neutral-border-500: rgba(255, 255, 255, 0.45);
+  --neutral-border-600: rgba(255, 255, 255, 0.3);
+  --neutral-border-700: rgba(255, 255, 255, 0.26);
+  --neutral-border-800: rgba(255, 255, 255, 0.2);
+  --neutral-border-900: rgba(255, 255, 255, 0.16);
+  --neutral-border-950: rgba(255, 255, 255, 0.12);
+
+  --hue-red-400: #fecaca;
+  --hue-red-300: #fee2e2;
+  --hue-orange-400: #fed7aa;
+  --hue-orange-300: #ffedd5;
+  --hue-amber-400: #fde68a;
+  --hue-amber-300: #fef3c7;
+  --hue-yellow-400: #fef08a;
+  --hue-yellow-300: #fef9c3;
+  --hue-lime-400: #d9f99d;
+  --hue-lime-300: #ecfccb;
+  --hue-green-400: #bbf7d0;
+  --hue-green-300: #dcfce7;
+  --hue-emerald-400: #a7f3d0;
+  --hue-emerald-300: #d1fae5;
+  --hue-teal-400: #99f6e4;
+  --hue-teal-300: #ccfbf1;
+  --hue-cyan-400: #a5f3fc;
+  --hue-cyan-300: #cffafe;
+  --hue-sky-400: #bae6fd;
+  --hue-sky-300: #e0f2fe;
+  --hue-blue-400: #bfdbfe;
+  --hue-blue-300: #dbeafe;
+  --hue-pink-400: #fbcfe8;
+  --hue-pink-300: #fce7f3;
+  --hue-rose-400: #fecdd3;
+  --hue-rose-300: #ffe4e6;
+
+  --ok:      #d9fbe6;
+  --warn:    #fef3c7;
+  --danger:  #ffe0e0;
+  --info:    #ffffff;
+  --info-surface: rgba(255, 255, 255, 0.18);
+
+  --chart-accent:   #ffffff;
+  --chart-muted:    rgba(255, 255, 255, 0.35);
+  --chart-cat-1:    #ffffff;
+  --chart-cat-2:    #ffd166;
+  --chart-cat-3:    #7ee0b5;
+  --chart-grid:     rgba(255, 255, 255, 0.18);
+  --chart-track:    rgba(255, 255, 255, 0.22);
+}
+
+html.style-magenta.dark body {
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.1), transparent 34%),
+    linear-gradient(180deg, var(--surface-page) 0%, #b8005f 100%);
+  background-attachment: fixed;
+}
+
+/* A brand fill is white here, so the label on it turns magenta. */
+:where(html.style-magenta.dark) .bg-indigo-500.text-white,
+:where(html.style-magenta.dark) .bg-indigo-600.text-white,
+:where(html.style-magenta.dark) .bg-indigo-700.text-white,
+:where(html.style-magenta.dark) .bg-indigo-800.text-white,
+:where(html.style-magenta.dark) .bg-violet-500.text-white,
+:where(html.style-magenta.dark) .bg-violet-600.text-white,
+:where(html.style-magenta.dark) .bg-violet-700.text-white,
+:where(html.style-magenta.dark) .bg-violet-800.text-white,
+:where(html.style-magenta.dark) .bg-purple-500.text-white,
+:where(html.style-magenta.dark) .bg-purple-600.text-white,
+:where(html.style-magenta.dark) .bg-purple-700.text-white,
+:where(html.style-magenta.dark) .bg-purple-800.text-white,
+:where(html.style-magenta.dark) .bg-fuchsia-500.text-white,
+:where(html.style-magenta.dark) .bg-fuchsia-600.text-white,
+:where(html.style-magenta.dark) .bg-fuchsia-700.text-white,
+:where(html.style-magenta.dark) .bg-fuchsia-800.text-white { color: var(--brand-contrast); }
+
+:where(html.style-magenta.dark) .bg-white\/95 { background-color: rgba(226, 0, 116, 0.95); }
+:where(html.style-magenta.dark) .bg-white\/80 { background-color: rgba(226, 0, 116, 0.80); }
+:where(html.style-magenta.dark) .bg-white\/70 { background-color: rgba(226, 0, 116, 0.70); }
+:where(html.style-magenta.dark) .bg-white\/60 { background-color: rgba(226, 0, 116, 0.60); }
+
+

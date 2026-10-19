@@ -566,6 +566,117 @@ ${Object.entries(HUES).map(([name, h]) => `  --hue-${name}-rgb: ${h.rgb};\n  --h
 }
 `;
 
+
+/* ── 4. magenta style ──────────────────────────────────────────────────────
+ * The workspace palette preset "magenta" (src/lib/palette.js) puts
+ * `style-magenta` on <html> instead of computing ramps. Light: magenta
+ * buttons on a white page. Dark: the page itself is filled with magenta,
+ * text is white, and brand fills (the buttons) turn white with magenta text.
+ * The neutral look above stays the default and the "neutral" preset. */
+const TW_HUE_LIGHT = {
+  red: ['#fecaca', '#fee2e2'], orange: ['#fed7aa', '#ffedd5'], amber: ['#fde68a', '#fef3c7'],
+  yellow: ['#fef08a', '#fef9c3'], lime: ['#d9f99d', '#ecfccb'], green: ['#bbf7d0', '#dcfce7'],
+  emerald: ['#a7f3d0', '#d1fae5'], teal: ['#99f6e4', '#ccfbf1'], cyan: ['#a5f3fc', '#cffafe'],
+  sky: ['#bae6fd', '#e0f2fe'], blue: ['#bfdbfe', '#dbeafe'], pink: ['#fbcfe8', '#fce7f3'],
+  rose: ['#fecdd3', '#ffe4e6'],
+};
+const W = (a) => `rgba(255, 255, 255, ${a})`;
+const MAGENTA_DARK = {
+  brandVars: { 50: '#b5005d', 100: '#c40065', 200: '#d1006b', 300: '#ffd6ea', 400: '#ffe6f2',
+    500: '#ffffff', 600: '#ffffff', 700: '#ffffff', 800: '#ffffff', 900: '#ffffff', 950: '#ffffff' },
+  brandBg: { 50: W(0.16), 100: W(0.24), 200: W(0.32), 300: '#ffd6ea', 400: '#ffe6f2', 500: '#ffffff',
+    600: '#ffffff', 700: '#ffe6f2', 800: '#ffd6ea', 900: W(0.28), 950: W(0.36) },
+  brandText: { 300: '#ffe6f2', 400: '#ffffff', 500: '#ffffff', 600: '#ffffff', 700: '#ffffff',
+    800: '#ffffff', 900: '#ffffff', 950: '#ffffff' },
+  brandBorder: { 50: W(0.22), 100: W(0.30), 200: W(0.40), 300: W(0.52), 400: '#ffffff', 500: '#ffffff',
+    600: '#ffffff', 700: '#ffffff', 800: '#ffffff', 900: '#ffffff' },
+  neutralBg: { 50: '#d1006b', 100: '#c40065', 200: '#b5005d', 300: '#a60056', 400: W(0.35),
+    500: W(0.45), 600: W(0.55), 700: '#a00052', 800: '#8f004a', 900: '#7a0040', 950: '#5e0031' },
+  neutralText: { 300: '#ffc4df', 400: '#ffcce4', 500: '#ffd6ea', 600: '#ffe3f0', 700: '#fff0f7',
+    800: '#ffffff', 900: '#ffffff', 950: '#ffffff' },
+  neutralBorder: { 50: W(0.12), 100: W(0.16), 200: W(0.22), 300: W(0.30), 400: W(0.38), 500: W(0.45),
+    600: W(0.30), 700: W(0.26), 800: W(0.20), 900: W(0.16), 950: W(0.12) },
+};
+const varLines = (prefix, obj) => Object.entries(obj).map(([k, v]) => `  --${prefix}-${k}: ${v};`).join('\n');
+const buttonSelectors = [];
+for (const hue of BRAND_HUES) {
+  for (const shade of [500, 600, 700, 800]) {
+    buttonSelectors.push(`:where(html.style-magenta.dark) .bg-${hue}-${shade}.text-white`);
+  }
+}
+const MAGENTA_STYLE = `
+/* ── 4. magenta style (palette preset "magenta") ─────────────────────── */
+html.style-magenta {
+  --surface-page:    #ffffff;
+  --surface-sunken:  #fafafa;
+  --surface-raised:  #f5f5f5;
+  --surface-hover:   #f0f0f0;
+  --border-subtle:   #ececec;
+  --border-default:  #e0e0e0;
+}
+
+html.style-magenta.dark {
+  --surface-page:    #c8006a;
+  --surface-sunken:  #bd0063;
+  --surface-card:    #e20074;
+  --surface-raised:  #b0005c;
+  --surface-hover:   #cc0069;
+  --surface-inverse: #ffffff;
+
+  --border-subtle:   ${W(0.16)};
+  --border-default:  ${W(0.24)};
+  --border-strong:   ${W(0.36)};
+
+  --text-primary:    #ffffff;
+  --text-secondary:  #fff0f7;
+  --text-muted:      #ffd6ea;
+  --text-faint:      #ffc4df;
+  --text-inverse:    #e20074;
+
+${varLines('brand', MAGENTA_DARK.brandVars)}
+  --brand:           #ffffff;
+  --brand-contrast:  #e20074;
+  --brand-rgb:       255, 255, 255;
+${varLines('brand-bg', MAGENTA_DARK.brandBg)}
+${varLines('brand-text', MAGENTA_DARK.brandText)}
+${varLines('brand-border', MAGENTA_DARK.brandBorder)}
+${varLines('neutral-bg', MAGENTA_DARK.neutralBg)}
+${varLines('neutral-text', MAGENTA_DARK.neutralText)}
+${varLines('neutral-border', MAGENTA_DARK.neutralBorder)}
+
+${Object.entries(TW_HUE_LIGHT).map(([h, [t400, t300]]) => `  --hue-${h}-400: ${t400};\n  --hue-${h}-300: ${t300};`).join('\n')}
+
+  --ok:      #d9fbe6;
+  --warn:    #fef3c7;
+  --danger:  #ffe0e0;
+  --info:    #ffffff;
+  --info-surface: ${W(0.18)};
+
+  --chart-accent:   #ffffff;
+  --chart-muted:    ${W(0.35)};
+  --chart-cat-1:    #ffffff;
+  --chart-cat-2:    #ffd166;
+  --chart-cat-3:    #7ee0b5;
+  --chart-grid:     ${W(0.18)};
+  --chart-track:    ${W(0.22)};
+}
+
+html.style-magenta.dark body {
+  background:
+    radial-gradient(circle at top, ${W(0.10)}, transparent 34%),
+    linear-gradient(180deg, var(--surface-page) 0%, #b8005f 100%);
+  background-attachment: fixed;
+}
+
+/* A brand fill is white here, so the label on it turns magenta. */
+${buttonSelectors.join(',\n')} { color: var(--brand-contrast); }
+
+:where(html.style-magenta.dark) .bg-white\\/95 { background-color: rgba(226, 0, 116, 0.95); }
+:where(html.style-magenta.dark) .bg-white\\/80 { background-color: rgba(226, 0, 116, 0.80); }
+:where(html.style-magenta.dark) .bg-white\\/70 { background-color: rgba(226, 0, 116, 0.70); }
+:where(html.style-magenta.dark) .bg-white\\/60 { background-color: rgba(226, 0, 116, 0.60); }
+`;
+
 const out = [
   header,
   tokensBlock,
@@ -574,6 +685,7 @@ const out = [
   '\n\n/* ── 3. dark theme ────────────────────────────────────────────────────── */\n',
   dark.lines.join('\n'),
   EXTRAS,
+  MAGENTA_STYLE,
   '\n',
 ].join('\n');
 
