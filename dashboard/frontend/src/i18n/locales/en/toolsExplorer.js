@@ -1,6 +1,6 @@
 export default {
   toolInventory: 'Tool Inventory',
-  browseToolsAvailableToAgents: 'Browse tools available to agents in the cluster.',
+  browseToolsAvailableToAgents: 'Browse tools available to agents.',
   searchTools: 'Search tools...',
   loadingToolDefinitions: 'Loading tool definitions...',
   noToolsFound: 'No tools found.',

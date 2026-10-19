@@ -39,9 +39,9 @@ def _catalog(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _direct_transport(monkeypatch):
-    """The tool launches through the run's state transport, which defaults to
-    the HTTP relay when the database is Postgres (tests/test_state_transport.py).
-    There is no backend behind these tests, so pin the direct transport; the
+    """The tool launches through the run's state transport, which a setting
+    may point at the HTTP relay (tests/test_state_transport.py). There is no
+    backend behind these tests, so pin the direct transport; the
     container tests below override it with in_container, which always picks
     HTTP and stubs the backend."""
     monkeypatch.setattr("common.config.run_state_transport", lambda: "db")

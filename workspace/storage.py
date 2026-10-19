@@ -200,10 +200,8 @@ def _seed_workspace_metadata(name: str, attached_path: Optional[str] = None) -> 
             meta = {
                 "name": name,
                 "created_at": str(uuid.uuid4()),  # Placeholder for actual time if needed
-                # Who created it. ``local`` outside AUTH_MODE=multi, where there
-                # is exactly one operator and an owner would be a fiction; a
-                # user id under multi, where it decides who may configure or
-                # delete the workspace. See common/identity.py.
+                # Who created it: ``local``, the one operator. See
+                # common/identity.py.
                 "owner": current_user_id(),
                 "allowed_agents": list(system_agent_ids()),
                 "env_vars": {},

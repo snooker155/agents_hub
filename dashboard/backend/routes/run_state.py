@@ -276,9 +276,8 @@ async def finalize_task_route(run_id: str, body: FinalizeTaskBody):
 #
 # A run that delegates from inside a container asks the backend to create the
 # subtask and launch the delegate: launched here, the delegate gets its own
-# container (or a place on the run queue in the ``api`` role) exactly like a
-# launch from the dashboard, instead of a subprocess nested inside the
-# parent's container; and it works when the container's state directory is
+# container exactly like a launch from the dashboard, instead of a subprocess
+# nested inside the parent's container; and it works when the container's state directory is
 # read-only. The routes below are the four calls ``HttpStateTransport`` makes
 # for that; ``DirectStateTransport`` calls the same functions in-process.
 

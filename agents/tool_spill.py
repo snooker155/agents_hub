@@ -115,15 +115,11 @@ def _register(workspace: str, rel: str, tool: str, run_id: str) -> Optional[str]
     the operating folder is not under the workspaces root or the registry
     cannot be reached (a container without the database)."""
     try:
-        from common import db
         from common.config import run_state_transport
-        if run_state_transport() == "http" and not db.is_postgres():
+        if run_state_transport() == "http":
             # A container that relays its state over HTTP has its SQLite state
             # mounted read only: nothing to register in; the backend does it
-            # when the run closes (register_relayed_spills). Under Postgres
-            # the relay is the default even for processes that do hold the
-            # database URL (the backend, a chat replica), and a process that
-            # holds it registers here; one handed no URL reads as SQLite.
+            # when the run closes (register_relayed_spills).
             return None
         from tools.filesystem_langchain import _registry_target
         target = _registry_target(workspace)

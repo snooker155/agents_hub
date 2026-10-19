@@ -85,10 +85,8 @@ them (``host`` on the record). A dead run with a checkpoint
 instead of failed, up to :data:`MAX_AUTO_RESUMES` times, the same rule flows
 and loops follow.
 
-With several backend replicas only the holder of the ``watchdog`` lease
-(``common/leases.py``) sweeps; the others tick and try to take the lease. The
-sweep also reconciles the launch queue (``common/run_queue.py``): rows whose
-worker stopped renewing are closed or handed back.
+The sweep runs only while this process holds the ``watchdog`` lease
+(``common/leases.py``).
 
 Each sweep runs under the lease version the tick took (a fencing token,
 ``common.leases.fencing_token``). Every write that closes or resumes a run

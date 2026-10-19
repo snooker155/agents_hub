@@ -280,7 +280,7 @@ def _transport():
     """Where the subtask is created and the delegate launched
     (``tasks/delegate.py`` runs there). Inside a container that is always the
     backend, over HTTP: the host launches the delegate, so it gets its own
-    container or a place on the run queue, instead of a subprocess nested in
+    container, instead of a subprocess nested in
     this one (docs/containers.md, "Delegation from a container"). Elsewhere
     it is the run's own state transport, direct by default."""
     from common.hostnet import in_container

@@ -344,11 +344,9 @@ def build_api_command(hub_getter: Callable[[], Any], call: Callable, console: Co
 
 # Tags with a hand-written group of their own (cli/commands/), or that are
 # core CLI infrastructure rather than an API entity: generating a second,
-# clumsier `ah <tag>` for these would only compete with the good one, or (for
-# "auth") mix login/session routes into what is otherwise plain CRUD.
+# clumsier `ah <tag>` for these would only compete with the good one.
 EXCLUDED_TAGS = {
-    "auth", "secrets", "agents", "tasks", "workspaces", "projects",
-    "nodes",
+    "secrets", "agents", "tasks", "workspaces", "projects",
 }
 
 

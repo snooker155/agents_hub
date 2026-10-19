@@ -19,7 +19,7 @@ import { useI18n } from '../i18n';
 
 // A connector lives only in the workspace that defines it: the default
 // workspace's definition works everywhere, another workspace's own
-// definition works only there (connectors/channels/store.py). Every card
+// definition works only there (connectors/store.py). Every card
 // below says which one it is (ConnectorSourceBadge); the page's ⓘ says it
 // once for the page, naming the workspace these tabs are about to change.
 function WorkspaceScopeNote() {

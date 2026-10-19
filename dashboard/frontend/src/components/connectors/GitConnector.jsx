@@ -13,7 +13,7 @@ import { ConnectorSourceBadge, ConnectorDefinedIn, ConnectorSourceActions } from
 // still live under the `settings.*` i18n keys they were written with when the
 // card sat on the Settings page; they are the same strings, moved verbatim.
 //
-// Per workspace, like every other connector (connectors/channels/store.py):
+// Per workspace, like every other connector (connectors/store.py):
 // the default workspace's token works everywhere, another workspace's own
 // token works only there. The config GET answers `sources` (per provider,
 // "here" or "default") and, from the default workspace, `defined_in`.

@@ -28,17 +28,7 @@ async def health(request: Request):
     the page calls this on every load, so the event loop must keep serving."""
     from starlette.concurrency import run_in_threadpool
 
-    result = await run_in_threadpool(snapshot, request.app.state)
-    # Optional-feature facts, kept separate from the liveness/state data above:
-    # the frontend reads this to hide a feature's pages rather than probing
-    # its routes.
-    # ``cluster`` is always true now: the Cluster page maps the shared services
-    # (database, model runtime, ...) even for one process. The key stays for
-    # older frontends that gate on it.
-    result["features"] = {
-        "cluster": True,
-    }
-    return result
+    return await run_in_threadpool(snapshot, request.app.state)
 
 
 @router.get("/health/doctor")

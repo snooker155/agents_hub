@@ -25,8 +25,7 @@ from tasks import service as ts
 @pytest.fixture(autouse=True)
 def _direct_state_transport(monkeypatch):
     """These run the entrypoint in-process: the direct transport, whatever
-    the database (on Postgres the default is the HTTP relay, which needs a
-    backend to post to)."""
+    the developer's .env says (the HTTP relay needs a backend to post to)."""
     monkeypatch.setenv("AGENT_RUN_STATE_TRANSPORT", "db")
 
 

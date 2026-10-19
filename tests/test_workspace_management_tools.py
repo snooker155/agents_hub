@@ -2,7 +2,7 @@
 The main agent's workspace management tools (tools/workspace_management.py,
 docs/workspaces.md "Managing workspaces from the chat"): each tool's happy
 path, the scope rule (main-agent in default only), the dashboard's refusals,
-the permissions of multi mode, and the approval on delete_workspace.
+and the approval on delete_workspace.
 """
 from __future__ import annotations
 
@@ -263,28 +263,6 @@ def test_an_unknown_workspace_is_not_found(main_run):
                      (wm.remove_workspace_agent, {"agent_id": "a"}), (wm.delete_workspace, {})):
         out = _call(tool, name=_name("missing"), **kw)
         assert out["ok"] is False and out["code"] == "not_found", tool.name
-
-
-# ── multi mode ───────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def multi(monkeypatch):
-    """AUTH_MODE=multi with three accounts: alice owns what she makes, bob is
-    an editor of everything, root is an administrator."""
-    from common import identity
-    from common.attribution import USER_ENV
-    accounts = {"alice": "member", "bob": "member", "root": "admin"}
-    roles: dict = {}
-    monkeypatch.setattr(identity, "current_mode", lambda: "multi")
-    monkeypatch.setattr(identity, "get_user", lambda uid: (
-        {"id": uid, "role": accounts[uid], "disabled": False} if uid in accounts else None))
-    monkeypatch.setattr(identity, "membership_role", lambda ws, uid: roles.get((ws, uid)))
-    monkeypatch.setattr(identity, "claim_workspace",
-                        lambda ws, uid=None: roles.__setitem__((ws, uid), "owner"))
-
-    def act_as(user):
-        monkeypatch.setenv(USER_ENV, user)
-    return act_as, roles
 
 
 # ── approval ─────────────────────────────────────────────────────────────────

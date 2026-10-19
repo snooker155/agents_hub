@@ -123,8 +123,8 @@ class StateTransport:
     # -- delegation (tools/delegation.py, tasks/delegate.py) -----------------
     # The delegating run decides what to hand over; where the subtask is
     # created and the delegate launched is this transport's business, so a run
-    # container's delegation is launched by the backend (its own container,
-    # or the run queue), never as a subprocess nested inside the parent's.
+    # container's delegation is launched by the backend (its own container),
+    # never as a subprocess nested inside the parent's.
 
     def delegate(self, parent_task_id: str, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create the subtask and launch the delegate (``tasks.delegate.

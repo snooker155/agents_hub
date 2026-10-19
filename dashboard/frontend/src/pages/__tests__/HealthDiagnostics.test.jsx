@@ -37,15 +37,6 @@ vi.mock('../../api/system', () => ({
   getDoctor: (...a) => getDoctor(...a),
 }));
 
-// The SLO card loads on mount too; without this mock its call reached the
-// partly mocked api module and only a swallowed exception hid that.
-vi.mock('../../api/support', () => ({
-  getSlo: () => ok({ status: 'ok', objectives: {} }),
-  getSupportBundle: () => Promise.resolve({ data: new Blob([]) }),
-}));
-
-// The Stack services card loads on its own; these tests are about other cards.
-vi.mock('../../api/services', () => ({ getClusterStack: () => Promise.resolve({ data: { components: [] } }) }));
 vi.mock('../../api', () => ({
   getHealth: () => ok({ status: 'ok', database: {}, services: {}, storage: {}, providers: {} }),
 }));
@@ -109,13 +100,13 @@ const DOCTOR_I18N = {
       doc: 'service-health', anchor: 'check-disk',
     },
     {
-      id: 'stale_runs', title: 'Stale runs and leases', status: 'warn',
-      summary: '2 run(s) have not beaten for over 180 s; expired lease(s): worker.',
+      id: 'security', title: 'Security settings', status: 'warn',
+      summary: 'CAPABILITY_GUARD is warn: an agent may hold all three capabilities; set it back to block; 2 secret(s) stored but AGENTS_HUB_SECRET_KEY is empty, so runs receive none of them.',
       summary_i18n: { parts: [
-        { key: 'staleRuns.stale', params: { count: 2, seconds: 180 } },
-        { key: 'staleRuns.leases', params: { roles: 'worker' } },
+        { key: 'security.guard', params: { guard: 'warn' } },
+        { key: 'security.secretKey', params: { count: 2 } },
       ] },
-      detail: {}, doc: 'service-health', anchor: 'check-stale-runs',
+      detail: {}, doc: 'service-health', anchor: 'check-security',
     },
     {
       id: 'brand_new', title: 'Brand new check', status: 'ok',
@@ -137,9 +128,10 @@ describe('Health — Diagnostics in the reader\'s language', () => {
     show();
     await waitFor(() => expect(screen.getByText('Свободное место на диске')).toBeInTheDocument());
     expect(screen.getByText('В каталоге состояния свободно 3.0 ГБ.')).toBeInTheDocument();
-    expect(screen.getByText('Зависшие запуски и аренды')).toBeInTheDocument();
+    expect(screen.getByText('Настройки безопасности')).toBeInTheDocument();
     // Two findings joined into one sentence, plural form picked by count.
-    expect(screen.getByText('2 запуска молчат дольше 180 с; просроченные аренды: worker.'))
+    expect(screen.getByText('CAPABILITY_GUARD в режиме warn: агент может получить все три возможности; верните block; '
+      + 'сохранено 2 секрета, но AGENTS_HUB_SECRET_KEY пуст, и запуски не получают ни одного.'))
       .toBeInTheDocument();
   });
 

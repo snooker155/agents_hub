@@ -129,18 +129,16 @@ export default {
   },
   tracker: {
     title: "Issue-Tracker",
-    hint: "Ein Jira-Projekt oder ein Linear-Team als Aufgaben dieses Projekts spiegeln. Die Zugangsdaten stehen auf",
+    hint: "Ein Jira-Projekt als Aufgaben dieses Projekts spiegeln. Die Zugangsdaten stehen auf",
     connectors: "der Seite Konnektoren.",
     saved: "Tracker gespeichert.",
     synced: "Synchronisiert: {{imported}} importiert, {{updated}} aktualisiert, {{total}} Vorgänge.",
     providers: {
       none: "Kein Tracker",
       jira: "Jira",
-      linear: "Linear",
     },
     remotePlaceholder: {
       jira: "Projektschlüssel, z. B. PROJ",
-      linear: "Teamschlüssel, z. B. ENG",
     },
   },
 };

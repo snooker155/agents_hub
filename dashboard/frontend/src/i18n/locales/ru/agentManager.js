@@ -8,7 +8,7 @@ export default {
   noAgentsMatch: 'Нет агентов по запросу «{{query}}».',
   agents: 'Агенты',
   orchestrateYourFleetOfSpecialized: 'Управляйте своим парком специализированных ИИ инстансов.',
-  scanningClusterForAgentNodes: 'Сканирование кластера на инстансы агентов…',
+  loadingAgentInstances: 'Загрузка инстансов агентов…',
   importAnAgentThatAlready: 'Импортировать агента, который уже живёт в своём git-репозитории',
   importFromRepo: 'Импорт из репозитория',
   importedAgent: 'Импортированный агент',

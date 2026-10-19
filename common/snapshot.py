@@ -3,8 +3,8 @@ Registry snapshots for run containers.
 
 The agent registry, the custom provider list and the model catalog live in
 the database (``common/docstore.py``). A run container does not get the
-database: under Postgres it is never handed the URL and password, and under
-SQLite the file is pinned read-only for the ``http`` state transport. What it
+database: the SQLite file is pinned read-only for the ``http`` state
+transport. What it
 gets instead is a *snapshot*: before the launcher starts the container it
 writes the three registries as JSON into ``<state>/run_snapshots/<run_id>/``
 (:func:`write_snapshots`), mounts that directory read-only, and sets

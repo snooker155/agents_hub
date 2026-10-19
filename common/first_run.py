@@ -54,17 +54,6 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def applies() -> bool:
-    """True where the first run is the way in: everything but ``multi`` mode."""
-    from common import identity
-    from common.auth import MULTI
-    try:
-        return identity.current_mode() != MULTI
-    except Exception:  # noqa: BLE001 - an unreadable mode is the default, single
-        log.debug("first run: auth mode unreadable", exc_info=True)
-        return True
-
-
 def _in_use() -> bool:
     """Signs that this install was set up before the first run existed."""
     try:
@@ -100,12 +89,8 @@ def load() -> Dict[str, Any]:
 def status() -> Dict[str, Any]:
     """What the browser needs to decide, cheaply: whether to show the first
     run, and where it stopped. Never raises."""
-    if not applies():
-        return {"applies": False, "required": False, "completed_at": None, "step": None,
-                "language": None, "theme": None}
     doc = load()
     return {
-        "applies": True,
         "required": not doc.get("completed_at"),
         "completed_at": doc.get("completed_at"),
         "via": doc.get("via") or "",
@@ -131,8 +116,6 @@ def act(action: str, *, step: Optional[str] = None, language: Optional[str] = No
     action = str(action or "").strip().lower()
     if action not in ACTIONS:
         raise ValueError(f"action must be one of {', '.join(ACTIONS)}")
-    if not applies():
-        raise ValueError("the first run does not apply in multi mode")
     if step is not None and step not in STEPS:
         raise ValueError(f"step must be one of {', '.join(STEPS)}")
     if language is not None and language not in LANGUAGES:
@@ -217,5 +200,5 @@ def context() -> Dict[str, Any]:
     return out
 
 
-__all__ = ["ACTIONS", "LANGUAGES", "STEPS", "THEMES", "act", "applies", "configured", "context",
+__all__ = ["ACTIONS", "LANGUAGES", "STEPS", "THEMES", "act", "configured", "context",
            "language", "load", "status"]

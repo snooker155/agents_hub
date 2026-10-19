@@ -30,21 +30,18 @@ if BACKEND not in sys.path:
     sys.path.insert(0, BACKEND)
 
 FERNET_KEY = "0" * 43 + "="  # 44 chars of urlsafe base64, 32 bytes
-PASSWORD = "hunter2-but-longer"
 
 
 @pytest.fixture
 def key(monkeypatch):
     from common.config import settings
     monkeypatch.setattr(settings, "secret_key", "correct horse battery staple", raising=False)
-    monkeypatch.setattr(settings, "secret_backend", "local", raising=False)
 
 
 @pytest.fixture
 def no_key(monkeypatch):
     from common.config import settings
     monkeypatch.setattr(settings, "secret_key", "", raising=False)
-    monkeypatch.setattr(settings, "secret_backend", "local", raising=False)
 
 
 def _agent(agent_id: str, *, tools=(), secrets=()):
@@ -76,7 +73,6 @@ def test_a_fernet_key_round_trips(monkeypatch):
     from common import secrets
     from common.config import settings
     monkeypatch.setattr(settings, "secret_key", secrets.keygen(), raising=False)
-    monkeypatch.setattr(settings, "secret_backend", "local", raising=False)
     secrets.set_secret("ws", "X", "value-long-enough")
     assert secrets.get_secret("ws", "X") == "value-long-enough"
 
@@ -285,67 +281,8 @@ def test_git_token_prefers_the_active_in_process_secret(key, monkeypatch):
     assert store.get_token("gitlab") == "connector-token"
 
 
-# ── vault ────────────────────────────────────────────────────────────────────
-
-class _Resp:
-    def __init__(self, status, body=None):
-        self.status_code = status
-        self._body = body or {}
-
-    def json(self):
-        return self._body
-
-
-def test_vault_backend_keeps_the_value_in_vault(monkeypatch):
-    import requests
-    from common import db, secrets
-    vault: dict = {}
-    calls: list = []
-
-    def post(url, json=None, headers=None, timeout=None):
-        calls.append(("POST", url, headers))
-        vault[url] = json["data"]["value"]
-        return _Resp(200)
-
-    def get(url, headers=None, timeout=None):
-        calls.append(("GET", url, headers))
-        if url in vault:
-            return _Resp(200, {"data": {"data": {"value": vault[url]}}})
-        return _Resp(404)
-
-    def delete(url, headers=None, timeout=None):
-        calls.append(("DELETE", url, headers))
-        vault.pop(url.replace("/metadata/", "/data/"), None)
-        return _Resp(204)
-
-    monkeypatch.setattr(requests, "post", post)
-    monkeypatch.setattr(requests, "get", get)
-    monkeypatch.setattr(requests, "delete", delete)
-    backend = secrets.VaultBackend(url="http://vault:8200", token="vt", mount="kv")
-    backend.set("ws", "TOKEN", "vault-held-value", "a1", None)
-    assert calls[0][1] == "http://vault:8200/v1/kv/data/agents-hub/ws/a1/_/TOKEN"
-    assert calls[0][2] == {"X-Vault-Token": "vt"}
-    row = db.get_conn().execute("SELECT ciphertext, hint FROM secrets").fetchone()
-    assert row["ciphertext"] == "" and row["hint"] == "alue"
-    assert backend.list("ws")[0]["agent_id"] == "a1"
-    assert backend.resolve_for_run("ws", "a1", None, ["TOKEN"]) == {"TOKEN": "vault-held-value"}
-    assert backend.delete("ws", "TOKEN", "a1", None) is True
-    assert calls[-1][0] == "DELETE" and "/v1/kv/metadata/agents-hub/ws/a1/_/TOKEN" in calls[-1][1]
-    assert vault == {}
-
-
-def test_vault_backend_without_configuration_refuses_to_store():
+def test_the_backend_is_the_local_one():
     from common import secrets
-    with pytest.raises(secrets.SecretsError, match="AGENTS_HUB_VAULT_URL"):
-        secrets.VaultBackend(url="", token="").set("ws", "X", "value")
-
-
-def test_backend_is_picked_by_settings(monkeypatch):
-    from common import secrets
-    from common.config import settings
-    monkeypatch.setattr(settings, "secret_backend", "vault", raising=False)
-    assert isinstance(secrets.backend(), secrets.VaultBackend)
-    monkeypatch.setattr(settings, "secret_backend", "local", raising=False)
     assert isinstance(secrets.backend(), secrets.LocalBackend)
 
 
@@ -361,24 +298,6 @@ def client():
 @pytest.fixture
 def single(monkeypatch):
     pass
-
-
-def _bearer(token):
-    return {"Authorization": f"Bearer {token}"}
-
-
-def _admin(client):
-    r = client.post("/api/auth/bootstrap", json={"username": "root", "password": PASSWORD})
-    assert r.status_code == 200, r.text
-    return _bearer(r.json()["token"])
-
-
-def _member(client, admin, username):
-    created = client.post("/api/auth/users", json={"username": username, "password": PASSWORD},
-                          headers=admin)
-    assert created.status_code == 200, created.text
-    session = client.post("/api/auth/login", json={"username": username, "password": PASSWORD})
-    return created.json()["id"], _bearer(session.json()["token"])
 
 
 def test_routes_store_list_and_delete_without_ever_returning_a_value(single, key, client):

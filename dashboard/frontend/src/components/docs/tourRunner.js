@@ -16,8 +16,7 @@ export const ELEMENT_TIMEOUT_MS = 3000;
 /**
  * The tour's stops, in order. Selectors are ones the pages already render:
  * every page has a PageHeader (a <header> inside <main>), Chat has its
- * composer textarea, Agents its card grid. A stop with a `feature` exists only
- * when the backend has that feature enabled.
+ * composer textarea, Agents its card grid.
  */
 export const TOUR_STOPS = [
   { id: 'chat', path: '/chat', element: 'main textarea' },
@@ -30,10 +29,9 @@ export const TOUR_STOPS = [
   { id: 'docs', path: '/docs', element: 'main header' },
 ];
 
-/** The stops for this deployment, with their text resolved through `t`. */
-export function buildSteps(t, features = {}) {
+/** The stops, with their text resolved through `t`. */
+export function buildSteps(t) {
   return TOUR_STOPS
-    .filter((s) => !s.feature || features[s.feature] !== false)
     .map((s) => ({
       id: s.id,
       path: s.path,

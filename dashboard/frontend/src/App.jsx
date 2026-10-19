@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import PageLoader from './components/PageLoader';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
-import { FeaturesProvider } from './components/FeaturesContext';
 import { AuthProvider } from './components/AuthContext';
 import FirstRunGate from './components/firstRun/FirstRunGate';
 
@@ -61,8 +60,6 @@ const ArtifactsRedirect = lazy(() => import('./pages/Artifacts').then((m) => ({ 
 const ViewDetail = lazy(() => import('./pages/ViewDetail'));
 const Studio = lazy(() => import('./pages/Studio'));
 const Docs = lazy(() => import('./pages/Docs'));
-// Identity pages. Both are inert outside AUTH_MODE=multi: the login screen is
-// never reached and the users route is not registered. See docs/identity.md.
 
 /** Centred spinner shown while a page's chunk is on the wire. */
 function RouteFallback() {
@@ -158,15 +155,13 @@ function App() {
   return (
     <Router basename={import.meta.env.BASE_URL}>
       <AuthProvider>
-        <FeaturesProvider>
-          {/* A new install sets itself up first
-              (docs/installation.md, "The first run in the browser"), in place of the whole app. */}
-          <FirstRunGate>
-            <Layout>
-              <AppRoutes />
-            </Layout>
-          </FirstRunGate>
-        </FeaturesProvider>
+        {/* A new install sets itself up first
+            (docs/installation.md, "The first run in the browser"), in place of the whole app. */}
+        <FirstRunGate>
+          <Layout>
+            <AppRoutes />
+          </Layout>
+        </FirstRunGate>
       </AuthProvider>
     </Router>
   );

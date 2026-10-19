@@ -27,8 +27,8 @@ This module is the one place that vocabulary lives:
 The statuses, and what each means for any kind:
 
 ``pending``
-    The record exists; no process has claimed it yet. A launch waiting for a
-    worker (docs/workers.md), or one prepared but not yet spawned.
+    The record exists; no process has claimed it yet: a launch prepared but
+    not yet spawned.
 ``running``
     A process is executing it and refreshing its heartbeat.
 ``stopping``
@@ -88,7 +88,7 @@ RESUMABLE_STATUSES: FrozenSet[str] = frozenset({
 # The closed transition table. Every edge traces to a real writer:
 #   pending   -> running   the launcher recorded a pid or a container
 #   pending   -> stopping  a stop request before the process started
-#   pending   -> failed    the launch itself failed (no worker, bad spec)
+#   pending   -> failed    the launch itself failed (bad spec, spawn error)
 #   pending   -> stopped   stopped before it ever started
 #   pending   -> completed a run that needed no process (an empty flow)
 #   running   -> stopping  a stop request
@@ -99,7 +99,7 @@ RESUMABLE_STATUSES: FrozenSet[str] = frozenset({
 #   awaiting_input -> running   resumed with an answer
 #   awaiting_input -> stopped / failed          stopped or closed while parked
 #   stopped / failed -> running   a resume from the checkpoint
-#   stopped / failed -> pending   a resume handed to the launch queue
+#   stopped / failed -> pending   a resume prepared before its process spawns
 # A same-status write is always allowed (progress writes repeat the status).
 TRANSITIONS: Dict[str, FrozenSet[str]] = {
     RunStatus.pending.value: frozenset({
@@ -171,8 +171,8 @@ def is_terminal(status: Union[RunStatus, str, None]) -> bool:
 # What ``runs.status`` may hold (managers/runs/*, runtime/agent_run.py), each
 # mapped onto the shared vocabulary. Anything not listed maps to itself.
 _LEAF_ALIASES: Dict[str, str] = {
-    "queued": RunStatus.pending.value,         # waiting for a worker
-    "assigned": RunStatus.pending.value,       # waiting for a node
+    "queued": RunStatus.pending.value,         # older records
+    "assigned": RunStatus.pending.value,       # older records
     "awaiting_approval": RunStatus.pending.value,
     "stop": RunStatus.stopping.value,          # stop requested, not yet honoured
     "done": RunStatus.completed.value,

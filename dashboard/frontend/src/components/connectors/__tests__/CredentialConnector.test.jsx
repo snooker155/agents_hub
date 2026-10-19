@@ -4,12 +4,10 @@ import { WorkspaceContext } from '../../workspace';
 import { I18nProvider } from '../../../i18n';
 import CredentialConnector from '../CredentialConnector';
 
-// Jira, Linear, Google, Microsoft, Notion and Confluence all go through this
-// one component (routes/connectors.py). It is scoped per workspace like
-// every other connector (connectors/channels/store.py): the default
-// workspace's definition works everywhere, another workspace's own
-// definition works only there. These tests stand in for all six names with
-// "jira", which is what the page actually shows first.
+// Jira goes through this one component (routes/connectors.py). It is scoped
+// per workspace like every other connector (connectors/store.py): the
+// default workspace's definition works everywhere, another workspace's own
+// definition works only there.
 
 const api = vi.hoisted(() => ({
   listConnectors: vi.fn(),

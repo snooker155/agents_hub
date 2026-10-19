@@ -84,49 +84,17 @@ def _require_can_steer(request: Request, run: Dict[str, Any]):
     return principal
 
 
-def _run_owner(run: Dict[str, Any]) -> Optional[str]:
-    """The user a run belongs to: the owner of its conversation for a chat
-    turn, the person who filed its task otherwise. None when neither is known
-    (a delegated run, a flow node)."""
-    try:
-        if str(run.get("session_type") or "") == "chat":
-            from common import chat_store
-            conv_id = str(run.get("conversation_id") or run.get("task_id") or "")
-            chat = chat_store.get_chat(conv_id) if conv_id else None
-            return str((chat or {}).get("owner") or "") or None
-        task = _task_of(run)
-        if task is None:
-            return None
-        return str(getattr(task, "created_by_user", "") or "") or None
-    except Exception:  # noqa: BLE001 - an unknown owner leaves the run to admins
-        log.debug("steering: owner lookup failed for %s", run.get("run_id"), exc_info=True)
-        return None
-
-
 def _require_operator(principal: Any, run: Dict[str, Any]) -> None:
     """403 unless ``principal`` may add to this run's instructions.
 
     The service credential is refused first and always: it is what a run's
     own process (and every run it delegates to) presents to this API, so
-    accepting it would let an agent rewrite its own system prompt. Then an
-    admin may, and outside ``multi`` mode the one operator may. In ``multi``
-    mode a member must own the run (:func:`_run_owner`); a run with no known
-    owner is left to admins.
+    accepting it would let an agent rewrite its own system prompt. The one
+    operator may.
     """
-    from common.auth import MULTI
-
     if principal is None or getattr(principal, "kind", "") == "service":
         raise HTTPException(status_code=403,
                             detail="a system message is sent by an operator, not by an agent or a delegated run")
-    if principal.is_admin or identity.current_mode() != MULTI:
-        return
-    owner = _run_owner(run)
-    # owner_or_admin reads a "local" owner (filed before identity existed) as
-    # anyone's, the rule every other owned record follows.
-    if owner and access.owner_or_admin(principal, owner):
-        return
-    raise HTTPException(status_code=403,
-                        detail="only the run's owner or an admin may send a system message")
 
 
 def _require_not_agent(principal: Any) -> None:

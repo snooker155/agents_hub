@@ -5,17 +5,15 @@ process half.
 
 Before this module a loop run was a daemon thread of the API process
 (``dashboard/backend/routes/loops.py``'s old ``start_run``): it died with
-every restart of the backend, it could not be handed to a worker, and it
+every restart of the backend, and it
 competed with request handling for the process's own resources. A loop is
 the longest-running thing the hub has (a whole flow, repeated), which is the
 worst possible candidate for living inside the web server.
 
 Now :func:`start_loop_run` prepares the record, the task and the log path,
 then hands a plain JSON spec to :func:`runtime.entity_launch.dispatch`, which
-either spawns ``runtime/loop_run.py`` right here (the default role) or queues
-the spec for a worker to spawn on its own host (the ``api`` role;
-docs/workers.md). ``loops.runner.run_loop`` still does the actual iterations,
-in that process, given the pre-created record and, on a resume, its position.
+spawns ``runtime/loop_run.py``. ``loops.runner.run_loop`` still does the
+actual iterations, in that process, given the pre-created record and, on a resume, its position.
 A loop always runs as a local subprocess, never in a container: its
 iterations run the flow engine in-process, so the loop process is the
 orchestrator of the agent runs, not their sandbox, the same as a flow.
@@ -31,9 +29,9 @@ from loops.runner import LoopResumeError
 
 log = logging.getLogger(__name__)
 
-#: What a loop launch is called on the queue and in runtime.entity_launch's
+#: The kind a loop launch spec carries, a key of runtime.entity_launch's
 #: ENTRYPOINTS table.
-QUEUE_KIND = "loop"
+LAUNCH_KIND = "loop"
 
 
 def _log_path(loop_run_id: str) -> str:
@@ -104,7 +102,7 @@ def start_loop_run(
         log.debug("assigning loop run to task failed", exc_info=True)
 
     spec = {
-        "kind": QUEUE_KIND, "run_id": run.loop_run_id, "entity_id": loop_id,
+        "kind": LAUNCH_KIND, "run_id": run.loop_run_id, "entity_id": loop_id,
         "entrypoint": "loop_run", "cli_args": ["--run-id", run.loop_run_id],
         "workspace": ws_name, "ws_path": ws_path,
         "task_id": task_id, "session_id": session_id,
@@ -124,8 +122,7 @@ def resume_loop_run(loop_run_id: str, *, auto: bool = False) -> LoopRun:
     ``loops.runner.resume_loop_run`` applies. ``auto`` marks a resume the
     watchdog performed and counts against its cap. The status moves back to
     ``running`` only once a process exists (``launch_prepared``), so a launch
-    waiting in the queue reads honestly as ``stopped`` or ``failed`` until
-    then.
+    that never spawns reads honestly as ``stopped`` or ``failed``.
     """
     from common import entity_runs
     from runtime import entity_launch
@@ -167,7 +164,7 @@ def resume_loop_run(loop_run_id: str, *, auto: bool = False) -> LoopRun:
         log.debug("resolving task workspace failed", exc_info=True)
 
     spec = {
-        "kind": QUEUE_KIND, "run_id": loop_run_id, "entity_id": run.loop_id,
+        "kind": LAUNCH_KIND, "run_id": loop_run_id, "entity_id": run.loop_id,
         "entrypoint": "loop_run", "cli_args": ["--run-id", loop_run_id, "--resume"],
         "workspace": ws_name, "ws_path": str(ws_path),
         "task_id": run.task_id, "session_id": run.session_id,
@@ -197,5 +194,5 @@ def stop_loop_run(loop_run_id: str) -> bool:
     return store.request_stop(loop_run_id)
 
 
-__all__ = ["LoopResumeError", "QUEUE_KIND", "start_loop_run", "resume_loop_run",
+__all__ = ["LoopResumeError", "LAUNCH_KIND", "start_loop_run", "resume_loop_run",
            "launch_prepared", "stop_loop_run"]

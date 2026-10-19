@@ -209,7 +209,7 @@ def test_quickstart_leaves_the_demo_to_the_first_run():
 def test_review_masks_a_password_in_any_url():
     assert W._shown("SOME_URL", "https://user:pw@host/") == "https://user:****@host/"
     assert W._shown("OPENAI_API_KEY", "sk-abcdefghijklmnop") != "sk-abcdefghijklmnop"
-    assert W._shown("HUB_PUBLIC_URL", "https://hub.example.com") == "https://hub.example.com"
+    assert W._shown("OLLAMA_BASE_URL", "http://localhost:11434") == "http://localhost:11434"
 
 
 def test_rag_on_the_local_shape_sets_the_store_and_may_add_the_extra(monkeypatch):

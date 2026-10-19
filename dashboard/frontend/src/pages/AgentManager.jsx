@@ -506,7 +506,7 @@ const AgentManager = () => {
       />
 
       {loading ? (
-        <div className="bg-white rounded-xl border border-dashed border-gray-200"><PageLoader label={t('agentManager.scanningClusterForAgentNodes')} /></div>
+        <div className="bg-white rounded-xl border border-dashed border-gray-200"><PageLoader label={t('agentManager.loadingAgentInstances')} /></div>
       ) : visibleAgents.length === 0 && agentQuery.trim() ? (
         <div className="py-16 text-center bg-white rounded-xl border border-dashed border-gray-200">
           <p className="text-sm text-gray-500">{t('agentManager.noAgentsMatch', { query: agentQuery.trim() })}</p>

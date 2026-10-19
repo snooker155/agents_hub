@@ -16,15 +16,12 @@ secret holds private data, so the trifecta rule sees it the moment the
 declaration is saved, and an agent that declares nothing receives nothing, no
 matter how many secrets its workspace holds.
 
-Why two backends behind one interface: ``local`` keeps the ciphertext in the
-table itself, encrypted with Fernet under ``AGENTS_HUB_SECRET_KEY``, which is
-enough for one host. ``vault`` keeps the value in HashiCorp Vault (KV v2) and
-leaves only the metadata row here, so listing, scoping and precedence work the
-same way and never need a round trip to Vault. Both talk plain HTTP or the
-standard ``cryptography`` package; no Vault client library.
+Where the value lives: the ciphertext sits in the table itself, encrypted
+with Fernet under ``AGENTS_HUB_SECRET_KEY`` (the standard ``cryptography``
+package), which is enough for one host.
 
-Why failures are quiet at launch time: a secrets problem (a missing key, Vault
-down, a row encrypted under an old key) must not crash a run, and it must
+Why failures are quiet at launch time: a secrets problem (a missing key, a
+row encrypted under an old key) must not crash a run, and it must
 never degrade into handing out *more* than the allowlist. ``env_for_run``
 therefore logs a warning and returns nothing on any error. Values are never
 logged, never returned by ``list``, and never written to the audit trail.
@@ -50,7 +47,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
-from urllib.parse import quote
 
 from common import db
 
@@ -374,7 +370,7 @@ class SecretBackend:
         """{name: (value, allowed_hosts)} for one run, most specific scope first.
 
         Only ``allowed_names`` are considered; an empty allowlist returns
-        nothing. A row that cannot be read (wrong key, Vault unreachable)
+        nothing. A row that cannot be read (wrong key)
         falls through to the next most specific scope for that name rather
         than failing the whole hand-out.
         """
@@ -435,82 +431,8 @@ class LocalBackend(SecretBackend):
             return None
 
 
-class VaultBackend(SecretBackend):
-    """HashiCorp Vault KV v2 over plain HTTP; the row keeps only metadata."""
-
-    name = "vault"
-    TIMEOUT = 10
-
-    def __init__(self, url: Optional[str] = None, token: Optional[str] = None,
-                 mount: Optional[str] = None) -> None:
-        import os
-        self.url = (url if url is not None else os.environ.get("AGENTS_HUB_VAULT_URL", "")).rstrip("/")
-        self.token = token if token is not None else os.environ.get("AGENTS_HUB_VAULT_TOKEN", "")
-        self.mount = (mount if mount is not None
-                      else os.environ.get("AGENTS_HUB_VAULT_MOUNT", "") or "secret").strip("/")
-
-    def path(self, workspace: str, name: str, agent_id: str, user_id: str) -> str:
-        parts = ["agents-hub", workspace, agent_id or "_", user_id or "_", name]
-        return "/".join(quote(str(p), safe="") for p in parts)
-
-    def _endpoint(self, kind: str, path: str) -> str:
-        return f"{self.url}/v1/{self.mount}/{kind}/{path}"
-
-    def _headers(self) -> Dict[str, str]:
-        return {"X-Vault-Token": self.token}
-
-    def _check_writable(self) -> None:
-        if not self.url or not self.token:
-            raise SecretsError("the vault secret backend needs AGENTS_HUB_VAULT_URL "
-                               "and AGENTS_HUB_VAULT_TOKEN")
-
-    def _seal(self, workspace, name, agent_id, user_id, value) -> str:
-        import requests
-        response = requests.post(
-            self._endpoint("data", self.path(workspace, name, agent_id, user_id)),
-            json={"data": {"value": value}}, headers=self._headers(), timeout=self.TIMEOUT)
-        if response.status_code >= 400:
-            raise SecretsError(f"vault refused the write (HTTP {response.status_code})")
-        return ""  # nothing sensitive in the row
-
-    def _unseal(self, row) -> Optional[str]:
-        if not self.url or not self.token:
-            return None
-        import requests
-        try:
-            response = requests.get(
-                self._endpoint("data", self.path(row["workspace"], row["name"],
-                                                 row["agent_id"], row["user_id"])),
-                headers=self._headers(), timeout=self.TIMEOUT)
-            if response.status_code != 200:
-                log.warning("secrets: vault answered %s for %s", response.status_code, row["name"])
-                return None
-            value = ((response.json() or {}).get("data") or {}).get("data", {}).get("value")
-            return None if value is None else str(value)
-        except (requests.RequestException, ValueError) as exc:
-            log.warning("secrets: vault read of %s failed: %s", row["name"], type(exc).__name__)
-            return None
-
-    def _forget(self, row) -> None:
-        if not self.url or not self.token:
-            return
-        import requests
-        try:
-            # metadata/ removes every version, not just the latest.
-            requests.delete(
-                self._endpoint("metadata", self.path(row["workspace"], row["name"],
-                                                     row["agent_id"], row["user_id"])),
-                headers=self._headers(), timeout=self.TIMEOUT)
-        except requests.RequestException as exc:
-            log.warning("secrets: vault delete of %s failed: %s", row["name"], type(exc).__name__)
-
-
 def backend() -> SecretBackend:
-    """The backend ``AGENTS_HUB_SECRET_BACKEND`` names (``local`` by default)."""
-    from common.config import settings
-    kind = str(getattr(settings, "secret_backend", "local") or "local").strip().lower()
-    if kind == "vault":
-        return VaultBackend()
+    """The secret backend: ciphertext in the database (:class:`LocalBackend`)."""
     return LocalBackend()
 
 
@@ -765,7 +687,7 @@ __all__ = [
     "NAME_RE", "KEY_VERSION", "NO_KEY_MESSAGE", "SecretsError", "SecretKeyMissing",
     "SecretEgressUnavailable", "PLAINTEXT_FALLBACK_ENV", "normalize_hosts", "resolve_bound",
     "set_secret_hosts",
-    "SecretBackend", "LocalBackend", "VaultBackend", "backend",
+    "SecretBackend", "LocalBackend", "backend",
     "validate_name", "make_hint", "keygen", "key_configured",
     "set_secret", "get_secret", "delete_secret", "list_secrets", "resolve_for_run",
     "allowed_for_agent", "env_for_run", "env_for_flow", "activate", "active_scope", "get",

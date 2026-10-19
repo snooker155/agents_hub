@@ -6,9 +6,9 @@ import {
 } from '../../api/trackers';
 import { useI18n } from '../../i18n';
 
-const PROVIDERS = ['none', 'jira', 'linear'];
+const PROVIDERS = ['none', 'jira'];
 
-// The project to tracker link: which Jira project or Linear team this project
+// The project to tracker link: which Jira project this project
 // mirrors, and the button that imports its issues as tasks. Sits on the
 // project's Repository tab next to the git issue sync, which it generalises.
 export default function TrackerCard({ projectId, workspace }) {

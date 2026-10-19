@@ -207,14 +207,10 @@ class Settings(BaseSettings):
     # Days an audit row is kept; 0 keeps everything.
     audit_retention_days: int = Field(
         default=365, validation_alias=AliasChoices("AUDIT_RETENTION_DAYS", "audit_retention_days"))
-    # Secrets at rest (common/secrets.py): the encryption key, and the backend
-    # ("local" encrypts into the database; "vault" reads from HashiCorp Vault's
-    # KV v2 at AGENTS_HUB_VAULT_URL / AGENTS_HUB_VAULT_TOKEN through the same
-    # interface).
+    # Secrets at rest (common/secrets.py): the key they are encrypted under
+    # in the database.
     secret_key: str = Field(
         default="", validation_alias=AliasChoices("AGENTS_HUB_SECRET_KEY", "secret_key"))
-    secret_backend: str = Field(
-        default="local", validation_alias=AliasChoices("AGENTS_HUB_SECRET_BACKEND", "secret_backend"))
     # When true, ``run_shell`` only permits commands whose first word is in
     # ``allow_shell``. Off by default so existing agent shell usage is unchanged;
     # a workspace can opt in via its settings (shell_allowlist_enabled).

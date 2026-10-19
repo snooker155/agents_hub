@@ -129,18 +129,16 @@ export default {
   },
   tracker: {
     title: "Issue tracker",
-    hint: "Mirror a Jira project or a Linear team as tasks of this project. Credentials are set on",
+    hint: "Mirror a Jira project as tasks of this project. Credentials are set on",
     connectors: "the Connectors page.",
     saved: "Tracker saved.",
     synced: "Synced: {{imported}} imported, {{updated}} updated, {{total}} issues.",
     providers: {
       none: "No tracker",
       jira: "Jira",
-      linear: "Linear",
     },
     remotePlaceholder: {
       jira: "Project key, e.g. PROJ",
-      linear: "Team key, e.g. ENG",
     },
   },
 };

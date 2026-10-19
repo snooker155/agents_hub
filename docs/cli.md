@@ -33,8 +33,6 @@ export AGENTS_HUB_URL=http://localhost:8080
 ah task list
 ```
 
-`ah auth whoami` names the local person the CLI acts as.
-
 A write from the CLI reaches an open dashboard the way a write from an agent
 subprocess does: the change goes to the shared database and a `<resource>.changed`
 event is relayed, so open tabs refetch instead of showing stale rows.
@@ -59,9 +57,8 @@ ah task create "Build a REST API" --decompose
 ah task list --status todo
 ah workspace list
 ah doctor                               # judge the service: each check ok, warn, fail or skip (--json; exits 1 on fail)
-ah db status                            # which database backend, schema version, row counts
+ah db status                            # where the database is, schema version, row counts
 ah db backup --to ./backups             # archive the database
-ah auth whoami                          # who this CLI is acting as
 ah config
 ```
 

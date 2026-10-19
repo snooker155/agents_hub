@@ -13,9 +13,8 @@ that run executes:
   (``HttpStateTransport`` → ``POST /api/run-state/tasks/{id}/delegate``) and
   the backend runs this module. The delegate is then launched by the backend
   the same way a launch from the dashboard is, so it gets its own container
-  with its own limits and environment (or goes on the run queue for a worker
-  in the ``api`` role), instead of being a bare subprocess nested inside the
-  parent's container, which is what happened when the tool launched from in
+  with its own limits and environment, instead of being a bare subprocess
+  nested inside the parent's container, which is what happened when the tool launched from in
   there itself. It also works when the container's state directory is
   read-only (``AGENT_RUN_STATE_TRANSPORT=http``), where the tool could not
   even create the subtask row.

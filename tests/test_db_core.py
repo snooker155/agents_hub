@@ -1,9 +1,5 @@
-"""The database core's two-backend seams (common/db.py, common/migrations/,
-common/db_transfer.py).
-
-Everything here runs on whichever backend the suite is on; the pieces that
-are inherently about one dialect (the placeholder adapter, the DDL rewrite)
-are pure functions and run everywhere.
+"""The database core (common/db.py, common/migrations/, common/db_transfer.py):
+the SQL helpers, rows, the schema startup and copying between SQLite files.
 """
 from __future__ import annotations
 
@@ -18,7 +14,7 @@ from common import migrations
 from common import db_transfer
 
 
-# ── SQL adaptation for Postgres (pure) ───────────────────────────────────────
+# ── SQL helpers (pure) ───────────────────────────────────────────────────────
 
 def test_upsert_sql_updates_every_non_key_column():
     sql = db.upsert_sql("meta", ("key", "value"), ("key",))
@@ -178,9 +174,9 @@ def test_the_whole_database_moves_to_another_sqlite_file_and_counts_match(tmp_pa
     assert db_transfer.transfer(str(target), force=True)["tables"]["runs"]["target"] == 1
 
 
-def test_status_reports_the_backend_and_counts():
+def test_status_reports_the_file_and_counts():
     info = db_transfer.status()
-    assert info["dialect"] in ("sqlite", "postgres")
+    assert info["dialect"] == "sqlite"
     assert info["schema_version"] == db.SCHEMA_VERSION
     assert "runs" in info["counts"]
-    assert Path(info["location"]).name == "test.db" or info["location"].startswith("postgresql://")
+    assert Path(info["location"]).name == "test.db"

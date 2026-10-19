@@ -47,15 +47,12 @@ def dot_env(monkeypatch):
 
 
 def _default_kind():
-    """Unset, the transport follows the database: direct on SQLite, the HTTP
-    relay on Postgres (a run container is never handed the database URL just
-    to update its own record)."""
-    from common import db
-    from common.state_transport import DirectStateTransport, HttpStateTransport
-    return HttpStateTransport if db.is_postgres() else DirectStateTransport
+    """Unset, the transport is direct database access."""
+    from common.state_transport import DirectStateTransport
+    return DirectStateTransport
 
 
-def test_default_transport_follows_the_database(dot_env):
+def test_default_transport_is_direct_database_access(dot_env):
     from common.state_transport import get_state_transport
 
     assert isinstance(get_state_transport(), _default_kind())

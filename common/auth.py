@@ -17,13 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Optional
 
-#: The one identity posture. ``TOKEN`` and ``MULTI`` name postures that no
-#: longer exist; they are kept so a route comparing ``current_mode()`` against
-#: them reads False rather than failing to import.
+#: The one identity posture.
 SINGLE = "single"
-TOKEN = "token"
-MULTI = "multi"
-AUTH_MODES = (SINGLE,)
 
 #: The owner id every ownable record gets. There is exactly one operator, so
 #: a real user id would be a fiction; this constant says so.
@@ -95,7 +90,7 @@ def role_satisfies(held: Optional[str], required: str) -> bool:
 
 
 __all__ = [
-    "AUTH_MODES", "GLOBAL_ROLES", "LOCAL_OPERATOR_ID", "LOCAL_PRINCIPAL", "MULTI",
-    "Principal", "ROLE_ADMIN", "ROLE_MEMBER", "SINGLE", "TOKEN", "WORKSPACE_ROLES",
+    "GLOBAL_ROLES", "LOCAL_OPERATOR_ID", "LOCAL_PRINCIPAL",
+    "Principal", "ROLE_ADMIN", "ROLE_MEMBER", "SINGLE", "WORKSPACE_ROLES",
     "WS_EDITOR", "WS_OWNER", "WS_VIEWER", "auth_headers", "role_satisfies",
 ]

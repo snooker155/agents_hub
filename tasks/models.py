@@ -323,11 +323,11 @@ class Task(BaseModel):
     created_by: CreatedBy = Field(default=CreatedBy.user)
     # *Which* user filed it, as opposed to ``created_by``, which says what kind
     # of actor did (a person, the orchestrator, an external system). Stamped by
-    # the store from the request in flight; ``local`` outside AUTH_MODE=multi,
-    # where there is exactly one operator. See common/identity.py.
+    # the store from the request in flight; ``local``, the one operator.
+    # See common/identity.py.
     created_by_user: str = Field(
         default="local",
-        description="Id of the user who created the task ('local' in single-operator modes)",
+        description="Id of the user who created the task ('local', the one operator)",
     )
 
     parent_id: Optional[UUID] = None

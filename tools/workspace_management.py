@@ -15,10 +15,7 @@ Each tool applies what the matching route of
 undeletable, system agents kept, ``default_workspace_only`` agents only in
 ``default``, another workspace's own agents only when shared), and allows the
 person the run acts for (``common.attribution.launching_user``) only what the
-dashboard would allow them: in ``AUTH_MODE=multi`` creating needs a signed in
-account, changing a workspace needs an editor of it and deleting it its owner, or an
-administrator. With one operator (``single``, ``token``) that operator does
-everything.
+dashboard would allow them. There is one operator, who does everything.
 
 What a tool never touches: secrets, hooks and the tool policy, members,
 environment variables, the web domain policy and connectors. Those are

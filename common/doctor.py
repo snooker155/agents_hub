@@ -208,32 +208,26 @@ def check_security(snap: Dict[str, Any]) -> Result:
     capability guard, the secret key against the secrets already stored, and
     the execution mode the runs use."""
     from agents.capability_guard import guard_mode
-    from common import db, identity, secrets
-    from common.config import agent_execution_mode, settings
-    mode = identity.current_mode()
+    from common import db, secrets
+    from common.config import agent_execution_mode
     execution = agent_execution_mode()
     guard = guard_mode()
-    backend = str(getattr(settings, "secret_backend", "local") or "local").strip().lower()
-    conn = db.get_conn()
-    stored = 0
-    if backend != "vault":
-        stored = int(conn.execute("SELECT COUNT(*) FROM secrets").fetchone()[0])
-    detail = {"auth_mode": mode, "execution_mode": execution, "capability_guard": guard,
-              "secret_backend": backend, "secret_key": secrets.key_configured(),
-              "secrets_stored": stored}
+    stored = int(db.get_conn().execute("SELECT COUNT(*) FROM secrets").fetchone()[0])
+    detail = {"execution_mode": execution, "capability_guard": guard,
+              "secret_key": secrets.key_configured(), "secrets_stored": stored}
     problems = []
     if guard != "block":
         problems.append(Msg("security.guard", f"CAPABILITY_GUARD is {guard}: an agent may hold "
                                               "all three capabilities; set it back to block",
                             guard=guard))
-    if backend != "vault" and stored and not secrets.key_configured():
+    if stored and not secrets.key_configured():
         problems.append(Msg("security.secretKey", f"{stored} secret(s) stored but "
                                                   "AGENTS_HUB_SECRET_KEY is empty, so runs receive "
                                                   "none of them", count=stored))
     if problems:
         return ("warn", Msg.joined(problems), detail)
-    return ("ok", Msg("security.ok", f"{mode} mode, {execution} runs, capability guard on block.",
-                      mode=mode, execution=execution), detail)
+    return ("ok", Msg("security.ok", f"{execution} runs, capability guard on block.",
+                      execution=execution), detail)
 
 
 # ── stale runs and leases ────────────────────────────────────────────────────

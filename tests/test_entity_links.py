@@ -10,7 +10,7 @@ import json
 import pytest
 
 from common import entity_sink
-from common.entity_links import append_entity_links, entity_link_lines, entity_payloads
+from common.entity_links import entity_payloads
 
 
 @pytest.fixture
@@ -120,19 +120,3 @@ def test_records_with_nowhere_to_point_are_dropped():
     # A file with no workspace has no page; an unknown kind has no route at all.
     assert entity_payloads([_record("file", "src/api.py", "updated", "src/api.py")]) == []
     assert entity_payloads([_record("teapot", "418", "created", "Short and stout")]) == []
-
-
-def test_link_lines_are_absolute_and_deduplicated(monkeypatch):
-    monkeypatch.setenv("AGENTS_HUB_PUBLIC_URL", "https://hub.example.com/")
-    items = entity_payloads([
-        _record("file", "a.py", "created", "a.py", workspace="demo"),
-        _record("file", "a.py", "created", "a.py", workspace="demo"),  # two flow nodes, one file
-    ])
-    lines = entity_link_lines(items)
-    assert lines == ["📄 File created: [a.py](https://hub.example.com/workspaces/demo?tab=files&file=a.py)"]
-
-
-def test_append_skips_entities_the_agent_already_linked():
-    items = entity_payloads([_record("file", "a.py", "created", "a.py", workspace="demo")])
-    text = "I wrote a.py for you."
-    assert append_entity_links(text, items) == text

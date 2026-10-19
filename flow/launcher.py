@@ -11,10 +11,8 @@ Public API:
 
 Like a task run (agents/agent_launcher.py), a flow launch is a database half
 and a process half. ``start_flow_run`` and ``resume_flow_run`` do the first
-and, in the default role, the second right away; in the ``api`` role they put
-a launch spec on the queue (``common/run_queue.py``) and a worker calls
-:func:`launch_prepared` with it. The process half is the envelope every
-entity kind shares (runtime/entity_launch.py). See docs/workers.md.
+and then the second right away (:func:`launch_prepared`). The process half is
+the envelope every entity kind shares (runtime/entity_launch.py).
 """
 from __future__ import annotations
 
@@ -107,9 +105,9 @@ def start_flow_run(
         parent_run_id=parent_run_id,
     )
 
-    # Audit trail (common/audit.py). No HTTP request is in flight here (a flow
-    # may be re-queued by a worker or fired by a schedule), so the actor comes
-    # from the current-user contextvar, "local" when nobody is signed in.
+    # Audit trail (common/audit.py). No HTTP request may be in flight here (a
+    # flow may be fired by a schedule), so the actor comes from the
+    # current-user contextvar, "local" for the one operator.
     try:
         from common import audit
         from common.auth import LOCAL_OPERATOR_ID
@@ -146,7 +144,7 @@ def start_flow_run(
         cli_args += ["--seed", _json.dumps(seed)]
 
     _dispatch({
-        "kind": QUEUE_KIND, "run_id": run_id, "entity_id": flow_id, "flow_id": flow_id,
+        "kind": LAUNCH_KIND, "run_id": run_id, "entity_id": flow_id, "flow_id": flow_id,
         "entrypoint": "flow_run", "cli_args": cli_args, "task_id": str(task_id),
         "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
         "log_file": str(log_file), "header": "Flow run started", "mode": "w",
@@ -155,13 +153,12 @@ def start_flow_run(
     return run_id, session_id
 
 
-#: What a flow launch is called on the queue.
-QUEUE_KIND = "flow"
+#: The kind a flow launch spec carries.
+LAUNCH_KIND = "flow"
 
 
 def _dispatch(spec: Dict[str, Any]) -> None:
-    """Spawn here, or hand the spec to a worker, by this process's role
-    (runtime/entity_launch.py)."""
+    """Spawn the run here (runtime/entity_launch.py)."""
     from runtime.entity_launch import dispatch
     dispatch(spec, launch_prepared)
 
@@ -281,7 +278,7 @@ def resume_flow_run(
         "--resume-from", flow_run_id,
     ]
     _dispatch({
-        "kind": QUEUE_KIND, "run_id": flow_run_id, "entity_id": flow_id, "flow_id": flow_id,
+        "kind": LAUNCH_KIND, "run_id": flow_run_id, "entity_id": flow_id, "flow_id": flow_id,
         "entrypoint": "flow_run", "cli_args": cli_args, "task_id": task_id,
         "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
         "log_file": str(log_file), "header": "Flow run resumed", "mode": "a",

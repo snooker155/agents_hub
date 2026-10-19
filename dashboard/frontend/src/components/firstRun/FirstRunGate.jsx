@@ -3,7 +3,7 @@
  * whole app until it is finished, the same way AuthGate shows the login
  * screen: no shell behind it and no route past it.
  *
- * Only outside multi mode, and never in the recorded demo. An unreachable
+ * Never in the recorded demo. An unreachable
  * backend or an older one without the route lets the app through: the first
  * run must never be what keeps someone out of a working hub.
  *
@@ -52,7 +52,7 @@ export default function FirstRunGate({ children }) {
         if (!live) return;
         if (data?.language && !own.current.language) setLanguage(data.language);
         if (data?.theme && !own.current.theme) setTheme(data.theme);
-        setState(data && data.applies ? data : { required: false });
+        setState(data || { required: false });
       })
       .catch(() => { if (live) setState({ required: false }); });
     return () => { live = false; };

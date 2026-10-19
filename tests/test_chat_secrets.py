@@ -59,7 +59,6 @@ def test_the_scope_hands_out_only_declared_names(monkeypatch):
     from common import secrets
     from common.config import settings
     monkeypatch.setattr(settings, "secret_key", "test-passphrase", raising=False)
-    monkeypatch.setattr(settings, "secret_backend", "local", raising=False)
     monkeypatch.setattr(secrets, "allowed_for_agent",
                         lambda agent_id: {"GITHUB_TOKEN"} if agent_id == "bot" else set())
     secrets.set_secret("w1", "GITHUB_TOKEN", "ghp_secret")

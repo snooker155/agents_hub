@@ -123,7 +123,7 @@ def _creating_user_id() -> str:
     return current_user_id()
 
 
-# Creation order, on both backends (SQLite's rowid has no Postgres counterpart).
+# Creation order, by columns rather than SQLite's rowid.
 _INSERTION_ORDER = "created_at, id"
 
 

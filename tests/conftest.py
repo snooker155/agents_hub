@@ -188,7 +188,7 @@ def fresh_db(tmp_path, monkeypatch):
 @pytest.fixture
 def reopen_db(monkeypatch):
     """A callable that points the process at another empty database (a new
-    file on SQLite, the truncated shared one on Postgres) and forces the next
+    SQLite file) and forces the next
     ``get_conn()`` through the startup sequence, for tests of that sequence."""
     import common.db as db
 

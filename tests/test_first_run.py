@@ -81,7 +81,7 @@ def _client():
 
 def test_a_fresh_install_is_asked_from_the_first_screen(single, no_keys, ws):
     got = first_run.status()
-    assert got["applies"] and got["required"]
+    assert got["required"]
     assert got["step"] == "hello" and got["language"] is None
 
 

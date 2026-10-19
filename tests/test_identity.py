@@ -12,7 +12,6 @@ from common.auth import LOCAL_OPERATOR_ID, LOCAL_PRINCIPAL, SINGLE, WS_EDITOR, W
 
 def test_the_mode_is_always_single():
     assert identity.current_mode() == SINGLE
-    assert not any(identity.mode_features().values())
 
 
 def test_every_request_is_allowed_as_the_operator():
@@ -46,8 +45,3 @@ def test_current_user_is_the_operator_unless_bound():
 def test_role_ranks_still_compare():
     assert role_satisfies(WS_OWNER, WS_EDITOR)
     assert not role_satisfies(None, WS_EDITOR)
-
-
-def test_principal_dict_is_json_ready():
-    data = identity.principal_dict(LOCAL_PRINCIPAL)
-    assert data["id"] == LOCAL_OPERATOR_ID and data["scope"] is None

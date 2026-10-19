@@ -392,8 +392,7 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
             if structured_payload is not None:
                 done_event["response_obj"] = structured_payload
             # Links to the service entities the run touched. The web chat renders
-            # them under the reply; text-only surfaces append them to
-            # the text via ``common.entity_links.append_entity_links``.
+            # them under the reply.
             if drive.entities:
                 done_event["entities"] = drive.entities
             # Sources the reply cites as [n]; the chat renders them under it.

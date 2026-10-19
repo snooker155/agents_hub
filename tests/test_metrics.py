@@ -1,8 +1,7 @@
 """common/metrics.py: the hand-written Prometheus exposition ``render()``
 that backs ``GET /metrics``. Tested directly against the store modules
-(``managers.run_manager``, ``common.run_queue``, ``common.leases``,
-``notify.outbound``), rather than over HTTP — that wiring is
-``tests/test_ops_routes.py``'s job.
+(``managers.run_manager``, ``common.leases``), rather than over HTTP:
+that wiring is ``tests/test_ops_routes.py``'s job.
 """
 from __future__ import annotations
 

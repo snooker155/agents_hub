@@ -50,7 +50,6 @@ from routes import connectors as connectors_router
 from routes import trackers as trackers_router
 from routes import agent_import, agents, chats, context_refs, entity_chats, tasks, flows, stats, memory, workspaces, tools, sessions, chat, projects, containers, messages, flow_entities, git, marketplace, plan, stream, health, replay, views, skills, weblogs, loops, teams, instances, notify as notify_router
 from routes import first_run as first_run_router
-from routes import auth as auth_router
 from routes import secrets as secrets_router
 from routes import run_groups as run_groups_router
 from routes import run_state as run_state_router
@@ -455,7 +454,7 @@ app.include_router(stream.router)
 app.include_router(health.router)
 
 # Ops domain: liveness, readiness and Prometheus metrics — /livez, /readyz,
-# /metrics, unprefixed and open in every AUTH_MODE (see routes/ops.py).
+# /metrics, unprefixed and open (see routes/ops.py).
 app.include_router(ops_router.router)
 
 # The running release and its newest schema migration (ah version).
@@ -469,10 +468,6 @@ app.include_router(views.router)
 
 # Notifications domain: the alert rules that raise in-app notifications.
 app.include_router(notify_router.router)
-
-# Identity domain: the auth-mode probe the frontend bootstraps from. There is
-# one local operator and nothing to sign in to.
-app.include_router(auth_router.router)
 
 app.include_router(secrets_router.router)
 

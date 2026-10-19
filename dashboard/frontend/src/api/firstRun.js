@@ -1,10 +1,10 @@
 /**
  * The first run (common/first_run.py, docs/installation.md, "The first run in the browser"): the install's own
- * setup, once, before the rest of the app opens. Only outside multi mode.
+ * setup, once, before the rest of the app opens.
  */
 import api from './index';
 
-/** { applies, required, step, language, theme, completed_at } */
+/** { required, step, language, theme, completed_at } */
 export const getFirstRun = () => api.get('/first-run');
 
 /** Save the step (and the language or look), finish, or start again. */

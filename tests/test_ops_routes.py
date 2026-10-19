@@ -1,9 +1,9 @@
 """GET /livez, /readyz, /metrics (dashboard/backend/routes/ops.py).
 
 All three sit outside ``/api`` on purpose, which is what exempts them from the
-identity guard in every ``AUTH_MODE`` — ``common.auth.is_open_path`` already
+identity guard: ``common.auth.is_open_path`` already
 treats anything that does not start with ``/api`` as open, so a load balancer
-or a Prometheus scraper never needs to be handed the operator's token. This
+or a Prometheus scraper never needs a credential. This
 file proves that wiring end to end, over real HTTP, rather than asserting it
 of the pure predicate alone (that is ``tests/test_identity.py``'s job).
 """

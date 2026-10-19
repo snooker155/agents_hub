@@ -44,14 +44,13 @@ class RepoConfig(BaseModel):
 
 
 class TrackerConfig(BaseModel):
-    """A project's link to an issue tracker (connectors/trackers: Jira, Linear).
+    """A project's link to an issue tracker (connectors/trackers: Jira).
 
     ``provider`` is "none" until the Projects page connects one; ``remote_id``
-    is the Jira project key or the Linear team key — whichever ``provider``
-    names — and ``url`` is an optional display link to the project/team on
-    the tracker's own site.
+    is the Jira project key, and ``url`` is an optional display link to the
+    project on Jira's own site.
     """
-    provider: str = "none"  # none|jira|linear
+    provider: str = "none"  # none|jira
     remote_id: Optional[str] = None
     url: Optional[str] = None
 

@@ -10,10 +10,8 @@ This module gives a team run the same shape a flow run has had since stage 2
 of the scaling plan (flow/launcher.py, the reference this mirrors): a
 :func:`start_team_run` prepares the record, the task and the log path, then
 hands a plain JSON spec to :func:`runtime.entity_launch.dispatch`, which
-either spawns ``runtime/team_run.py`` right here (the default role) or queues
-the spec for a worker to spawn on its own host (the ``api`` role;
-docs/workers.md). ``teams.runner.run_team`` still does the actual round loop
-— in this process when it minted its own record (chat, a tool call), or in
+spawns ``runtime/team_run.py``. ``teams.runner.run_team`` still does the
+actual round loop: in this process when it minted its own record (chat, a tool call), or in
 the subprocess the spec above just started, given the pre-created record and,
 on a resume, the checkpoint to pick up from.
 """
@@ -33,9 +31,9 @@ class TeamResumeError(Exception):
     resume from."""
 
 
-#: What a team launch is called on the queue and in runtime.entity_launch's
-#: ENTRYPOINTS / LAUNCHERS tables (runtime/entity_launch.py).
-QUEUE_KIND = "team"
+#: The kind a team launch spec carries, a key of runtime.entity_launch's
+#: ENTRYPOINTS table.
+LAUNCH_KIND = "team"
 
 
 def _log_path(team_run_id: str) -> str:
@@ -97,7 +95,7 @@ def start_team_run(
 
     execution_mode = entity_launch.execution_mode_for(ws_name)
     spec = {
-        "kind": QUEUE_KIND, "run_id": run.team_run_id, "entity_id": team_id,
+        "kind": LAUNCH_KIND, "run_id": run.team_run_id, "entity_id": team_id,
         "entrypoint": "team_run", "cli_args": ["--run-id", run.team_run_id],
         "workspace": ws_name, "ws_path": ws_path,
         "task_id": task_id, "session_id": session_id,
@@ -116,9 +114,7 @@ def resume_team_run(team_run_id: str, *, auto: bool = False) -> TeamRun:
     from. The status itself is left alone here: ``launch_prepared`` (via
     ``runtime.entity_launch.launch_prepared`` -> ``entity_runs.mark_running``)
     is what moves it back to ``running``, once a process actually exists for
-    it — in the ``api`` role that can be a while after this call returns, and
-    the record should say so honestly in the meantime rather than claim
-    ``running`` for a launch still sitting in the queue.
+    it, so the record never claims ``running`` for a launch that did not spawn.
     """
     from common import entity_runs
     from runtime import entity_launch
@@ -150,7 +146,7 @@ def resume_team_run(team_run_id: str, *, auto: bool = False) -> TeamRun:
     ws_name, ws_path = _resolve_run_workspace(rec)
     execution_mode = entity_launch.execution_mode_for(ws_name)
     spec = {
-        "kind": QUEUE_KIND, "run_id": team_run_id, "entity_id": rec.team_id,
+        "kind": LAUNCH_KIND, "run_id": team_run_id, "entity_id": rec.team_id,
         "entrypoint": "team_run",
         "cli_args": ["--run-id", team_run_id, "--resume"],
         "workspace": ws_name, "ws_path": ws_path,

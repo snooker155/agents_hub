@@ -30,8 +30,7 @@ and a kind-agnostic reader does not need a translation table
 **Writes.** Every write goes through one merge: read the row inside
 ``db.transaction()``, lay the changes over it, write every column and the
 document back with one upsert. Write transactions are serialised (``BEGIN
-IMMEDIATE`` on SQLite, the advisory write lock on Postgres), so two
-processes changing different fields of one run cannot drop each other's
+IMMEDIATE``), so two processes changing different fields of one run cannot drop each other's
 change. A status change is checked against the transition table in
 common/run_status.py and refused when the table forbids it.
 

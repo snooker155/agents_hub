@@ -4,7 +4,7 @@
 import api from './index';
 
 // Git connector API (GitLab). Per workspace like the other connectors
-// (connectors/channels/store.py): the default workspace's token works
+// (connectors/store.py): the default workspace's token works
 // everywhere, another workspace's own token works only there. The config GET
 // answers `sources` (per provider, "here" or "default") and, from the default
 // workspace, `defined_in` per provider.

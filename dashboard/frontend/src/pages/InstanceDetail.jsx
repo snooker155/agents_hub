@@ -28,7 +28,7 @@ import PageLoader from '../components/PageLoader';
  * answered, what it used to get there, and a box to write to it. The box works
  * whatever state the copy is in. A resident instance is a process or container
  * of its own (instances/carrier.py): it holds several conversations at once,
- * the Process tab is its carrier, and the Access tab is its public address.
+ * and the Process tab is its carrier.
  */
 
 const CORE_TABS = [

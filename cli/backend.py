@@ -310,16 +310,6 @@ class DirectBackend:
         dump = getattr(result, "model_dump", None)
         return dump(mode="json") if dump else dict(result)
 
-    # ---- auth: whoami ----
-    # Direct mode is the local operator, the one identity this hub has.
-
-    def whoami(self) -> dict:
-        from common.auth import LOCAL_OPERATOR_ID, ROLE_ADMIN
-        from common import identity
-        return {"id": LOCAL_OPERATOR_ID, "username": LOCAL_OPERATOR_ID,
-                "role": ROLE_ADMIN, "kind": "local", "via": "local",
-                "mode": identity.current_mode()}
-
     # ---- generic transport (cli/openapi.py, the entity groups that reuse it) ----
     # Every command written against a hand-picked method above needs both
     # backends touched to add one route. This one method covers the rest: the
@@ -556,9 +546,6 @@ class HttpBackend:
         # Some checks probe the network with their own timeouts; allow for
         # all of them in a row.
         return self._request("GET", "/api/health/doctor", timeout=90)
-
-    def whoami(self):
-        return self._request("GET", "/api/auth/me")
 
     # ---- generic transport: see DirectBackend.request ----
 

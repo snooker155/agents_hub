@@ -1213,7 +1213,7 @@ def test_proxy_response_grants_cors(client, monkeypatch):
     assert r.headers["access-control-allow-origin"] == "*"
 
 
-# ── entity links in the chat reply (sink → append_entity_links) ──────────────
+# ── entity links in the chat reply (sink → entity_payloads) ──────────────────
 
 def _create_view_tool(workspace=None):
     from tools.views import create_view_tools
@@ -1265,34 +1265,10 @@ def _view_records(action, view_id):
     return [{"kind": "view", "id": view_id, "action": action, "label": "", "meta": {}}]
 
 
-def test_append_entity_links_adds_a_link_per_view():
-    from common.entity_links import append_entity_links, entity_payloads
-    env = create_view("chart", "Revenue by quarter",
-                      {"vega_lite": {"mark": "bar", "data": {"values": [{"a": 1}]}}},
-                      summary="Q3 dips")
-    items = entity_payloads(_view_records("created", env.view_id))
-    out = append_entity_links("Here is the breakdown.", items)
-    assert out == (f"Here is the breakdown.\n\n"
-                   f"📊 View created: [Revenue by quarter](/views/{env.view_id})")
-
-
-def test_append_entity_links_absolute_with_public_url(monkeypatch):
-    from common.entity_links import append_entity_links, entity_payloads
-    monkeypatch.setenv("AGENTS_HUB_PUBLIC_URL", "https://hub.example.com/")
+def test_a_view_deleted_during_the_run_has_no_link():
+    from common.entity_links import entity_payloads
     env = create_view("markdown", "Notes", {"markdown": "hi"}, summary="s")
-    out = append_entity_links("done", entity_payloads(_view_records("updated", env.view_id)))
-    assert f"https://hub.example.com/views/{env.view_id}" in out
-    assert "View updated: [Notes]" in out
-
-
-def test_append_entity_links_skips_already_linked_and_deleted():
-    from common.entity_links import append_entity_links, entity_payloads
-    env = create_view("markdown", "Notes", {"markdown": "hi"}, summary="s")
-    # the agent wrote the link itself → no second link
-    text = f"See [Notes](/views/{env.view_id})."
-    items = entity_payloads(_view_records("created", env.view_id))
-    assert append_entity_links(text, items) == text
-    # a view deleted during the run has nothing to link to
+    assert entity_payloads(_view_records("created", env.view_id))[0]["url"] == f"/views/{env.view_id}"
     delete_view(env.view_id)
     assert entity_payloads(_view_records("created", env.view_id)) == []
 

@@ -33,14 +33,14 @@ describe('FirstRunGate', () => {
   });
 
   it('shows the first run in place of the whole app while it is required', async () => {
-    firstRunApi.getFirstRun.mockResolvedValue({ data: { applies: true, required: true, step: 'hello' } });
+    firstRunApi.getFirstRun.mockResolvedValue({ data: { required: true, step: 'hello' } });
     renderGate();
     expect(await screen.findByTestId('first-run-hello')).toBeTruthy();
     expect(screen.queryByTestId('app')).toBeNull();
   });
 
   it('lets the app through once it is finished', async () => {
-    firstRunApi.getFirstRun.mockResolvedValue({ data: { applies: true, required: false } });
+    firstRunApi.getFirstRun.mockResolvedValue({ data: { required: false } });
     renderGate();
     expect(await screen.findByTestId('app')).toBeTruthy();
   });
@@ -52,7 +52,7 @@ describe('FirstRunGate', () => {
   });
 
   it('hands a new browser the language chosen in the first run', async () => {
-    firstRunApi.getFirstRun.mockResolvedValue({ data: { applies: true, required: false, language: 'de' } });
+    firstRunApi.getFirstRun.mockResolvedValue({ data: { required: false, language: 'de' } });
     renderGate();
     await screen.findByTestId('app');
     await waitFor(() => expect(localStorage.getItem('agents_hub_language')).toBe('de'));
@@ -60,7 +60,7 @@ describe('FirstRunGate', () => {
 
   it('keeps the language a browser already chose', async () => {
     localStorage.setItem('agents_hub_language', 'ru');
-    firstRunApi.getFirstRun.mockResolvedValue({ data: { applies: true, required: false, language: 'de' } });
+    firstRunApi.getFirstRun.mockResolvedValue({ data: { required: false, language: 'de' } });
     renderGate();
     await screen.findByTestId('app');
     expect(localStorage.getItem('agents_hub_language')).toBe('ru');

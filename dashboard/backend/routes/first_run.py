@@ -52,12 +52,6 @@ class FirstModel(BaseModel):
     base_url: str = ""
 
 
-def _applies() -> None:
-    from common import first_run
-    if not first_run.applies():
-        raise HTTPException(status_code=404, detail="the first run does not apply in multi mode")
-
-
 @router.get("")
 async def get_status():
     from common import first_run
@@ -89,21 +83,18 @@ async def first_model(body: FirstModel, request: Request):
 @router.get("/context")
 async def get_context():
     from common import first_run
-    _applies()
     return await run_in_threadpool(first_run.context)
 
 
 @router.get("/options")
 async def get_options():
     from common import setup_ops
-    _applies()
     return await run_in_threadpool(setup_ops.options)
 
 
 @router.post("/op")
 async def run_op(body: FirstRunOp, request: Request):
     from common import setup_ops
-    _applies()
     if body.operation not in _OPERATIONS:
         raise HTTPException(status_code=400, detail={"code": "unknown_operation",
                                                      "message": f"operation must be one of {', '.join(_OPERATIONS)}"})

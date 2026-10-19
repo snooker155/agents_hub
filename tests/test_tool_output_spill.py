@@ -211,13 +211,10 @@ def test_a_container_run_gets_its_spills_registered_when_it_closes(operating_dir
     from managers import run_manager
 
     ws, project = operating_dir
-    from common import db
     run_id = f"run-{uuid.uuid4().hex[:8]}"
     state = LoopState(run_id=run_id)
     with monkeypatch.context() as m:
         m.setattr(config, "run_state_transport", lambda: "http")
-        # The container holds no database URL, so it reads as SQLite.
-        m.setattr(db, "is_postgres", lambda: False)
         _with_state(state, tool_spill.spill_output, "web_fetch", {}, BIG,
                     workspace=str(project), threshold=20000)
     [spill] = state.tool_spills

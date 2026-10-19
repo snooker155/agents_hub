@@ -35,11 +35,9 @@ def _read_run_log_text(run_id: str) -> Optional[str]:
 
     Tries the run record's own ``log_file``, the canonical ``run_logs/``
     location and each workspace's ``.logs/``, in that order — the same search
-    ``get_logs`` always did. Each local check now falls back to the blob store
-    (``common/blobs.py``) before moving on, so a run whose process ran on a
-    different worker or backend replica (Postgres, docs/workers.md) is still
-    served: its log was mirrored there even though this host never wrote it.
-    Returns None when the log is not found anywhere.
+    ``get_logs`` always did. Each local check also asks the state files
+    (``common/blobs.py``) by their key before moving on. Returns None when
+    the log is not found anywhere.
     """
     from common import blobs
 

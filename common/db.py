@@ -78,12 +78,6 @@ def dialect() -> str:
     return "sqlite"
 
 
-def is_postgres() -> bool:
-    """Always False: this edition runs on SQLite only. Kept so the few call
-    sites that branch on it need no change."""
-    return False
-
-
 # ── Connections ──────────────────────────────────────────────────────────────
 
 def _connect_sqlite(path: Optional[Path] = None) -> sqlite3.Connection:

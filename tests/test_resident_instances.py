@@ -4,7 +4,7 @@
 What is under test: nodes folded into instances (migration 0029), the carrier
 lifecycle recorded on the instance row, conversations in the mailbox, the
 process loop answering several conversations at once but never two messages of
-one conversation, and the public address answering through the mailbox.
+one conversation, and a message's answer read back from the mailbox.
 """
 from __future__ import annotations
 

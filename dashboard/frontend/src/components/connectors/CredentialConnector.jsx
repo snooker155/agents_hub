@@ -13,7 +13,7 @@ import { ConnectorSourceBadge, ConnectorDefinedIn, ConnectorSourceActions } from
 // describes its fields (GET /api/connectors); `children` renders whatever
 // extra the connector has (a project picker) and receives the loaded payload.
 //
-// Scoped per workspace like every other connector (connectors/channels/
+// Scoped per workspace like every other connector (connectors/
 // store.py): the default workspace's definition works everywhere, another
 // workspace's own definition works only there. The GET payload's `source`
 // says which one this is; a non default workspace that still inherits the

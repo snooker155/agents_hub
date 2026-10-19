@@ -16,8 +16,7 @@ there is anybody to refuse. There never is.
 from __future__ import annotations
 
 from contextvars import ContextVar
-from dataclasses import asdict
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from common.auth import (
     LOCAL_OPERATOR_ID,
@@ -47,12 +46,6 @@ def current_mode() -> str:
     that only mattered when there were several people.
     """
     return SINGLE
-
-
-def mode_features() -> Dict[str, bool]:
-    """What identity-related UI the frontend should render: nothing."""
-    return {"login": False, "users": False, "members": False, "api_keys": False,
-            "audit": False}
 
 
 # ── the current user, for the stores ─────────────────────────────────────────
@@ -112,15 +105,6 @@ def request_principal(request) -> Optional[Principal]:
     return principal or LOCAL_PRINCIPAL
 
 
-def principal_dict(principal: Optional[Principal]) -> Optional[Dict[str, Any]]:
-    """A principal as JSON, for ``GET /api/auth/me``."""
-    if principal is None:
-        return None
-    data = asdict(principal)
-    data["scope"] = list(principal.scope) if principal.scope is not None else None
-    return data
-
-
 def client_ip(request) -> Optional[str]:
     """The caller's address, honouring the first ``X-Forwarded-For`` hop when
     the hub sits behind a proxy."""
@@ -134,6 +118,6 @@ def client_ip(request) -> Optional[str]:
 
 __all__ = [
     "SINGLE", "authorize_request", "claim_workspace", "client_ip", "current_mode",
-    "current_principal", "current_user_id", "mode_features", "principal_dict",
+    "current_principal", "current_user_id",
     "request_principal", "require_role", "reset_current_user", "set_current_user",
 ]

@@ -33,9 +33,9 @@ export const WORKSPACE_EVENT = 'agents-hub-workspace';
 
 export const useTheme = () => useContext(ThemeContext);
 
-/** Where this browser keeps a personal palette when there is no account to
- * save one against (AUTH_MODE single/token), or as a fallback whenever the
- * preferences endpoint is unreachable (signed out, offline). */
+/** Where this browser keeps a personal palette: there is no account to save
+ * one against, and it is the fallback whenever the preferences endpoint is
+ * unreachable (offline). */
 export const LOCAL_PALETTE_KEY = 'agents_hub_palette';
 
 /** 'dark' | 'light', resolving 'system' against the OS preference right now. */

@@ -196,7 +196,7 @@ def _list_row_to_record(row) -> Dict[str, Any]:
 
 
 # Named sort orders for the runs list (``query_runs(sort=...)``). Text columns
-# are coalesced so NULLs sort the same on SQLite and Postgres.
+# are coalesced so NULLs sort as empty strings.
 RUN_SORTS = {
     "started": "COALESCE(started_at, created_at, '')",
     "finished": "COALESCE(finished_at, '')",

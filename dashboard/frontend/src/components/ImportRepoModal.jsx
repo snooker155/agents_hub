@@ -34,7 +34,7 @@ export default function ImportRepoModal({ mode = 'import', project = null, works
   const [error, setError] = useState('');
 
   // The git token in effect is the one of the workspace a repo would land
-  // in (connectors/channels/store.py: the default workspace's token works
+  // in (connectors/store.py: the default workspace's token works
   // everywhere, another workspace's own token works only there) — the
   // project already being connected, or the target of a new import.
   const effectiveWorkspace = (mode === 'connect' ? project?.workspace : workspace) || 'default';

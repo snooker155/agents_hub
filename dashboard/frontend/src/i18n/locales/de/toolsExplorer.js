@@ -1,6 +1,6 @@
 export default {
   toolInventory: 'Werkzeug-Inventar',
-  browseToolsAvailableToAgents: 'Werkzeuge durchsuchen, die den Agenten im Cluster zur Verfügung stehen.',
+  browseToolsAvailableToAgents: 'Werkzeuge durchsuchen, die den Agenten zur Verfügung stehen.',
   searchTools: 'Werkzeuge suchen…',
   loadingToolDefinitions: 'Werkzeugdefinitionen werden geladen…',
   noToolsFound: 'Keine Werkzeuge gefunden.',

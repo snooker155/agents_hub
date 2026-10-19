@@ -29,7 +29,7 @@ describe('welcome tour steps', () => {
     expect(TOUR_STOPS.map((s) => s.id)).toEqual([
       'chat', 'agents', 'tasks', 'flows', 'teams', 'artifacts', 'health', 'docs',
     ]);
-    const steps = buildSteps(t, {});
+    const steps = buildSteps(t);
     expect(steps.map((s) => s.path)).toEqual([
       '/chat', '/agents', '/tasks', '/flows', '/teams', '/artifacts', '/health', '/docs',
     ]);

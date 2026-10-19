@@ -58,12 +58,10 @@ app = typer.Typer(
 )
 
 server_app = typer.Typer(help="Backend server commands.", no_args_is_help=True)
-db_app = typer.Typer(help="Database commands: which backend is in use, moving state between backends.",
+db_app = typer.Typer(help="Database commands: status, backup, verify and restore.",
                      no_args_is_help=True)
-auth_app = typer.Typer(help="Who this CLI is acting as.", no_args_is_help=True)
 
 app.add_typer(server_app, name="server")
-app.add_typer(auth_app, name="auth")
 app.add_typer(db_app, name="db")
 
 # agent/task/workspace/project/instance (cli/commands/), flow/loop/team
@@ -409,9 +407,8 @@ def server_start(
 # ---------------------------------------------------------------------------
 # db commands
 # ---------------------------------------------------------------------------
-# Direct mode only: these open the database this process is configured with
-# (AGENTS_HUB_DATABASE_URL, or the SQLite file under AGENTS_HUB_ROOT), so a
-# CLI pointed at a remote backend over AGENTS_HUB_URL has nothing to open.
+# Direct mode only: these open the SQLite file under AGENTS_HUB_ROOT, so a
+# CLI pointed at a backend over AGENTS_HUB_URL has nothing to open.
 
 
 def _require_direct_mode(what: str) -> None:
@@ -423,7 +420,7 @@ def _require_direct_mode(what: str) -> None:
 
 @db_app.command("status")
 def db_status():
-    """Which backend is in use, its schema version and row counts."""
+    """Where the database is, its schema version and row counts."""
     _require_direct_mode("ah db status")
     from common import db_transfer
     info = db_transfer.status()
@@ -437,37 +434,6 @@ def db_status():
     console.print(table)
 
 
-@db_app.command("migrate")
-def db_migrate(
-    to: str = typer.Option(..., "--to", help="Target: a postgresql:// URL, or a path to a SQLite file."),
-    force: bool = typer.Option(False, "--force", help="Empty the target's tables first."),
-    batch: int = typer.Option(500, help="Rows per INSERT batch."),
-):
-    """Copy the whole database into another backend, table by table, in one
-    transaction, and compare the counts. Works in both directions: SQLite to
-    Postgres and back. Files beside the database (run logs, workspaces, view
-    assets) are not moved. Then point AGENTS_HUB_DATABASE_URL at the target
-    and restart."""
-    _require_direct_mode("ah db migrate")
-    from common import db_transfer
-    console.print(f"copying into [bold]{db_transfer.describe(to)}[/bold]")
-    try:
-        report = db_transfer.transfer(to, force=force, batch=batch,
-                                      log=lambda line: console.print(f"  {line}"))
-    except Exception as exc:  # noqa: BLE001 - the CLI reports, it does not recover
-        console.print(f"[red]failed:[/red] {exc}")
-        raise typer.Exit(code=1)
-    total = sum(v["target"] for v in report["tables"].values())
-    console.print(f"[green]done[/green]: {total} row(s) in {len(report['tables'])} table(s) "
-                  f"now in {report['target']}")
-    if report["dialect"] == "postgres":
-        console.print("next: set AGENTS_HUB_DATABASE_URL to that URL in .env and restart every "
-                      "process that touches state (backend, workers, the CLI).")
-    else:
-        console.print("next: clear AGENTS_HUB_DATABASE_URL in .env (and, if the file is not "
-                      "the default one, point AGENTS_HUB_ROOT at its directory) and restart.")
-
-
 @db_app.command("backup")
 def db_backup_cmd(
     to: str = typer.Option(".", "--to", help="Archive path, or a directory to name a timestamped archive in."),
@@ -475,8 +441,7 @@ def db_backup_cmd(
 ):
     """Write one archive with the database and, by default, the state
     directories beside it (run logs, workspaces, views, and the rest;
-    docs/backup.md). Works whatever backend is configured: the archive
-    always holds a plain SQLite file."""
+    docs/backup.md). The database goes in as a plain SQLite file."""
     _require_direct_mode("ah db backup")
     from common import db_backup
     try:
@@ -543,29 +508,6 @@ def db_verify_cmd(archive: str = typer.Argument(..., help="An archive written by
     else:
         console.print(f"[red]mismatch:[/red] {report['mismatches']}")
         raise typer.Exit(code=1)
-
-
-# ---------------------------------------------------------------------------
-# auth commands: whoami
-# ---------------------------------------------------------------------------
-# Over AGENTS_HUB_URL this reads /api/auth/me; in direct mode DirectBackend
-# answers as the local operator. Both say the same thing: there is one.
-
-
-@auth_app.command("whoami")
-def auth_whoami():
-    """Who this CLI is acting as."""
-    info = call(hub().whoami)
-    lines = [f"[bold]id:[/bold] {info.get('id', '-')}"]
-    if info.get("username"):
-        lines.append(f"[bold]username:[/bold] {info['username']}")
-    if info.get("role"):
-        lines.append(f"[bold]role:[/bold] {info['role']}")
-    if info.get("via"):
-        lines.append(f"[bold]via:[/bold] {info['via']}")
-    if info.get("mode"):
-        lines.append(f"[bold]mode:[/bold] {info['mode']}")
-    console.print(Panel("\n".join(lines), title="whoami", border_style="cyan"))
 
 
 # ---------------------------------------------------------------------------
@@ -1287,7 +1229,7 @@ app.command("apply")(apply_command)
 # below: not a permission list, just a fast "have we already got this one".
 _KNOWN_TOP_LEVEL = {
     "agent", "task", "workspace", "project", "instance", "flow", "loop", "team",
-    "api", "server", "auth", "db", "secrets", "files",
+    "api", "server", "db", "secrets", "files",
     "up", "chat", "config", "shell-init", "shell-export",
     "setup", "onboard", "version", "doctor", "apply",
 }

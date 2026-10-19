@@ -286,21 +286,6 @@ def test_a_bad_decision_is_a_400(client):
     assert _answer(client, row["approval_id"], decision="later").status_code == 400
 
 
-@pytest.fixture
-def multi(monkeypatch):
-    from common import identity
-    monkeypatch.setattr(identity, "current_mode", lambda: "multi")
-    monkeypatch.setattr("common.access.can_see_workspace", lambda principal, ws: True)
-
-
-def test_in_multi_mode_only_the_owner_or_an_admin_may_answer(client, multi):
-    row = _pending(_rid())
-    assert _answer(client, row["approval_id"], principal="user:u-other:member").status_code == 403
-    assert _answer(client, row["approval_id"], principal="user:u-owner:member").status_code == 200
-    other = _pending(_rid())
-    assert _answer(client, other["approval_id"], principal="user:u-admin:admin").status_code == 200
-
-
 def test_a_reopened_chat_finds_the_waiting_call(client):
     run_id = _rid()
     row = _pending(run_id)

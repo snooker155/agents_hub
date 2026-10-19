@@ -1,9 +1,9 @@
 """
 The answer to one mailbox message, for callers that wait on it.
 
-The instance page streams its answers live; a caller of the public address
-(``/api/external/{token}/messages``) or of a carrier's direct port usually
-wants the answer itself. A message is answered by exactly one run
+The instance page streams its answers live; a caller of
+``GET /api/instances/{id}/messages/{msg_id}`` or of a carrier's direct port
+usually wants the answer itself. A message is answered by exactly one run
 (``instance_inbox.run_id``), so its state is readable from two rows:
 
 - ``queued``: not claimed yet (the carrier is busy or starting);

@@ -2,13 +2,9 @@
 Entity links — turn the records a run's :class:`common.entity_sink.EntitySink`
 collected into links back into the dashboard.
 
-One place owns the mapping "entity kind → page URL + display label", because
-every surface needs the same answer in a different shape:
-
-* the web chat renders the records as clickable chips under the reply
-  (:func:`entity_payloads`),
-* any text-only surface appends one markdown link per record
-  to the reply text (:func:`append_entity_links`).
+One place owns the mapping "entity kind → page URL + display label": the web
+chat renders the records as clickable chips under the reply
+(:func:`entity_payloads`).
 
 Label resolution is best-effort and lazy: a tool that just created a task
 already holds its title and passes it as ``label``; anything without one is
@@ -18,7 +14,6 @@ whose store errors) is dropped rather than linked into a 404.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
@@ -166,31 +161,6 @@ KINDS: Dict[str, KindSpec] = {
     },
 }
 
-# Past-tense wording for the text surfaces, per action.
-ACTION_WORDS = {
-    "created": "created",
-    "updated": "updated",
-    "deleted": "deleted",
-    "viewed": "opened",
-    "scheduled": "scheduled",
-    "cancelled": "cancelled",
-    "started": "started",
-    "stopped": "stopped",
-    "assigned": "assigned",
-    "blocked": "blocked",
-}
-
-
-def public_base() -> str:
-    """Absolute-URL prefix when the hub knows its own address, else empty.
-
-    The web chat wants site-relative links (it is already on the origin);
-    text-only surfaces need absolute ones. ``AGENTS_HUB_PUBLIC_URL`` is the knob
-    for the public origin.
-    """
-    return (os.environ.get("AGENTS_HUB_PUBLIC_URL") or "").rstrip("/")
-
-
 def _resolve_label(kind_spec: KindSpec, record: Dict[str, Any]) -> Optional[str]:
     label = (record.get("label") or "").strip()
     if label:
@@ -208,9 +178,8 @@ def _resolve_label(kind_spec: KindSpec, record: Dict[str, Any]) -> Optional[str]
 def entity_payloads(records) -> List[Dict[str, Any]]:
     """Records → ``[{kind, id, action, title, url, icon, noun}, …]``.
 
-    URLs are site-relative — that is the form stored with the message and used
-    by the web chat, which is already on the origin. Text-only surfaces make
-    them absolute through :func:`entity_link_lines`.
+    URLs are site-relative: that is the form stored with the message and used
+    by the web chat, which is already on the origin.
 
     Unknown kinds, entities that no longer exist and records with no page to
     point at are dropped. Order follows first touch, so the links read in the
@@ -249,50 +218,7 @@ def entity_payloads(records) -> List[Dict[str, Any]]:
     return out
 
 
-def entity_link_lines(items, *, seen_text: str = "") -> List[str]:
-    """One markdown link line per entity payload, for surfaces that carry only text.
-
-    ``items`` are :func:`entity_payloads` results. Their site-relative URLs are
-    made absolute when ``AGENTS_HUB_PUBLIC_URL`` is set, so a link is
-    clickable. Entities already linked in ``seen_text`` are skipped — when the
-    agent wrote the link itself, repeating it is noise.
-    """
-    base = public_base()
-    lines: List[str] = []
-    seen: set = set()
-    for item in items or []:
-        if not isinstance(item, dict) or not item.get("url"):
-            continue
-        entity_id = item.get("id") or ""
-        if entity_id and entity_id in (seen_text or ""):
-            continue
-        # A flow reply concatenates several nodes' payloads; the same entity
-        # touched by two nodes still gets one line.
-        key = (item.get("kind") or "", entity_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        word = ACTION_WORDS.get(item.get("action") or "", item.get("action") or "updated")
-        url = f"{base}{item['url']}" if base and item["url"].startswith("/") else item["url"]
-        noun = item.get("noun") or item.get("kind") or "Entity"
-        lines.append(f"{item.get('icon') or '🔗'} {noun} {word}: [{item.get('title') or entity_id}]({url})")
-    return lines
-
-
-def append_entity_links(text: str, items, *, seen_text: str = "") -> str:
-    """Return ``text`` with a link line appended for each entity the run touched."""
-    lines = entity_link_lines(items, seen_text=seen_text or text or "")
-    if not lines:
-        return text
-    body = (text or "").rstrip()
-    return (body + "\n\n" if body else "") + "\n".join(lines)
-
-
 __all__ = [
     "KINDS",
-    "ACTION_WORDS",
-    "public_base",
     "entity_payloads",
-    "entity_link_lines",
-    "append_entity_links",
 ]

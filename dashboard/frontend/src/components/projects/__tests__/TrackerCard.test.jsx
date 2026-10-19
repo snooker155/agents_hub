@@ -3,8 +3,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import TrackerCard from '../TrackerCard';
 
-// Jira and Linear credentials live per workspace on the Connectors page
-// (connectors/channels/store.py: the default workspace's credentials work
+// Jira credentials live per workspace on the Connectors page
+// (connectors/store.py: the default workspace's credentials work
 // everywhere, another workspace's own work only there), so listing a
 // provider's projects for a tracker link needs that project's own workspace.
 

@@ -177,7 +177,7 @@ def save_chat(chat: Dict[str, Any]) -> Dict[str, Any]:
             # flight rather than from the client, which must not be able to
             # claim someone else's chat, and never rewritten once set: a
             # client that re-saves a conversation is not changing its owner.
-            # ``local`` outside AUTH_MODE=multi. See common/identity.py.
+            # ``local``, the one operator. See common/identity.py.
             "owner": ((existing or {}).get("owner") or _current_user_id()),
             "created_at": (chat.get("created_at")
                            or (existing or {}).get("created_at") or _now()),

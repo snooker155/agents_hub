@@ -335,9 +335,9 @@ def test_run_agent_tool_refuses_an_agent_not_available_here(two_ws):
 
 @pytest.fixture
 def direct_state(monkeypatch):
-    """The checks in tasks/delegate.py run in this process. Left alone, the
-    transport is the HTTP relay on Postgres (common.config.run_state_transport)
-    and the call would land on whatever backend listens on localhost."""
+    """The checks in tasks/delegate.py run in this process. A .env that sets
+    the HTTP relay (common.config.run_state_transport) would send the call to
+    whatever backend listens on localhost."""
     monkeypatch.setattr("common.config.run_state_transport", lambda: "db")
 
 

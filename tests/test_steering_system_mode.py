@@ -294,16 +294,6 @@ def test_an_agents_own_credential_may_not_send_one(client):
     assert steering.pending_count(run_id) == 0
 
 
-@pytest.fixture
-def multi(monkeypatch):
-    from common import identity
-    monkeypatch.setattr(identity, "current_mode", lambda: "multi")
-    monkeypatch.setattr(identity, "membership_role", lambda ws, uid: "editor")
-    from common import chat_store
-    monkeypatch.setattr(chat_store, "get_chat",
-                        lambda cid: {"id": cid, "owner": "u-owner"} if cid.startswith("conv-") else None)
-
-
 def test_a_team_run_takes_no_system_message(client, monkeypatch):
     from routes import steering as steering_routes
     team = SimpleNamespace(team_run_id="trun-1", workspace=None, status="running",

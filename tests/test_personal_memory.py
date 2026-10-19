@@ -241,22 +241,6 @@ def test_the_memory_tools_refuse_someone_elses_personal_pool(as_user):
     assert refused == {"ok": False, "error": f"Memory pool not found: {pool}"}
 
 
-def test_the_memory_page_shows_a_personal_pool_to_its_owner_only(as_user, monkeypatch):
-    from common import access
-
-    alice_pool = personal.ensure_pool("alice", "default")
-    shared = SharedMemory(name="shared", workspace="default")
-    monkeypatch.setattr(identity, "current_mode", lambda: "multi")
-    monkeypatch.setattr(access, "can_see_workspace", lambda principal, ws: True)
-    from routes.memory import _pool_visible
-
-    alice = identity.Principal(id="alice", username="alice", role="member", kind="user")
-    bob = identity.Principal(id="bob", username="bob", role="member", kind="user")
-    assert _pool_visible(alice, alice_pool)
-    assert not _pool_visible(bob, alice_pool)
-    assert _pool_visible(bob, shared)
-
-
 # ── saving from the chat ─────────────────────────────────────────────────────
 
 @pytest.fixture

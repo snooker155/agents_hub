@@ -20,7 +20,6 @@ runner = CliRunner()
 def direct(monkeypatch):
     from common.config import settings
     monkeypatch.setattr(settings, "secret_key", "cli test passphrase", raising=False)
-    monkeypatch.setattr(settings, "secret_backend", "local", raising=False)
     monkeypatch.setattr(cli, "_backend", SimpleNamespace(kind="direct"))
 
 

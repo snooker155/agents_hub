@@ -4,7 +4,6 @@ import { driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
 import './tour.css';
 import { useI18n } from '../../i18n';
-import { useFeatures } from '../features';
 import { buildSteps, createTourRunner } from './tourRunner';
 
 /**
@@ -26,7 +25,6 @@ function routerPath() {
 export function useWelcomeTour() {
   const { t } = useI18n();
   const navigate = useNavigate();
-  const features = useFeatures();
   const driverRef = useRef(null);
   const runnerRef = useRef(null);
 
@@ -56,7 +54,7 @@ export function useWelcomeTour() {
     });
     driverRef.current = d;
 
-    const steps = buildSteps(t, features);
+    const steps = buildSteps(t);
     const runner = createTourRunner({
       steps,
       navigate: (path) => navigate(path),
@@ -86,7 +84,7 @@ export function useWelcomeTour() {
     });
     runnerRef.current = runner;
     runner.start();
-  }, [t, features, navigate]);
+  }, [t, navigate]);
 
   return { start };
 }

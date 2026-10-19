@@ -42,8 +42,8 @@ from managers.run_manager import preopen_run, _utc_now_iso, _update_run, finaliz
 
 log = logging.getLogger(__name__)
 
-#: What a task launch is called on the queue.
-QUEUE_KIND = "task"
+#: The kind a task launch spec carries.
+LAUNCH_KIND = "task"
 
 
 def preregister_run(task_id: str, agent_id: str, session_id: Optional[str] = None) -> str:
@@ -277,10 +277,10 @@ def prepare_run(
             log.debug("prepare_run: ignored error", exc_info=True)
     execution_mode = _ws_agent_mode or agent_execution_mode()
 
-    # Audit trail (common/audit.py): who launched this run. No HTTP request is
-    # in flight here (a launch may be re-queued by a worker), so the actor
-    # comes from the current-user contextvar rather than a principal, "local"
-    # when nobody is signed in (single/token mode, or the system itself).
+    # Audit trail (common/audit.py): who launched this run. No HTTP request
+    # may be in flight here (a schedule or the watchdog launches too), so the
+    # actor comes from the current-user contextvar rather than a principal,
+    # "local" for the one operator or the system itself.
     try:
         from common import audit
         from common.auth import LOCAL_OPERATOR_ID
@@ -315,7 +315,7 @@ def prepare_run(
             logging.getLogger(__name__).debug("launch: container profile not recorded on run %s", run_id, exc_info=True)
 
     spec: Dict[str, Any] = {
-        "kind": QUEUE_KIND,
+        "kind": LAUNCH_KIND,
         "run_id": run_id,
         # This run's own delegate concurrency limit (see max_concurrent_delegates
         # above), applied to the child's environment in launch_prepared.
@@ -325,8 +325,8 @@ def prepare_run(
         "session_id": session_id,
         "instance_id": instance_id,
         "workspace": ws_name,
-        # Who asked for this run, so the process that spawns it (maybe a
-        # worker with no request in flight) can resolve user-scoped secrets.
+        # Who asked for this run, so the process that spawns it (maybe with
+        # no request in flight) can resolve user-scoped secrets.
         "launched_by": _current_user_id(),
         # The personal key it is charged to (common/attribution.py), handed to
         # the child so the runs it creates count against the same key.
@@ -337,8 +337,8 @@ def prepare_run(
         "priority": int(params.get("priority") or 0) if str(params.get("priority") or "").lstrip("-").isdigit() else 0,
     }
     # Extra variables the caller asked every launch in its context to carry
-    # (runtime.entity_launch.child_env), the run depth for one. Plain strings and never a secret, so they may travel
-    # through the queue; the key is absent when there are none.
+    # (runtime.entity_launch.child_env), the run depth for one. Plain strings
+    # and never a secret; the key is absent when there are none.
     extra = _child_env_extra()
     if extra:
         spec["env"] = extra

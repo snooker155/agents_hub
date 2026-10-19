@@ -18,7 +18,7 @@ from common import doctor
 
 
 def _snap(**parts):
-    base = {"providers": {}, "services": {}, "cluster": {}, "storage": {}}
+    base = {"providers": {}, "services": {}, "storage": {}}
     base.update(parts)
     return base
 
@@ -333,8 +333,7 @@ def test_skills_check_skips_without_skills_and_warns_on_a_high_flag(monkeypatch)
 def test_security_is_ok_for_the_laptop_case_and_names_each_problem(monkeypatch):
     import agents.capability_guard as guard
     import common.config as config
-    from common import db, identity, secrets
-    monkeypatch.setattr(identity, "current_mode", lambda: "single")
+    from common import db, secrets
     monkeypatch.setattr(config, "agent_execution_mode", lambda: "local")
     monkeypatch.setattr(guard, "guard_mode", lambda: "block")
     monkeypatch.setattr(secrets, "key_configured", lambda: False)

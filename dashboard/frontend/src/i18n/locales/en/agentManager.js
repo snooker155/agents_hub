@@ -7,7 +7,7 @@ export default {
   noAgentsMatch: 'No agent matches “{{query}}”.',
   agents: 'Agents',
   orchestrateYourFleetOfSpecialized: 'Orchestrate your fleet of specialized AI instances.',
-  scanningClusterForAgentNodes: 'Scanning the cluster for agent instances...',
+  loadingAgentInstances: 'Loading agent instances...',
   importAnAgentThatAlready: 'Import an agent that already lives in its own git repository',
   importFromRepo: 'Import from Repo',
   importedAgent: 'Imported agent',

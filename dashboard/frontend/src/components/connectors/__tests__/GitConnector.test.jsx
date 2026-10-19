@@ -5,7 +5,7 @@ import { I18nProvider } from '../../../i18n';
 import GitConnector from '../GitConnector';
 
 // The GitLab token and base URL, scoped per workspace like the other
-// connectors (connectors/channels/store.py): the default workspace's token
+// connectors (connectors/store.py): the default workspace's token
 // works everywhere, another workspace's own token works only there. The
 // config GET answers `sources` ("here" or "default") and, from the default
 // workspace, `defined_in`.

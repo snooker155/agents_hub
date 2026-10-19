@@ -1,6 +1,6 @@
 export default {
   toolInventory: 'Каталог инструментов',
-  browseToolsAvailableToAgents: 'Обзор инструментов, доступных агентам в кластере.',
+  browseToolsAvailableToAgents: 'Обзор инструментов, доступных агентам.',
   searchTools: 'Поиск инструментов…',
   loadingToolDefinitions: 'Загрузка описаний инструментов…',
   noToolsFound: 'Инструменты не найдены.',

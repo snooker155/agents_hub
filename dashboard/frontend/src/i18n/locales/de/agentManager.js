@@ -7,7 +7,7 @@ export default {
   noAgentsMatch: 'Kein Agent passt zu „{{query}}“.',
   agents: 'Agenten',
   orchestrateYourFleetOfSpecialized: 'Orchestrieren Sie Ihre Flotte spezialisierter KI Instanzen.',
-  scanningClusterForAgentNodes: 'Cluster wird nach Agenteninstanzen durchsucht…',
+  loadingAgentInstances: 'Agenteninstanzen werden geladen…',
   importAnAgentThatAlready: 'Einen Agenten importieren, der bereits in einem eigenen Git-Repository lebt',
   importFromRepo: 'Aus Repository importieren',
   importedAgent: 'Importierter Agent',
