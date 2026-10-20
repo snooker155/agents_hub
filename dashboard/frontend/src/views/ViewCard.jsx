@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   BarChart3, Table2, GitBranch, FileText, Image as ImageIcon,
-  Box, Maximize2, ExternalLink, X, AlertCircle, Boxes, Code2, Sigma, Atom, Waypoints, Activity,
+  Box, Maximize2, X, AlertCircle, Boxes, Code2, Sigma, Atom, Waypoints, Activity,
   Presentation, FileText as FileDoc, Camera,
 } from 'lucide-react';
 import { getView, applyViewOps, saveViewSnapshot } from '../api';
@@ -174,12 +174,6 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           <div className="flex items-center gap-1">
             {snapMsg && <span className="text-[10px] text-gray-400">{snapMsg}</span>}
-            {viewId && (
-              <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
-                className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-600">
-                <ExternalLink className="w-4 h-4" />
-              </Link>
-            )}
             {actions}
             {view && (
               <>
