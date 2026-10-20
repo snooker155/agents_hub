@@ -3,6 +3,8 @@ Streaming callbacks that forward agent events to subscribers.
 
 - ``SessionPublishCallback`` — POSTs token/tool events to the local dashboard's
   session SSE endpoint. Used by subprocess runs that are session continuations.
+- ``ChannelPublishCallback`` — the same events published straight onto a
+  broker channel, for a run the backend executes in its own process (a replay).
 
 The chat/session in-process streaming callbacks (``ChatStreamCallback`` in
 routes/chat.py and the session-chat callback in routes/sessions.py) remain in
@@ -215,3 +217,28 @@ class SessionPublishCallback(BaseCallbackHandler):
             "error": str(error),
             "run_id": self.run_id,
         })
+
+
+class ChannelPublishCallback(SessionPublishCallback):
+    """``SessionPublishCallback`` for a run executed inside the backend process.
+
+    The events, their batching and their order are the same; only the transport
+    differs. Instead of a POST to ``/api/sessions/<id>/events`` (which would be
+    the backend calling itself), each event is folded into the live tail
+    (``common.live_runs``) and published on ``channel`` through the broker, so
+    the browser's ``LiveRunStream`` reads it exactly as it reads a subprocess
+    run. ``channel`` stands in for the session id on every event.
+    """
+
+    def __init__(self, channel: str, run_id: str, agent_id: str):
+        super().__init__(channel, run_id, agent_id)
+        self._url = ""
+
+    def _send(self, event: dict) -> None:
+        try:
+            from common import live_runs
+            from common.session_broker import publish_event
+            live_runs.record_run_event(event, session_id=self.session_id)
+            publish_event(self.session_id, event)
+        except Exception:  # noqa: BLE001 - live streaming is best effort and must not fail the run
+            log.debug("_send: ignored error", exc_info=True)

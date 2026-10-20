@@ -34,6 +34,12 @@ export default {
   yes: 'yes',
   no: 'no',
   toolDecisions: 'Tool policy decisions',
+  decisionTool: 'Tool',
+  decisionMode: 'Mode',
+  decisionResult: 'Decision',
+  decisionBy: 'Decided by',
+  decisionReason: 'Reason',
+  decisionCached: 'repeat',
   auxCalls: 'Other model calls',
   auxTokens: '{{input}} in, {{output}} out tokens',
   auxPurpose: {

@@ -9,7 +9,7 @@ shared token-usage / JSON-safe helpers they previously duplicated.
 - control:   SharedProgressCallback, RunStopCallback, NodeFileCallback.
 - guards:    ToolRepetitionGuard (+ error), AskUserGuard (+ signal),
              ContextWindowGuard (+ error), RunBudgetGuard (+ RunBudgetExceeded).
-- streaming: SessionPublishCallback.
+- streaming: SessionPublishCallback, ChannelPublishCallback.
 """
 from agents.callbacks.run_statistics import (
     StatsCollectorCallback,
@@ -40,7 +40,7 @@ from agents.callbacks.guards import (
     turn_spend_usd,
     RunBudgetExceeded,
 )
-from agents.callbacks.streaming import SessionPublishCallback
+from agents.callbacks.streaming import ChannelPublishCallback, SessionPublishCallback
 from agents.callbacks.chat_stream import (
     ChatStreamCallback,
     DelegationStreamCallback,
@@ -75,6 +75,7 @@ __all__ = [
     "RunBudgetExceeded",
     "RunStopCallback",
     "NodeFileCallback",
+    "ChannelPublishCallback",
     "SessionPublishCallback",
     "ChatStreamCallback",
     "DelegationStreamCallback",

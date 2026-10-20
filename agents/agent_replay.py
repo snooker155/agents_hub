@@ -48,12 +48,15 @@ def replay_run(
     *,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    channel: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Replay ``run_id`` and return a structured diff of original vs replay.
 
     ``provider`` / ``model`` optionally override the model the replay uses (to
-    compare a run across models). Raises :class:`ReplayError` when the original
-    run has nothing replayable.
+    compare a run across models). ``channel``, when given, is a broker channel
+    the replay streams its tokens, thinking and tool calls on while it runs
+    (``ChannelPublishCallback``), closed by a ``done`` event. Raises
+    :class:`ReplayError` when the original run has nothing replayable.
     """
     from managers import run_manager as rm
 
@@ -130,10 +133,20 @@ def replay_run(
         )
         rm.seed_run_input_context(replay_run_id, getattr(agent, "system_prompt", "") or "", user_message)
 
+        publisher = None
+        if channel:
+            from agents.callbacks.streaming import ChannelPublishCallback
+            publisher = ChannelPublishCallback(channel, replay_run_id, agent_id)
+            publisher._post({"type": "meta", "run_id": replay_run_id, "session_id": channel,
+                             "agent_id": agent_id})
+
         from agents.agent_invoke import invoke_agent
-        invocation = invoke_agent(agent, user_message, run_id=replay_run_id)
+        invocation = invoke_agent(agent, user_message, run_id=replay_run_id,
+                                  extra_callbacks=[publisher] if publisher else ())
         result = invocation.result
         rm.close_run_from_result(replay_run_id, result, process=invocation.process)
+        if publisher:
+            publisher.publish_done(result, invocation)
 
         replay_ok = bool(getattr(result, "ok", False))
         replay_text = str(getattr(result, "agent_output", "") or "") if replay_ok else ""
@@ -144,11 +157,14 @@ def replay_run(
         rep_outbound = int(tu.get("outbound_tokens") or 0)
         replay_duration_ms = invocation.duration_ms
 
-    diff = "".join(difflib.unified_diff(
-        original_text.splitlines(keepends=True),
-        replay_text.splitlines(keepends=True),
+    # Lines without their ends, joined back with "\n": with keepends a text
+    # whose last line has no newline glued the next diff line onto it.
+    diff = "\n".join(difflib.unified_diff(
+        original_text.splitlines(),
+        replay_text.splitlines(),
         fromfile=f"original ({original.get('model') or '?'})",
         tofile=f"replay ({resolved_model or '?'})",
+        lineterm="",
     ))
 
     return {

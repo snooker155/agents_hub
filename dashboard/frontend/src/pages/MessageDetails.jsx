@@ -1,14 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical, SquareTerminal, Wrench } from 'lucide-react';
+import { ChevronLeft, Loader, RefreshCw, MessageSquare, ScrollText, Bot, FileText, Workflow, Square, Globe, CheckCircle, XCircle, Clock, AlertCircle, Repeat, FlaskConical, SquareTerminal, Wrench, KeySquare } from 'lucide-react';
 
-import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage, replayRun } from '../api';
+import { getMessage, getMessageLogs, getMessageInsights, getMessageLive, stopMessage } from '../api';
 import LiveRunStream from '../components/LiveRunStream';
 import Citations from '../components/chat/Citations';
 import RunLoopPanel from '../components/run/RunLoopPanel';
 import LoadedTools from '../components/run/LoadedTools';
 import { loadedToolsOf } from '../components/run/loadedToolsOf';
 import AgentVersion from '../components/run/AgentVersion';
+import ToolDecisions from '../components/run/ToolDecisions';
+import { toolDecisionsOf } from '../components/run/toolDecisionsOf';
+import ReplayRunModal from '../components/run/ReplayRunModal';
 import RunOverrides from '../components/run/RunOverrides';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { LazyTerminalPanel } from '../components/terminal';
@@ -21,6 +24,7 @@ import { ExternalRunBadge } from '../components/RunOriginBadges';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 import { fmtRunUsd } from '../components/dashboard/format';
+import { conversationLink } from '../lib/conversationLink';
 // One label and one value style for every field of the metadata card, so an
 // id, a date and a name read at the same size.
 const META_LABEL = 'text-gray-500';
@@ -300,10 +304,6 @@ export default function MessageDetails() {
   const [liveTurn, setLiveTurn] = useState(null);
   const [stopping, setStopping] = useState(false);
   const [replayOpen, setReplayOpen] = useState(false);
-  const [replaying, setReplaying] = useState(false);
-  const [replayModel, setReplayModel] = useState('');
-  const [replayResult, setReplayResult] = useState(null);
-  const [replayError, setReplayError] = useState('');
 
   // "To eval case" — seeding an eval dataset from real traffic is the
   // cheapest way to build one, so the button lives next to Replay rather than
@@ -365,21 +365,6 @@ export default function MessageDetails() {
       console.error('Failed to stop message', err);
     } finally {
       setStopping(false);
-    }
-  };
-
-  const handleReplay = async () => {
-    setReplaying(true);
-    setReplayError('');
-    setReplayResult(null);
-    try {
-      const body = replayModel.trim() ? { model: replayModel.trim() } : {};
-      const { data } = await replayRun(runId, body);
-      setReplayResult(data);
-    } catch (err) {
-      setReplayError(err.response?.data?.detail || t('messageDetails.replayFailed'));
-    } finally {
-      setReplaying(false);
     }
   };
 
@@ -474,7 +459,7 @@ export default function MessageDetails() {
           )}
           {message?.channel !== 'replay' && (message?.status === 'completed' || message?.status === 'failed') && (
             <button
-              onClick={() => setReplayOpen((v) => !v)}
+              onClick={() => setReplayOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-indigo-200 rounded-lg text-indigo-600 hover:bg-indigo-50"
             >
               <Repeat className="w-4 h-4" />
@@ -516,6 +501,8 @@ export default function MessageDetails() {
           (run.overrides: model, instructions, tools, skills, MCP, policy, schema). */}
       <RunOverrides run={message} />
 
+      {replayOpen && <ReplayRunModal run={message} onClose={() => setReplayOpen(false)} />}
+
       {/* Metadata card */}
       <div className="bg-white border border-gray-200 rounded-xl p-5 shrink-0">
 
@@ -531,57 +518,6 @@ export default function MessageDetails() {
         <p className="text-xs text-green-600 mt-2">{caseSavedMessage}</p>
       )}
 
-      {/* Replay / regression panel */}
-      {replayOpen && (
-        <div className="mt-4 border border-indigo-100 bg-indigo-50/40 rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-gray-700">{t('messageDetails.replayThisRun')}</span>
-            <input
-              value={replayModel}
-              onChange={(e) => setReplayModel(e.target.value)}
-              placeholder={`Model override (default: ${message?.model || 'same'})`}
-              className="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none w-72"
-            />
-            <button
-              onClick={handleReplay}
-              disabled={replaying}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {replaying ? <Loader className="w-4 h-4 animate-spin" /> : <Repeat className="w-4 h-4" />}
-              {replaying ? t('common.running') : t('messageDetails.runReplay')}
-            </button>
-            <span className="text-xs text-gray-500">{t('messageDetails.reInvokesTheAgentOn')}</span>
-          </div>
-
-          {replayError && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-2 text-sm">{replayError}</div>}
-
-          {replayResult && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 text-sm">
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${replayResult.identical ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                  {replayResult.identical ? <CheckCircle className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-                  {replayResult.identical ? t('messageDetails.outputIdentical') : t('messageDetails.outputDiffers')}
-                </span>
-                {!replayResult.replay?.ok && <span className="text-xs text-red-600">{t('messageDetails.replayFailed')}: {replayResult.replay?.error}</span>}
-                <Link to={`/messages/${replayResult.replay_run_id}`} className="text-xs text-indigo-600 hover:underline ml-auto">{t('messageDetails.openReplayRun')}</Link>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-white border border-gray-200 rounded-lg p-3">
-                  <div className="text-xs text-gray-500 mb-1">{t('messageDetails.original')} · {replayResult.original?.model || '—'} · ${Number(replayResult.original?.cost || 0).toFixed(4)}</div>
-                  <pre className="text-xs whitespace-pre-wrap text-gray-800 max-h-64 overflow-auto">{replayResult.original?.text || t('messageDetails.empty')}</pre>
-                </div>
-                <div className="bg-white border border-gray-200 rounded-lg p-3">
-                  <div className="text-xs text-gray-500 mb-1">{t('messageDetails.replay')} · {replayResult.replay?.model || '—'} · ${Number(replayResult.replay?.cost || 0).toFixed(4)} · {replayResult.replay?.duration_ms || 0}ms</div>
-                  <pre className="text-xs whitespace-pre-wrap text-gray-800 max-h-64 overflow-auto">{replayResult.replay?.text || t('messageDetails.empty')}</pre>
-                </div>
-              </div>
-              {replayResult.diff && (
-                <pre className="text-xs font-mono whitespace-pre-wrap bg-gray-900 text-gray-100 rounded-lg p-3 max-h-64 overflow-auto">{replayResult.diff}</pre>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Metadata */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2.5 text-sm">
@@ -697,12 +633,18 @@ export default function MessageDetails() {
             </span>
           </div>
         )}
-        {message?.session_type === 'chat' && (
-          <div>
-            <span className={META_LABEL}>{t('messageDetails.conversationId')}</span>{' '}
-            <span className={META_VALUE}>{message?.task_id || insights?.session_task_id || '—'}</span>
-          </div>
-        )}
+        {message?.session_type === 'chat' && (() => {
+          const convId = message?.task_id || insights?.session_task_id || '';
+          const href = conversationLink(convId, message);
+          return (
+            <div>
+              <span className={META_LABEL}>{t('messageDetails.conversationId')}</span>{' '}
+              {href
+                ? <Link to={href} className={`${META_VALUE} !text-indigo-600 hover:underline`}>{convId}</Link>
+                : <span className={META_VALUE}>{convId || '—'}</span>}
+            </div>
+          );
+        })()}
         <div><span className={META_LABEL}>{t('messageDetails.workspace')}</span> <span className={META_VALUE}>{message?.workspace || '—'}</span></div>
         <div><span className={META_LABEL}>{t('messageDetails.started')}</span> <span className={META_VALUE}>{fmtDate(message?.started_at)}</span></div>
         <div><span className={META_LABEL}>{t('messageDetails.finished')}</span> <span className={META_VALUE}>{fmtDate(message?.finished_at)}</span></div>
@@ -786,6 +728,10 @@ export default function MessageDetails() {
         <nav className="flex flex-wrap gap-2 -mb-px">
           {[
             { id: 'insights', icon: MessageSquare, label: t('messageDetails.tabs.insights') },
+            // Only a run whose calls went through the tool policy has this tab.
+            ...(toolDecisionsOf(message).length
+              ? [{ id: 'tool_decisions', icon: KeySquare, label: t('messageDetails.tabs.toolDecisions') }]
+              : []),
             { id: 'input_context', icon: MessageSquare, label: t('messageDetails.tabs.inputContext') },
             { id: 'response', icon: Bot, label: t('messageDetails.tabs.response') },
             { id: 'logs', icon: FileText, label: t('messageDetails.tabs.logs') },
@@ -847,6 +793,12 @@ export default function MessageDetails() {
               {JSON.stringify(responseJson, null, 2)}
             </pre>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'tool_decisions' && (
+        <div className="flex-1 min-h-0 overflow-y-auto pb-6">
+          <ToolDecisions run={message} />
         </div>
       )}
 
