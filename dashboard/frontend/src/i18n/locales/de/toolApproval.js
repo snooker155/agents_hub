@@ -22,8 +22,6 @@ export default {
   approve: 'Freigeben',
   deny: 'Ablehnen',
   waitsUntil: 'Wartet bis {{time}}, danach wird der Aufruf abgelehnt.',
-  decidedBy: 'Beantwortet von {{name}}',
-  noteShown: 'Notiz: {{note}}',
   waiting: 'Wartet auf Ihre Freigabe für {{tool}}',
   errors: {
     forbidden: 'Nur der Besitzer des Laufs oder ein Admin kann diesen Aufruf beantworten.',

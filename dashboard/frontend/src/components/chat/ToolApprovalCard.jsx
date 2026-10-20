@@ -3,8 +3,8 @@
  * (common/tool_approvals.py, docs/hooks.md "In chat"): what the agent wants to
  * run and why it was held, a note, Approve and Deny. The answer goes to the
  * server; the turn itself carries on (or reads the refusal) and streams
- * `tool_approval_resolved`, which settles the card. A call a person approved
- * leaves no card behind.
+ * `tool_approval_resolved`. An answered card leaves at once (the reply says
+ * what became of the call); only an approval auto mode gave stays on show.
  *
  * `ToolApprovals` is the list under a live bubble. A chat reopened while its
  * turn waits has no `tool_approval` event to replay, so the list also asks the
@@ -67,7 +67,7 @@ function GenericToolApprovalCard({ approval, live = true }) {
   const [error, setError] = useState('');
   // What the server said to our own answer counts until the stream confirms it.
   const status = approval.status !== 'pending' ? approval.status : (answered?.status || 'pending');
-  const settled = answered && approval.status === 'pending' ? answered : approval;
+  const auto = Boolean(approval.auto || approval.by === 'auto_mode');
   const open = status === 'pending' && live;
   const input = prettyInput(approval.input);
   const until = clockTime(approval.expires_at);
@@ -85,9 +85,10 @@ function GenericToolApprovalCard({ approval, live = true }) {
     }
   };
 
-  // Approved by a person: nothing left to say, the call just runs. A denial and
-  // an approval auto mode gave stay, they tell the person something.
-  if (status === 'approved' && !(approval.auto || approval.by === 'auto_mode')) return null;
+  // Answered (here or elsewhere), timed out or stopped: the card has done its
+  // job and goes at once; the reply says what became of the call. Only an
+  // approval auto mode gave stays, since nobody was asked.
+  if (status !== 'pending' && !(status === 'approved' && auto)) return null;
 
   return (
     <div
@@ -150,12 +151,6 @@ function GenericToolApprovalCard({ approval, live = true }) {
       {status === 'approved' ? (
         <p className="mt-0.5 text-[11px] text-amber-700" data-testid="tool-approval-auto">
           {t('toolApproval.approvedAutomatically')}
-        </p>
-      ) : status !== 'pending' && (settled.decided_by_name || settled.note) ? (
-        <p className="mt-0.5 text-[11px] text-gray-500" data-testid="tool-approval-outcome">
-          {settled.decided_by_name ? t('toolApproval.decidedBy', { name: settled.decided_by_name }) : null}
-          {settled.decided_by_name && settled.note ? ' · ' : null}
-          {settled.note ? t('toolApproval.noteShown', { note: settled.note }) : null}
         </p>
       ) : null}
       {error ? <p className="mt-0.5 text-[11px] text-red-600" role="alert">{error}</p> : null}

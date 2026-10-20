@@ -49,12 +49,12 @@ describe('ToolApprovalCard', () => {
     await waitFor(() => expect(screen.queryByTestId('tool-approval-card')).toBeNull());
   });
 
-  it('denies', async () => {
+  it('denies and goes away', async () => {
     decideToolApproval.mockResolvedValue({ data: { approval: { ...PENDING, status: 'denied' } } });
     show(<ToolApprovalCard approval={PENDING} />);
     fireEvent.click(screen.getByRole('button', { name: 'Deny' }));
     await waitFor(() => expect(decideToolApproval).toHaveBeenCalledWith('appr_1', 'deny', ''));
-    await waitFor(() => expect(screen.getByText('Denied')).toBeTruthy());
+    await waitFor(() => expect(screen.queryByTestId('tool-approval-card')).toBeNull());
   });
 
   it('says who may answer when the server refuses', async () => {
@@ -65,11 +65,12 @@ describe('ToolApprovalCard', () => {
     expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy();
   });
 
-  it('settles from the stream with the answer and the note', () => {
-    show(<ToolApprovalCard approval={{ ...PENDING, status: 'denied', decided_by_name: 'ann', note: 'use staging' }} />);
-    expect(screen.getByText('Denied')).toBeTruthy();
-    expect(screen.getByTestId('tool-approval-outcome').textContent).toBe('Answered by ann · Note: use staging');
-    expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
+  it('leaves nothing once the stream says it was answered elsewhere or timed out', () => {
+    for (const status of ['denied', 'expired', 'cancelled']) {
+      const { unmount } = show(<ToolApprovalCard approval={{ ...PENDING, status, decided_by_name: 'ann' }} />);
+      expect(screen.queryByTestId('tool-approval-card')).toBeNull();
+      unmount();
+    }
   });
 
   it('leaves nothing once the stream says a person approved it', () => {

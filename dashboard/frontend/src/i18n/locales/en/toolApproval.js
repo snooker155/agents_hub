@@ -22,8 +22,6 @@ export default {
   approve: 'Approve',
   deny: 'Deny',
   waitsUntil: 'Waits until {{time}}, then the call is refused.',
-  decidedBy: 'Answered by {{name}}',
-  noteShown: 'Note: {{note}}',
   waiting: 'Waiting for your approval of {{tool}}',
   errors: {
     forbidden: 'Only the run\'s owner or an admin can answer this call.',
