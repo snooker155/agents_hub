@@ -3,8 +3,8 @@
  * (common/tool_approvals.py, docs/hooks.md "In chat"): what the agent wants to
  * run and why it was held, a note, Approve and Deny. The answer goes to the
  * server; the turn itself carries on (or reads the refusal) and streams
- * `tool_approval_resolved`. An answered card leaves at once (the reply says
- * what became of the call); only an approval auto mode gave stays on show.
+ * `tool_approval_resolved`. Only a waiting call has a card: an answered one
+ * leaves at once, and one auto mode approved never shows.
  *
  * `ToolApprovals` is the list under a live bubble. A chat reopened while its
  * turn waits has no `tool_approval` event to replay, so the list also asks the
@@ -16,14 +16,6 @@ import { useI18n } from '../../i18n';
 import { decideToolApproval, listRunApprovals } from '../../api/toolApprovals';
 import { mergeServerApprovals } from './toolApprovals';
 import { ConnectionProposalCard } from './ConnectionProposalCard';
-
-const STATUS_CLASSES = {
-  pending: 'bg-amber-100 text-amber-800',
-  approved: 'bg-emerald-100 text-emerald-700',
-  denied: 'bg-red-100 text-red-700',
-  expired: 'bg-gray-100 text-gray-600',
-  cancelled: 'bg-gray-100 text-gray-600',
-};
 
 function prettyInput(input) {
   if (input == null || input === '') return '';
@@ -67,7 +59,6 @@ function GenericToolApprovalCard({ approval, live = true }) {
   const [error, setError] = useState('');
   // What the server said to our own answer counts until the stream confirms it.
   const status = approval.status !== 'pending' ? approval.status : (answered?.status || 'pending');
-  const auto = Boolean(approval.auto || approval.by === 'auto_mode');
   const open = status === 'pending' && live;
   const input = prettyInput(approval.input);
   const until = clockTime(approval.expires_at);
@@ -85,10 +76,10 @@ function GenericToolApprovalCard({ approval, live = true }) {
     }
   };
 
-  // Answered (here or elsewhere), timed out or stopped: the card has done its
-  // job and goes at once; the reply says what became of the call. Only an
-  // approval auto mode gave stays, since nobody was asked.
-  if (status !== 'pending' && !(status === 'approved' && auto)) return null;
+  // Answered (here or elsewhere), timed out, stopped or approved by auto mode:
+  // the card has done its job, or had none, and is not shown; the reply says
+  // what became of the call.
+  if (status !== 'pending') return null;
 
   return (
     <div
@@ -107,7 +98,7 @@ function GenericToolApprovalCard({ approval, live = true }) {
           </span>
         ) : <span className="flex-1" />}
         <span
-          className={`flex-shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium ${STATUS_CLASSES[status] || STATUS_CLASSES.expired}`}
+          className="flex-shrink-0 rounded-full bg-amber-100 px-1.5 py-px text-[10px] font-medium text-amber-800"
           title={open && until ? t('toolApproval.waitsUntil', { time: until }) : undefined}
         >
           {t(`toolApproval.status.${status}`)}
@@ -147,11 +138,6 @@ function GenericToolApprovalCard({ approval, live = true }) {
             {t('toolApproval.deny')}
           </button>
         </div>
-      ) : null}
-      {status === 'approved' ? (
-        <p className="mt-0.5 text-[11px] text-amber-700" data-testid="tool-approval-auto">
-          {t('toolApproval.approvedAutomatically')}
-        </p>
       ) : null}
       {error ? <p className="mt-0.5 text-[11px] text-red-600" role="alert">{error}</p> : null}
     </div>

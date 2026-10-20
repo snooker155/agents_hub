@@ -125,14 +125,13 @@ describe('auto mode in the chat page', () => {
 });
 
 describe('a card auto mode approved', () => {
-  it('keeps the auto flag from the stream and says who approved it', () => {
+  it('keeps the auto flag from the stream and shows no card', () => {
     const approvals = upsertApproval([], {
       approval_id: 'appr_9', tool: 'run_shell', status: 'approved', by: 'auto_mode', auto: true,
       decided_by_name: 'auto mode',
     });
     expect(approvals[0].auto).toBe(true);
     render(<I18nProvider><ToolApprovalCard approval={approvals[0]} /></I18nProvider>);
-    expect(screen.getByTestId('tool-approval-auto').textContent).toContain('auto mode is on');
-    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByTestId('tool-approval-card')).toBeNull();
   });
 });
