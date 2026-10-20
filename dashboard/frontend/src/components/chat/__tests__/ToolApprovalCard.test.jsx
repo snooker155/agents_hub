@@ -40,14 +40,13 @@ describe('ToolApprovalCard', () => {
     expect(screen.getByText('Waiting for you')).toBeTruthy();
   });
 
-  it('approves with the note', async () => {
+  it('approves with the note and goes away', async () => {
     decideToolApproval.mockResolvedValue({ data: { approval: { ...PENDING, status: 'approved' } } });
     show(<ToolApprovalCard approval={PENDING} />);
     fireEvent.change(screen.getByLabelText('Note for the agent'), { target: { value: ' only build/ ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(decideToolApproval).toHaveBeenCalledWith('appr_1', 'approve', 'only build/'));
-    await waitFor(() => expect(screen.getByText('Approved')).toBeTruthy());
-    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId('tool-approval-card')).toBeNull());
   });
 
   it('denies', async () => {
@@ -71,6 +70,11 @@ describe('ToolApprovalCard', () => {
     expect(screen.getByText('Denied')).toBeTruthy();
     expect(screen.getByTestId('tool-approval-outcome').textContent).toBe('Answered by ann · Note: use staging');
     expect(screen.queryByRole('button', { name: 'Deny' })).toBeNull();
+  });
+
+  it('leaves nothing once the stream says a person approved it', () => {
+    show(<ToolApprovalCard approval={{ ...PENDING, status: 'approved', decided_by_name: 'ann' }} />);
+    expect(screen.queryByTestId('tool-approval-card')).toBeNull();
   });
 
   it('offers no buttons once the turn is over', () => {
