@@ -29,8 +29,10 @@ function formatTokens(n) {
  * @param {function} [props.onClear] clear-the-chat action; offered only where
  *   the context is actually tight, so the control appears when it is the answer.
  * @param {string}   [props.className]
+ * @param {boolean}  [props.inset] drawn inside another box (the chat composer):
+ *   the overflow notice drops its own border and corners, the box has them.
  */
-export default function ContextMeter({ usage, onClear = null, className = '' }) {
+export default function ContextMeter({ usage, onClear = null, className = '', inset = false }) {
   const { t } = useI18n();
   const { used = 0, window: limit = 0, overflow = false } = usage || {};
 
@@ -50,7 +52,7 @@ export default function ContextMeter({ usage, onClear = null, className = '' }) 
   if (overflow) {
     return (
       <div
-        className={`flex items-start gap-1.5 rounded-md border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/50 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-300 ${className}`}
+        className={`flex items-start gap-1.5 ${inset ? '' : 'rounded-md border border-red-200 dark:border-red-900 px-2'} bg-red-50 dark:bg-red-950/50 py-1.5 text-[11px] text-red-700 dark:text-red-300 ${className}`}
       >
         <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
         <div className="flex-1 min-w-0">

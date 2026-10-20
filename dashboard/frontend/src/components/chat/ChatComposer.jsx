@@ -251,132 +251,134 @@ export default function ChatComposer() {
               </div>
             )}
 
-            {/* What is left of the model's window, read where the next message
-                is typed. Clearing is offered once the context is tight; /clear
-                is the same action from the keyboard. */}
-            <ContextMeter
-              usage={contextUsage}
-              onClear={loading ? null : () => selectCommand({ name: '/clear' })}
-              className="mb-2 px-1"
-            />
-
             <SteerBar steering={steering} t={t} />
 
             <div
               data-testid="composer-box"
-              className={`flex items-center gap-3 border rounded-2xl px-4 py-3 bg-white shadow-lg transition-all
+              className={`border rounded-2xl bg-white shadow-lg transition-all
                 ${autoMode?.on ? 'border-amber-400' : 'border-gray-300'}`}
             >
-              {/* Attach: a file from the computer, or a record the hub already
-                  holds (task / view / project / loop / …). An entity
-                  picked here is folded into the prompt whether or not the agent
-                  owns a tool that could have fetched it. */}
-              <div className="relative flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setAttachMenuOpen((open) => !open)}
-                  className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40"
-                  title={t('chat.attachMenuTitle')}
-                  disabled={loading || !hasTarget}
-                >
-                  <Paperclip className="w-4 h-4" />
-                </button>
+              <div className="flex items-center gap-3 px-4 py-3">
+                {/* Attach: a file from the computer, or a record the hub already
+                    holds (task / view / project / loop / …). An entity
+                    picked here is folded into the prompt whether or not the agent
+                    owns a tool that could have fetched it. */}
+                <div className="relative flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setAttachMenuOpen((open) => !open)}
+                    className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40"
+                    title={t('chat.attachMenuTitle')}
+                    disabled={loading || !hasTarget}
+                  >
+                    <Paperclip className="w-4 h-4" />
+                  </button>
 
-                {attachMenuOpen && (
-                  <>
-                    {/* Click-away layer: a menu anchored above the composer has
-                        no other way to close without stealing focus. */}
-                    <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
-                    <div className="absolute bottom-10 left-0 z-50 w-60 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg py-1">
-                      <button
-                        type="button"
-                        onClick={() => { setAttachMenuOpen(false); fileInputRef.current?.click(); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        <Upload className="w-4 h-4 text-gray-400" />
-                        {t('chat.attachFiles')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setAttachMenuOpen(false); setFilePickerOpen(true); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        <FolderOpen className="w-4 h-4 text-gray-400" />
-                        {t('files.chat.fromWorkspace')}
-                      </button>
-                      {contextKinds.length > 0 && (
-                        <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-gray-400 border-t border-gray-100 mt-1">
-                          {t('chat.attachFromHub')}
-                        </div>
-                      )}
-                      {contextKinds.map((k) => (
+                  {attachMenuOpen && (
+                    <>
+                      {/* Click-away layer: a menu anchored above the composer has
+                          no other way to close without stealing focus. */}
+                      <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
+                      <div className="absolute bottom-10 left-0 z-50 w-60 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg py-1">
                         <button
-                          key={k.kind}
                           type="button"
-                          onClick={() => { setAttachMenuOpen(false); setPickerKind(k.kind); }}
+                          onClick={() => { setAttachMenuOpen(false); fileInputRef.current?.click(); }}
                           className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
                         >
-                          <span aria-hidden="true">{k.icon}</span>
-                          {t(`chat.entityKind.${k.kind}`, { defaultValue: k.noun })}
+                          <Upload className="w-4 h-4 text-gray-400" />
+                          {t('chat.attachFiles')}
                         </button>
-                      ))}
-                    </div>
+                        <button
+                          type="button"
+                          onClick={() => { setAttachMenuOpen(false); setFilePickerOpen(true); }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          <FolderOpen className="w-4 h-4 text-gray-400" />
+                          {t('files.chat.fromWorkspace')}
+                        </button>
+                        {contextKinds.length > 0 && (
+                          <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-gray-400 border-t border-gray-100 mt-1">
+                            {t('chat.attachFromHub')}
+                          </div>
+                        )}
+                        {contextKinds.map((k) => (
+                          <button
+                            key={k.kind}
+                            type="button"
+                            onClick={() => { setAttachMenuOpen(false); setPickerKind(k.kind); }}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          >
+                            <span aria-hidden="true">{k.icon}</span>
+                            {t(`chat.entityKind.${k.kind}`, { defaultValue: k.noun })}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <textarea
+                  ref={textareaRef}
+                  className="flex-1 resize-none text-base text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
+                  placeholder={steering.busy ? t('steering.placeholderBusy') : composerPlaceholder}
+                  rows={1}
+                  value={input}
+                  disabled={!hasTarget}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setInput(val);
+                    resizeTextarea();
+                    setCommandMenuOpen(val.startsWith('/'));
+                    setCommandMenuIndex(0);
+                  }}
+                  onKeyDown={onKeyDown}
+                />
+
+                {steering.busy ? (
+                  <>
+                    {input.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => steering.steer()}
+                        title={steering.activeMode ? t(`steering.modeHints.${steering.activeMode}`) : t('steering.send')}
+                        data-testid="steer-send"
+                        className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
+                          bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold transition-colors"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        {steering.activeMode ? t(`steering.modes.${steering.activeMode}`) : t('steering.send')}
+                      </button>
+                    )}
+                    <button
+                      onClick={steering.stop}
+                      title={t('chat.stop')}
+                      className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors"
+                    >
+                      <StopCircle className="w-4 h-4" />
+                    </button>
                   </>
+                ) : (
+                  <button
+                    onClick={sendMessage}
+                    disabled={(!input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0) || !hasTarget}
+                    title={t('chat.sendEnter')}
+                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full
+                      bg-indigo-600 text-white hover:bg-indigo-700
+                      disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
                 )}
               </div>
-
-              <textarea
-                ref={textareaRef}
-                className="flex-1 resize-none text-base text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
-                placeholder={steering.busy ? t('steering.placeholderBusy') : composerPlaceholder}
-                rows={1}
-                value={input}
-                disabled={!hasTarget}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setInput(val);
-                  resizeTextarea();
-                  setCommandMenuOpen(val.startsWith('/'));
-                  setCommandMenuIndex(0);
-                }}
-                onKeyDown={onKeyDown}
+              {/* What is left of the model's window, under the line it is
+                  spent from. Clearing is offered once the context is tight;
+                  /clear is the same action from the keyboard. */}
+              <ContextMeter
+                usage={contextUsage}
+                onClear={loading ? null : () => selectCommand({ name: '/clear' })}
+                className="border-t border-gray-100 rounded-b-2xl px-4 py-1.5"
+                inset
               />
-
-              {steering.busy ? (
-                <>
-                  {input.trim() && (
-                    <button
-                      type="button"
-                      onClick={() => steering.steer()}
-                      title={steering.activeMode ? t(`steering.modeHints.${steering.activeMode}`) : t('steering.send')}
-                      data-testid="steer-send"
-                      className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
-                        bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold transition-colors"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      {steering.activeMode ? t(`steering.modes.${steering.activeMode}`) : t('steering.send')}
-                    </button>
-                  )}
-                  <button
-                    onClick={steering.stop}
-                    title={t('chat.stop')}
-                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors"
-                  >
-                    <StopCircle className="w-4 h-4" />
-                  </button>
-                </>
-              ) : (
-                <button
-                  onClick={sendMessage}
-                  disabled={(!input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0) || !hasTarget}
-                  title={t('chat.sendEnter')}
-                  className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full
-                    bg-indigo-600 text-white hover:bg-indigo-700
-                    disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                </button>
-              )}
             </div>
             {attachmentError && (
               <p className="text-xs text-red-600 mt-2">{attachmentError}</p>
