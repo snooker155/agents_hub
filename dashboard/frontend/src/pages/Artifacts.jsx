@@ -976,10 +976,17 @@ export default function Artifacts() {
 
   // The folder the cards show, kept in the URL so a folder can be linked to
   // (the Views folder is `?folder=__views__`, where the old /views lands).
+  // Going to another folder closes the open panel: what it showed is no
+  // longer among the cards. Built from the current params, not this render's,
+  // so it does not put back a panel the outside press just closed.
   const setFolder = (path) => {
-    const next = new URLSearchParams(searchParams);
-    if (path) next.set('folder', path); else next.delete('folder');
-    setSearchParams(next);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (path) next.set('folder', path); else next.delete('folder');
+      next.delete('file');
+      next.delete('view');
+      return next;
+    });
   };
 
   const onOpenView = (viewId) => openView(viewId);
