@@ -25,9 +25,8 @@ function SteerBar({ steering, t }) {
   return (
     <div className="mb-2 space-y-1.5" data-testid="steer-bar">
       {steering.busy && modes.length > 1 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-gray-500">{t('steering.modeLabel')}</span>
-          <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 p-0.5" role="radiogroup">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="inline-flex flex-shrink-0 rounded-full border border-gray-200 bg-gray-50 p-0.5" role="radiogroup">
             {modes.map((m) => (
               <button
                 key={m}
@@ -35,7 +34,7 @@ function SteerBar({ steering, t }) {
                 role="radio"
                 aria-checked={activeMode === m}
                 onClick={() => setMode(m)}
-                className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${
+                className={`px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap rounded-full transition-colors ${
                   activeMode === m ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                 }`}
               >
@@ -43,7 +42,9 @@ function SteerBar({ steering, t }) {
               </button>
             ))}
           </div>
-          <span className="text-[11px] text-gray-400">{t(`steering.modeHints.${activeMode}`)}</span>
+          <span className="min-w-0 truncate text-[11px] text-gray-400" title={t(`steering.modeHints.${activeMode}`)}>
+            {t(`steering.modeHints.${activeMode}`)}
+          </span>
         </div>
       )}
       {steering.busy && modes.length === 1 && (
