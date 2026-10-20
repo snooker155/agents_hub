@@ -16,7 +16,6 @@ export default {
     guardrail: 'Eine Leitplanke',
     auto_mode: 'Automodus',
   },
-  approvedAutomatically: 'Automatisch freigegeben: der Automodus ist in diesem Chat an',
   noteLabel: 'Notiz für den Agenten',
   notePlaceholder: 'Eine Notiz für den Agenten (optional)',
   approve: 'Freigeben',

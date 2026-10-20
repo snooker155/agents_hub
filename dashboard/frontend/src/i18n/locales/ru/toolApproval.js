@@ -16,7 +16,6 @@ export default {
     guardrail: 'Ограничитель',
     auto_mode: 'Авторежим',
   },
-  approvedAutomatically: 'Одобрено автоматически: в этом чате включён авторежим',
   noteLabel: 'Заметка для агента',
   notePlaceholder: 'Заметка для агента (необязательно)',
   approve: 'Одобрить',

@@ -16,7 +16,6 @@ export default {
     guardrail: 'A guardrail',
     auto_mode: 'Auto mode',
   },
-  approvedAutomatically: 'Approved automatically: auto mode is on in this chat',
   noteLabel: 'Note for the agent',
   notePlaceholder: 'A note for the agent (optional)',
   approve: 'Approve',
