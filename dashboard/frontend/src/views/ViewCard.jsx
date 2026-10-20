@@ -156,8 +156,10 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
             )}
           </div>
         </div>
-        {/* The buttons, and the kind under them. */}
-        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+        {/* The buttons, and the kind under them. Pulled into the corner by
+            the buttons' own padding, so the icons sit as close to the edge
+            as the title does. */}
+        <div className="flex flex-col items-end gap-1 flex-shrink-0 -mt-1 -mr-2">
           <div className="flex items-center gap-1">
             {actions}
             {view && (
