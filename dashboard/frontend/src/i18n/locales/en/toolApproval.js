@@ -22,8 +22,6 @@ export default {
   approve: 'Approve',
   deny: 'Deny',
   waitsUntil: 'Waits until {{time}}, then the call is refused.',
-  decidedBy: 'Answered by {{name}}',
-  noteShown: 'Note: {{note}}',
   waiting: 'Waiting for your approval of {{tool}}',
   errors: {
     gone: 'This call is no longer waiting for an answer.',

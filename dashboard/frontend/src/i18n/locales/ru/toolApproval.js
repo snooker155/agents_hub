@@ -22,8 +22,6 @@ export default {
   approve: 'Одобрить',
   deny: 'Отклонить',
   waitsUntil: 'Ждёт до {{time}}, потом вызов будет отклонён.',
-  decidedBy: 'Ответ: {{name}}',
-  noteShown: 'Заметка: {{note}}',
   waiting: 'Ждёт вашего одобрения для {{tool}}',
   errors: {
     gone: 'Этот вызов уже не ждёт ответа.',
