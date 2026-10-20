@@ -1,5 +1,4 @@
 export default {
-  modeLabel: 'While the agent works',
   modes: {
     inject: 'Steer',
     interrupt: 'Interrupt',

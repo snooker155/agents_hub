@@ -1,5 +1,4 @@
 export default {
-  modeLabel: 'Während der Agent arbeitet',
   modes: {
     inject: 'Lenken',
     interrupt: 'Unterbrechen',

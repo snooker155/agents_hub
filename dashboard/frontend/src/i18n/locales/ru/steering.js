@@ -1,5 +1,4 @@
 export default {
-  modeLabel: 'Пока агент работает',
   modes: {
     inject: 'Подсказать',
     interrupt: 'Прервать',
