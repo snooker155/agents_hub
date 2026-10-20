@@ -1,8 +1,9 @@
 export default {
   emptyDeckTheAgentWill: 'Empty deck. The agent will add slides.',
   exportPdf: 'Export PDF',
+  download: 'Download',
   pdf: 'PDF',
-  pptx: 'PPTX',
+  pptx: 'PowerPoint (.pptx)',
   exportPptx: 'Download as PowerPoint (.pptx)',
   exporting: 'Exporting…',
   exportFailed: 'Could not build the .pptx file.',
