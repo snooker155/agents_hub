@@ -355,7 +355,9 @@ def chat_answer_text(tool_id: str, tool_input: Any, approval: Dict[str, Any],
 
     Same JSON shape as :func:`policy_denied_text`, with a ``code`` per case,
     so the agent reads every refusal the same way. A denial says not to try
-    the same call again; a timeout says nobody answered, which is not a no,
+    the same call again in this turn, and that it does not carry over to a
+    later request (a model reading its own "it was declined" back would
+    otherwise stop calling the tool at all); a timeout says nobody answered, which is not a no,
     so the agent is told to ask in the conversation instead of retrying.
     """
     try:
@@ -367,11 +369,13 @@ def chat_answer_text(tool_id: str, tool_input: Any, approval: Dict[str, Any],
     who = str(approval.get("decided_by_name") or "").strip() or "The user"
     if status == "denied":
         code = "approval_denied"
-        error = f"{who} denied `{tool_id}`."
+        error = f"{who} declined this `{tool_id}` call on the approval card, so it did not run."
         if note:
             error += f" Their note: {note}"
-        error += (" Do not retry the same call. Take another way to the goal, or explain "
-                  "why this step cannot be done.")
+        error += (" Do not retry the same call in this turn. Take another way to the goal, or "
+                  "tell the user it did not run because they declined it. The no covers this "
+                  "one call only: the tool is still available, and when the user asks for it "
+                  "again in a later message, call it again and they decide on a new card.")
     elif status == "cancelled":
         code = "approval_cancelled"
         error = f"The run was stopped while `{tool_id}` waited for approval. It did not run."

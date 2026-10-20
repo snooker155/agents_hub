@@ -188,6 +188,8 @@ def test_deny_hands_the_note_back_as_the_tool_output(chat_turn):
     body = json.loads(out["result"])
     assert body["code"] == "approval_denied"
     assert "use the staging copy" in body["error"] and body["note"] == "use the staging copy"
+    # The no covers this call only: a later request must reach a new card.
+    assert "this one call only" in body["error"] and "call it again" in body["error"]
     verdict = policy.call_verdict("run_shell", object(), {"command": "drop table users"})
     assert verdict["reason_code"] == "human_denied"
 
