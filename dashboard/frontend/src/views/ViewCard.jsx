@@ -139,7 +139,6 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
       style={inChat && kind === 'slides' ? CHAT_DECK_WIDTH : undefined}>
       <div className="flex items-start justify-between gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-start gap-2 min-w-0">
-          <KindIcon kind={kind} className="w-4 h-4 mt-0.5 text-indigo-600 flex-shrink-0" />
           <div className="min-w-0">
             {/* The title wraps rather than cuts off: the buttons take most of
                 the header row, and a cut title says nothing. */}
@@ -172,7 +171,8 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
             )}
           </div>
           {kind && (
-            <span className="mr-1 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
+            <span className="mr-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
+              <KindIcon kind={kind} className="w-3 h-3 text-indigo-600 flex-shrink-0" />
               {kind}
             </span>
           )}
