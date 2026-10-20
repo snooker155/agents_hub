@@ -265,6 +265,14 @@ html.dark .react-flow__minimap-mask {
   box-shadow: 0 10px 24px -10px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(0 0 0 / 0.05);
 }
 
+/* The page's selection tint is the brand colour the prompt bubble is filled
+   with, so inside the bubble it vanishes: select in white there instead. */
+.chat-prompt-bubble::selection,
+.chat-prompt-bubble ::selection {
+  background: rgb(255 255 255 / 0.9);
+  color: var(--brand);
+}
+
 /* A code view inside a view card (views/ViewCard.jsx): the code block is the
    card body itself, flush with the card's edges instead of a rounded block
    floating in it with a margin, and it grows to whatever height the grid row

@@ -11,7 +11,7 @@
  */
 import { useContext, useMemo } from 'react';
 import { useI18n } from '../../i18n';
-import { trimBubbleText } from '../../lib/chatText';
+import { copyBubbleText, trimBubbleText } from '../../lib/chatText';
 import ViewCard from '../../views/ViewCard';
 import { SystemNotice } from './BuildMessage';
 import Citations, { CitedText } from './Citations';
@@ -67,7 +67,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
         <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white bg-indigo-600">
           <User className="w-4 h-4" />
         </div>
-        <div data-prompt-bubble className="chat-prompt-bubble max-w-[88%] sm:max-w-[72%] text-base leading-relaxed bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3">
+        <div data-prompt-bubble onCopy={copyBubbleText} className="chat-prompt-bubble max-w-[88%] sm:max-w-[72%] text-base leading-relaxed bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3">
           <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
           {caption && (
             <span className="mt-1 block text-[11px] text-indigo-100" data-testid="steer-caption">

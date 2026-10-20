@@ -3,7 +3,7 @@
  */
 import { useContext, useMemo } from 'react';
 import { useI18n } from '../../i18n';
-import { trimBubbleText } from '../../lib/chatText';
+import { copyBubbleText, trimBubbleText } from '../../lib/chatText';
 import { renderContent } from './markdown';
 import { ExtractionToolCard, RecallToolCard } from './memoryCards';
 import { EXTRACTION_TOOLS } from './memoryTools';
@@ -67,7 +67,7 @@ function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false }) {
         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white">
           <User className="w-4 h-4" />
         </div>
-        <div data-prompt-bubble className="chat-prompt-bubble max-w-[88%] sm:max-w-[72%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-base leading-relaxed whitespace-pre-wrap">
+        <div data-prompt-bubble onCopy={copyBubbleText} className="chat-prompt-bubble max-w-[88%] sm:max-w-[72%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-base leading-relaxed whitespace-pre-wrap">
           {trimBubbleText(msg.content)}
         </div>
       </div>
