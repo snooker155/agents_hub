@@ -1,8 +1,9 @@
 export default {
   emptyDeckTheAgentWill: 'Leeres Deck. Der Agent fügt Folien hinzu.',
   exportPdf: 'Als PDF exportieren',
+  download: 'Herunterladen',
   pdf: 'PDF',
-  pptx: 'PPTX',
+  pptx: 'PowerPoint (.pptx)',
   exportPptx: 'Als PowerPoint herunterladen (.pptx)',
   exporting: 'Wird exportiert…',
   exportFailed: 'Die .pptx-Datei konnte nicht erstellt werden.',

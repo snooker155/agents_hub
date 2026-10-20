@@ -1,8 +1,9 @@
 export default {
   emptyDeckTheAgentWill: 'Пустая презентация. Агент добавит слайды.',
   exportPdf: 'Экспорт в PDF',
+  download: 'Скачать',
   pdf: 'PDF',
-  pptx: 'PPTX',
+  pptx: 'PowerPoint (.pptx)',
   exportPptx: 'Скачать как PowerPoint (.pptx)',
   exporting: 'Экспорт…',
   exportFailed: 'Не удалось собрать файл .pptx.',
