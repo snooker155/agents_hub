@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom';
 import {
   BarChart3, Table2, GitBranch, FileText, Image as ImageIcon,
   Box, Maximize2, X, AlertCircle, Boxes, Code2, Sigma, Atom, Waypoints, Activity,
-  Presentation, FileText as FileDoc, Camera,
+  Presentation, FileText as FileDoc,
 } from 'lucide-react';
-import { getView, applyViewOps, saveViewSnapshot } from '../api';
+import { getView, applyViewOps } from '../api';
 import { applyOp as applyOpLocal } from './opsClient';
 import ViewRenderer from './ViewRenderer';
 import { FILL_KINDS } from './fillKinds';
@@ -132,19 +132,6 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
     if (viewId) applyViewOps(viewId, [op]).catch(() => {});
   }, [viewId, setView]);
 
-  // Best-effort snapshot: capture a <canvas> in the rendered view (chart, scene,
-  // simulation, math) and store it as the view's fallback image.
-  const [snapMsg, setSnapMsg] = useState('');
-  const capture = useCallback(() => {
-    const canvas = bodyRef.current?.querySelector('canvas');
-    if (!canvas || !viewId) { setSnapMsg(t('viewViewCard.noImageToCapture')); setTimeout(() => setSnapMsg(''), 1500); return; }
-    try {
-      const dataUrl = canvas.toDataURL('image/png');
-      saveViewSnapshot(viewId, dataUrl).then(() => { setSnapMsg(t('viewViewCard.snapshotSaved')); setTimeout(() => setSnapMsg(''), 1500); })
-        .catch(() => { setSnapMsg(t('viewViewCard.saveFailed')); setTimeout(() => setSnapMsg(''), 1500); });
-    } catch { setSnapMsg(t('viewViewCard.captureFailed')); setTimeout(() => setSnapMsg(''), 1500); }
-  }, [t, viewId]);
-
   return (
     <div className={`${embedded ? 'mt-2 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-900' : ''} ${
       compact ? 'flex flex-col h-[420px]' : fill ? 'flex flex-col flex-1 min-h-[420px]' : ''} ${
@@ -173,15 +160,10 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
         {/* The buttons, and the kind under them. */}
         <div className="flex flex-col items-end gap-1 flex-shrink-0">
           <div className="flex items-center gap-1">
-            {snapMsg && <span className="text-[10px] text-gray-400">{snapMsg}</span>}
             {actions}
             {view && (
               <>
                 <ViewImageMenu view={view} getRoot={() => bodyRef.current} />
-                <button onClick={capture} title={t('viewViewCard.saveSnapshot')}
-                  className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
-                  <Camera className="w-4 h-4" />
-                </button>
                 <button onClick={() => setExpanded(true)} title={t('viewViewCard.expand')}
                   className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
                   <Maximize2 className="w-4 h-4" />
