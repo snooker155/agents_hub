@@ -23,11 +23,14 @@ export const updateAgentLoopSettings = (agentId, payload) => api.put(agentPath(a
  * Every enabled catalog model as `{id, provider, model}` (`id` is
  * `provider/model`, the value this feature stores in `fallback_models`),
  * from the raw catalog document `getModelsCatalog()` resolves — the same
- * shape `tools/delegation.enabled_models` derives on the backend.
+ * shape `tools/delegation.enabled_models` derives on the backend. GET /models
+ * wraps the provider map as `{providers, global_default, ...}`; a bare
+ * provider map reads too.
  */
 export const flattenModelCatalog = (raw) => {
   const out = [];
-  Object.entries(raw || {}).forEach(([provider, entry]) => {
+  const providers = raw && typeof raw.providers === 'object' && raw.providers ? raw.providers : raw;
+  Object.entries(providers || {}).forEach(([provider, entry]) => {
     (entry && entry.models ? entry.models : []).forEach((m) => {
       if (m && m.enabled && m.id) out.push({ id: `${provider}/${m.id}`, provider, model: m.id });
     });

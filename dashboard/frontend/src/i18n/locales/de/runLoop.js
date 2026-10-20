@@ -34,6 +34,12 @@ export default {
   yes: 'ja',
   no: 'nein',
   toolDecisions: 'Werkzeugrichtlinien Entscheidungen',
+  decisionTool: 'Werkzeug',
+  decisionMode: 'Modus',
+  decisionResult: 'Entscheidung',
+  decisionBy: 'Entschieden von',
+  decisionReason: 'Grund',
+  decisionCached: 'Wiederholung',
   auxCalls: 'Weitere Modellaufrufe',
   auxTokens: '{{input}} Tokens rein, {{output}} raus',
   auxPurpose: {

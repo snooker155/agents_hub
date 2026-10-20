@@ -34,6 +34,12 @@ export default {
   yes: 'да',
   no: 'нет',
   toolDecisions: 'Решения политики инструментов',
+  decisionTool: 'Инструмент',
+  decisionMode: 'Режим',
+  decisionResult: 'Решение',
+  decisionBy: 'Кто решил',
+  decisionReason: 'Причина',
+  decisionCached: 'повтор',
   auxCalls: 'Другие вызовы модели',
   auxTokens: 'токенов: {{input}} на входе, {{output}} на выходе',
   auxPurpose: {

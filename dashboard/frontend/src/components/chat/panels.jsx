@@ -70,7 +70,9 @@ function ProcessPanelContent({ processInsights, topology = null, graphRun = null
 // ---------------------------------------------------------------------------
 // Build view — unified diff renderer (no external deps)
 // ---------------------------------------------------------------------------
-function DiffView({ diff }) {
+// `wrap` folds long lines instead of scrolling sideways: prose (a replayed
+// answer) is one line per paragraph, code is not.
+function DiffView({ diff, wrap = false }) {
   const { t } = useI18n();
   if (!diff) {
     return <div className="px-3 py-2 text-xs text-gray-400 italic">{t('chat.noTextualDiffAvailable')}</div>;
@@ -94,7 +96,7 @@ function DiffView({ diff }) {
           bg = 'bg-red-50';
         }
         return (
-          <div key={i} className={`px-3 whitespace-pre ${bg} ${cls}`}>
+          <div key={i} className={`px-3 ${wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} ${bg} ${cls}`}>
             {line || ' '}
           </div>
         );

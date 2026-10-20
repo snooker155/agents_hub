@@ -105,8 +105,9 @@ describe('RunLoopPanel', () => {
     expect(screen.getByText('runLoop.guardrails')).toBeInTheDocument();
     expect(screen.getByText('no secrets')).toBeInTheDocument();
     expect(screen.getByText('runLoop.structured')).toBeInTheDocument();
-    expect(screen.getByText('runLoop.toolDecisions')).toBeInTheDocument();
-    expect(screen.getByText('run_shell')).toBeInTheDocument();
+    // Tool policy decisions have their own tab on the run page (ToolDecisions).
+    expect(screen.queryByText('runLoop.toolDecisions')).toBeNull();
+    expect(screen.queryByText('run_shell')).toBeNull();
   });
 
   it('lists the model calls made for the run beside its loop', () => {
