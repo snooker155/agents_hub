@@ -212,9 +212,13 @@ export default function SlidesView({ view }) {
         <button type="button" onClick={() => go(1)} disabled={cur === n - 1} className={btn} aria-label={t('viewSlidesView.next')}>
           <ChevronRight className="w-4 h-4" />
         </button>
-        <div className="flex-1 h-1 rounded bg-gray-200 dark:bg-gray-800 overflow-hidden mx-1">
-          <div className="h-full" style={{ width: `${((cur + 1) / n) * 100}%`, background: theme.accent }} />
-        </div>
+        {/* How far the talk has got: for presenting only, the card has the
+            counter. The empty spacer keeps the buttons on the right. */}
+        {fullscreen ? (
+          <div className="flex-1 h-1 rounded bg-gray-200 dark:bg-gray-800 overflow-hidden mx-1">
+            <div className="h-full" style={{ width: `${((cur + 1) / n) * 100}%`, background: theme.accent }} />
+          </div>
+        ) : <div className="flex-1" />}
         {!fullscreen && (
           <button type="button" onClick={() => setThumbs((v) => !v)} className={toggleBtn(thumbs)} title={t('viewSlidesView.thumbnails')} aria-pressed={thumbs}>
             <LayoutGrid className="w-4 h-4" />
