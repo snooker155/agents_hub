@@ -200,6 +200,18 @@ describe('Artifacts page', () => {
     await waitFor(() => expect(screen.queryByTestId('file-preview-modal')).not.toBeInTheDocument());
   });
 
+  it('closes the file panel on a press outside it, not inside it or on a row', async () => {
+    localStorage.setItem('files.view', 'list');
+    show(`/artifacts?file=${REC.file_id}`);
+    const panel = await screen.findByTestId('file-panel');
+    fireEvent.pointerDown(panel);
+    expect(screen.getByTestId('file-panel')).toBeInTheDocument();
+    fireEvent.pointerDown(await screen.findByTestId('list-row'));
+    expect(screen.getByTestId('file-panel')).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByRole('textbox', { name: 'Search by name or id' }));
+    await waitFor(() => expect(screen.queryByTestId('file-panel')).not.toBeInTheDocument());
+  });
+
   it('opens the rendered file from a tree row without opening the panel', async () => {
     show();
     await waitFor(() => expect(screen.getByText('handbook.md')).toBeInTheDocument());

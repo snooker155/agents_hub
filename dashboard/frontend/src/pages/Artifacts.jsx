@@ -139,6 +139,7 @@ function TreeFile({ file, depth, openId, openFile, onPreview, t, formatDate }) {
       className={`flex items-center gap-2 pr-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 ${active ? 'bg-indigo-50/60' : ''}`}
       style={{ paddingLeft: `${12 + depth * 18 + 18}px` }}
       data-testid="tree-file"
+      data-opens-panel
       onClick={() => openFile(file.file_id)}
     >
       <span className="flex-1 min-w-0 flex items-center gap-2 text-gray-800">
@@ -186,6 +187,7 @@ function TreeView({ view, depth, active, onOpenView, navigate, t, formatDate }) 
       className={`flex items-center gap-2 pr-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 ${active ? 'bg-indigo-50/60' : ''}`}
       style={{ paddingLeft: `${12 + depth * 18 + 18}px` }}
       data-testid="tree-view"
+      data-opens-panel
       onClick={() => onOpenView(view.view_id)}
     >
       <span className="flex-1 min-w-0 flex items-center gap-2 text-gray-800">
@@ -511,7 +513,7 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
   };
 
   return (
-    <aside className={`${PANEL_CLASS} space-y-4 overflow-y-auto`} data-testid="file-panel">
+    <aside className={`${PANEL_CLASS} space-y-4 overflow-y-auto`} data-testid="file-panel" data-artifact-panel>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-gray-800 break-all">{rec?.name || fileId}</h3>
@@ -613,7 +615,7 @@ function FolderCard({ node, onOpen, t }) {
 
 function FileCard({ file, active, openFile, onPreview, t, formatDate }) {
   return (
-    <div role="button" tabIndex={0} onClick={() => openFile(file.file_id)} data-testid="file-card"
+    <div role="button" tabIndex={0} onClick={() => openFile(file.file_id)} data-testid="file-card" data-opens-panel
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFile(file.file_id); } }}
       className={`text-left rounded-xl border bg-white dark:bg-gray-900 p-4 cursor-pointer hover:border-indigo-300 hover:shadow-sm transition-colors flex flex-col gap-3 min-h-[9rem] ${
         active ? 'border-indigo-400 ring-2 ring-indigo-100' : 'border-gray-200 dark:border-gray-700'}`}>
@@ -650,7 +652,7 @@ function ViewGrid({ views, onOpenView, onDeleteView, navigate, t }) {
             actions={(
               <>
                 <button type="button" onClick={() => onOpenView(row.view_id)} title={t('artifacts.details')}
-                  data-testid="view-details"
+                  data-testid="view-details" data-opens-panel
                   className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-600">
                   <Info className="w-4 h-4" />
                 </button>
@@ -774,7 +776,7 @@ function ViewPanel({ viewId, onClose, onDeleteView }) {
   return (
     // A flex column: the details keep their height and the card takes the
     // rest, down to the bottom of the page, scrolling inside for a document.
-    <aside className={`${PANEL_CLASS} flex flex-col gap-4 min-h-0`} data-testid="view-panel">
+    <aside className={`${PANEL_CLASS} flex flex-col gap-4 min-h-0`} data-testid="view-panel" data-artifact-panel>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-gray-800 break-words">{view?.title || viewId}</h3>
@@ -951,6 +953,26 @@ export default function Artifacts() {
     if (viewId) next.set('view', viewId); else next.delete('view');
     setSearchParams(next, { replace: !viewId });
   };
+
+  // A press anywhere but the open panel or a row that opens one closes the
+  // panel. A row is left to its own click, which switches the panel to it; the
+  // preview dialog lies over the page and closes on its own.
+  const panelOpen = Boolean(openId || openViewId);
+  useEffect(() => {
+    if (!panelOpen) return undefined;
+    const onPointerDown = (e) => {
+      if (e.button > 0 || !(e.target instanceof Element)) return;
+      if (e.target.closest('[data-artifact-panel], [data-opens-panel], [role="dialog"]')) return;
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('file');
+        next.delete('view');
+        return next;
+      }, { replace: true });
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [panelOpen, setSearchParams]);
 
   // The folder the cards show, kept in the URL so a folder can be linked to
   // (the Views folder is `?folder=__views__`, where the old /views lands).
@@ -1178,7 +1200,7 @@ export default function Artifacts() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {shownViews.map((v) => (
-                    <tr key={v.view_id} onClick={() => onOpenView(v.view_id)} data-testid="list-view-row"
+                    <tr key={v.view_id} onClick={() => onOpenView(v.view_id)} data-testid="list-view-row" data-opens-panel
                       className={`cursor-pointer hover:bg-gray-50 ${openViewId === v.view_id ? 'bg-indigo-50/60' : ''}`}>
                       <td className="px-4 py-2.5">
                         <span className="flex items-center gap-2 text-gray-800">
@@ -1198,7 +1220,7 @@ export default function Artifacts() {
                     </tr>
                   ))}
                   {shownFiles.map((f) => (
-                    <tr key={f.file_id} onClick={() => openFile(f.file_id)} data-testid="list-row"
+                    <tr key={f.file_id} onClick={() => openFile(f.file_id)} data-testid="list-row" data-opens-panel
                       className={`cursor-pointer hover:bg-gray-50 ${openId === f.file_id ? 'bg-indigo-50/60' : ''}`}>
                       <td className="px-4 py-2.5">
                         <span className="flex items-center gap-2 text-gray-800">
