@@ -154,48 +154,51 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
         <div className="flex items-start gap-2 min-w-0">
           <KindIcon kind={kind} className="w-4 h-4 mt-0.5 text-indigo-600 flex-shrink-0" />
           <div className="min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              {viewId ? (
-                <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
-                  className="block text-sm font-medium text-gray-900 dark:text-gray-100 truncate no-underline hover:text-indigo-600 transition-colors">
-                  {title}
-                </Link>
-              ) : (
-                <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{title}</div>
-              )}
-              {kind && (
-                <span className="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
-                  {kind}
-                </span>
-              )}
-            </div>
+            {/* The title wraps rather than cuts off: the buttons take most of
+                the header row, and a cut title says nothing. */}
+            {viewId ? (
+              <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
+                className="block text-sm font-medium text-gray-900 dark:text-gray-100 break-words no-underline hover:text-indigo-600 transition-colors">
+                {title}
+              </Link>
+            ) : (
+              <div className="text-sm font-medium text-gray-900 dark:text-gray-100 break-words">{title}</div>
+            )}
             {/* A summary that only repeats the title says nothing: left out. */}
             {summary && summary.trim().toLowerCase() !== String(title || '').trim().toLowerCase() && (
               <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">{summary}</div>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {snapMsg && <span className="text-[10px] text-gray-400">{snapMsg}</span>}
-          {viewId && (
-            <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
-              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-600">
-              <ExternalLink className="w-4 h-4" />
-            </Link>
-          )}
-          {actions}
-          {view && (
-            <>
-              <ViewImageMenu view={view} getRoot={() => bodyRef.current} />
-              <button onClick={capture} title={t('viewViewCard.saveSnapshot')}
-                className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
-                <Camera className="w-4 h-4" />
-              </button>
-              <button onClick={() => setExpanded(true)} title={t('viewViewCard.expand')}
-                className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
-                <Maximize2 className="w-4 h-4" />
-              </button>
-            </>
+        {/* The buttons, and the kind under them. */}
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          <div className="flex items-center gap-1">
+            {snapMsg && <span className="text-[10px] text-gray-400">{snapMsg}</span>}
+            {viewId && (
+              <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
+                className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-600">
+                <ExternalLink className="w-4 h-4" />
+              </Link>
+            )}
+            {actions}
+            {view && (
+              <>
+                <ViewImageMenu view={view} getRoot={() => bodyRef.current} />
+                <button onClick={capture} title={t('viewViewCard.saveSnapshot')}
+                  className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
+                  <Camera className="w-4 h-4" />
+                </button>
+                <button onClick={() => setExpanded(true)} title={t('viewViewCard.expand')}
+                  className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
+                  <Maximize2 className="w-4 h-4" />
+                </button>
+              </>
+            )}
+          </div>
+          {kind && (
+            <span className="mr-1 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
+              {kind}
+            </span>
           )}
         </div>
       </div>
