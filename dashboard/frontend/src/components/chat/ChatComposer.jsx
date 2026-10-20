@@ -437,15 +437,44 @@ export default function ChatComposer() {
                 </button>
               )}
               </div>
-              {/* What is left of the model's window, under the line it is
-                  spent from. Clearing is offered once the context is tight;
-                  /clear is the same action from the keyboard. */}
-              <ContextMeter
-                usage={contextUsage}
-                onClear={loading ? null : () => selectCommand({ name: '/clear' })}
-                className="border-t border-gray-100 rounded-b-2xl px-4 py-1.5"
-                inset
-              />
+              {/* Under the line, past a rule: auto mode, how to type, and what
+                  is left of the model's window. Clearing is offered once the
+                  context is tight; /clear is the same action from the keyboard.
+                  The side columns share the width equally, so the hint stays
+                  centred whatever the toggle says. */}
+              <div className="grid grid-cols-[1fr_minmax(0,max-content)_1fr] items-center gap-3 border-t border-gray-100 px-3 py-1.5 text-xs">
+                <div className="flex min-w-0 justify-start">
+                  {autoMode && !currentTelegramBinding && !mirrored ? (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={autoMode.on}
+                      onClick={autoMode.toggle}
+                      disabled={!autoMode.allowed}
+                      data-testid="auto-mode-toggle"
+                      title={autoMode.allowed ? t('chat.autoMode.toggleHint') : t('chat.autoMode.disabledByAdmin')}
+                      className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 font-medium transition-colors
+                        disabled:opacity-40 disabled:cursor-not-allowed ${autoMode.on
+                          ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                          : 'text-gray-500 hover:bg-gray-100'}`}
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      {autoMode.on ? t('chat.autoMode.on') : t('chat.autoMode.off')}
+                      <span className="hidden sm:inline text-[10px] font-normal opacity-70">Shift+Tab</span>
+                    </button>
+                  ) : null}
+                </div>
+                <p className="min-w-0 truncate text-center text-[11px] text-gray-400">
+                  {t('chat.composerHint')} / {t('chat.forCommands')}
+                </p>
+                <div className="flex min-w-0 justify-end">
+                  <ContextMeter
+                    usage={contextUsage}
+                    onClear={loading ? null : () => selectCommand({ name: '/clear' })}
+                    compact
+                  />
+                </div>
+              </div>
             </div>
             {telegramError && (
               <p className="text-xs text-red-600 mt-2">{telegramError}</p>
@@ -479,30 +508,6 @@ export default function ChatComposer() {
                 onClose={() => setPickerKind(null)}
               />
             )}
-            <div className="mt-2 flex items-center justify-between gap-3 text-xs">
-              {autoMode && !currentTelegramBinding && !mirrored ? (
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={autoMode.on}
-                  onClick={autoMode.toggle}
-                  disabled={!autoMode.allowed}
-                  data-testid="auto-mode-toggle"
-                  title={autoMode.allowed ? t('chat.autoMode.toggleHint') : t('chat.autoMode.disabledByAdmin')}
-                  className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium transition-colors
-                    disabled:opacity-40 disabled:cursor-not-allowed ${autoMode.on
-                      ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-                      : 'text-gray-500 hover:bg-gray-100'}`}
-                >
-                  <Zap className="w-3.5 h-3.5" />
-                  {autoMode.on ? t('chat.autoMode.on') : t('chat.autoMode.off')}
-                  <span className="hidden sm:inline text-[10px] font-normal opacity-70">Shift+Tab</span>
-                </button>
-              ) : <span />}
-              <p className="text-gray-400 text-right">
-                {t('chat.composerHint')} <span className="">/</span> {t('chat.forCommands')}
-              </p>
-            </div>
           </div>
         </div>
     </>
