@@ -278,6 +278,18 @@ describe('Artifacts page', () => {
     expect(screen.queryByText('main.py')).not.toBeInTheDocument();
   });
 
+  it('closes the open file when another folder is opened', async () => {
+    listWorkspaceFiles.mockImplementation(() => ok({ workspace: 'acme', files: IN_FOLDER, usage_bytes: 30, limits: {} }));
+    show(`/artifacts?folder=proj&file=${IN_FOLDER[1].file_id}`);
+    await screen.findByTestId('file-panel');
+    const folder = await screen.findByTestId('folder-card');
+    // A press then a click, as in a browser: the click must not bring it back.
+    fireEvent.pointerDown(folder);
+    fireEvent.click(folder);
+    await waitFor(() => expect(screen.getByText('plan.md')).toBeInTheDocument());
+    expect(screen.queryByTestId('file-panel')).not.toBeInTheDocument();
+  });
+
   it('filters to the views alone with the Views source', async () => {
     show();
     await waitFor(() => expect(screen.getByText('handbook.md')).toBeInTheDocument());
