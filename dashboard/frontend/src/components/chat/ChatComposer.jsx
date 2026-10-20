@@ -302,22 +302,14 @@ export default function ChatComposer() {
               </div>
             )}
 
-            {/* What is left of the model's window, read where the next message
-                is typed. Clearing is offered once the context is tight; /clear
-                is the same action from the keyboard. */}
-            <ContextMeter
-              usage={contextUsage}
-              onClear={loading ? null : () => selectCommand({ name: '/clear' })}
-              className="mb-2 px-1"
-            />
-
             <SteerBar steering={steering} t={t} />
 
             <div
               data-testid="composer-box"
-              className={`flex items-center gap-3 border rounded-2xl px-4 py-3 bg-white shadow-lg transition-all
+              className={`border rounded-2xl bg-white shadow-lg transition-all
                 ${autoMode?.on && !currentTelegramBinding && !mirrored ? 'border-amber-400' : 'border-gray-300'}`}
             >
+              <div className="flex items-center gap-3 px-4 py-3">
               {/* Attach: a file from the computer, or a record the hub already
                   holds (task / view / project / scenario / loop / …). An entity
                   picked here is folded into the prompt whether or not the agent
@@ -444,6 +436,16 @@ export default function ChatComposer() {
                   <Send className="w-3.5 h-3.5" />
                 </button>
               )}
+              </div>
+              {/* What is left of the model's window, under the line it is
+                  spent from. Clearing is offered once the context is tight;
+                  /clear is the same action from the keyboard. */}
+              <ContextMeter
+                usage={contextUsage}
+                onClear={loading ? null : () => selectCommand({ name: '/clear' })}
+                className="border-t border-gray-100 rounded-b-2xl px-4 py-1.5"
+                inset
+              />
             </div>
             {telegramError && (
               <p className="text-xs text-red-600 mt-2">{telegramError}</p>
