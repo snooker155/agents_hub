@@ -1225,6 +1225,20 @@ class AgentFactory:
                     + HANDOFF_PROMPT
                 )
 
+        # Agents this one knows but was not linked to for security
+        # (agents/main_links.py): named in the prompt, so asked for one it
+        # says why it cannot pass the chat or a task there instead of
+        # guessing. Read from the live record, also for a pinned build.
+        if _spec is not None:
+            from agents.main_links import refusal_prompt
+            from agents.registry import get_agent as _reg_live
+            from common.workspace_context import workspace_name_from_path as _ws_name
+            _refusal_text = refusal_prompt(_reg_live(_spec.id) or _spec, _ws_name(workspace))
+            if _refusal_text:
+                config["system_prompt"] = (
+                    config.get("system_prompt", "") + "\n\n---\n\n" + _refusal_text
+                )
+
         # Advisor (tools/advisor.py), only for an agent that names an advisor
         # model. Appended after the guard like the handoff tool: it only asks
         # a model a question the agent writes, acting on nothing outside the run.

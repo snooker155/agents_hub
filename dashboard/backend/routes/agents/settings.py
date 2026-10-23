@@ -104,6 +104,9 @@ async def delete_agent(agent_id: str):
         })
     if not found:
         raise HTTPException(status_code=404, detail="Agent not found")
+    # The main agent's links name only agents that exist (agents/main_links.py).
+    from agents.main_links import unlink_agent
+    unlink_agent(agent_id)
 
     # Only delete the shared definition folder when no remaining record uses it.
     # This prevents one workspace's delete from breaking another's agent.

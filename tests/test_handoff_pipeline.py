@@ -425,3 +425,24 @@ def test_the_routes_save_and_refuse(agents):
     assert client.post("/api/agents/solo/skills-config", json={"skills_enabled": True}).status_code == 200
     spec = registry.get_agent("solo")
     assert spec.handoffs == ["billing", "front"] and spec.handoff_history == "summary"
+
+
+def test_each_run_knows_its_agent_session_and_run(agents, monkeypatch):
+    """Tools of a chat run read who runs, where and in which run (the web log,
+    the delegation allowlist); a receiving run sees its own agent and run."""
+    from common.agent_context import current_agent_id, current_run_id, current_session_id
+    seen_ctx = []
+
+    def _script(text, handoff=None):
+        def run(prompt, history):
+            seen_ctx.append((current_agent_id.get(), current_session_id.get(), current_run_id.get()))
+            return text, handoff
+        return run
+
+    _install(monkeypatch, {"front": _script("Billing takes it.", _hand("billing")),
+                           "billing": _script("Fixed.")})
+    events = asyncio.run(_collect(_request()))
+    metas = [e for e in events if e["type"] == "meta"]
+    assert [c[0] for c in seen_ctx] == ["front", "billing"]
+    assert all(c[1] for c in seen_ctx)
+    assert [c[2] for c in seen_ctx] == [m["run_id"] for m in metas]

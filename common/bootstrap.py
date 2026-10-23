@@ -252,6 +252,10 @@ def _sync_system_agents() -> list[str]:
             return True
 
     changed: list[str] = []
+    _user_agent_ids = {
+        ad.get("id") for ad in (live_raw.get("agents") or [])
+        if isinstance(ad, dict) and ad.get("id") and not _is_system_seed(ad)
+    }
     for ad in (live_raw.get("agents") or []):
         if not isinstance(ad, dict):
             continue
@@ -263,6 +267,18 @@ def _sync_system_agents() -> list[str]:
             k: seed[k] for k in _SEED_OWNED_FIELDS
             if k in seed and ad.get(k) != seed[k]
         }
+        # The seed owns the system agents a shipped agent links to, not the
+        # person's own agents: a link to one of those (the main agent gains
+        # every new agent, agents/main_links.py) stays after the seed's list.
+        for k in ("delegates", "handoffs"):
+            if k not in updates:
+                continue
+            own = [x for x in (ad.get(k) or [])
+                   if x in _user_agent_ids and x not in (seed.get(k) or [])]
+            if own:
+                updates[k] = list(seed.get(k) or []) + own
+                if updates[k] == list(ad.get(k) or []):
+                    del updates[k]
 
         # Tools are merged, never replaced. On an install that predates the
         # `user_modified` flag there is no way to tell a deliberate extra grant

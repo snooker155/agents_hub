@@ -33,6 +33,7 @@ export default {
   lastNLabel: 'Число сообщений',
   lastNUnit: 'сообщ.',
   lastNInvalid: 'Укажите число сообщений от 1 до {{max}}.',
+  passing: 'Передаю чат агенту {{agent}}.',
   divider: 'Разговор передан агенту {{agent}}: {{reason}}',
   dividerNoReason: 'Разговор передан агенту {{agent}}',
   openRun: 'Открыть запуск',
