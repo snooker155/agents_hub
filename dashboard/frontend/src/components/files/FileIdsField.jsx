@@ -11,10 +11,17 @@ import { useI18n } from '../../i18n';
 import { formatBytes, getWorkspaceFileRecord } from '../../api/files';
 import WorkspaceFilePicker from './WorkspaceFilePicker';
 
-export default function FileIdsField({ workspace, value = [], onChange, disabled = false, uploadSource }) {
+// `pickerOpen` / `onPickerOpenChange` let a card open the picker from a
+// button of its own (with `showAdd` false to drop the link here).
+export default function FileIdsField({
+  workspace, value = [], onChange, disabled = false, uploadSource,
+  showAdd = true, pickerOpen: pickerOpenProp, onPickerOpenChange,
+}) {
   const { t } = useI18n();
   const [records, setRecords] = useState({});
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpenOwn, setPickerOpenOwn] = useState(false);
+  const pickerOpen = pickerOpenProp ?? pickerOpenOwn;
+  const setPickerOpen = onPickerOpenChange ?? setPickerOpenOwn;
   const ids = value || [];
   // A string key, so a caller passing a fresh array each render does not
   // re-run the lookup below.
@@ -78,7 +85,7 @@ export default function FileIdsField({ workspace, value = [], onChange, disabled
           })}
         </div>
       )}
-      {!disabled && (
+      {!disabled && showAdd && (
         <button
           type="button"
           onClick={() => setPickerOpen(true)}

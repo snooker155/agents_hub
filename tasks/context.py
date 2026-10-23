@@ -14,7 +14,8 @@ imported back out of it by ``runtime.flow_run`` and the other entry points:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+import re
+from typing import Optional, Tuple
 
 from common.paths import PROJECTS_FILE
 from common.untrusted import agent_output_fence
@@ -189,7 +190,7 @@ def task_files_section(file_ids, work_dir=None) -> str:
     )
 
 
-def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -> str:
+def build_task_instruction(task_id: str, base_instruction: str, work_dir=None, *, worker: bool = True) -> str:
     """Enrich ``base_instruction`` with context drawn from the task store.
 
     Layers, in order: a task title prefix + the task description, then the
@@ -317,6 +318,56 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
         except Exception:  # noqa: BLE001 - the previous-output layer is optional, the instruction stands without it
             _log.debug("previous output failed", exc_info=True)
 
+        # A run on a parent whose work was split (its container agent fixing
+        # an unmet outcome, say) reads what each subtask produced.
+        try:
+            subtasks = sorted(tasks_service.get_subtasks(task.id), key=lambda s: (
+                s.order if s.order is not None else 1_000_000, str(s.created_at or "")))
+            sub_parts = []
+            for sub in subtasks:
+                label = f"{sub.key or str(sub.id)[:8]}: {sub.title} (status: {getattr(sub.status, 'value', sub.status)})"
+                sub_result = (tasks_service.get_task_result(sub.id) or "").strip()
+                sub_parts.append(
+                    f"[{label}]\n" + (
+                        agent_output_fence(_dep_result_excerpt(sub_result), source=f"subtask {label}")
+                        if sub_result else "(no result recorded)"))
+            if sub_parts:
+                instruction = (
+                    f"{instruction}\n\n"
+                    f"{'=' * 60}\n"
+                    f"SUBTASKS OF THIS TASK (the work was split into these)\n"
+                    f"{'=' * 60}\n"
+                    + "\n\n".join(sub_parts)
+                    + f"\n{'=' * 60}"
+                )
+        except Exception:  # noqa: BLE001 - the subtasks layer is optional, the instruction stands without it
+            _log.debug("subtask results failed", exc_info=True)
+
+        # How a task run goes. Without this a cautious model that finds an
+        # empty folder ends its answer with "shall I create the file?", which
+        # nobody reads before the next step starts.
+        where = f" ({work_dir})" if work_dir else ""
+        if worker:
+            instruction = (
+                f"{instruction}\n\n"
+                f"{'=' * 60}\n"
+                f"HOW THIS RUN WORKS\n"
+                f"{'=' * 60}\n"
+                "Nobody reads your answer before the next step: do the work now, do not ask "
+                "for confirmation or offer options. Your working folder" + where + " is the "
+                "project, even when it is empty: create the files the task needs there, and "
+                "change existing ones in place.\n"
+                "Before you finish, check your own work: read back every file you created or "
+                "changed and go through the task's requirements one by one against what is "
+                "actually in them. Fix what falls short. Then finish with what you did and "
+                "which files you created or changed, and end with exactly one of these lines:\n"
+                "STATUS: done\n"
+                "STATUS: blocked: <why the task cannot be finished here>\n"
+                "Say blocked only when the task truly cannot be finished with what you have "
+                "(a tool you would need is missing, say); the task then waits for a person.\n"
+                f"{'=' * 60}"
+            )
+
         # The workspace files the task works from: copied into the run's
         # working directory when there is one, named in the prompt either way.
         try:
@@ -340,6 +391,20 @@ def build_task_instruction(task_id: str, base_instruction: str, work_dir=None) -
         _log.debug("instruction build failed", exc_info=True)
 
     return instruction or f"Process task {task_id}"
+
+
+_STATUS_LINE = re.compile(r"^\W*STATUS\W*:\s*(done|blocked)\b\s*:?\s*(.*?)\W*$", re.IGNORECASE)
+
+
+def self_reported_status(output: str) -> Tuple[Optional[str], str]:
+    """The ``STATUS: done`` / ``STATUS: blocked: <why>`` line a worker ends its
+    answer with (see HOW THIS RUN WORKS above), as ``(status, reason)``;
+    ``(None, "")`` when the answer has none. The last such line counts."""
+    for line in reversed((output or "").strip().splitlines()):
+        m = _STATUS_LINE.match(line.strip())
+        if m:
+            return m.group(1).lower(), m.group(2).strip().lstrip("-–— ").strip()
+    return None, ""
 
 
 _MAX_RESULT_CHARS = 100_000

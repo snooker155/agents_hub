@@ -189,7 +189,7 @@ export function ProjectSelector({ current, projects, onChange }) {
             onClick={() => { onChange(null); setOpen(false); }}
             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-500 hover:bg-gray-50"
           >
-            No project
+            {t('taskDetails.noProject')}
             {!current && <Check className="w-3 h-3 ml-auto text-indigo-600" />}
           </button>
           {projects.map(p => (

@@ -6,6 +6,7 @@ import {
 import { getModelsCatalog } from '../../api';
 import { setTaskOutcome, deleteTaskOutcome, gradeTaskOutcome } from '../../api/outcomes';
 import { useI18n } from '../../i18n';
+import { InfoHint } from '../PageLayout';
 
 /**
  * TaskOutcomeCard: the task's definition of done (tasks/outcome.py).
@@ -60,8 +61,13 @@ function EvaluationRow({ evaluation, defaultOpen, t }) {
   const [open, setOpen] = useState(defaultOpen);
   const Chevron = open ? ChevronDown : ChevronRight;
   const score = Math.round((Number(evaluation.score) || 0) * 100);
-  const cost = Number(evaluation.cost_usd) || 0;
   const model = graderRef(evaluation.grader);
+  // Which model graded and when, where the cost used to be: what a reader
+  // compares between attempts.
+  const when = evaluation.graded_at
+    ? new Date(evaluation.graded_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
+    : '';
+  const gradedBy = [model, when].filter(Boolean).join(' · ');
   return (
     <li className="border border-gray-200 rounded-lg overflow-hidden" data-testid="outcome-evaluation">
       <button
@@ -80,7 +86,9 @@ function EvaluationRow({ evaluation, defaultOpen, t }) {
         {!isAttempt(evaluation) && (
           <span className="text-xs text-gray-500">{t('outcomes.manual')}</span>
         )}
-        <span className="ml-auto text-xs text-gray-400 shrink-0">${cost.toFixed(4)}</span>
+        {gradedBy && (
+          <span className="ml-auto text-xs text-gray-400 truncate min-w-0" data-testid="outcome-graded-by">{gradedBy}</span>
+        )}
       </button>
       {open && (
         <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 space-y-2">
@@ -112,12 +120,6 @@ function EvaluationRow({ evaluation, defaultOpen, t }) {
               <span className="font-semibold">{t('outcomes.overall')}:</span> {evaluation.feedback}
             </p>
           )}
-          <p className="text-xs text-gray-500">
-            {[
-              model && t('outcomes.gradedBy', { model }),
-              evaluation.graded_at && new Date(evaluation.graded_at).toLocaleString(),
-            ].filter(Boolean).join(' · ')}
-          </p>
         </div>
       )}
     </li>
@@ -231,8 +233,10 @@ export default function TaskOutcomeCard({ task, onChanged }) {
     return (
       <div className="bg-white shadow-sm border border-gray-200 rounded-xl px-4 py-3 mb-6 flex items-center gap-3 flex-wrap">
         <Target className="w-4 h-4 text-gray-400 shrink-0" />
-        <span className="text-sm font-semibold text-gray-800">{t('outcomes.title')}</span>
-        <span className="text-xs text-gray-500">{t('outcomes.noneHint')}</span>
+        <span className="text-sm font-semibold text-gray-800 inline-flex items-center gap-1">
+          {t('outcomes.title')}
+          <InfoHint text={t('outcomes.noneHint')} label={t('outcomes.about')} className="font-normal" />
+        </span>
         <button
           type="button"
           onClick={startEdit}
@@ -331,9 +335,17 @@ export default function TaskOutcomeCard({ task, onChanged }) {
               </select>
             </div>
             <div>
-              <label htmlFor="outcome-threshold" className="block text-xs font-semibold text-gray-600 mb-1">
-                {t('outcomes.threshold')}
-              </label>
+              {/* The hint waits behind the ⓘ, outside the label so opening it
+                  does not focus the field. */}
+              {/* As tall as the other fields' labels (h-4): the ⓘ button is
+                  taller and would push this field's input down. */}
+              <div className="flex items-center gap-1 mb-1 h-4">
+                <label htmlFor="outcome-threshold" className="text-xs font-semibold text-gray-600">
+                  {t('outcomes.threshold')}
+                </label>
+                <InfoHint text={t('outcomes.thresholdHint')} label={t('outcomes.thresholdAbout')} align="right" />
+                <span className="text-xs text-gray-400">{t('outcomes.thresholdOptional')}</span>
+              </div>
               <input
                 id="outcome-threshold"
                 type="number" min={0} max={1} step="0.05"
@@ -342,7 +354,6 @@ export default function TaskOutcomeCard({ task, onChanged }) {
                 onChange={(e) => setForm({ ...form, threshold: e.target.value })}
                 className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
               />
-              <p className="text-[11px] text-gray-500 mt-1">{t('outcomes.thresholdHint')}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -393,7 +404,7 @@ export default function TaskOutcomeCard({ task, onChanged }) {
                   <EvaluationRow
                     key={`${ev.iteration}-${ev.graded_at || i}`}
                     evaluation={ev}
-                    defaultOpen={i === 0}
+                    defaultOpen={false}
                     t={t}
                   />
                 ))}

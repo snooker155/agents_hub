@@ -91,3 +91,48 @@ export const statusCfg = (status) =>
 
 export const priorityCfg = (p) =>
   PRIORITIES.find(x => x.value === p);
+
+/**
+ * The agent an entry belongs to: the one it names, else the run of this task
+ * that was going on at that moment (entries written before the agent was
+ * recorded on every entry). `runs` are the task's execution log entries.
+ */
+export function entryAgent(entry, runs = []) {
+  // A grading is the grader's act. Entries written before that was recorded
+  // name in `agent_id` the agent whose work was graded (see gradedAgent).
+  if (entry?.type === 'outcome_graded') return 'outcome_grader';
+  const named = entry?.agent || entry?.agent_id;
+  if (named) return named;
+  const at = Date.parse(entry?.timestamp || '');
+  if (!at || !runs.length || entry?.type === 'created') return null;
+  // A run's first entry (the task going in progress) is written as it is
+  // launched, a few seconds before the run records its start; its last ones
+  // (its resolve, its release) a little after it ends, once it is graded.
+  const LEAD_MS = 15_000;
+  const SLACK_MS = 60_000;
+  let best = null;
+  for (const r of runs) {
+    if (r.subtask || r.agent_id === 'outcome_grader') continue;
+    const start = Date.parse(r.started_at || '');
+    const end = Date.parse(r.finished_at || '') || Date.now();
+    if (start && at >= start - LEAD_MS && at <= end + SLACK_MS && (!best || start > best.start)) {
+      best = { start, agent: r.agent_id };
+    }
+  }
+  return best?.agent || null;
+}
+
+// The agent whose work a grading entry is about: `graded_agent`, or on an
+// entry written before it existed, the `agent_id` it carried.
+export const gradedAgent = (entry) => entry?.graded_agent
+  || (entry?.agent && entry.agent !== 'outcome_grader' ? entry.agent : null)
+  || (entry?.agent_id !== 'outcome_grader' ? entry?.agent_id : null)
+  || null;
+
+// Moving a task back to todo starts it over: the server clears its execution
+// history, results and gradings, and its subtasks' too (tasks/service.py).
+// Asks first; true when the change may go ahead.
+export const confirmStatusChange = (t, task, newStatus) => {
+  if (newStatus !== 'todo' || !task || task.status === 'todo') return true;
+  return window.confirm(t('taskDetails.confirmResetToTodo', { title: task.title }));
+};

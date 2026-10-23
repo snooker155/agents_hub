@@ -20,6 +20,7 @@ from uuid import uuid4
 from common import db
 
 from .lifecycle import get_run_by_id, run_log_path
+from .notifications import notification_message
 from .store import _upsert_run, _utc_now_iso
 
 log = logging.getLogger(__name__)
@@ -198,7 +199,10 @@ def park_task_awaiting_input(run_id: str, question: Dict[str, Any], agent_id: st
                 title="A task needs your input",
                 body=q_text or "The agent is waiting for your answer.",
                 severity="info",
-                source={"origin": "agent", "task_id": str(task_id_str)},
+                source={"origin": "agent", "task_id": str(task_id_str),
+                        "message": notification_message(
+                            "taskNeedsInput", title=getattr(current_task, "title", None),
+                            question=q_text or None)},
                 workspace=str(getattr(current_task, "workspace", "") or "") or None,
                 channels=["dashboard"],
             )
@@ -264,7 +268,10 @@ def _auto_start_review(tid, task) -> bool:
                     title="A task hit its review cycle limit",
                     body=reason,
                     severity="warning",
-                    source={"origin": "agent", "task_id": str(tid)},
+                    source={"origin": "agent", "task_id": str(tid),
+                            "message": notification_message(
+                                "reviewCycleLimit", title=getattr(task, "title", None),
+                                limit=MAX_REVIEW_CYCLES)},
                     workspace=ws_name,
                     channels=["dashboard"],
                 )
@@ -410,6 +417,38 @@ def _superseded(task_id: Any, run_id: str) -> bool:
         return False
 
 
+def _block_on_self_report(task_id, run: Dict[str, Any]) -> bool:
+    """Block the task when the run's answer ends with ``STATUS: blocked``.
+
+    Returns True when it did. The answer is the run's output, or the result
+    the run saved on the task when the record carries none.
+    """
+    from tasks import service as _ts
+    from tasks.context import self_reported_status
+    from tasks.outcome import NON_GRADED_AGENTS
+
+    agent_id = str(run.get("agent_id") or "")
+    if not agent_id or agent_id in NON_GRADED_AGENTS:
+        return False
+    output = str(run.get("output") or "")
+    if not output.strip():
+        run_id = str(run.get("run_id") or "")
+        for entry in reversed(_ts.get_task_results(task_id) or []):
+            if str(entry.get("run_id") or "") == run_id:
+                output = str(entry.get("result") or "")
+                break
+    state, reason = self_reported_status(output)
+    if state != "blocked":
+        return False
+    why = reason or "no reason given"
+    _ts.block_task(task_id, reason=f"{agent_id} could not finish this task: {why}")
+    _ts.clear_agent(task_id)
+    _ts.append_task_activity_log(task_id, "self_reported_blocked",
+                                 f"{agent_id} checked its work and could not finish: {why}",
+                                 agent=agent_id, run_id=str(run.get("run_id") or ""), reason=why)
+    return True
+
+
 def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
     """Update the owning task's status after a run completes or fails."""
     try:
@@ -475,6 +514,13 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                 # end still runs; a relaunch has moved run-bound continuations
                 # onto the new run, so they wait for the last attempt.
                 outcome_handled = False
+                # The worker checked its own work and said it could not finish
+                # (STATUS: blocked, tasks/context.py): the task waits for a
+                # person, nothing grades it and a container does not go on.
+                if current_task and current_task.status not in agent_set_statuses \
+                        and _block_on_self_report(tid, run or {}):
+                    current_task = None
+                    outcome_handled = True
                 if current_task and current_task.status not in agent_set_statuses \
                         and getattr(current_task, "outcome", None):
                     try:
@@ -484,6 +530,16 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                         log.warning("outcome check failed for run %s", run_id, exc_info=True)
                         outcome_handled = False
                 if outcome_handled:
+                    current_task = None
+                # A subtask done by its container's agent is closed here,
+                # which starts the next one (tasks.service.finish_container_subtask).
+                if current_task and current_task.status not in agent_set_statuses \
+                        and _ts.finish_container_subtask(tid):
+                    current_task = None
+                # A container's own agent finishing another attempt on the
+                # parent, its subtasks all done and the outcome met: done.
+                if current_task and current_task.status not in agent_set_statuses \
+                        and _ts.finish_container_parent(tid):
                     current_task = None
                 if current_task and current_task.status not in agent_set_statuses:
                     ws_name = str(getattr(current_task, "workspace", "") or "default")
