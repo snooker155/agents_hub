@@ -30,6 +30,7 @@ from agents.agent_lifecycle import run_agent_lifecycle
 from managers.run_manager import open_run, close_run, update_run, run_log_path
 from flow import run_store
 from flow.engine import (
+    SKIP_REASON_TEXT,
     _node_value,
     build_agent_input as _build_agent_input,
     FlowEngineDriver,
@@ -290,7 +291,9 @@ def build_task_driver(
     hooks write to the same record, which is what lets a killed run be resumed
     instead of failed.
     """
-    agent_overrides = agent_overrides or {}
+    # Every agent node is built as a flow step (agents/agent_factory.py):
+    # it answers the next node, not a person.
+    agent_overrides = {**(agent_overrides or {}), "flow_step": True}
 
     async def _run_agent_node_async(node, node_id, label, prompt, outcome, flow_state):
         # _run_agent_node is synchronous (sync invoke_agent); run it off the loop.
@@ -396,22 +399,13 @@ def build_task_driver(
             })
 
     #: Why a node was not executed, in the words the history tab shows.
-    _SKIP_REASONS = {
-        "branch_not_selected": "not on the selected branch",
-        "predecessor_failed": "a node it depends on failed",
-        "branch_isolated": "its branch was isolated after a failure",
-        "cancelled_after_failure": "the run stopped at the first failure",
-        "already_done": "already completed before this run resumed",
-        "already_skipped": "already skipped before this run resumed",
-    }
-
     def _on_node_skip(ev: dict) -> None:
         reason = ev.get("reason") or ""
         print(f"[node_skip] node={ev['node_id']} reason={reason}")
         log_flow(flow_id, run_id, {
             "timestamp": _utc_now_iso(), "type": "node_skip", "node_id": ev["node_id"],
             "content": f"Skipping node '{ev['node_id']}': "
-                       + _SKIP_REASONS.get(reason, reason or "not on the selected branch"),
+                       + SKIP_REASON_TEXT.get(reason, reason or "not on the selected branch"),
             "status": "skipped",
         })
 
@@ -435,6 +429,7 @@ def build_task_driver(
                 "status": "completed",
                 "output": ev.get("output") or ev.get("text"),
                 "state": ev.get("state"),
+                **({"run_id": ev["run_id"]} if ev.get("run_id") else {}),
             })
         else:
             print(f"[node_error] node={node_id} label={ev.get('label')} error={ev.get('error')}")
@@ -444,6 +439,7 @@ def build_task_driver(
                 "agent_name": ev.get("label"), "tag": ev.get("category"),
                 "content": f"{ev.get('label')} failed: {ev.get('error')}",
                 "status": "failed", "output": ev.get("error"),
+                **({"run_id": ev["run_id"]} if ev.get("run_id") else {}),
             })
 
     def _on_flow_start(ev: dict) -> None:
