@@ -1,12 +1,12 @@
 /**
- * The definition's version history, its own tab on the agent page: what changed, the diff against what is live now, and rolling one
- * back.
+ * The definition's version history, its own tab on the agent page: what changed, the diff against what is live now, rolling one
+ * back, and pinning the agent to one (every run builds from it until unpinned).
  *
  * `onRolledBack` is the page's own reload: a rollback rewrites the definition,
  * so the editors above the history have to be re-read from the server.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { getAgentVersionDiff, getAgentVersions, rollbackAgentVersion } from '../../api';
+import { getAgentVersionDiff, getAgentVersions, pinAgentVersion, rollbackAgentVersion } from '../../api';
 import { errorDetail } from '../toast';
 
 export function useAgentVersions({ id, activeTab, onRolledBack, t }) {
@@ -19,6 +19,9 @@ export function useAgentVersions({ id, activeTab, onRolledBack, t }) {
   const [rollbackConfirmVersion, setRollbackConfirmVersion] = useState(null);
   const [rollbackBusy, setRollbackBusy] = useState(false);
   const [rollbackError, setRollbackError] = useState('');
+  const [pinnedVersion, setPinnedVersion] = useState(null);
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinError, setPinError] = useState('');
 
   // Load version history when the Versions tab opens
   const fetchVersions = useCallback(() => {
@@ -26,7 +29,10 @@ export function useAgentVersions({ id, activeTab, onRolledBack, t }) {
     setVersionsLoading(true);
     setVersionsError('');
     getAgentVersions(id)
-      .then(r => setAgentVersions(r.data?.versions || []))
+      .then((r) => {
+        setAgentVersions(r.data?.versions || []);
+        setPinnedVersion(r.data?.pinned_version ?? null);
+      })
       .catch(e => setVersionsError(errorDetail(e) || t('agentDetails.versions.errors.load')))
       .finally(() => setVersionsLoading(false));
   }, [id, t]);
@@ -70,9 +76,24 @@ export function useAgentVersions({ id, activeTab, onRolledBack, t }) {
       .finally(() => setRollbackBusy(false));
   };
 
+  // version: a stored number, 'current' or null (unpin).
+  const handlePin = (version) => {
+    setPinBusy(true);
+    setPinError('');
+    pinAgentVersion(id, version)
+      .then((r) => {
+        setPinnedVersion(r.data?.pinned_version ?? null);
+        // 'current' may have stored the live state as a new version.
+        if (version === 'current') fetchVersions();
+        onRolledBack();
+      })
+      .catch(e => setPinError(errorDetail(e) || t('agentDetails.versions.errors.pin')))
+      .finally(() => setPinBusy(false));
+  };
 
   return {
     agentVersions, versionsLoading, versionsError,
+    pinnedVersion, pinBusy, pinError, handlePin,
     openDiffVersion, diffText, diffLoading,
     rollbackConfirmVersion, setRollbackConfirmVersion, rollbackBusy,
     rollbackError, setRollbackError,

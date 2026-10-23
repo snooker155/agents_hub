@@ -1,23 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader, Play, X } from 'lucide-react';
+import { History, Loader, Lock, Play, X } from 'lucide-react';
 
-import { getAgents, getWorkspaces, startInstance } from '../../api';
+import { getAgents, getAgentVersions, getWorkspaces, startInstance } from '../../api';
 import { useWorkspace } from '../workspace';
 import { instancePath } from '../instanceUtils';
 import { useI18n } from '../../i18n';
 
 /**
- * Run, where the agent is not already fixed: the Instances page's button.
+ * Run: start a copy of an agent (routes/instances.py) and open its page.
  *
- * The form asks only the agent and the workspace (routes/instances.py) and
- * opens the copy's page.
+ * The copy always starts in the workspace the person is in (`defaultWorkspace`,
+ * else the selected one); the form only names it, there is no choice.
  *
- * `agentId` fixes the agent (Run from the agent's own page); without it the
- * form offers a select built from `agents` (the fleet grid already holds the
- * list, so it is passed in rather than fetched again).
+ * `agentId` fixes the agent (Run from the agent's own page), shown by
+ * `agentName` when the caller has it, else by the name from the agent list;
+ * without it the form offers a select built from `agents` (the fleet grid
+ * already holds the list, so it is passed in rather than fetched again).
  */
-export default function StartInstanceModal({ open, onClose, agentId = null, agents = null, defaultWorkspace = '' }) {
+export default function StartInstanceModal({ open, onClose, agentId = null, agentName: givenName = '', agents = null, defaultWorkspace = '' }) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { selectedWorkspace } = useWorkspace();
@@ -25,39 +26,61 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
   const [agentList, setAgentList] = useState(agents || []);
   const [selectedAgentId, setSelectedAgentId] = useState(agentId || '');
   const [workspaces, setWorkspaces] = useState([]);
-  const [workspace, setWorkspace] = useState(defaultWorkspace || selectedWorkspace || '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   // Opening the modal (or pointing it at another agent or workspace) starts
-  // the form over. Adjusted while rendering; `selectedWorkspace` is read but
-  // deliberately not part of the key, as before.
+  // the form over. Adjusted while rendering.
   const resetKey = open ? `${agentId}|${defaultWorkspace}` : null;
   const [seenResetKey, setSeenResetKey] = useState(resetKey);
   if (resetKey !== seenResetKey) {
     setSeenResetKey(resetKey);
     if (open) {
       setSelectedAgentId(agentId || '');
-      setWorkspace(defaultWorkspace || selectedWorkspace || '');
       setError('');
     }
   }
 
+  // The list also names a fixed agent when the caller did not pass its name.
   useEffect(() => {
-    if (!open || agentId || agents) return;
+    if (!open || agents || (agentId && givenName)) return;
     getAgents().then((r) => setAgentList(r.data?.agents || r.data || [])).catch(() => setAgentList([]));
-  }, [open, agentId, agents]);
+  }, [open, agentId, agents, givenName]);
 
   useEffect(() => {
     if (!open) return;
     getWorkspaces().then((r) => setWorkspaces(r.data || [])).catch(() => setWorkspaces([]));
   }, [open]);
 
-  if (!open) return null;
+  // Which version the run builds from: the agent's pin, else the live state
+  // (agents/versions.py agent_pin). Kept with the agent it was fetched for.
+  const versionAgentId = open ? (agentId || selectedAgentId) : '';
+  const [versionInfo, setVersionInfo] = useState({ agentId: '', pinned: null, current: null });
+  useEffect(() => {
+    if (!versionAgentId) return undefined;
+    let cancelled = false;
+    getAgentVersions(versionAgentId)
+      .then((r) => {
+        if (cancelled) return;
+        setVersionInfo({
+          agentId: versionAgentId,
+          pinned: r.data?.pinned_version ?? null,
+          current: r.data?.current_version ?? null,
+        });
+      })
+      .catch(() => { if (!cancelled) setVersionInfo({ agentId: versionAgentId, pinned: null, current: null }); });
+    return () => { cancelled = true; };
+  }, [versionAgentId]);
 
+  if (!open) return null;
+  const version = versionInfo.agentId && versionInfo.agentId === versionAgentId ? versionInfo : null;
+
+  const workspace = defaultWorkspace || selectedWorkspace || '';
+  const workspaceRow = workspaces.find((ws) => ws.name === (workspace || 'default'));
+  const workspaceLabel = workspaceRow?.label || workspaceRow?.name || workspace || 'default';
   const effectiveAgentId = agentId || selectedAgentId;
   const agentName = agentId
-    ? (agentList.find((a) => a.id === agentId)?.name || agentId)
+    ? (givenName || agentList.find((a) => a.id === agentId)?.name || '')
     : null;
 
   const handleSubmit = async (e) => {
@@ -102,7 +125,7 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
           <div>
             <label className={label}>{t('startInstance.agent')}</label>
             {agentId ? (
-              <div className="px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg text-gray-700">{agentName}</div>
+              <div className="px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg text-gray-700 min-h-[38px]">{agentName}</div>
             ) : (
               <select className={field} value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
                 <option value="">{t('startInstance.selectAgent')}</option>
@@ -113,14 +136,28 @@ export default function StartInstanceModal({ open, onClose, agentId = null, agen
             )}
           </div>
 
+          {version && (
+            <div>
+              <label className={label}>{t('startInstance.version')}</label>
+              {version.pinned != null ? (
+                <div className="px-3 py-2 text-sm bg-amber-50 border border-amber-200 rounded-lg text-amber-800 flex items-center gap-2">
+                  <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+                  {t('startInstance.versionPinned', { n: version.pinned })}
+                </div>
+              ) : (
+                <div className="px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg text-gray-700 flex items-center gap-2">
+                  <History className="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />
+                  {version.current != null
+                    ? t('startInstance.versionCurrentN', { n: version.current })
+                    : t('startInstance.versionCurrent')}
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <label className={label}>{t('startInstance.workspace')}</label>
-            <select className={field} value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
-              <option value="">{t('startInstance.defaultWorkspace')}</option>
-              {workspaces.map((ws) => (
-                <option key={ws.name} value={ws.name}>{ws.label || ws.id || ws.name}</option>
-              ))}
-            </select>
+            <div className="px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg text-gray-700">{workspaceLabel}</div>
           </div>
 
           <div className="flex justify-end gap-3 pt-2">

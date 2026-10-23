@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Any, Dict, List, Optional, Union
 
 from agents import registry
+from agents import versions as agent_versions
 from tools.registry import get_all_tools
 from agents.capability_guard import (
     guard_mode,
@@ -122,6 +123,8 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
         agent.setdefault("extends", None)
         agent.setdefault("extends_version", None)
         agent["children_count"] = _children_count.get(agent["id"], 0)
+        # The version it runs on (agents/versions.py): its pin, else the live state.
+        agent.update(agent_versions.version_state(agent["id"]))
         page.append(agent)
 
     if limit is None and offset is None:
@@ -209,6 +212,7 @@ async def get_agent_details(agent_id: str, workspace: Optional[str] = None):
     data.setdefault("extends", None)
     data.setdefault("extends_version", None)
     data["children"] = registry.children_of(spec.id)
+    data.update(agent_versions.version_state(agent_id))
     ws = (workspace or "default").strip() or "default"
     _apply_workspace_memory(data, ws, _workspace_memory_overrides(ws))
     return data

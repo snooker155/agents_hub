@@ -66,6 +66,7 @@ NEVER_INHERITED: Tuple[str, ...] = (
     "is_default_chat_agent",
     "api_key", "http_expose", "http_port", "http_host_port",
     "node_type", "remote", "default_workspace_only", "capability_override",
+    "pinned_version", "link_refusals",
 )
 
 #: Agents in one chain at most: grandparent, parent, child.

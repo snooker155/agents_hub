@@ -2,6 +2,7 @@ export default {
   title: 'Agentenversion',
   live: 'Agentenversion: aktuell (v{{version}})',
   pinned: 'Agentenversion: festgelegt auf v{{version}}',
+  badgeUnsaved: 'aktuell',
   versionOption: 'v{{version}}',
   jobFieldLabel: 'Agentenversion',
   jobFieldLive: 'Aktuell',

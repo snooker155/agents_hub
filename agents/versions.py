@@ -38,6 +38,7 @@ Public API:
 from __future__ import annotations
 
 import difflib
+from dataclasses import replace
 import hashlib
 import json
 import logging
@@ -450,14 +451,78 @@ def diff_entries(from_entry: Dict[str, Any], to_entry: Dict[str, Any]) -> Dict[s
         b_text = _part_text(to_entry, part)
         if a_text == b_text:
             continue
+        # Lines without their endings and joined here: with keepends, a text
+        # that does not end in a newline (the spec JSON never does) glues its
+        # last removed line to the added one ("-}+}").
         diff = difflib.unified_diff(
-            a_text.splitlines(keepends=True),
-            b_text.splitlines(keepends=True),
+            a_text.splitlines(),
+            b_text.splitlines(),
             fromfile=f"{part}@{_label(from_entry)}",
             tofile=f"{part}@{_label(to_entry)}",
+            lineterm="",
         )
-        out[part] = "".join(diff)
+        out[part] = "\n".join(diff) + "\n"
     return out
+
+
+# -------------------- Agent pin --------------------
+
+def agent_pin(agent_id: Optional[str]) -> Optional[int]:
+    """The version the agent itself is pinned to (``AgentSpec.pinned_version``)
+    when that row still exists, else None (the live definition)."""
+    if not agent_id:
+        return None
+    try:
+        from agents.registry import get_agent_raw
+        raw = get_agent_raw(agent_id)
+        pin = getattr(raw, "pinned_version", None) if raw is not None else None
+        if pin is None or get_version_row(agent_id, int(pin)) is None:
+            return None
+        return int(pin)
+    except Exception:  # noqa: BLE001 - a broken pin falls back to the live definition
+        log.debug("could not read the version pin of '%s'", agent_id, exc_info=True)
+        return None
+
+
+def effective_pin(agent_id: Optional[str], requested: Optional[int] = None) -> Optional[int]:
+    """The version a run builds from: the run's own pin (a task, a
+    deployment, a chat request) when given, else the agent's pin."""
+    if requested is not None:
+        return int(requested)
+    return agent_pin(agent_id)
+
+
+def version_state(agent_id: str) -> Dict[str, Optional[int]]:
+    """What the agent runs on, for the UI: ``pinned_version`` (the agent's
+    pin, None when it follows the live state) and ``current_version`` (the
+    stored version equal to the live state, None while the live state is not
+    in history yet). Never raises."""
+    current: Optional[int] = None
+    try:
+        current = version_for_hash(agent_id, definition_fingerprint(agent_id)["hash"])
+    except Exception:  # noqa: BLE001 - a display hint, never worth an error
+        log.debug("could not resolve the current version of '%s'", agent_id, exc_info=True)
+    return {"pinned_version": agent_pin(agent_id), "current_version": current}
+
+
+def set_agent_pin(agent_id: str, version: Optional[int], *, actor: Optional[str] = None) -> Optional[int]:
+    """Pin every run of the agent to a stored ``version``, or clear the pin
+    with None. Stored on the raw record as given (a child keeps its own
+    overrides) and not counted as an edit, so a system agent keeps getting
+    its shipped updates once unpinned. Raises ``ValueError`` for an unknown
+    agent or version."""
+    from agents.registry import get_agent_raw, save_raw
+    raw = get_agent_raw(agent_id)
+    if raw is None:
+        raise ValueError(f"Agent '{agent_id}' not found")
+    if version is not None:
+        version = int(version)
+        if get_version_row(agent_id, version) is None:
+            raise ValueError(f"Agent '{agent_id}' has no version {version}")
+    if raw.pinned_version == version:
+        return version
+    save_raw(replace(raw, pinned_version=version), user_edit=False, actor=actor)
+    return version
 
 
 # -------------------- Rollback --------------------
@@ -483,6 +548,11 @@ def rollback_to(agent_id: str, version: int, *, actor: Optional[str] = None) -> 
     from agents.registry import _validate_agent_dict, add_agent
 
     restored_spec = _validate_agent_dict(entry["spec"])
+    # The pin is a setting about versions, not part of one: a rollback keeps
+    # whatever pin the agent has now instead of the one stored with the row.
+    from agents.registry import get_agent_raw
+    _live = get_agent_raw(agent_id)
+    restored_spec = replace(restored_spec, pinned_version=_live.pinned_version if _live else None)
     add_agent(restored_spec, user_edit=True, actor=actor, note=f"rollback to v{version}")
 
     def_id = restored_spec.def_id()

@@ -210,6 +210,16 @@ def test_diff_spec_part_reflects_tool_changes():
     assert "b_tool" in diff["spec"]
 
 
+def test_diff_keeps_each_line_on_its_own_when_text_has_no_final_newline():
+    from_entry = {"version": 1, "definition": {"instructions": "same\nold last"}}
+    to_entry = {"version": None, "definition": {"instructions": "same\nnew last"}}
+    lines = av.diff_entries(from_entry, to_entry)["instructions"].splitlines()
+
+    assert "-old last" in lines
+    assert "+new last" in lines
+    assert lines[:2] == ["--- instructions@v1", "+++ instructions@current"]
+
+
 # ── Rollback ──────────────────────────────────────────────────────────────────
 
 def test_rollback_restores_tools_and_markdown_and_creates_a_new_version():

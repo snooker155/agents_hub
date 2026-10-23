@@ -2,6 +2,7 @@ import ImportedAgentPanel from '../ImportedAgentPanel';
 import { Activity, Clock, Database, Globe, Lock, MessageSquare, UserRound, Wrench } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAgentPage } from './context';
+import AgentVersionBadge from './AgentVersionBadge';
 
 /** Personal memory in use: switched on here, alone or next to a pool of the agent's own. */
 const personalActive = (c) => !!(c && c.effective);
@@ -86,6 +87,16 @@ export default function OverviewTab() {
               <div className="flex flex-col gap-0.5">
                 <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">ID</span>
                 <span className=" text-gray-700 text-xs break-all">{agent.id}</span>
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('agentVersionPin.title')}</span>
+                <span className="flex items-center gap-2">
+                  {agent.pinned_version != null || agent.current_version != null
+                    ? <AgentVersionBadge agent={agent} />
+                    : <span className="text-xs text-gray-500">{t('agentVersionPin.badgeUnsaved')}</span>}
+                  <button type="button" onClick={() => setActiveTab('versions')}
+                    className="text-xs text-indigo-600 hover:text-indigo-800">{t('agentDetails.versions.openVersions')}</button>
+                </span>
               </div>
             </div>
           </div>
