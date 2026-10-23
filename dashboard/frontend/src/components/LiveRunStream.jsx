@@ -45,6 +45,17 @@ const MAX_TEXT = 40000;
 
 const clip = (text) => (text.length > MAX_TEXT ? text.slice(text.length - MAX_TEXT) : text);
 
+// Streamed text joins the text entry it follows; after a thought or a tool
+// call it starts a new one, so the timeline keeps the order things happened in.
+function appendText(timeline, token) {
+  if (!token) return timeline;
+  const last = timeline[timeline.length - 1];
+  if (last?.kind === 'text') {
+    return [...timeline.slice(0, -1), { kind: 'text', content: clip(last.content + token) }];
+  }
+  return [...timeline, { kind: 'text', content: token }];
+}
+
 /**
  * One run's live state, rebuilt from the catch-up snapshot the server keeps
  * (`common.live_runs`). A page that opens while a run is half-way through
@@ -58,6 +69,13 @@ function seedRuns(seed) {
     text: clip(String(seed.text || '')),
     thinking: (seed.thinking || []).map((entry) => String(entry?.content ?? entry ?? '')),
     tools: (seed.tools || []).map((tool) => ({ ...tool })),
+    // A snapshot keeps no order between thinking and tools, so the timeline
+    // it seeds lists the thinking first; what streams after it is in order.
+    timeline: [
+      ...(seed.thinking || []).map((entry) => ({ kind: 'thinking', content: String(entry?.content ?? entry ?? '') })),
+      ...(seed.tools || []).map((_, i) => ({ kind: 'tool', index: i })),
+      ...(seed.text ? [{ kind: 'text', content: clip(String(seed.text)) }] : []),
+    ],
     errors: seed.error ? [String(seed.error)] : [],
     done: seed.status !== 'running',
     ok: seed.status === 'finished',
@@ -93,7 +111,7 @@ function useLiveRunStream(sessionId, { runId = null, seed = null } = {}) {
       const idx = list.findIndex((r) => r.run_id === runId);
       if (idx === -1) {
         return { sessionId: key, runs: [...list, mutate({
-          run_id: runId, agent_id: '', text: '', thinking: [], tools: [],
+          run_id: runId, agent_id: '', text: '', thinking: [], tools: [], timeline: [],
           errors: [], done: false, ok: null, usage: null, duration_ms: null,
           started_at: Date.now(),
         })] };
@@ -116,15 +134,20 @@ function useLiveRunStream(sessionId, { runId = null, seed = null } = {}) {
         upsert(eventRunId, (r) => ({ ...r, agent_id: ev.agent_id || r.agent_id }));
         break;
       case 'token':
-        upsert(eventRunId, (r) => ({ ...r, text: clip(r.text + (ev.token || '')) }));
+        upsert(eventRunId, (r) => ({ ...r, text: clip(r.text + (ev.token || '')), timeline: appendText(r.timeline, ev.token || '') }));
         break;
-      case 'thinking':
-        upsert(eventRunId, (r) => ({ ...r, thinking: [...r.thinking, String(ev.message || ev.content || '')] }));
+      case 'thinking': {
+        const content = String(ev.message || ev.content || '');
+        upsert(eventRunId, (r) => ({
+          ...r, thinking: [...r.thinking, content], timeline: [...r.timeline, { kind: 'thinking', content }],
+        }));
         break;
+      }
       case 'tool_start':
         upsert(eventRunId, (r) => ({
           ...r,
           tools: [...r.tools, { step: ev.step, tool: ev.tool, input: ev.input || '', output: null, error: null, running: true }],
+          timeline: [...r.timeline, { kind: 'tool', index: r.tools.length }],
         }));
         break;
       case 'tool_end':
@@ -489,7 +512,77 @@ function RunSteer({ runId, done }) {
   );
 }
 
-function RunBlock({ run, browserSession = false }) {
+/**
+ * A run's thoughts, tool calls and text one after another, in the order they
+ * happened, instead of grouped. Text the run did not stream (streaming off)
+ * arrives only with `done` and is shown at the end.
+ */
+function RunTimeline({ run, plain = false }) {
+  const items = run.timeline || [];
+  const streamedText = items.some((item) => item.kind === 'text');
+  return (
+    <div className="space-y-1.5">
+      {items.map((item, i) => {
+        if (item.kind === 'thinking') {
+          return (
+            <div key={i} className="flex items-start gap-1.5">
+              <Brain className="w-3 h-3 mt-1 shrink-0 text-violet-500" />
+              <pre className={`flex-1 whitespace-pre-wrap break-words text-[11px] text-violet-700 ${plain ? '' : 'bg-violet-50 rounded px-2 py-1'}`}>{item.content}</pre>
+            </div>
+          );
+        }
+        if (item.kind === 'tool') {
+          const tool = run.tools[item.index];
+          return tool ? <ToolRow key={i} tool={tool} /> : null;
+        }
+        return (
+          <pre key={i} className="whitespace-pre-wrap break-words text-xs text-gray-800 leading-relaxed">
+            {item.content}
+            {!run.done && i === items.length - 1 && <span className="inline-block w-1.5 h-3 align-middle bg-indigo-500 animate-pulse ml-0.5" />}
+          </pre>
+        );
+      })}
+      {!streamedText && run.done && run.text && (
+        <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 leading-relaxed">{run.text}</pre>
+      )}
+    </div>
+  );
+}
+
+// A run as one stream in the order it happened, with no frame or colour
+// around it: thoughts, tool calls and text are added at the bottom as they
+// come, so the panel reads as output going down, not a box growing.
+// Who is running: the agent and the run's id. On the docked panel it stays
+// above the scrolling output.
+function RunHeading({ run }) {
+  return (
+    <div className="flex items-center gap-2 text-xs text-gray-500" data-testid="live-run-heading">
+      <span className={`w-1.5 h-1.5 rounded-full ${run.done ? 'bg-gray-300' : 'bg-indigo-500 animate-pulse'}`} />
+      <span className="font-medium text-gray-700">{run.agent_id || 'agent'}</span>
+      <span className="font-mono text-[10px] text-gray-400">{String(run.run_id).slice(0, 8)}</span>
+    </div>
+  );
+}
+
+function RunStream({ run, heading = false }) {
+  const { t } = useI18n();
+  const empty = !(run.timeline || []).length && !run.errors.length;
+  return (
+    <div className="space-y-1.5" data-testid="live-run-stream">
+      {heading && <RunHeading run={run} />}
+      <RunTimeline run={run} plain />
+      {run.errors.map((e, i) => (
+        <div key={i} className="flex items-start gap-1.5 text-xs text-red-600">
+          <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+          <span className="break-words">{e}</span>
+        </div>
+      ))}
+      {empty && <p className="text-xs text-gray-400 italic">{t('liveRunStream.waitingForTheModel')}</p>}
+    </div>
+  );
+}
+
+function RunBlock({ run, timeline = false, browserSession = false }) {
   const { t } = useI18n();
   const [showThinking, setShowThinking] = useState(false);
   const browserCalls = run.tools.filter((tool) => isBrowserTool(tool.tool)).length;
@@ -505,7 +598,9 @@ function RunBlock({ run, browserSession = false }) {
         )}
       </div>
 
-      {run.thinking.length > 0 && (
+      {timeline && <RunTimeline run={run} />}
+
+      {!timeline && run.thinking.length > 0 && (
         <div>
           <button
             type="button"
@@ -526,7 +621,7 @@ function RunBlock({ run, browserSession = false }) {
         </div>
       )}
 
-      {run.tools.length > 0 && (
+      {!timeline && run.tools.length > 0 && (
         <div className="space-y-1">
           {run.tools.map((t, i) => <ToolRow key={i} tool={t} />)}
         </div>
@@ -541,7 +636,7 @@ function RunBlock({ run, browserSession = false }) {
         </div>
       ))}
 
-      {run.text && (
+      {!timeline && run.text && (
         <pre className="whitespace-pre-wrap break-words text-xs text-gray-800 leading-relaxed">
           {run.text}
           {!run.done && <span className="inline-block w-1.5 h-3 align-middle bg-indigo-500 animate-pulse ml-0.5" />}
@@ -560,24 +655,81 @@ function RunBlock({ run, browserSession = false }) {
  * Live panel for a session. Renders nothing when the session has produced no
  * events yet, so it can be dropped above existing content without leaving an
  * empty box on pages where nothing is running.
+ *
+ * `timeline` shows each run's thoughts, tool calls and text one after another
+ * in the order they happened (RunTimeline) instead of grouped; `bare` drops
+ * the panel's own frame, for a place that already frames it (a modal).
+ * `docked` is the panel as a tab of its own (the task page's Live output): it
+ * is always there and fills the height it is given, shows only the runs still
+ * going, scrolls their output inside, and keeps the box that talks to the
+ * running run pinned at the bottom. With nothing running it says so
+ * (`emptyText`, or `waitingText` while `working` says a run has started but
+ * nothing has streamed yet).
  */
 export default function LiveRunStream({ sessionId, runId = null, seed = null,
-                                       title, className = '', browserSession = false }) {
+                                       title, className = '', timeline = false, bare = false,
+                                       docked = false, working = false,
+                                       emptyText = '', waitingText = '', browserSession = false }) {
   const { t } = useI18n();
   const { runs, activeCount } = useLiveRunStream(sessionId, { runId, seed });
   const heading = title ?? t('liveRunStream.liveOutput');
-  const endRef = useRef(null);
+  const boxRef = useRef(null);
+  // Whether the reader is at the bottom of the panel; only then does new
+  // output pull it down. Read on scroll, before the next render changes it.
+  const pinnedRef = useRef(true);
+  const onScroll = () => {
+    const box = boxRef.current;
+    if (box) pinnedRef.current = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+  };
 
-  // Follow the tail while something is running; leave the scroll alone once the
-  // last run finished so the user can read back without being yanked down.
+  // Follow the tail while something is running, by scrolling the panel's own
+  // box only. scrollIntoView scrolled every scrollable ancestor too (the page,
+  // a modal), so reading elsewhere while a run streamed kept jumping back.
   useEffect(() => {
-    if (activeCount > 0) endRef.current?.scrollIntoView({ block: 'nearest' });
+    const box = boxRef.current;
+    if (box && activeCount > 0 && pinnedRef.current) box.scrollTop = box.scrollHeight;
   }, [runs, activeCount]);
+
+  if (docked) {
+    const live = runs.filter((r) => !r.done);
+    const current = live[live.length - 1];
+    return (
+      <div className={`flex flex-col min-h-0 ${className}`} data-testid="live-run-docked">
+        <div className="shrink-0 flex items-center gap-2 mb-3">
+          <Radio className={`w-4 h-4 ${live.length ? 'text-indigo-500 animate-pulse' : 'text-gray-400'}`} />
+          <h3 className="text-sm font-semibold text-gray-800 truncate">{heading}</h3>
+          {live.length > 0 && (
+            <span className="text-[10px] font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">
+              {live.length} running
+            </span>
+          )}
+        </div>
+        {/* The current run's agent and id stay put; only its output scrolls.
+            Runs going at the same time each get their line in the stream. */}
+        {current && live.length === 1 && (
+          <div className="shrink-0 mb-2"><RunHeading run={current} /></div>
+        )}
+        <div ref={boxRef} onScroll={onScroll} data-testid="live-run-box"
+          className="flex-1 min-h-0 space-y-4 overflow-y-auto overscroll-contain">
+          {live.length === 0 ? (
+            <p className="h-full flex items-center justify-center text-sm text-gray-400 text-center px-4">
+              {working ? waitingText : emptyText}
+            </p>
+          ) : live.map((r) => <RunStream key={r.run_id} run={r} heading={live.length > 1} />)}
+        </div>
+        {current && (
+          <div className="shrink-0 pt-2" data-testid="live-run-steer">
+            <RunSteer key={current.run_id} runId={current.run_id} done={current.done} />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (!sessionId || runs.length === 0) return null;
 
   return (
-    <div className={`bg-white rounded-xl shadow-sm border border-gray-100 p-4 ${className}`}>
+    <div className={`${bare ? '' : 'bg-white rounded-xl shadow-sm border border-gray-100 p-4'} ${className}`}>
       <div className="flex items-center gap-2 mb-3">
         <Radio className={`w-4 h-4 ${activeCount > 0 ? 'text-indigo-500 animate-pulse' : 'text-gray-400'}`} />
         <h3 className="text-sm font-semibold text-gray-800">{heading}</h3>
@@ -587,9 +739,9 @@ export default function LiveRunStream({ sessionId, runId = null, seed = null,
           </span>
         )}
       </div>
-      <div className="space-y-2 max-h-[28rem] overflow-y-auto">
-        {runs.map((r) => <RunBlock key={r.run_id} run={r} browserSession={browserSession} />)}
-        <div ref={endRef} />
+      <div ref={boxRef} onScroll={onScroll} data-testid="live-run-box"
+        className="space-y-2 max-h-[28rem] overflow-y-auto overscroll-contain">
+        {runs.map((r) => <RunBlock key={r.run_id} run={r} timeline={timeline} browserSession={browserSession} />)}
       </div>
     </div>
   );
