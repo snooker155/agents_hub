@@ -6,11 +6,13 @@ import GraphMirror from '../GraphMirror';
 import ProcessGraph, { TokenPill } from '../ProcessGraph';
 import ViewCard from '../../views/ViewCard';
 import { useI18n } from '../../i18n';
-import { ChevronDown, ChevronUp, FileText, LayoutGrid, Loader2, Workflow } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, FileText, LayoutGrid, Loader2, Workflow } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { getWorkspaceFileContent } from '../../api';
 import CodeBlock from '../CodeBlock';
 import { codeLanguageFor } from '../../lib/codeLanguage';
+import { renderContent } from './markdown';
 import { ARTIFACT_OP_META } from './artifactOps';
 
 function ProcessPanelContent({ processInsights, topology = null, graphRun = null, workspace = null }) {
@@ -169,12 +171,17 @@ function ArtifactContent({ workspace, path }) {
   }
   if (state.error) return <div className="p-3 text-xs text-red-600">{state.error}</div>;
   const language = codeLanguageFor(path);
+  // A Markdown file reads as the document it is, in the panel itself, not
+  // as a code block of its source.
+  if (language === 'markdown') {
+    return <div className="px-4 py-3 text-sm text-gray-800" data-testid="artifact-markdown">{renderContent(state.content || '')}</div>;
+  }
   if (language) return <div className="p-3"><CodeBlock language={language} code={state.content} /></div>;
   return <pre className="p-3 font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words text-gray-700">{state.content}</pre>;
 }
 
 /** One changed file: what it holds now (``content``) or what changed (``diff``). */
-function ArtifactDetail({ artifact, workspace, mode }) {
+function ArtifactDetail({ artifact, workspace, mode, onModeChange = null }) {
   const { t } = useI18n();
   const meta = ARTIFACT_OP_META[artifact.op] || ARTIFACT_OP_META.modify;
   return (
@@ -188,6 +195,20 @@ function ArtifactDetail({ artifact, workspace, mode }) {
           {artifact.additions > 0 && <span className="text-emerald-600">+{artifact.additions}</span>}
           {artifact.deletions > 0 && <span className="text-red-600">−{artifact.deletions}</span>}
         </span>
+        {/* The file's own page under Artifacts; a deleted file has none. */}
+        {artifact.url && artifact.op !== 'delete' ? (
+          <Link
+            to={artifact.url}
+            title={t('chat.openArtifactTitle')}
+            data-testid="artifact-open"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-xs text-gray-600 no-underline transition-colors hover:border-indigo-300 hover:bg-indigo-50"
+          >
+            <ExternalLink className="h-3 w-3" />
+            {t('chat.openArtifact')}
+          </Link>
+        ) : null}
+        {/* Files / Diff on the file's own line, where the panel has no header of its own. */}
+        {onModeChange ? <ArtifactsModeSwitch mode={mode} onChange={onModeChange} t={t} /> : null}
       </div>
       <div className="flex-1 min-h-0 overflow-auto" data-testid="artifact-detail">
         {mode === 'content' ? (
@@ -209,9 +230,15 @@ function ArtifactDetail({ artifact, workspace, mode }) {
  * the selected one on the right. ``mode`` is the column's switch: ``content``
  * (the default) shows each file as it is now, so a deleted file is not
  * listed; ``diff`` shows what every run changed, deletions included. A view
- * is drawn whole in either.
+ * is drawn whole in either. `onModeChange`, when given, puts the switch on
+ * the selected file's line, for a panel without a header to hold it.
+ * `picked` (`file:<path>` / `view:<id>`) with `onPick` lets the page choose
+ * what is open.
  */
-function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'content' }) {
+function ArtifactsPanel({
+  artifacts, views = [], workspace = null, mode = 'content', onModeChange = null,
+  picked: pickedProp, onPick = null,
+}) {
   const { t } = useI18n();
   const items = useMemo(
     () => Object.values(artifacts || {})
@@ -225,7 +252,11 @@ function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'conte
     return { add, del };
   }, [items]);
   // `file:<path>` or `view:<id>`; the newest view, else the first file, until picked.
-  const [picked, setPicked] = useState(null);
+  // Held here, or by the page when it picks one too (`picked` / `onPick`:
+  // a file clicked in the chat beside the panel).
+  const [pickedHere, setPickedHere] = useState(null);
+  const picked = onPick ? pickedProp : pickedHere;
+  const setPicked = onPick || setPickedHere;
   const fallback = views.length ? `view:${views[views.length - 1].view_id}` : items.length ? `file:${items[0].path}` : null;
   const stillThere = picked && (
     (picked.startsWith('file:') && items.some((a) => `file:${a.path}` === picked))
@@ -290,7 +321,7 @@ function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'conte
         )}
       </div>
       {selectedFile ? (
-        <ArtifactDetail key={selectedFile.path} artifact={selectedFile} workspace={workspace} mode={mode} />
+        <ArtifactDetail key={selectedFile.path} artifact={selectedFile} workspace={workspace} mode={mode} onModeChange={onModeChange} />
       ) : selectedView ? (
         <div className="flex-1 min-w-0 overflow-auto p-3" data-testid="artifact-detail">
           <ViewCard key={selectedView.view_id} viewRef={selectedView} />
@@ -300,4 +331,19 @@ function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'conte
   );
 }
 
-export { ProcessPanelContent, DiffView, ArtifactItem, ArtifactsPanel };
+/** Files (what each file holds now) or Diff (what the runs changed). */
+function ArtifactsModeSwitch({ mode, onChange, t }) {
+  return (
+    <div className="inline-flex rounded-md border border-gray-200 overflow-hidden text-xs" role="tablist" aria-label={t('chat.artifactModes.label')}>
+      {[['content', t('chat.artifactModes.files')], ['diff', t('chat.artifactModes.diff')]].map(([key, label], i) => (
+        <button key={key} type="button" role="tab" aria-selected={mode === key} onClick={() => onChange(key)}
+          className={`px-2 py-0.5 ${i ? 'border-l border-gray-200' : ''} ${
+            mode === key ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'}`}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export { ProcessPanelContent, DiffView, ArtifactItem, ArtifactsModeSwitch, ArtifactsPanel };

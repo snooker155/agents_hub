@@ -4,9 +4,10 @@
  */
 import { useI18n } from '../../i18n';
 import ViewCard from '../../views/ViewCard';
-import { ArtifactItem } from './panels';
-import { ArrowUpRight, ChevronDown, ChevronUp, FileText, Link2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useContext } from 'react';
+import { fileLink } from './artifactOps';
+import { FileOpenContext } from './fileOpenContext';
+import { ArrowUpRight, FileText, Link2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 // ---------------------------------------------------------------------------
@@ -62,57 +63,66 @@ function ResponseButtons({ response, onAction, disabled }) {
   );
 }
 
-// Files the agent created, edited or deleted during this turn, listed inside the
-// reply itself. The Artifacts column only exists in Build view, so without this
-// a chat-view user never sees that the agent touched the filesystem. Diffs are
-// not persisted with the message (localStorage quota), so a reloaded
-// conversation shows the file list and its +/- counts; the diff body is filled
-// in from `artifactsByPath` while the session that produced it is still open.
-function MessageFiles({ files, artifactsByPath }) {
-  const items = files || [];
-  // null = follow the default (expanded for a small change set). The list starts
-  // empty and fills in as `artifact` events stream, so the default has to be
-  // re-evaluated on every render, not captured as the initial state.
-  const [userOpen, setUserOpen] = useState(null);
-  const open = userOpen === null ? items.length <= 3 : userOpen;
-  const totals = useMemo(() => {
-    let add = 0, del = 0;
-    for (const f of (files || [])) { add += f.additions || 0; del += f.deletions || 0; }
-    return { add, del };
-  }, [files]);
+// Files the agent created, edited or deleted during this turn, shown inside
+// the reply as small blocks, each one the file's name linked to its page (the
+// Artifacts page, or the Files tab of its workspace). The link rides on the
+// change itself (`url`, set by the filesystem tools, see
+// common/entity_links.py file_url); a change recorded before that finds its
+// link among the turn's entity links by path. A deleted file has no page left
+// and is shown struck through, without one. What changed inside a file is the
+// side panel's Diff, not the reply's.
+function FileLinks({ files, entities, className = 'mt-2' }) {
+  const { t } = useI18n();
+  // A page with the run's artifacts beside the chat shows the file there.
+  const openFile = useContext(FileOpenContext);
+  const items = [];
+  const seen = new Set();
+  for (const f of files || []) {
+    if (!f?.path || seen.has(f.path)) continue;
+    seen.add(f.path);
+    items.push(f);
+  }
   if (!items.length) return null;
   return (
-    <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50/70 overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setUserOpen(!open)}
-        className="w-full flex items-center gap-1.5 px-3 py-2 text-left hover:bg-gray-100/70"
-      >
-        <FileText className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
-        <span className="text-xs font-semibold text-gray-700 flex-shrink-0">
-          {items.length} file{items.length === 1 ? '' : 's'} changed
-        </span>
-        <span className="flex items-center gap-1.5 text-[10px] font-mono flex-shrink-0">
-          {totals.add > 0 && <span className="text-emerald-600">+{totals.add}</span>}
-          {totals.del > 0 && <span className="text-red-600">−{totals.del}</span>}
-        </span>
-        {open
-          ? <ChevronUp className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" />
-          : <ChevronDown className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" />}
-      </button>
-      {open && (
-        <div className="border-t border-gray-100 p-2 space-y-1.5">
-          {items.map((f) => (
-            <ArtifactItem
-              key={f.path}
-              artifact={{ ...f, ...(artifactsByPath?.[f.path] || {}) }}
-              defaultOpen={false}
-            />
-          ))}
-        </div>
-      )}
+    <div className={`${className} flex flex-wrap gap-1.5`} data-testid="message-files">
+      {items.map((f) => {
+        const url = openFile && f.op !== 'delete' ? null : fileLink(f, entities);
+        const inPanel = Boolean(openFile) && f.op !== 'delete';
+        const name = f.path.split('/').pop() || f.path;
+        // A button, plainly: a brand-coloured frame, raised, its icon in the
+        // brand colour; hover only fills it. A file with nowhere to go
+        // (deleted) stays a flat label.
+        const active = Boolean(url || inPanel);
+        const cls = `inline-flex max-w-full items-center gap-1.5 rounded-lg border px-2.5 py-1 no-underline ${active
+          ? 'border-indigo-300 bg-white shadow-sm transition-colors hover:bg-indigo-50'
+          : 'border-gray-200 bg-gray-50'}`;
+        const body = (
+          <>
+            <FileText className={`h-3.5 w-3.5 flex-shrink-0 ${active ? 'text-indigo-500' : 'text-gray-400'}`} />
+            <span className={`truncate text-xs ${active ? 'font-medium text-gray-800' : 'text-gray-500'} ${f.op === 'delete' ? 'line-through' : ''}`}>
+              {name}
+            </span>
+          </>
+        );
+        if (inPanel) {
+          return (
+            <button key={f.path} type="button" onClick={() => openFile(f.path)} className={`${cls} text-left`} title={`${t('chat.showInArtifacts')}: ${f.path}`}>
+              {body}
+            </button>
+          );
+        }
+        return url ? (
+          <Link key={f.path} to={url} className={cls} title={`${t('chat.openFile')}: ${f.path}`}>{body}</Link>
+        ) : (
+          <span key={f.path} className={cls} title={f.path}>{body}</span>
+        );
+      })}
     </div>
   );
+}
+
+function MessageFiles({ files, entities }) {
+  return <FileLinks files={files} entities={entities} />;
 }
 
 // Service entities the agent touched during this turn — a task it created, a
@@ -172,4 +182,4 @@ function MessageViews({ views }) {
   );
 }
 
-export { ResponseButtons, MessageFiles, MessageEntities, MessageViews };
+export { ResponseButtons, FileLinks, MessageFiles, MessageEntities, MessageViews };

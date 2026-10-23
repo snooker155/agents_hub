@@ -407,7 +407,7 @@ def test_the_display_trace_is_persisted_for_the_reload(turn_env):
     _run(turn_env, spec, "s1", "add a bard", lambda h: "PROMPT")
     trace = turn_env["store"].get_trace("scenario", "s1")
     assert trace[0] == {"k": "user", "text": "add a bard"}
-    assert {"k": "assistant", "text": "Done."} in trace
+    assert {"k": "assistant", "text": "Done.", "run_id": "run-1"} in trace
 
 
 def test_a_silent_agent_falls_back_to_what_it_changed(turn_env, monkeypatch):

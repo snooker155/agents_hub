@@ -1,13 +1,13 @@
-import ContextEntityPicker from '../ContextEntityPicker';
 import ContextMeter from '../ContextMeter';
-import WorkspaceFilePicker from '../files/WorkspaceFilePicker';
-import { CheckCircle, Clock, FolderOpen, Loader, Paperclip, Send, Send as SendIcon, StopCircle, Terminal, Upload, X, Zap } from 'lucide-react';
+import { Clock, Send, Send as SendIcon, StopCircle, Terminal, X, Zap } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
 import { useI18n } from '../../i18n';
 import ComposerMic from './ComposerMic';
 import useChatVoice from './useChatVoice';
+import ComposerBox from './ComposerBox';
+import { COMPOSER_SEND_CLS, COMPOSER_STOP_CLS, COMPOSER_TEXTAREA_CLS } from './composerStyles';
+import { AttachButton, AttachPickers, PendingAttachments, PendingReferences } from './ComposerAttachments';
 
 function isTyping(target) {
   const tag = target?.tagName;
@@ -197,87 +197,14 @@ export default function ChatComposer() {
               className="hidden"
               onChange={onPickFiles}
             />
-            {pendingReferences.length > 0 && (
-              <div className="mb-2 flex flex-wrap items-center gap-1.5">
-                {pendingReferences.map((ref) => (
-                  <span
-                    key={`${ref.kind}:${ref.id}`}
-                    className="inline-flex items-center gap-1.5 max-w-full rounded-full border border-indigo-200
-                      bg-indigo-50 px-2 py-1 text-[11px] text-indigo-700"
-                    title={t(`chat.entityKind.${ref.kind}`, { defaultValue: ref.kind })}
-                  >
-                    <span aria-hidden="true">{ref.icon}</span>
-                    {ref.url ? (
-                      <Link to={ref.url} className="truncate max-w-[14rem] font-medium hover:underline">
-                        {ref.label || ref.id}
-                      </Link>
-                    ) : (
-                      <span className="truncate max-w-[14rem] font-medium">{ref.label || ref.id}</span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => removeReference(ref.kind, ref.id)}
-                      className="text-indigo-400 hover:text-red-600 flex-shrink-0"
-                      title={t('chat.removeAttachment')}
-                      disabled={loading}
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {pendingAttachments.length > 0 && (
-              <div className="mb-2 space-y-2">
-                {pendingAttachments.map((att) => (
-                  <div key={att.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50">
-                    <div className="min-w-0">
-                      <div className="text-xs text-gray-700 font-medium truncate">{att.filename}</div>
-                      <div className="text-[11px] text-gray-500">{t('chat.bytes', { count: att.size })}</div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {att.file_id ? (
-                        <Link
-                          to={`/files?file=${encodeURIComponent(att.file_id)}`}
-                          className="flex items-center gap-1 text-xs text-emerald-700 hover:underline"
-                          data-testid="attachment-saved"
-                        >
-                          {att.from_workspace ? <FolderOpen className="w-3.5 h-3.5" /> : <CheckCircle className="w-3.5 h-3.5" />}
-                          {att.from_workspace ? t('files.chat.workspaceFile') : t('files.chat.saved')}
-                        </Link>
-                      ) : att.saving ? (
-                        <span className="flex items-center gap-1 text-xs text-gray-500">
-                          <Loader className="w-3.5 h-3.5 animate-spin" /> {t('files.chat.saving')}
-                        </span>
-                      ) : (
-                        <label className={`flex items-center gap-1.5 text-xs ${selectedWorkspace ? 'text-gray-600' : 'text-gray-400'}`}>
-                          <input
-                            type="checkbox"
-                            checked={Boolean(att.store_to_workspace)}
-                            onChange={(e) => toggleAttachmentStore(att.id, e.target.checked)}
-                            disabled={!selectedWorkspace || loading}
-                          />
-                          {t('chat.storeInWorkspace')}
-                        </label>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => removeAttachment(att.id)}
-                        className="text-gray-400 hover:text-red-600"
-                        title={t('chat.removeAttachment')}
-                        disabled={loading}
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {!selectedWorkspace && (
-                  <p className="text-[11px] text-amber-600">{t('chat.selectAWorkspaceIfYou')}</p>
-                )}
-              </div>
-            )}
+            <PendingReferences references={pendingReferences} onRemove={removeReference} disabled={loading} />
+            <PendingAttachments
+              attachments={pendingAttachments}
+              workspace={selectedWorkspace}
+              onToggleStore={toggleAttachmentStore}
+              onRemove={removeAttachment}
+              disabled={loading}
+            />
 
             {/* Slash command picker */}
             {commandMenuOpen && commandSuggestions.length > 0 && (
@@ -304,147 +231,76 @@ export default function ChatComposer() {
 
             <SteerBar steering={steering} t={t} />
 
-            <div
-              data-testid="composer-box"
-              className={`border rounded-2xl bg-white shadow-lg transition-all
-                ${autoMode?.on && !currentTelegramBinding && !mirrored ? 'border-amber-400' : 'border-gray-300'}`}
-            >
-              <div className="flex items-center gap-3 px-4 py-3">
-              {/* Attach: a file from the computer, or a record the hub already
-                  holds (task / view / project / scenario / loop / …). An entity
-                  picked here is folded into the prompt whether or not the agent
-                  owns a tool that could have fetched it. */}
-              <div className="relative flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setAttachMenuOpen((open) => !open)}
-                  className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40"
-                  title={t('chat.attachMenuTitle')}
+            {/* Under the line, past a rule: auto mode, how to type, and what
+                is left of the model's window. Clearing is offered once the
+                context is tight; /clear is the same action from the keyboard. */}
+            <ComposerBox
+              highlight={Boolean(autoMode?.on) && !currentTelegramBinding && !mirrored}
+              // Attach: a file from the computer, or a record the hub already
+              // holds (task / view / project / loop / …). An entity picked
+              // here is folded into the prompt whether or not the agent owns
+              // a tool that could have fetched it.
+              leading={(
+                <AttachButton
+                  open={attachMenuOpen}
+                  onOpenChange={setAttachMenuOpen}
                   disabled={loading || !hasTarget}
-                >
-                  <Paperclip className="w-4 h-4" />
-                </button>
-
-                {attachMenuOpen && (
-                  <>
-                    {/* Click-away layer: a menu anchored above the composer has
-                        no other way to close without stealing focus. */}
-                    <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
-                    <div className="absolute bottom-10 left-0 z-50 w-60 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg py-1">
-                      <button
-                        type="button"
-                        onClick={() => { setAttachMenuOpen(false); fileInputRef.current?.click(); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        <Upload className="w-4 h-4 text-gray-400" />
-                        {t('chat.attachFiles')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setAttachMenuOpen(false); setFilePickerOpen(true); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        <FolderOpen className="w-4 h-4 text-gray-400" />
-                        {t('files.chat.fromWorkspace')}
-                      </button>
-                      {contextKinds.length > 0 && (
-                        <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-gray-400 border-t border-gray-100 mt-1">
-                          {t('chat.attachFromHub')}
-                        </div>
-                      )}
-                      {contextKinds.map((k) => (
-                        <button
-                          key={k.kind}
-                          type="button"
-                          onClick={() => { setAttachMenuOpen(false); setPickerKind(k.kind); }}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                        >
-                          <span aria-hidden="true">{k.icon}</span>
-                          {t(`chat.entityKind.${k.kind}`, { defaultValue: k.noun })}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <textarea
-                ref={textareaRef}
-                className="flex-1 resize-none text-base text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
-                placeholder={steering.busy ? t('steering.placeholderBusy') : composerPlaceholder}
-                rows={1}
-                value={input}
-                disabled={!hasTarget}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setInput(val);
-                  resizeTextarea();
-                  setCommandMenuOpen(val.startsWith('/'));
-                  setCommandMenuIndex(0);
-                }}
-                onKeyDown={onKeyDown}
-              />
-
-              {steering.busy ? (
-                <>
-                  {input.trim() && (
-                    <button
-                      type="button"
-                      onClick={() => steering.steer()}
-                      title={steering.activeMode ? t(`steering.modeHints.${steering.activeMode}`) : t('steering.send')}
-                      data-testid="steer-send"
-                      className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
-                        bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold transition-colors"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      {steering.activeMode ? t(`steering.modes.${steering.activeMode}`) : t('steering.send')}
-                    </button>
-                  )}
-                  <button
-                    onClick={steering.stop}
-                    title={t('chat.stop')}
-                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors"
-                  >
-                    <StopCircle className="w-4 h-4" />
-                  </button>
-                </>
-              ) : currentTelegramBinding ? (
-                <button
-                  onClick={sendAsBot}
-                  disabled={!input.trim() || telegramSending || !telegramReplyAllowed}
-                  title={!telegramReplyAllowed
-                    ? t('chat.telegramBoundElsewhere', { workspace: currentTelegramBinding.workspace || 'default' })
-                    : t('chat.sendAsBotToChat')}
-                  className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
-                    bg-sky-600 text-white hover:bg-sky-700 text-xs font-semibold
-                    disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <SendIcon className="w-3.5 h-3.5" />
-                  {telegramSending ? t('chat.sending') : t('chat.sendAsBot')}
-                </button>
-              ) : micShown ? (
-                <ComposerMic voice={voice} disabled={!micUsable} t={t} />
-              ) : (
-                <button
-                  onClick={sendMessage}
-                  disabled={(!input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0) || !hasTarget || mirrored}
-                  title={t('chat.sendEnter')}
-                  className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full
-                    bg-indigo-600 text-white hover:bg-indigo-700
-                    disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                </button>
+                  contextKinds={contextKinds}
+                  onFiles={() => fileInputRef.current?.click()}
+                  onWorkspaceFiles={() => setFilePickerOpen(true)}
+                  onKind={setPickerKind}
+                />
               )}
-              </div>
-              {/* Under the line, past a rule: auto mode, how to type, and what
-                  is left of the model's window. Clearing is offered once the
-                  context is tight; /clear is the same action from the keyboard.
-                  The side columns share the width equally, so the hint stays
-                  centred whatever the toggle says. */}
-              <div className="grid grid-cols-[1fr_minmax(0,max-content)_1fr] items-center gap-3 border-t border-gray-100 px-3 py-1.5 text-xs">
-                <div className="flex min-w-0 justify-start">
-                  {autoMode && !currentTelegramBinding && !mirrored ? (
+              actions={steering.busy ? (
+                  <>
+                    {input.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => steering.steer()}
+                        title={steering.activeMode ? t(`steering.modeHints.${steering.activeMode}`) : t('steering.send')}
+                        data-testid="steer-send"
+                        className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
+                          bg-indigo-600 text-white hover:bg-indigo-700 text-xs font-semibold transition-colors"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        {steering.activeMode ? t(`steering.modes.${steering.activeMode}`) : t('steering.send')}
+                      </button>
+                    )}
+                    <button
+                      onClick={steering.stop}
+                      title={t('chat.stop')}
+                      className={COMPOSER_STOP_CLS}
+                    >
+                      <StopCircle className="w-4 h-4" />
+                    </button>
+                  </>
+                ) : currentTelegramBinding ? (
+                  <button
+                    onClick={sendAsBot}
+                    disabled={!input.trim() || telegramSending || !telegramReplyAllowed}
+                    title={!telegramReplyAllowed
+                      ? t('chat.telegramBoundElsewhere', { workspace: currentTelegramBinding.workspace || 'default' })
+                      : t('chat.sendAsBotToChat')}
+                    className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
+                      bg-sky-600 text-white hover:bg-sky-700 text-xs font-semibold
+                      disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <SendIcon className="w-3.5 h-3.5" />
+                    {telegramSending ? t('chat.sending') : t('chat.sendAsBot')}
+                  </button>
+                ) : micShown ? (
+                  <ComposerMic voice={voice} disabled={!micUsable} t={t} />
+                ) : (
+                  <button
+                    onClick={sendMessage}
+                    disabled={(!input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0) || !hasTarget || mirrored}
+                    title={t('chat.sendEnter')}
+                    className={COMPOSER_SEND_CLS}
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              footerLeft={autoMode && !currentTelegramBinding && !mirrored ? (
                     <button
                       type="button"
                       role="switch"
@@ -462,20 +318,33 @@ export default function ChatComposer() {
                       {autoMode.on ? t('chat.autoMode.on') : t('chat.autoMode.off')}
                       <span className="hidden sm:inline text-[10px] font-normal opacity-70">Shift+Tab</span>
                     </button>
-                  ) : null}
-                </div>
-                <p className="min-w-0 truncate text-center text-[11px] text-gray-400">
-                  {t('chat.composerHint')} / {t('chat.forCommands')}
-                </p>
-                <div className="flex min-w-0 justify-end">
+              ) : null}
+              hint={<>{t('chat.composerHint')} / {t('chat.forCommands')}</>}
+              footerRight={(
                   <ContextMeter
                     usage={contextUsage}
                     onClear={loading ? null : () => selectCommand({ name: '/clear' })}
                     compact
                   />
-                </div>
-              </div>
-            </div>
+              )}
+            >
+                <textarea
+                  ref={textareaRef}
+                  className={COMPOSER_TEXTAREA_CLS}
+                  placeholder={steering.busy ? t('steering.placeholderBusy') : composerPlaceholder}
+                  rows={1}
+                  value={input}
+                  disabled={!hasTarget}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setInput(val);
+                    resizeTextarea();
+                    setCommandMenuOpen(val.startsWith('/'));
+                    setCommandMenuIndex(0);
+                  }}
+                  onKeyDown={onKeyDown}
+                />
+            </ComposerBox>
             {telegramError && (
               <p className="text-xs text-red-600 mt-2">{telegramError}</p>
             )}
@@ -489,25 +358,18 @@ export default function ChatComposer() {
               </p>
             )}
 
-            {filePickerOpen && (
-              <WorkspaceFilePicker
-                workspace={selectedWorkspace}
-                excludeIds={pendingAttachments.map((a) => a.file_id).filter(Boolean)}
-                uploadSource="chat"
-                onPick={(records) => { setFilePickerOpen(false); addWorkspaceFiles(records); }}
-                onClose={() => setFilePickerOpen(false)}
-              />
-            )}
-            {pickerKind && (
-              <ContextEntityPicker
-                initialKind={pickerKind}
-                workspace={selectedWorkspace}
-                projectId={selectedProject}
-                selected={pendingReferences}
-                onAdd={addReferences}
-                onClose={() => setPickerKind(null)}
-              />
-            )}
+            <AttachPickers
+              workspace={selectedWorkspace}
+              projectId={selectedProject}
+              filePickerOpen={filePickerOpen}
+              onCloseFilePicker={() => setFilePickerOpen(false)}
+              attachments={pendingAttachments}
+              onAddWorkspaceFiles={addWorkspaceFiles}
+              pickerKind={pickerKind}
+              onClosePicker={() => setPickerKind(null)}
+              references={pendingReferences}
+              onAddReferences={addReferences}
+            />
           </div>
         </div>
     </>

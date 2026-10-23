@@ -17,6 +17,8 @@ import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import ComposerDock from '../components/ComposerDock';
+import ComposerBox from '../components/chat/ComposerBox';
+import { COMPOSER_SEND_CLS, COMPOSER_STOP_CLS, COMPOSER_TEXTAREA_CLS } from '../components/chat/composerStyles';
 import { useWorkspace } from '../components/workspace';
 import { useChannel, useLiveRefetch, useStream } from '../components/stream';
 import {
@@ -685,7 +687,7 @@ export default function TeamDetails() {
             components/ComposerDock.jsx), with Run and Stop beside it the way a
             chat keeps Send beside the message. */}
         <ComposerDock>
-          <div className="bg-white rounded-2xl border-2 border-gray-300 px-3 pb-3 pt-4 shadow-2xl ring-1 ring-black/5">
+          <div>
             {estimate && (
               <div className="mb-2 rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-800">
                 <span className="font-bold">{t('teamDetails.upToLlmCalls', { count: estimate.llm_calls_upper_bound })}</span>
@@ -695,53 +697,40 @@ export default function TeamDetails() {
                 </span>
               </div>
             )}
-            {/* The box is styled as the Chat page's: the border and the ring
-                belong to the box around the text, not the text itself. The
-                button beside it is exactly one line of the box tall. */}
-            <div className="flex items-end gap-2">
-              <div
-                className={`flex-1 min-w-0 flex items-center border rounded-xl px-3 transition-all
-                 
-                  ${live ? 'border-gray-200 bg-gray-50' : 'border-gray-400 bg-white'}`}
-              >
-                <textarea
-                  ref={goalRef}
-                  value={goal}
-                  onChange={(e) => setGoal(e.target.value)}
-                  rows={1}
-                  disabled={live}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey && !live) { e.preventDefault(); handleStart(); }
-                  }}
-                  placeholder={t('teamDetails.whatTheTeamShouldDeliver')}
-                  aria-label={t('teamDetails.theRequestToHandThe')}
-                  className="flex-1 min-w-0 text-sm leading-6 py-2 resize-none bg-transparent text-gray-800 placeholder-gray-400 focus:outline-none disabled:text-gray-400"
-                />
-              </div>
-              {live ? (
-                <button
-                  onClick={handleStop} disabled={stopping}
-                  className="inline-flex items-center h-[2.625rem] px-4 text-sm font-semibold text-white bg-amber-600 rounded-xl hover:bg-amber-700 disabled:opacity-60"
-                >
-                  {stopping ? <Loader className="w-4 h-4 mr-1.5 animate-spin" />
-                            : <Square className="w-4 h-4 mr-1.5" />}
-                  {t('common.stop')}
+            {/* The Chat page's box: Run where a chat has Send, Stop while
+                the team works, how a request goes in the footer. */}
+            <ComposerBox
+              hint={t('teamDetails.requestHint')}
+              hintTitle={t('teamDetails.requestHint')}
+              actions={live ? (
+                <button onClick={handleStop} disabled={stopping} title={t('common.stop')} className={COMPOSER_STOP_CLS}>
+                  {stopping ? <Loader className="w-4 h-4 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
                 </button>
               ) : (
                 <button
                   onClick={handleStart}
                   disabled={starting || !team.members.length}
-                  className="inline-flex items-center h-[2.625rem] px-4 text-sm font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 disabled:opacity-50"
+                  title={t('common.run')}
+                  className={COMPOSER_SEND_CLS}
                 >
-                  {starting ? <Loader className="w-4 h-4 mr-1.5 animate-spin" />
-                            : <Play className="w-4 h-4 mr-1.5" />}
-                  {t('common.run')}
+                  {starting ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                 </button>
               )}
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              {t('teamDetails.requestHint')}
-            </p>
+            >
+              <textarea
+                ref={goalRef}
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                rows={1}
+                disabled={live}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !live) { e.preventDefault(); handleStart(); }
+                }}
+                placeholder={t('teamDetails.whatTheTeamShouldDeliver')}
+                aria-label={t('teamDetails.theRequestToHandThe')}
+                className={COMPOSER_TEXTAREA_CLS}
+              />
+            </ComposerBox>
           </div>
         </ComposerDock>
             </div>

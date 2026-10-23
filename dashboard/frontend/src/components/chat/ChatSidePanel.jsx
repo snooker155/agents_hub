@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { ArtifactsPanel, ProcessPanelContent } from './panels';
+import { ArtifactsModeSwitch, ArtifactsPanel, ProcessPanelContent } from './panels';
+import { useArtifactsMode } from './artifactsMode';
 import CodePanel from './CodePanel';
 import { Code2, FileText, RefreshCw, X } from 'lucide-react';
 import { useChatPage } from './context';
@@ -40,23 +40,6 @@ function Column({ width, title, icon: Icon, actions = null, onClose, t, children
   );
 }
 
-const ARTIFACTS_MODE_KEY = 'agent_hub_chat_artifacts_mode';
-
-/** Files (what each file holds now) or Diff (what the runs changed). */
-function ArtifactsModeSwitch({ mode, onChange, t }) {
-  return (
-    <div className="inline-flex rounded-md border border-gray-200 overflow-hidden text-xs" role="tablist" aria-label={t('chat.artifactModes.label')}>
-      {[['content', t('chat.artifactModes.files')], ['diff', t('chat.artifactModes.diff')]].map(([key, label], i) => (
-        <button key={key} type="button" role="tab" aria-selected={mode === key} onClick={() => onChange(key)}
-          className={`px-2 py-0.5 ${i ? 'border-l border-gray-200' : ''} ${
-            mode === key ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'}`}>
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export default function ChatSidePanel() {
   const {
     activeRunId, agentTopology, artifactViews, artifacts, artifactsOpen, codeOpen, currentConv, graphRun,
@@ -64,13 +47,7 @@ export default function ChatSidePanel() {
     setArtifactsOpen, setCodeOpen, setProcessOpen, t, viewMode,
   } = useChatPage();
   const workspace = currentConv?.workspace || selectedWorkspace || null;
-  // Content unless the person picked Diff; the pick survives leaving the page.
-  const [artifactsMode, setArtifactsMode] = useState(() => {
-    try { return localStorage.getItem(ARTIFACTS_MODE_KEY) === 'diff' ? 'diff' : 'content'; } catch { return 'content'; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem(ARTIFACTS_MODE_KEY, artifactsMode); } catch { /* storage unavailable */ }
-  }, [artifactsMode]);
+  const [artifactsMode, setArtifactsMode] = useArtifactsMode();
   const showProcess = processOpen && viewMode !== 'build';
   // One panel at a time (the top bar closes one when opening the other); a
   // stale pair from an older saved state resolves to Code.

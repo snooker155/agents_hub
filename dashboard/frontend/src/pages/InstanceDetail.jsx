@@ -13,10 +13,13 @@ import {
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import ComposerDock from '../components/ComposerDock';
 import InstanceComposer from '../components/instances/InstanceComposer';
-import { useStream, useChannel } from '../components/stream';
+import { useStream, useChannel, useStreamEvent } from '../components/stream';
 import { StateBadge } from '../components/InstanceList';
 import { formatDuration, relativeTime } from '../components/instanceUtils';
-import MarkdownRenderer from '../components/MarkdownRenderer';
+import AgentTranscript from '../components/chat/AgentTranscript';
+import ViewModeToggle from '../components/chat/ViewModeToggle';
+import { useChatViewMode } from '../components/chat/viewMode';
+import { agentMessage, applyTurnEvent, settleTurn } from '../components/chat/turnEvents';
 import ProcessTab from '../components/instances/ProcessTab';
 import AccessTab from '../components/instances/AccessTab';
 import { useI18n } from '../i18n';
@@ -52,44 +55,23 @@ function Stat({ label, value }) {
   );
 }
 
-function Turn({ turn, t }) {
-  return (
-    <div className="border-b border-gray-100 last:border-0 py-3 space-y-2">
-      {turn.user_message && (
-        <div className="flex gap-2">
-          <div className="w-16 shrink-0 text-[11px] uppercase tracking-wide text-gray-400 pt-0.5">
-            {t('instanceDetail.turn.asked')}
-          </div>
-          <div className="text-sm text-gray-700 whitespace-pre-wrap min-w-0">{turn.user_message}</div>
-        </div>
-      )}
-      {turn.tools && (
-        <div className="flex gap-2">
-          <div className="w-16 shrink-0 text-[11px] uppercase tracking-wide text-gray-400 pt-0.5">
-            {t('instanceDetail.turn.used')}
-          </div>
-          <div className="text-xs text-gray-500 inline-flex items-center gap-1.5 min-w-0">
-            <Wrench className="w-3 h-3 shrink-0" /><span className="truncate">{turn.tools}</span>
-          </div>
-        </div>
-      )}
-      {turn.response && (
-        <div className="flex gap-2">
-          <div className="w-16 shrink-0 text-[11px] uppercase tracking-wide text-gray-400 pt-0.5">
-            {t('instanceDetail.turn.answered')}
-          </div>
-          <div className="min-w-0 text-sm text-gray-800">
-            <MarkdownRenderer content={turn.response} />
-          </div>
-        </div>
-      )}
-      <div className="pl-[4.5rem] text-[11px] text-gray-300">
-        <Link to={`/messages/${turn.run_id}`} className="hover:text-indigo-500">
-          {t('instanceDetail.turn.openRun')}
-        </Link>
-      </div>
-    </div>
-  );
+// The journal's turns as Chat page messages: what was asked, then the answer
+// with the steps and files of its run (routes/instances.py adds them).
+function turnMessages(turns) {
+  const out = [];
+  for (const turn of turns) {
+    if (turn.user_message) out.push({ id: `${turn.run_id}-asked`, role: 'user', content: turn.user_message });
+    out.push({
+      id: String(turn.run_id),
+      role: 'agent',
+      run_id: turn.run_id,
+      content: turn.response || '',
+      timeline: turn.timeline || [],
+      files: turn.files || [],
+      error: turn.status === 'failed',
+    });
+  }
+  return out;
 }
 
 /**
@@ -186,9 +168,12 @@ export default function InstanceDetail() {
   const [pageError, setPageError] = useState('');
 
   const [queuedNote, setQueuedNote] = useState('');
-  const [liveText, setLiveText] = useState('');
-  const [liveActivity, setLiveActivity] = useState('');
+  // The turn being answered, drawn like the journal's: the message that
+  // started it (when it was sent from here) and the reply as it is written.
+  const [livePrompt, setLivePrompt] = useState(null);
+  const [liveReply, setLiveReply] = useState(null);
   const [streaming, setStreaming] = useState(false);
+  const [viewMode, setViewMode] = useChatViewMode();
   const [liveTaskId, setLiveTaskId] = useState(null);
   // The run the copy is answering with, from the stream's own `meta`: what a
   // message typed meanwhile is steered into (see InstanceComposer).
@@ -285,42 +270,50 @@ export default function InstanceDetail() {
     if (ev.type === 'logs') setLogs(ev.content || '');
   });
 
+  // State changes (starting, active, standby, finished, stopped) travel as
+  // row deltas on the app channel, not on the instance's own channel: patch
+  // the header in place so the badge and the Stop button follow the copy.
+  useStreamEvent('app', 'instances.delta', useCallback((ev) => {
+    if (!Array.isArray(ev.items)) return;
+    const delta = ev.items.find((d) => d.instance_id === instanceId);
+    if (!delta) return;
+    setInstance((prev) => (prev ? { ...prev, ...delta } : prev));
+  }, [instanceId]));
+
   // The instance's own channel: a revived turn, a resident's queued reply, or
   // a task run it picked up while taking tasks.
   useChannel(instanceId ? `instance:${instanceId}` : null, useCallback((ev) => {
     if (!ev || !ev.type) return;
     if (ev.type === 'meta') {
       const matchesConversation = !resident || (ev.conversation_id || 'main') === selectedConversation;
-      if (ev.task_id) {
-        setLiveTaskId(ev.task_id);
+      if (ev.task_id || matchesConversation) {
+        if (ev.task_id) {
+          setLiveTaskId(ev.task_id);
+          setLivePrompt(null);
+        }
         setLiveRunId(ev.run_id || null);
         setStreaming(true);
-        setLiveText('');
-        setQueuedNote('');
-      } else if (matchesConversation) {
-        setLiveRunId(ev.run_id || null);
-        setStreaming(true);
-        setLiveText('');
+        setLiveReply(agentMessage({ id: `live-${ev.run_id || 'turn'}`, run_id: ev.run_id || null }));
         setQueuedNote('');
       }
       return;
     }
-    if (ev.type === 'token') { setLiveText((prev) => prev + (ev.token || '')); return; }
-    if (ev.type === 'tool_start') { setLiveActivity(`${ev.tool || ''}`); return; }
-    if (ev.type === 'thinking') { setLiveActivity(ev.message || ''); return; }
     if (ev.type === 'done') {
-      setLiveActivity('');
+      setLiveReply((m) => (m ? settleTurn(m, { content: ev.response, error: ev.ok === false }) : m));
       if (!ev.ok && ev.error) setQueuedNote(String(ev.error));
       return;
     }
     if (ev.type === 'instance_stream_end') {
       setStreaming(false);
-      setLiveText('');
-      setLiveActivity('');
+      setLivePrompt(null);
+      setLiveReply(null);
       setLiveTaskId(null);
       setLiveRunId(null);
       load();
+      return;
     }
+    // Thoughts, tools, text, files: the reducer every chat shares.
+    setLiveReply((m) => (m ? applyTurnEvent(m, ev) : m));
   }, [load, resident, selectedConversation]));
 
   // The composer's delivery: true when the copy took the message.
@@ -341,7 +334,7 @@ export default function InstanceDetail() {
       });
       if (res.data?.mode === 'running') {
         setStreaming(true);
-        setLiveText('');
+        setLivePrompt({ id: `live-asked-${Date.now()}`, role: 'user', content: message });
       } else if (res.data?.mode === 'steered') {
         // Busy with a task run: the agent reads it before its next step.
         setQueuedNote(t('instanceDetail.message.steered'));
@@ -429,6 +422,8 @@ export default function InstanceDetail() {
 
   const isBusy = ['active', 'starting'].includes(instance.state);
   const turns = timeline?.turns || [];
+  const journal = turnMessages(turns);
+  const liveMessages = [livePrompt, liveReply].filter(Boolean);
   const pending = timeline?.pending || [];
   const tabs = resident ? [...CORE_TABS, ...RESIDENT_TABS] : CORE_TABS;
 
@@ -559,10 +554,30 @@ export default function InstanceDetail() {
       </div>
 
       {activeTab === 'timeline' && (
-        <div className="bg-white border border-gray-200 rounded-xl px-4">
-          {!turns.length ? (
-            <div className="py-8 text-center text-sm text-gray-400">{t('instanceDetail.emptyTimeline')}</div>
-          ) : turns.map((turn) => <Turn key={turn.run_id} turn={turn} t={t} />)}
+        // The conversation as the Chat page draws one, in the view chosen there.
+        <div className="mt-3">
+          {(journal.length > 0 || liveMessages.length > 0) && (
+            <div className="flex justify-end mb-2">
+              <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
+            </div>
+          )}
+          {!journal.length && !liveMessages.length ? (
+            <div className="bg-white border border-gray-200 rounded-xl py-8 text-center text-sm text-gray-400">{t('instanceDetail.emptyTimeline')}</div>
+          ) : (
+            <AgentTranscript
+              messages={[...journal, ...liveMessages]}
+              viewMode={viewMode}
+              streamingId={streaming ? liveReply?.id || null : null}
+              waiting={streaming && !liveReply}
+              agentName={instance.agent_id || ''}
+            />
+          )}
+          {streaming && liveTaskId && (
+            <div className="mx-2 -mt-3 mb-4 text-xs text-indigo-600 inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+              {t('instanceDetail.message.taskRun')}
+            </div>
+          )}
         </div>
       )}
 
@@ -645,16 +660,6 @@ export default function InstanceDetail() {
 
       {activeTab === 'access' && resident && (
         <AccessTab instance={instance} onInstanceUpdated={setInstance} />
-      )}
-
-      {streaming && (
-        <div className="bg-white border border-indigo-200 rounded-xl p-3 mt-4">
-          <div className="text-xs text-indigo-600 mb-1 inline-flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            {liveTaskId ? t('instanceDetail.message.taskRun') : (liveActivity || t('instanceDetail.message.working'))}
-          </div>
-          <div className="text-sm text-gray-800 whitespace-pre-wrap">{liveText}</div>
-        </div>
       )}
 
       {/* The message box: the reason an instance is not just a run log. The

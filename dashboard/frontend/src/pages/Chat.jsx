@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
+import { conversationTarget } from '../components/chat/handoff';
 import { useWorkspace } from '../components/workspace';
 import { useStream } from '../components/stream';
 import ViewCard from '../views/ViewCard';
@@ -63,6 +64,7 @@ import { ChatMathActionsContext } from '../components/chat/chatMarkdownContext';
 import ChatSidebar from '../components/chat/ChatSidebar';
 import ChatTopBar from '../components/chat/ChatTopBar';
 import ChatMessageList from '../components/chat/ChatMessageList';
+import { useChatViewMode } from '../components/chat/viewMode';
 import ChatComposer from '../components/chat/ChatComposer';
 import ChatSidePanel from '../components/chat/ChatSidePanel';
 import useChatTelegram from '../components/chat/useChatTelegram';
@@ -93,8 +95,6 @@ const EMPTY_MESSAGES = [];
 const PROCESS_OPEN_KEY = 'agent_hub_chat_process_open';
 // Whether the code panel is open, persisted for the same reason.
 const CODE_OPEN_KEY = 'agent_hub_chat_code_open';
-// 'chat' vs 'build' view mode, persisted across navigation for the same reason.
-const VIEW_MODE_KEY = 'agent_hub_chat_view_mode';
 // Whether the artifacts panel (files and views the turns produced) is open.
 const ARTIFACTS_OPEN_KEY = 'agent_hub_chat_build_panel_open';
 
@@ -206,9 +206,8 @@ export default function Chat() {
   const [codeFocus, setCodeFocus] = useState(null);
   // 'chat' = clean message bubbles (default). 'build' = full inline transcript
   // (messages + thinking + plan + tool calls).
-  const [viewMode, setViewMode] = useState(() => {
-    try { return localStorage.getItem(VIEW_MODE_KEY) === 'build' ? 'build' : 'chat'; } catch { return 'chat'; }
-  });
+  // Shared with every chat embedded in other pages (components/chat/viewMode.js).
+  const [viewMode, setViewMode] = useChatViewMode();
   const [artifactsOpen, setArtifactsOpen] = useState(() => {
     try { return localStorage.getItem(ARTIFACTS_OPEN_KEY) === '1'; } catch { return false; }
   });
@@ -241,10 +240,6 @@ export default function Chat() {
   useEffect(() => {
     try { localStorage.setItem(CODE_OPEN_KEY, codeOpen ? '1' : '0'); } catch { /* storage unavailable */ }
   }, [codeOpen]);
-
-  useEffect(() => {
-    try { localStorage.setItem(VIEW_MODE_KEY, viewMode); } catch { /* storage unavailable */ }
-  }, [viewMode]);
 
   useEffect(() => {
     try { localStorage.setItem(ARTIFACTS_OPEN_KEY, artifactsOpen ? '1' : '0'); } catch { /* storage unavailable */ }
@@ -558,6 +553,38 @@ export default function Chat() {
       });
   }, [selectedWorkspace]);
 
+  // ---- the open conversation decides what the page talks to ----
+  // Its stored target (agent, flow or team) is followed whenever it changes:
+  // opening it by link or after a reload, a handoff moving it to another
+  // agent (chat/handoff.js), or another tab changing it. A pick in the top
+  // bar writes the conversation too, so it never fights this. Adjusted while
+  // rendering, like the URL sync above.
+  // Primitive copies of the fields: handing the object itself to a function
+  // makes the React Compiler treat it as mutable and drop the memos above.
+  const convTarget = conversationTarget(currentConv ? {
+    id: String(currentConv.id), target_mode: String(currentConv.target_mode || ''),
+    agent_id: String(currentConv.agent_id || ''), flow_id: String(currentConv.flow_id || ''),
+    team_id: String(currentConv.team_id || ''),
+  } : null, selectableAgents.map((a) => a.id));
+  const [seenConvTarget, setSeenConvTarget] = useState(null);
+  const followTarget = convTarget && convTarget.key !== seenConvTarget ? convTarget : null;
+  // The agent picked here in this render, for the validity check below
+  // (state set while rendering is only read on the next render).
+  const followedAgent = followTarget?.targetMode === 'agent' ? followTarget.agentId : null;
+  if (followTarget) {
+    setSeenConvTarget(followTarget.key);
+    if (followTarget.targetMode === 'flow') {
+      setTargetMode('flow');
+      setSelectedFlow(followTarget.flowId);
+    } else if (followTarget.targetMode === 'team') {
+      setTargetMode('team');
+      setSelectedTeam(followTarget.teamId);
+    } else if (followedAgent) {
+      setTargetMode('agent');
+      if (followedAgent !== selectedAgent) setSelectedAgent(followedAgent);
+    }
+  }
+
   // ---- a conversation with the Assistant opens with the Assistant picked ----
   // However it was opened (the list, a link, a reload), once per opening: the
   // person may pick another agent after that, and the next message then
@@ -575,9 +602,10 @@ export default function Chat() {
   // ---- ensure selected agent is valid for current workspace ----
   // Adjusted while rendering, so the page never draws an agent the workspace
   // does not offer.
+  const agentNow = followedAgent || selectedAgent;
   if (!selectableAgents.length) {
     if (selectedAgent) setSelectedAgent('');
-  } else if (!selectableAgents.some((a) => a.id === selectedAgent)) {
+  } else if (!selectableAgents.some((a) => a.id === agentNow)) {
     const defaultAgent = selectableAgents.find((a) => a.is_default_chat_agent);
     setSelectedAgent((defaultAgent || selectableAgents[0]).id);
   }

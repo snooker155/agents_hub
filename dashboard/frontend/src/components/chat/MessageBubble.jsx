@@ -16,6 +16,8 @@ import ViewCard from '../../views/ViewCard';
 import { SystemNotice } from './BuildMessage';
 import Citations, { CitedText } from './Citations';
 import { MessageEntities, MessageFiles, MessageViews, ResponseButtons } from './messageParts';
+import { MessageChanges } from './entityChanges';
+import { BUBBLE_SIZES } from './bubbleSizes';
 import { messageViews } from './turnViews';
 import { LiveThoughts } from './reasoning';
 import LiveDelegation from './liveDelegation';
@@ -47,7 +49,8 @@ function WorkingDots({ label }) {
   );
 }
 
-function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifactsByPath, onRetry }) {
+function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry, compact = false }) {
+  const size = compact ? BUBBLE_SIZES.compact : BUBBLE_SIZES.full;
   const { t } = useI18n();
   // Outside the Chat page (tests, other hosts) there is no Code panel to open.
   const openInCodePanel = useContext(ChatPageContext)?.openInCodePanel;
@@ -65,11 +68,13 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
     // step, delivered at step N, queued for the next turn).
     const caption = msg.steer ? steerCaption(msg.steer) : null;
     return (
-      <div className="flex gap-3 mb-6 mx-2 flex-row-reverse">
-        <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white bg-indigo-600">
-          <User className="w-4 h-4" />
-        </div>
-        <div data-prompt-bubble onCopy={copyBubbleText} className="chat-prompt-bubble max-w-[88%] sm:max-w-[72%] text-base leading-relaxed bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3">
+      <div className={`${size.row} flex-row-reverse`}>
+        {!compact && (
+          <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white bg-indigo-600">
+            <User className="w-4 h-4" />
+          </div>
+        )}
+        <div data-prompt-bubble onCopy={copyBubbleText} className={`chat-prompt-bubble ${size.bubble} leading-relaxed bg-indigo-600 text-white rounded-tr-sm`}>
           <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
           {/* Said aloud to the Assistant: the line is its transcript. */}
           {msg.voice && (
@@ -128,11 +133,17 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
   const refusal = done && msg.error ? msg.refusal : null;
   const views = done ? messageViews(msg) : [];
   const shownViewIds = new Set(views.map((v) => v.view_id));
-  const entities = (msg.entities || []).filter((e) => !(e.kind === 'view' && shownViewIds.has(e.id)));
+  // A file the turn changed is listed, linked, with the files; its entity
+  // chip would say the same twice.
+  const listedFiles = new Set((msg.files || []).map((f) => f.path));
+  const entities = (msg.entities || []).filter((e) => !(e.kind === 'view' && shownViewIds.has(e.id))
+    && !(e.kind === 'file' && listedFiles.has(e.title)));
   return (
-    <div className="flex gap-3 mb-6 mx-2 flex-row">
-      {/* Avatar */}
-      <div className="flex flex-col items-center gap-1 flex-shrink-0">
+    <div className={`${size.row} flex-row`}>
+      {/* Avatar: a fixed width, so every agent's bubble starts at the same
+          indent whatever the length of its name; a long name is cut, in full
+          on hover. A compact chat has one agent and no room for the gutter. */}
+      {!compact && <div className="flex flex-col items-center gap-1 flex-shrink-0 w-14">
         {markState ? (
           <LiveMark state={markState} initial="working" size={32} className="w-8 h-8" />
         ) : (
@@ -141,15 +152,15 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
           </div>
         )}
         {agentName && (
-          <span className="text-[9px] text-gray-400 font-medium text-center leading-tight max-w-[56px] break-words">
+          <span title={agentName} className="w-full truncate text-[9px] text-gray-400 font-medium text-center leading-tight">
             {agentName}
           </span>
         )}
-      </div>
+      </div>}
 
       {/* Bubble */}
       <div
-        className={`max-w-[88%] sm:max-w-[72%] min-w-0 text-base leading-relaxed bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm
+        className={`${size.bubble} min-w-0 leading-relaxed bg-white border border-gray-200 text-gray-800 rounded-tl-sm shadow-sm
           ${msg.error && !refusal ? 'border-red-300 bg-red-50 text-red-700' : ''}`}
       >
         {liveDelegation ? <LiveDelegation key={liveDelegation.run_id} entry={liveDelegation} /> : null}
@@ -171,7 +182,9 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
         {/* A tool call waiting for a person: Approve / Deny in the same turn. */}
         <ToolApprovals msg={msg} live={isStreaming} />
         {/* Files the agent created / edited / deleted during this turn. */}
-        <MessageFiles files={msg.files} artifactsByPath={artifactsByPath} />
+        <MessageFiles files={msg.files} entities={msg.entities} />
+        {/* What a build chat's turn changed in the thing it is pinned to. */}
+        {done && <MessageChanges changes={msg.changes} />}
         {done && (
           <>
             {/* The views the turn built, delegated runs included, as live previews. */}
@@ -194,12 +207,18 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, artifact
 // ---------------------------------------------------------------------------
 // Typing indicator
 // ---------------------------------------------------------------------------
-function TypingIndicator({ agentName }) {
+function TypingIndicator({ agentName, compact = false }) {
   const { t } = useI18n();
+  const size = compact ? BUBBLE_SIZES.compact : BUBBLE_SIZES.full;
   return (
-    <div className="flex gap-3 mb-6">
-      <LiveMark state="working" size={32} className="flex-shrink-0 w-8 h-8" />
-      <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm shadow-sm px-4 py-3 flex items-center gap-2">
+    <div className={size.row}>
+      {/* The same avatar column as an answer, so the indicator lines up with it. */}
+      {!compact && (
+        <div className="flex-shrink-0 w-14 flex justify-center">
+          <LiveMark state="working" size={32} className="w-8 h-8" />
+        </div>
+      )}
+      <div className={`bg-white border border-gray-200 rounded-tl-sm shadow-sm flex items-center gap-2 ${compact ? 'rounded-xl px-3 py-2' : 'rounded-2xl px-4 py-3'}`}>
         <span className="text-xs text-gray-400">{t('chat.agentIsWorking', { agent: agentName })}</span>
         <span className="flex gap-1">
           {[0, 150, 300].map((delay) => (

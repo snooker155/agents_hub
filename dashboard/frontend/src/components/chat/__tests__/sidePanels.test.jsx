@@ -11,7 +11,9 @@ vi.mock('../targetPickers', () => ({
   AgentDropdown: () => null, FlowDropdown: () => null, ProjectDropdown: () => null, TeamDropdown: () => null,
 }));
 vi.mock('../CodePanel', () => ({ default: () => <div data-testid="code-panel-body" /> }));
-vi.mock('../panels', () => ({
+vi.mock('../panels', async (importOriginal) => ({
+  // The real Files / Diff switch: the header's tabs are under test.
+  ArtifactsModeSwitch: (await importOriginal()).ArtifactsModeSwitch,
   ArtifactsPanel: ({ artifacts, views }) => (
     <div data-testid="artifacts-body">{Object.keys(artifacts).length} files, {views.length} views</div>
   ),
@@ -101,7 +103,7 @@ describe('chat side columns', () => {
   it('switches the artifacts column between files and diff from its header', () => {
     draw({ artifactsOpen: true });
     const diffTab = screen.getByRole('tab', { name: 'Diff' });
-    expect(screen.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'File' })).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(diffTab);
     expect(diffTab).toHaveAttribute('aria-selected', 'true');
     expect(localStorage.getItem('agent_hub_chat_artifacts_mode')).toBe('diff');

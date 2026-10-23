@@ -105,6 +105,12 @@ def _file_path(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:
     return f"/workspaces/{quote(workspace)}?tab=files&file={quote(entity_id)}"
 
 
+def file_url(path: str, workspace: str) -> Optional[str]:
+    """The dashboard page of a file in ``workspace`` (the link a ``file``
+    entity gets), for a chat that lists the files a turn changed."""
+    return _file_path(path, {"workspace": workspace})
+
+
 def _workspace_file_label(entity_id: str, meta: Dict[str, Any]) -> Optional[str]:
     """A workspace file (files/service.py) is linked by id; a deleted one
     has no page left, so it drops out of the list."""

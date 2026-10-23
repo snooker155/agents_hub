@@ -26,6 +26,7 @@ from instances import carrier, delivery, inbox, replies, store
 from instances import history as instance_history
 from instances import registry as instance_registry
 from managers import run_manager
+from routes.messages import build_run_trail
 from tasks import service as tasks_service
 
 log = logging.getLogger(__name__)
@@ -370,6 +371,16 @@ async def get_instance_timeline(instance_id: str, max_turns: int = 40,
     context = instance_history.describe_context(
         instance_id, max_turns=max_turns, conversation_id=conversation_id,
         service_id=instance.get("service_id") or None)
+    for turn in context.get("turns") or []:
+        trail = None
+        if isinstance(turn, dict) and turn.get("run_id"):
+            try:
+                trail = build_run_trail(turn["run_id"])
+            except Exception:  # noqa: BLE001 - a broken trail must not hide the turn
+                trail = None
+        turn["timeline"] = (trail or {}).get("timeline") or []
+        turn["files"] = (trail or {}).get("files") or []
+        turn["stats"] = (trail or {}).get("stats") or {"tools": 0, "errors": 0, "thoughts": 0}
     return {**context, "pending": inbox.pending(instance_id, conversation_id,
                                                 any_conversation=False)}
 

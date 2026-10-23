@@ -10,17 +10,24 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import {
   RefreshCw, Boxes, GitBranch, Sparkles, Save, Undo2,
-  Brain, MessageSquare, PanelRightClose, PanelRightOpen,
+  MessageSquare, PanelRightClose, PanelRightOpen,
   Send, PlusCircle, Trash2, Network, X, Pencil, Square,
-  FileText, Globe,
+  FileText, Globe, MessageSquarePlus,
 } from 'lucide-react';
 import {
   getProjectGraph, saveProjectGraph, resetProjectGraph, relayoutProjectGraph,
   getProjectGraphMessages, clearProjectGraphMessages, streamProjectGraphChat,
   stopProjectGraphChat,
 } from '../../api';
-import { FeedItem } from './ChatFeed';
+import AgentTranscript from '../chat/AgentTranscript';
+import ViewModeToggle from '../chat/ViewModeToggle';
+import { useChatViewMode } from '../chat/viewMode';
+import { agentMessage, applyTurnEvent, settleTurn } from '../chat/turnEvents';
+import { genId } from '../chat/turnState';
+import { graphChangeEvent, graphChatMessages, isGraphBuilderTool } from './graphChatTrace';
 import ContextMeter from '../ContextMeter';
+import ChatSessionList, { ChatSessionsToggle } from '../ChatSessionList';
+import { useChatSessions } from '../chatSessions';
 import { useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
 import { useInlineChatOpen } from '../pageChat/pageChat';
@@ -203,18 +210,25 @@ function ProjectGraph({ projectId }) {
   const [sel, setSel] = useState(null);
 
   // Chat
-  const [feed, setFeed] = useState([]);           // unified transcript + tool steps
+  const [messages, setMessages] = useState([]);   // the transcript, in the Chat page's message shape
+  const [streamingId, setStreamingId] = useState(null);
+  const [viewMode, setViewMode] = useChatViewMode();
   // The architect chat re-sends its transcript every turn, so a long build
   // walks into the model's context ceiling. The meter under the composer shows
   // how close it is; Clear chat is the way back.
   const { usage: contextUsage, observe: observeContext, reset: resetContext } = useContextUsage();
   const [input, setInput] = useState('');
   const [showChat, setShowChat] = useState(true);
-  const [showThinking, setShowThinking] = useState(true);  // render the agent's reasoning trace
   const abortRef = useRef(null);
   // While this chat is open its composer owns the bottom-right corner, so the
   // floating page-chat launcher stands down until it is folded away.
   useInlineChatOpen(showChat);
+  // The thread store key the server reports for this view's chat, and the
+  // history list it opens in place of the transcript.
+  const [chatRef, setChatRef] = useState(null);
+  const [sessionsKey, setSessionsKey] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const sessionHistory = useChatSessions(chatRef, sessionsKey);
 
   const onNodesChange = useCallback((changes) => {
     setNodes((nds) => applyNodeChanges(changes, nds));
@@ -344,18 +358,15 @@ function ProjectGraph({ projectId }) {
       .then(([g, m]) => {
         setError('');
         applyGraph(g.data);
-        // Prefer the rich trace (thinking + tool/graph steps) so a reload restores
-        // the full session; fall back to the bare user/assistant transcript.
-        const trace = m.data.trace;
-        if (Array.isArray(trace) && trace.length) {
-          setFeed(trace);
-        } else {
-          setFeed((m.data.messages || []).map((x) => ({ k: x.role, text: x.content })));
-        }
+        // The rich trace (thinking + tool/graph steps) restores the full
+        // session; the bare user/assistant transcript is the fallback.
+        setMessages(graphChatMessages(m.data));
+        setChatRef(m.data.chat_ref || null);
+        setHistoryOpen(false);
       })
       .catch((e) => {
         setError(e?.response?.data?.detail || e.message || t('flowProjectGraph.loadFailed'));
-        setNodes([]); setEdges([]); setFeed([]);
+        setNodes([]); setEdges([]); setMessages([]);
       })
       .finally(() => setLoading(false))
   ), [projectId, applyGraph, t]);
@@ -374,9 +385,15 @@ function ProjectGraph({ projectId }) {
     setBusy(true);
     setError('');
     setShowChat(true);
-    setFeed((f) => [...f, { k: 'user', text: message }]);
-
-    const append = (item) => setFeed((f) => [...f, item]);
+    const replyId = genId();
+    setMessages((list) => [...list, { id: genId(), role: 'user', content: message }, agentMessage({ id: replyId })]);
+    setStreamingId(replyId);
+    const patch = (fn) => setMessages((list) => list.map((m) => (m.id === replyId ? fn(m) : m)));
+    const change = (ev) => {
+      const entry = graphChangeEvent(ev);
+      if (entry) patch((m) => applyTurnEvent(m, entry));
+    };
+    let stopped = false;
     const ac = new AbortController();
     abortRef.current = ac;
     try {
@@ -385,30 +402,31 @@ function ProjectGraph({ projectId }) {
         onEvent: (ev) => {
           observeContext(ev);
           switch (ev.type) {
+            case 'meta':
+              if (ev.run_id) patch((m) => ({ ...m, run_id: ev.run_id }));
+              break;
             case 'tool_start':
+            case 'tool_end':
+            case 'tool_error':
               // graph-builder tools surface as their own node/edge events; show
               // only inspection tools here to avoid noise.
-              if (!String(ev.tool || '').startsWith('add_graph')
-                  && !String(ev.tool || '').startsWith('delete_graph')
-                  && ev.tool !== 'clear_graph') {
-                append({ k: 'tool', tool: ev.tool, status: 'running' });
-              }
+              if (!isGraphBuilderTool(ev.tool)) patch((m) => applyTurnEvent(m, ev));
               break;
             case 'graph_node':
               applyLiveNode(ev.node);
-              append({ k: 'node', label: (ev.node?.data?.label) || ev.node?.id });
+              change(ev);
               break;
             case 'graph_edge':
               applyLiveEdge(ev.edge);
-              append({ k: 'node', label: '', edge: `${ev.edge.source} → ${ev.edge.target}` });
+              change(ev);
               break;
             case 'graph_node_delete':
               applyLiveDeleteNode(ev.id, ev.edges);
-              append({ k: 'tool', tool: `removed ${ev.id}`, status: 'done' });
+              change(ev);
               break;
             case 'graph_edge_delete':
               applyLiveDeleteEdge(ev.id);
-              append({ k: 'tool', tool: `removed edge ${ev.id}`, status: 'done' });
+              change(ev);
               break;
             case 'graph_layout':
               // Re-position existing nodes to keep clusters/edges readable as
@@ -417,39 +435,50 @@ function ProjectGraph({ projectId }) {
               break;
             case 'graph_clear':
               setNodes([]); setEdges([]);
-              append({ k: 'tool', tool: t('flowProjectGraph.clearedGraph'), status: 'done' });
-              break;
-            case 'think':
-              // Native model reasoning — the agent's thinking as it builds.
-              if (ev.content) append({ k: 'thinking', text: ev.content });
+              patch((m) => ({
+                ...m,
+                timeline: [...(m.timeline || []), {
+                  type: 'tool', tool: t('flowProjectGraph.clearedGraph'), input: '', output: null, status: 'ok',
+                }],
+              }));
               break;
             case 'thinking':
-            case 'native_reasoning': {
-              const t = ev.message || ev.content || '';
-              // Skip internal log markers ("[llm_start] …") — show real text only.
-              if (t && !t.startsWith('[')) append({ k: 'thinking', text: t });
+            case 'native_reasoning':
+              // Log markers: the reasoning itself arrives as think events.
               break;
-            }
             case 'error':
-              append({ k: 'error', text: ev.error || 'error' });
+              patch((m) => ({
+                ...m, error: true,
+                content: m.content ? `${m.content}\n\n${ev.error || 'error'}` : (ev.error || 'error'),
+              }));
               break;
             case 'stopped':
-              append({ k: 'tool', tool: t('flowProjectGraph.stoppedByYou'), status: 'done' });
+              stopped = true;
               break;
             case 'message':
-              if (ev.content) append({ k: 'assistant', text: ev.content });
+              if (ev.content) patch((m) => settleTurn({ ...m, run_id: ev.run_id || m.run_id }, { content: ev.content }));
               break;
             default:
+              patch((m) => applyTurnEvent(m, ev));
               break;
           }
         },
       });
     } catch (e) {
-      if (e.name !== 'AbortError') append({ k: 'error', text: e.message || t('flowProjectGraph.chatFailed') });
+      if (e.name !== 'AbortError') {
+        patch((m) => ({ ...m, error: true, content: m.content || e.message || t('flowProjectGraph.chatFailed') }));
+      }
     } finally {
+      patch((m) => {
+        const settled = settleTurn(m);
+        if (stopped && !(settled.content || '').trim()) return { ...settled, content: t('flowProjectGraph.stoppedByYou') };
+        return settled;
+      });
+      setStreamingId(null);
       setBusy(false);
       setStopping(false);
       abortRef.current = null;
+      setSessionsKey((k) => k + 1);
     }
   }, [busy, projectId, view, applyLiveNode, applyLiveEdge, applyLiveDeleteNode,
       applyLiveDeleteEdge, observeContext, t]);
@@ -530,12 +559,30 @@ function ProjectGraph({ projectId }) {
     setError('');
     try {
       await clearProjectGraphMessages(projectId, view);
-      setFeed([]);
+      setMessages([]);
       resetContext();
+      setSessionsKey((k) => k + 1);
     } catch (e) {
       setError(e?.response?.data?.detail || e.message || 'Clear chat failed');
     }
   }, [projectId, view, busy, resetContext]);
+
+  const pickSession = useCallback(async (session) => {
+    if (session.active) { setHistoryOpen(false); return; }
+    const data = await sessionHistory.activate(session.id);
+    if (!data) return;
+    setMessages(graphChatMessages(data));
+    setError('');
+    resetContext();
+    setHistoryOpen(false);
+  }, [sessionHistory, resetContext]);
+
+  const toggleHistory = useCallback(() => {
+    setHistoryOpen((open) => {
+      if (!open) sessionHistory.reload();
+      return !open;
+    });
+  }, [sessionHistory]);
 
   const styledNodes = useMemo(() => nodes, [nodes]);
 
@@ -587,7 +634,7 @@ function ProjectGraph({ projectId }) {
   const feedRef = useRef(null);
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [feed]);
+  }, [messages]);
 
   // Auto-grow the chat input (same behaviour as the main Chat page).
   const textareaRef = useRef(null);
@@ -643,11 +690,13 @@ function ProjectGraph({ projectId }) {
           <button onClick={() => load(view)} disabled={anyBusy}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-gray-500 hover:bg-gray-50 disabled:opacity-50"
             title={t('flowProjectGraph.reload')}><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
-          {!showChat && (
-            <button onClick={() => setShowChat(true)} className="px-3 py-1.5 rounded-md text-sm text-gray-500 hover:bg-gray-50" title={t('flowProjectGraph.showChat')}>
-              <PanelRightOpen className="w-4 h-4" />
-            </button>
-          )}
+          {/* One toggle for the chat, in the same place whether it opens or
+              hides it. */}
+          <button onClick={() => setShowChat((v) => !v)} aria-pressed={showChat}
+            className="px-3 py-1.5 rounded-md text-sm text-gray-500 hover:bg-gray-50"
+            title={showChat ? t('flowProjectGraph.hideChat') : t('flowProjectGraph.showChat')}>
+            {showChat ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+          </button>
         </div>
       </div>
 
@@ -697,38 +746,52 @@ function ProjectGraph({ projectId }) {
 
         {showChat && (
           <div className="w-[28rem] shrink-0 border-l border-gray-200 flex flex-col bg-white">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
-              <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+            {/* A fixed height: the controls come and go with the conversation
+                and the history list, and the row must not move when they do. */}
+            <div className="flex items-center justify-between h-11 shrink-0 px-3 border-b border-gray-100 gap-2">
+              <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 min-w-0">
                 <MessageSquare className={`w-4 h-4 ${busy ? 'text-violet-500 animate-pulse' : 'text-gray-400'}`} /> {t('flowProjectGraph.architectChat')}
               </div>
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none"
-                  title={t('flowProjectGraph.showOrHideTheAgent')}>
-                  <input type="checkbox" checked={showThinking}
-                    onChange={(e) => setShowThinking(e.target.checked)}
-                    className="w-3.5 h-3.5 accent-indigo-600 cursor-pointer" />
-                  <Brain className="w-3.5 h-3.5 text-amber-400" /> {t('flowProjectGraph.thinking')}
-                </label>
-                <button onClick={clearChat} disabled={busy}
-                  className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 px-2 py-1 rounded-md disabled:opacity-40"
-                  title={t('flowProjectGraph.clearTheConversationAndStart')}>
-                  <Trash2 className="w-3.5 h-3.5" /> {t('flowProjectGraph.clearChat')}
-                </button>
-                <button onClick={() => setShowChat(false)} className="text-gray-400 hover:text-gray-600" title={t('flowProjectGraph.hideChat')}>
-                  <PanelRightClose className="w-4 h-4" />
-                </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {messages.length > 0 && !historyOpen && (
+                  <button onClick={clearChat} disabled={busy} title={t('entityChat.clearChat')}
+                    className="inline-flex items-center gap-1 text-[11px] font-normal text-gray-400 hover:text-indigo-600 disabled:opacity-40">
+                    <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
+                  </button>
+                )}
+                {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
+                {sessionHistory.hasHistory && (
+                  <ChatSessionsToggle open={historyOpen} count={sessionHistory.count} disabled={busy} onToggle={toggleHistory} />
+                )}
               </div>
             </div>
 
+            {historyOpen ? (
+              <ChatSessionList
+                sessions={sessionHistory.sessions}
+                working={sessionHistory.working}
+                error={sessionHistory.error}
+                onPick={pickSession}
+                onDelete={(session) => sessionHistory.remove(session.id)}
+                onClose={() => setHistoryOpen(false)}
+                className="flex-1 min-h-0 overflow-y-auto px-3 py-2"
+              />
+            ) : (<>
             <div ref={feedRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-2">
-              {feed.length === 0 && !busy ? (
+              {messages.length === 0 && !busy ? (
                 <div className="text-xs text-gray-400 mt-2">
                   Describe the project or the flow you want — e.g. <span className="italic">{t('flowProjectGraph.customerSubmitsAnOrderPayment')}</span> The agent adds each node to the canvas live as you go.
                 </div>
               ) : null}
-              {feed.map((e, i) => (
-                (showThinking || e.k !== 'thinking') ? <FeedItem key={i} e={e} /> : null
-              ))}
+              {messages.length > 0 && (
+                <AgentTranscript
+                  messages={messages}
+                  viewMode={viewMode}
+                  streamingId={streamingId}
+                  compact
+                  onAction={busy ? null : runChat}
+                />
+              )}
               {busy ? <div className="text-[11px] text-violet-400 animate-pulse">{stopping ? 'stopping…' : 'working…'}</div> : null}
             </div>
 
@@ -764,6 +827,7 @@ function ProjectGraph({ projectId }) {
                 {busy ? (stopping ? 'Stopping…' : 'Press ■ to stop the run') : 'Enter to send · Shift+Enter for new line'}
               </p>
             </div>
+            </>)}
           </div>
         )}
       </div>
