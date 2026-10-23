@@ -31,20 +31,36 @@ export const RUN_STATUS_STYLES = {
 // and every node's terminal event (finish/error/stopped) becomes an agent bubble
 // carrying that node's output. Bubble shape matches FlowChat's message objects so
 // a chat record can be resumed there.
+//
+// A turn that ran the flow again from a node (flow/rerun.py) has no message of
+// its own: its user bubble carries `rerun` ({node_id, label, mode}) instead,
+// worded by rerunBubbleText. A chat turn says so on its flow_start (`turn`), a
+// task run on the flow_resume line written just before it.
 export function reconstructRunMessages(run) {
   const events = run?.events || [];
   const bubbles = [];
   let turnHasUser = false;
+  let pendingRerun = null;
   const extractUserMessage = (input) => {
     const text = String(input || '');
     const marker = 'Latest user message:';
     const idx = text.lastIndexOf(marker);
     const tail = idx >= 0 ? text.slice(idx + marker.length) : text;
-    return tail.split('\n=== Attached files ===')[0].trim();
+    // What the person wrote, without what rides after it: attached files,
+    // and the step instruction a root node gets under its input.
+    return tail.split('\n=== Attached files ===')[0].split('\n## Your specific task for this step:')[0].trim();
   };
   for (const ev of events) {
-    if (ev.type === 'flow_start') {
+    if (ev.type === 'flow_resume' && ev.rerun) {
+      pendingRerun = ev.rerun;
+    } else if (ev.type === 'flow_start') {
       turnHasUser = false;
+      const rerun = ev.turn?.rerun || pendingRerun;
+      pendingRerun = null;
+      if (rerun) {
+        bubbles.push({ id: `${ev.timestamp}-u`, role: 'user', content: '', rerun });
+        turnHasUser = true;
+      }
     } else if (ev.type === 'agent_start') {
       if (!turnHasUser) {
         const userText = extractUserMessage(ev.input);
@@ -58,10 +74,20 @@ export function reconstructRunMessages(run) {
         id: `${ev.timestamp}-${ev.node_id || 'a'}`,
         role: 'agent',
         agent_label: ev.agent_name || ev.agent_id || 'Agent',
+        // The node's run: its steps and files are fetched from it (chat/runTrail.js).
+        ...(ev.run_id ? { run_id: ev.run_id } : {}),
         content: ev.output || ev.content || '',
         error: ev.type !== 'agent_finish',
       });
     }
   }
   return bubbles;
+}
+
+// What a user bubble of a run again from a node says.
+export function rerunBubbleText(t, rerun) {
+  const node = rerun?.label || rerun?.node_id || '';
+  return rerun?.mode === 'single'
+    ? t('flowFlowChat.rerunSingle', { node })
+    : t('flowFlowChat.rerunRest', { node });
 }

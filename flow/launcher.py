@@ -48,6 +48,8 @@ def start_flow_run(
     params: Optional[Dict[str, Any]] = None,
     *,
     parent_run_id: Optional[str] = None,
+    checkpoint: Optional[Dict[str, Any]] = None,
+    record: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, str]:
     """Launch a flow run subprocess and return (run_id, session_id).
 
@@ -57,6 +59,10 @@ def start_flow_run(
     ``parent_run_id`` is the run this one executes inside (a ``run_flow``
     node of another flow, see flow/entities/containers/), so a recursive stop
     and the cost of the run tree reach it.
+
+    ``checkpoint`` starts the new run from that resume point instead of the
+    beginning (a run from one node of a past run, flow/rerun.py), and
+    ``record`` adds fields of its own to the run's record.
     """
     from tasks import service as _ts
     from common.session_service import get_or_create_task_session
@@ -106,6 +112,11 @@ def start_flow_run(
         title=task.title, log_file=str(log_file), status="pending",
         parent_run_id=parent_run_id,
     )
+    extra: Dict[str, Any] = dict(record or {})
+    if checkpoint:
+        extra["checkpoint"] = checkpoint
+    if extra:
+        run_store.update_flow_run(run_id, extra)
 
     # Audit trail (common/audit.py). No HTTP request is in flight here (a flow
     # may be re-queued by a worker or fired by a schedule), so the actor comes
@@ -133,6 +144,8 @@ def start_flow_run(
         "--run-id", run_id,
         "--session-id", session_id,
     ]
+    if checkpoint:
+        cli_args += ["--resume-from", run_id]
 
     desc = params.get("description") or ""
     if desc:
@@ -292,6 +305,65 @@ def resume_flow_run(
         "flow_run_id": flow_run_id, "flow_id": flow_id, "task_id": task_id,
         "session_id": session_id, "pid": rec.get("pid"), "resume_attempts": attempts,
         "resumed_nodes": len(checkpoint.get("done") or []),
+    }
+
+
+def rerun_flow_run(flow_id: str, run_group: str, node_id: str, mode: str) -> Dict[str, Any]:
+    """Run a past task run of a flow again from one node, as a new run.
+
+    The new run works on the same task and starts from the past run's
+    checkpoint with the chosen part taken out (flow/rerun.py): ``single``
+    runs only that node, ``rest`` that node and everything after it. The
+    past run stays as it was. A run without a stored checkpoint is rebuilt
+    from its log. Raises ``FlowResumeError`` when it cannot be done.
+    """
+    from tasks import service as _ts
+    from flow import store as flow_store
+    from flow import run_store
+    from flow import rerun as flow_rerun
+
+    flow = flow_store.get_flow(flow_id)
+    if not flow:
+        raise FlowResumeError(f"Flow not found: {flow_id}")
+    rec = run_store.get_flow_run(run_group) or {}
+    if rec and str(rec.get("flow_id") or "") != str(flow_id):
+        raise FlowResumeError(f"Run {run_group} is not a run of this flow")
+    source = dict(rec.get("checkpoint") or {})
+    if not source.get("done"):
+        source = flow_rerun.checkpoint_from_events(run_store.read_run_group_events(flow_id, run_group))
+    try:
+        checkpoint = flow_rerun.rerun_checkpoint(flow, source, node_id, mode)
+    except flow_rerun.RerunError as e:
+        raise FlowResumeError(str(e)) from e
+
+    task_id = str(rec.get("task_id") or "")
+    task = _ts.get_task(task_id) if task_id else None
+    ws_name = rec.get("workspace") or (getattr(task, "workspace", None) if task else None) or flow.get("workspace")
+    if task is None:
+        from workspace import create_workspace_folder
+        ws_name = ws_name or create_workspace_folder().name
+        task = _ts.create_task(
+            title=f"Flow: {flow.get('name') or flow_id}",
+            description=flow.get("description", "") or "",
+            workspace=ws_name,
+        )
+    params: Dict[str, Any] = {
+        "workspace": ws_name,
+        "description": flow.get("description", "") or "",
+        "flow_id": flow_id,
+    }
+    run_id, session_id = start_flow_run(
+        str(task.id), flow_id, params, checkpoint=checkpoint,
+        record={"rerun_of": run_group, "rerun_node": node_id, "rerun_mode": mode},
+    )
+    try:
+        _ts.assign_agent(task.id, flow.get("name") or flow_id, params, run_id=run_id)
+    except Exception:  # noqa: BLE001 - the run is already going, the task just shows no executor
+        log.debug("executor assignment failed", exc_info=True)
+    return {
+        "status": "started", "task_id": str(task.id), "run_id": run_id,
+        "session_id": session_id, "workspace": ws_name,
+        "rerun_of": run_group, "node_id": node_id, "mode": mode,
     }
 
 

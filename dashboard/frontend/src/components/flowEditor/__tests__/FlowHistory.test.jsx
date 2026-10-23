@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { I18nProvider } from '../../../i18n';
 import { FlowHistory } from '../FlowHistory';
 
@@ -26,9 +26,27 @@ describe('FlowHistory', () => {
     expect(screen.getByText('Nightly run')).toBeInTheDocument();
     expect(screen.getByText('Completed')).toBeInTheDocument();
     expect(screen.getByText('Running')).toBeInTheDocument();
-    // Kind badges.
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByText('Task run')).toBeInTheDocument();
+    // The kind leads each row's second line.
+    expect(screen.getByText(/^Chat · /)).toBeInTheDocument();
+    expect(screen.getByText(/^Task run · /)).toBeInTheDocument();
+  });
+
+  it('offers Delete on a chat and on a task run, and passes the entry without selecting it', () => {
+    const runs = [
+      { run_group: 'g1', kind: 'chat', title: 'Hello there', started_at: '2026-01-01T00:00:00Z', status: 'completed', events: [] },
+      { run_group: 'g2', kind: 'task', title: 'Nightly run', started_at: '2026-01-02T00:00:00Z', status: 'completed', events: [] },
+      // Still running, and an entry of the old shared log: nothing to delete yet / no file of its own.
+      { run_group: 'g3', kind: 'task', title: 'Going', started_at: '2026-01-03T00:00:00Z', status: 'running', events: [] },
+      { run_group: 'legacy-1', kind: 'task', title: 'Old', started_at: '2025-01-01T00:00:00Z', status: 'completed', events: [] },
+    ];
+    const onDelete = vi.fn();
+    const onSelect = vi.fn();
+    show({ runs, instances: {}, onResume: vi.fn(), onSelect, onDelete });
+    const buttons = screen.getAllByTestId('flow-history-delete');
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[1]);
+    expect(onDelete).toHaveBeenCalledWith(runs[1]);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('offers Resume only for a run that is failed/awaiting input with a checkpoint', () => {

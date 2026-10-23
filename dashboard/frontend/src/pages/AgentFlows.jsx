@@ -49,6 +49,9 @@ const AgentFlows = () => {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { selectedWorkspace, workspaceFilter } = useWorkspace();
+  // Another workspace lists only its own flows, so a card names its workspace
+  // only in the default one.
+  const isDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
   const [flows, setFlows] = useState([]);
   // The list is for this workspace filter; another filter shows the loader
   // again, derived instead of set inside the effect.
@@ -396,13 +399,15 @@ const AgentFlows = () => {
                         )}
                       </div>
                       <div className="mt-0.5 line-clamp-2 text-[11px] text-gray-500">
-                        {flow.description || 'No description provided.'}
+                        {flow.description || t('agentFlows.noDescription')}
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
-                      <span className="rounded bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
-                        {flow.workspace || 'Shared'}
-                      </span>
+                      {isDefaultWorkspace && (
+                        <span className="rounded bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
+                          {flow.workspace || t('agentFlows.sharedWorkspace')}
+                        </span>
+                      )}
                       {flow.shared && (
                         <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-indigo-600" title={t('agentFlows.publishedToTheMarketplace')}>
                           <Globe className="h-2.5 w-2.5" /> {t('agentFlows.market')}
@@ -437,7 +442,7 @@ const AgentFlows = () => {
                           ? 'text-indigo-500 hover:border-indigo-200 hover:bg-indigo-50'
                           : 'text-gray-400 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600'
                       }`}
-                      title={flow.shared ? 'Remove from marketplace' : 'Publish to marketplace (also publishes its agents)'}
+                      title={flow.shared ? t('agentFlows.removeFromMarketplace') : t('agentFlows.publishToMarketplace')}
                     >
                       <Globe className="h-3.5 w-3.5" />
                     </button>

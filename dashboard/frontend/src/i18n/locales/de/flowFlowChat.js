@@ -1,4 +1,10 @@
 export default {
+  messageFlow: 'Nachricht an {{name}}…',
+  messageNode: 'Nachricht an den Knoten „{{node}}“…',
+  toNode: 'An den Knoten „{{node}}“: der Flow beginnt mit Ihrer Nachricht bei ihm und läuft bis zum Ende',
+  toNodeCancel: 'Stattdessen an den Anfang des Flows senden',
+  rerunSingle: 'Nur den Knoten „{{node}}“ erneut ausführen, mit den Eingaben der letzten Runde',
+  rerunRest: 'Ab dem Knoten „{{node}}“ bis zum Ende erneut ausführen, mit den Eingaben der letzten Runde',
   chatWithFlow: 'Chat mit dem Flow',
   stop: 'Stoppen',
   sendEnter: 'Senden (Enter)',

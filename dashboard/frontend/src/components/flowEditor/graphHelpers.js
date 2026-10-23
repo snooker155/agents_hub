@@ -46,6 +46,11 @@ export function normalizeNode(node, onRunNode) {
       timeout_seconds: d.timeout_seconds ?? node.timeout_seconds ?? '',
       domain: d.domain || node.domain || 'general',
       nodeTask: d.nodeTask || node.nodeTask || '',
+      // An agent node that picks its next step (flow/branching.py). Carried
+      // through, or a save from the editor would drop the node's routing.
+      route: d.route ?? node.route ?? null,
+      route_default: d.route_default ?? node.route_default ?? null,
+      route_hint: d.route_hint ?? node.route_hint ?? '',
       onRunNode,
     },
   };
@@ -125,3 +130,50 @@ export const AGENT_SLOT_ID = '__agent__';
 // (flow/validate.py resolve_entities).
 export const isUnchosenAgent = (data) =>
   data?.category === 'agent' && !data?.agent_id && !data?.entity_id;
+
+// The state keys a node can read as a run reaches it: the output keys of every
+// node upstream of it, each with the labels of the nodes that write it.
+export function upstreamOutputKeys(nodeId, nodes, edges) {
+  const preds = {};
+  for (const e of edges || []) (preds[e.target] ||= []).push(e.source);
+  const seen = new Set();
+  const stack = [...(preds[nodeId] || [])];
+  while (stack.length) {
+    const id = stack.pop();
+    if (id === nodeId || seen.has(id)) continue;
+    seen.add(id);
+    stack.push(...(preds[id] || []));
+  }
+  const writers = new Map();
+  for (const node of nodes || []) {
+    if (!seen.has(node.id)) continue;
+    for (const key of node.data?.output || []) {
+      if (!key) continue;
+      if (!writers.has(key)) writers.set(key, []);
+      writers.get(key).push(node.data?.label || node.id);
+    }
+  }
+  return [...writers].map(([key, labels]) => ({ key, writers: labels }));
+}
+
+const keySlug = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+// An agent node joined to a switch: the switch can only test what the agent
+// writes, so an agent that writes nothing to state gets an output key, the one
+// the switch tests or one named after the agent, and a switch that tests
+// nothing yet tests it. Returns `nodes` itself when there is nothing to do.
+export function wireAgentToSwitch(nodes, sourceId, targetId) {
+  const source = nodes.find((n) => n.id === sourceId);
+  const target = nodes.find((n) => n.id === targetId);
+  if (!source || !target) return nodes;
+  if (source.data?.category !== 'agent' || target.data?.entity_id !== 'state_switch') return nodes;
+  if ((source.data.output || []).some(Boolean)) return nodes;
+  const config = target.data.config || {};
+  const slug = keySlug(source.data.agent_id) || keySlug(source.data.label);
+  const key = config.key || (slug ? `${slug}_result` : 'result');
+  return nodes.map((n) => {
+    if (n.id === sourceId) return { ...n, data: { ...n.data, output: [key] } };
+    if (n.id === targetId && !config.key) return { ...n, data: { ...n.data, config: { ...config, key } } };
+    return n;
+  });
+}

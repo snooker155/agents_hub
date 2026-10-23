@@ -193,3 +193,34 @@ def test_stop_short_circuits(monkeypatch):
     events = _drive(flow, driver)
     assert [e["type"] for e in events] == ["flow_start", "flow_finish"]
     assert events[-1]["stopped"] is True
+
+
+def test_user_request_is_the_bare_request_when_given(monkeypatch):
+    """The run's working rules stay in the prompt; the state carries what was
+    asked, which is what a person reads in the run's state."""
+    _install_fakes(monkeypatch)
+    flow = {"id": "f1", "name": "one", "nodes": [{"id": "a", "kind": "agent"}], "edges": []}
+    prompts = {}
+
+    async def _collect(**kw):
+        return [ev async for ev in run_flow_engine(
+            flow, flow_id="f1", shared_context="RULES\nWrite the report", driver=_make_driver(prompts=prompts), **kw)]
+
+    start = asyncio.run(_collect(request="Write the report"))[0]
+    assert start["state"]["user_request"] == "Write the report"
+    assert "RULES" in prompts["a"]
+    # Without one, the shared context is the request, as before.
+    assert asyncio.run(_collect())[0]["state"]["user_request"] == "RULES\nWrite the report"
+
+
+def test_declared_user_request_stays_when_the_run_brings_none(monkeypatch):
+    """A flow whose own state names the request runs on it when nothing is asked."""
+    _install_fakes(monkeypatch)
+    flow = {"id": "f1", "name": "one", "state": {"user_request": "Weekly digest"},
+            "nodes": [{"id": "a", "kind": "agent"}], "edges": []}
+
+    async def _collect(**kw):
+        return [ev async for ev in run_flow_engine(flow, flow_id="f1", driver=_make_driver(), **kw)]
+
+    assert asyncio.run(_collect(shared_context=""))[0]["state"]["user_request"] == "Weekly digest"
+    assert asyncio.run(_collect(shared_context="", request="Today only"))[0]["state"]["user_request"] == "Today only"

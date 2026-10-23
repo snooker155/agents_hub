@@ -38,7 +38,7 @@ from chat.models import ChatRequest
 from chat.runs import utc_iso
 from chat.streaming import StreamDriveResult, drive_streaming_run
 
-from flow.engine import FlowEngineDriver, build_agent_input
+from flow.engine import SKIP_REASON_TEXT, FlowEngineDriver, build_agent_input
 from flow.state import RunContext
 
 log = logging.getLogger(__name__)
@@ -55,6 +55,31 @@ class ChatFlowState:
     #: node_id → the conversation messages that node runs with. Only a root node
     #: has one: downstream nodes answer their predecessor, not the user.
     node_history: Dict[str, list] = field(default_factory=dict)
+
+
+def _node_step_stats(callback: Any, log_lines: list) -> dict:
+    """Step counts of a node run from what is in memory: tool calls (without
+    the think/plan pseudo-tools), failed ones, reasoning lines and files."""
+    history = [e for e in (getattr(callback, "tool_history", None) or []) if isinstance(e, dict)]
+    real = [e for e in history if e.get("tool") not in ("think", "plan")]
+    return {
+        "tools": len(real),
+        "errors": sum(1 for e in real if e.get("status") == "error"),
+        "thoughts": sum(1 for ln in (log_lines or [])
+                        if isinstance(ln, str) and ln.lstrip().startswith("[reasoning]")),
+        "files": len(_node_files(callback)),
+    }
+
+
+def _node_files(callback: Any) -> list:
+    """The files a node run changed, one per path (the last change wins), as
+    the run log shows them: the name and the link to the file's page, without
+    the diff, which stays on the run's process payload."""
+    files: dict = {}
+    for art in (getattr(callback, "artifact_history", None) or []):
+        if isinstance(art, dict) and art.get("path"):
+            files[art["path"]] = {k: art[k] for k in ("op", "path", "url") if art.get(k)}
+    return list(files.values())
 
 
 def build_chat_driver(
@@ -161,6 +186,7 @@ def build_chat_driver(
             "timestamp": utc_iso(), "type": "agent_start", "node_id": node_id,
             "agent_id": yaml_agent_id, "agent_name": label, "tag": node_domain,
             "content": f"Running {label}", "status": "running", "input": prompt,
+            "run_id": run_id,
         })
         # A message sent to a node of this turn that finished without taking
         # it goes to the node starting now (common/steering.py), so a person
@@ -209,7 +235,8 @@ def build_chat_driver(
             # polling) stalls and shows as "pending" while a flow chat runs. Build
             # it in a worker thread to keep the loop responsive.
             agent = await asyncio.to_thread(
-                create_agent, yaml_agent_id, workspace=workspace_abs, streaming=True
+                create_agent, yaml_agent_id, workspace=workspace_abs, streaming=True,
+                flow_step=True,
             )
             callback.bind_model(agent.provider or "", agent.model or "")
             # The node's run id reaches its loop so a message sent to this
@@ -261,6 +288,8 @@ def build_chat_driver(
                 "agent_id": yaml_agent_id, "agent_name": label, "tag": node_domain,
                 "content": f"{label} stopped by user", "status": "stopped",
                 "input": prompt, "output": "Stopped by user",
+                "run_id": run_id, "stats": _node_step_stats(callback, log_lines),
+                "files": _node_files(callback),
             })
             raise
 
@@ -293,6 +322,8 @@ def build_chat_driver(
                 "agent_id": yaml_agent_id, "agent_name": label, "tag": node_domain,
                 "content": f"{label} stopped by user", "status": "stopped",
                 "input": prompt, "output": "Stopped by user",
+                "run_id": run_id, "stats": _node_step_stats(callback, log_lines),
+                "files": _node_files(callback),
             })
             outcome.ok = False
             outcome.stopped = True
@@ -313,6 +344,8 @@ def build_chat_driver(
                 "agent_id": yaml_agent_id, "agent_name": label, "tag": node_domain,
                 "content": f"Completed {label}", "status": "completed",
                 "input": prompt, "output": drive.response,
+                "run_id": run_id, "stats": _node_step_stats(callback, log_lines),
+                "files": _node_files(callback),
             })
             outcome.ok = True
             outcome.output = drive.response
@@ -331,6 +364,8 @@ def build_chat_driver(
                 "agent_id": yaml_agent_id, "agent_name": label, "tag": node_domain,
                 "content": f"{label} failed: {err}", "status": "failed",
                 "input": prompt, "output": err,
+                "run_id": run_id, "stats": _node_step_stats(callback, log_lines),
+                "files": _node_files(callback),
             })
             outcome.ok = False
             outcome.output = f"Error: {err}"
@@ -360,6 +395,20 @@ def build_chat_driver(
             "content": f"Starting flow: {flow_name}", "status": "running",
             "title": session_title, "session_id": session_id, "conversation_id": conv_id,
             "state": ev.get("state"),
+            # A turn that started at a node or ran again from one (chat/pipelines.py).
+            **({"turn": ev["turn"]} if ev.get("turn") else {}),
+        })
+
+    def _on_node_skip(ev: dict) -> None:
+        # Logged as the task surface logs it (flow/task_driver.py), so a saved
+        # chat record knows which nodes a branch passed over and which a run
+        # again from a node took from the turn before (reason already_done).
+        reason = ev.get("reason") or ""
+        log_flow({
+            "timestamp": utc_iso(), "type": "node_skip", "node_id": ev["node_id"],
+            "content": f"Skipping node '{ev['node_id']}': "
+                       + SKIP_REASON_TEXT.get(reason, reason or "not on the selected branch"),
+            "reason": reason, "status": "skipped",
         })
 
     def _on_node_done(ev: dict) -> None:
@@ -383,6 +432,7 @@ def build_chat_driver(
         on_node_start=_on_node_start,
         on_flow_start=_on_flow_start,
         on_node_done=_on_node_done,
+        on_node_skip=_on_node_skip,
         # No stop_agent_node override: unlike the task surface's synchronous,
         # worker-thread invocation (flow.task_driver, which needs an explicit
         # stop_event + in-loop guard to actually reach it), this node runs on

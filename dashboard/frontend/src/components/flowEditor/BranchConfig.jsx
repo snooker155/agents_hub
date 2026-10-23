@@ -1,6 +1,8 @@
-import { Plus, XCircle } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { ChevronDown, Plus, XCircle } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { INPUT_CLS } from './graphHelpers';
+import AgentSelect from './AgentSelect';
 
 // Branching decided while a flow runs (flow/branching.py on the backend): a map
 // node that runs one agent per item of a list, a switch that follows the first
@@ -45,21 +47,16 @@ export function MapConfig({ node, agents = [], onPatch }) {
   const config = d.config || {};
   const patchConfig = (patch) => onPatch({ config: { ...config, ...patch } });
   const current = config.agent_id || '';
-  const known = agents.some((a) => a.id === current);
   return (
     <div className="space-y-3" data-testid="map-config">
       <div>
         <Label k="flowEditor.map.agent" />
-        <select
+        <AgentSelect
+          agents={agents}
           value={current}
-          onChange={(e) => patchConfig({ agent_id: e.target.value })}
-          className={`${INPUT_CLS} ${current ? '' : 'border-amber-400'}`}
-          data-testid="map-agent"
-        >
-          <option value="">{t('flowEditor.chooseAgent')}</option>
-          {current && !known ? <option value={current}>{current}</option> : null}
-          {agents.map((a) => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
-        </select>
+          onChange={(id) => patchConfig({ agent_id: id })}
+          testId="map-agent"
+        />
       </div>
       <div>
         <Label k="flowEditor.map.task" />
@@ -117,23 +114,100 @@ export function MapConfig({ node, agents = [], onPatch }) {
   );
 }
 
-export function SwitchConfig({ node, successors = [], onPatch }) {
+// A key typed by hand or picked from the keys the switch can read: the
+// request a run starts with and what the nodes before it write.
+function KeyCombo({ value, options, onChange, placeholder, testId }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef(null);
+  const pick = (key) => { onChange(key); setOpen(false); };
+  return (
+    <div className="relative">
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value.trim())}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}
+        placeholder={placeholder}
+        role="combobox"
+        aria-expanded={open}
+        className={`${INPUT_CLS} pr-8`}
+        data-testid={testId}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label={t('flowEditor.switch.showKeys')}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setOpen((v) => !v);
+          inputRef.current?.focus();
+        }}
+        className="absolute inset-y-0 right-0 flex items-center px-2 text-slate-400 hover:text-slate-600"
+      >
+        <ChevronDown className="h-4 w-4" />
+      </button>
+      {open && options.length ? (
+        <ul role="listbox" className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+          {options.map((o) => (
+            <li
+              key={o.key}
+              role="option"
+              aria-selected={o.key === value}
+              // Before the input's blur, which would close the list first.
+              onMouseDown={(e) => { e.preventDefault(); pick(o.key); }}
+              className={`cursor-pointer px-3 py-1.5 hover:bg-cyan-50 ${o.key === value ? 'bg-slate-50' : ''}`}
+            >
+              <div className="truncate font-mono text-xs text-slate-800">{o.key}</div>
+              {o.hint ? <div className="truncate text-[11px] text-slate-400">{o.hint}</div> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+// `stateKeys`: what the switch can test. `upstream` is what the nodes before it
+// write ({key, writers}), `declared` the keys the flow's own state names.
+export function SwitchConfig({ node, successors = [], onPatch, stateKeys = {} }) {
   const { t } = useI18n();
   const d = node.data || {};
   const config = d.config || {};
   const cases = Array.isArray(config.cases) ? config.cases : [];
   const patchConfig = (patch) => onPatch({ config: { ...config, ...patch } });
   const setCase = (index, patch) => patchConfig({ cases: cases.map((c, i) => (i === index ? { ...c, ...patch } : c)) });
+  const upstream = stateKeys.upstream || [];
+  const declared = stateKeys.declared || [];
+  const key = config.key || '';
+  const keyOptions = [
+    { key: 'user_request', hint: t('flowEditor.switch.requestKey') },
+    ...upstream.filter((u) => u.key !== 'user_request').map((u) => ({ key: u.key, hint: u.writers.join(', ') })),
+  ];
+  // The run seeds `user_request` and the flow's declared keys; anything else
+  // only a node before the switch can write.
+  const unwritten = key && key !== 'user_request' && !declared.includes(key) && !upstream.some((u) => u.key === key);
   return (
     <div className="space-y-3" data-testid="switch-config">
       <div>
         <Label k="flowEditor.switch.key" />
-        <input
-          value={config.key || ''}
-          onChange={(e) => patchConfig({ key: e.target.value.trim() })}
+        <KeyCombo
+          value={key}
+          options={keyOptions}
+          onChange={(next) => patchConfig({ key: next })}
           placeholder="score"
-          className={INPUT_CLS}
+          testId="switch-key"
         />
+        {unwritten ? (
+          <p className="px-1 pt-1 text-[11px] leading-5 text-amber-600" data-testid="switch-key-unwritten">
+            {t('flowEditor.switch.keyUnwritten')}
+          </p>
+        ) : null}
+        <p className="px-1 pt-1 text-[11px] leading-5 text-slate-400">
+          {t('flowEditor.switch.keyHint', { field: t('flowEditor.outputStateKeys') })}
+        </p>
       </div>
       <div className="space-y-2">
         <Label k="flowEditor.switch.cases" />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtKeys, normalizeNode, parseKeys, serializeNode } from '../graphHelpers';
+import { fmtKeys, normalizeNode, parseKeys, serializeNode, upstreamOutputKeys, wireAgentToSwitch } from '../graphHelpers';
 
 describe('normalizeNode / serializeNode round trip', () => {
   it('keeps an agent node the same shape after normalize then serialize', () => {
@@ -78,5 +78,55 @@ describe('parseKeys / fmtKeys', () => {
   it('round-trips through parse then format', () => {
     const text = 'topic, findings, summary';
     expect(fmtKeys(parseKeys(text))).toBe(text);
+  });
+});
+
+describe('normalizeNode keeps an agent node\'s routing', () => {
+  it('survives a load and a save', () => {
+    const stored = {
+      id: 'n1', position: { x: 0, y: 0 },
+      data: { label: 'Router', agent_id: 'a', route: 'one', route_default: 'n2', route_hint: 'pick one' },
+    };
+    const saved = serializeNode(normalizeNode(stored));
+    expect(saved.data).toMatchObject({ route: 'one', route_default: 'n2', route_hint: 'pick one' });
+  });
+});
+
+describe('keys a switch can test', () => {
+  const node = (id, data) => ({ id, data: { label: id.toUpperCase(), ...data } });
+  const nodes = [
+    node('a', { output: ['notes'] }), node('b', { output: ['verdict'] }),
+    node('c', { output: ['later'] }), node('s', { entity_id: 'state_switch' }),
+  ];
+  const edges = [{ source: 'a', target: 'b' }, { source: 'b', target: 's' }, { source: 's', target: 'c' }];
+
+  it('lists what every node upstream writes, not what comes after', () => {
+    expect(upstreamOutputKeys('s', nodes, edges)).toEqual([
+      { key: 'notes', writers: ['A'] }, { key: 'verdict', writers: ['B'] },
+    ]);
+  });
+});
+
+describe('an agent joined to a switch', () => {
+  const agent = (output = []) => ({ id: 'a', data: { category: 'agent', agent_id: 'checker', label: 'Checker', output } });
+  const sw = (config = {}) => ({ id: 's', data: { entity_id: 'state_switch', category: 'condition', config } });
+
+  it('gets an output key the switch then tests', () => {
+    const out = wireAgentToSwitch([agent(), sw()], 'a', 's');
+    expect(out[0].data.output).toEqual(['checker_result']);
+    expect(out[1].data.config.key).toBe('checker_result');
+  });
+
+  it('writes the key the switch already tests', () => {
+    const out = wireAgentToSwitch([agent(), sw({ key: 'verdict' })], 'a', 's');
+    expect(out[0].data.output).toEqual(['verdict']);
+    expect(out[1].data.config).toEqual({ key: 'verdict' });
+  });
+
+  it('leaves an agent that already writes a key, and other joins, as they are', () => {
+    const written = [agent(['notes']), sw()];
+    expect(wireAgentToSwitch(written, 'a', 's')).toBe(written);
+    const reversed = [agent(), sw()];
+    expect(wireAgentToSwitch(reversed, 's', 'a')).toBe(reversed);
   });
 });

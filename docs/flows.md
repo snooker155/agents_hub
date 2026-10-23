@@ -183,6 +183,13 @@ checkpoint with the answer in flow state under the node's output key, so the
 node after it reads what the person actually said. In flow chat, where there is
 no task to park, the node simply answers with its question.
 
+An agent node never asks on its own. Its reply is the next node's input, so it
+is built as a flow step: the clarification gate is off, `ask_user` is taken
+away even when the agent lists it, the buttons and views formats fall back to
+plain text, and the prompt tells the agent to make reasonable assumptions,
+state them and do the work. Put a human interrupt node before it when a person
+has to decide something.
+
 ## Checkpoint and resume
 
 After every node, the run records what is done, what was skipped and the whole

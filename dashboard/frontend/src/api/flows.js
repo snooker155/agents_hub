@@ -37,16 +37,23 @@ export const exportFlow = (flowId) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/export`, { responseType: 'blob' });
 export const runFlow = (flowId, data) => api.post(`/flows/${encodeURIComponent(flowId)}/run`, data);
 export const stopFlow = (flowId) => api.post(`/flows/${encodeURIComponent(flowId)}/stop`);
-export const runFlowNode = (flowId, data) => api.post(`/flows/${encodeURIComponent(flowId)}/run-node`, data);
+// Run a past task run again from one node, as a new run: `{node_id, mode}`,
+// mode `single` (that node only) or `rest` (it and everything after it).
+export const rerunFlowRun = (flowId, runGroup, data) => api.post(
+  `/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(runGroup)}/rerun`, data,
+);
 export const getFlowLogs = (flowId, workspace) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/logs`, { params: { workspace } });
 export const getFlowRuns = (flowId, workspace) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/runs`, { params: { workspace } });
+export const estimateFlowCost = (flowId) => api.get(`/flows/${encodeURIComponent(flowId)}/estimate`);
+// Drops one chat from the History tab, and the conversation with it.
+export const deleteFlowChat = (flowId, runGroup) =>
+  api.delete(`/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(runGroup)}`);
 // One record per execution (status, checkpoint, timing), unlike /runs which
 // groups the log. A failed or parked run with a checkpoint can be resumed.
 export const getFlowInstances = (flowId, activeOnly = false) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/instances`, { params: { active_only: activeOnly } });
-export const estimateFlowCost = (flowId) => api.get(`/flows/${encodeURIComponent(flowId)}/estimate`);
 export const resumeFlowRun = (flowRunId, answer) =>
   api.post(`/flows/runs/${encodeURIComponent(flowRunId)}/resume`, answer ? { answer } : {});
 

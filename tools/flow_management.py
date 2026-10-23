@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 from uuid import uuid4
 
 from langchain_core.tools import tool
@@ -643,7 +644,6 @@ def _delegation_errors(flow: Dict[str, Any], ws: Optional[str]) -> List[str]:
                     "agent with a delegation allowlist may not put in a flow it builds")
     return errors
 
-
 def _estimate(flow: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The cost of one run, with the map steps priced per item."""
     try:
@@ -659,6 +659,7 @@ def _estimate(flow: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "the number of items is known only when the run gets there, so they are not in "
             "the total.")
     return estimate
+
 
 
 def run_new_flow(
@@ -724,16 +725,16 @@ def run_new_flow(
             code="invalid_flow",
             extra={"errors": errors, "warnings": warnings},
         )
-
     estimate = _estimate(flow)
+
     plan = _simplify(flow)
     plan.pop("id", None)
     if not approved("run_new_flow_tool", user_approved,
                     {"name": flow["name"], "goal": goal, "steps": len(flow["nodes"])},
                     reason="Builds a flow for this request and runs it."):
-        extra: Dict[str, Any] = {"plan": plan}
         if estimate:
             extra["estimate"] = estimate
+        extra: Dict[str, Any] = {"plan": plan}
         if warnings:
             extra["warnings"] = warnings
         return _json_err(
@@ -748,7 +749,8 @@ def run_new_flow(
     record_entity("flow", flow["id"], "created", flow["name"])
     from tools.langchain_tools import launch_flow_run
     payload = launch_flow_run(flow["id"], flow, ws, goal.strip(), create_task=create_task)
-    payload["link"] = f"/flows/{flow['id']}?run={payload['run_id']}"
+    # The run's own page under the flow (dashboard App.jsx /flows/:id/runs/:run).
+    payload["link"] = f"/flows/{flow['id']}/runs/{quote(str(payload['run_id']), safe='')}"
     payload["ephemeral"] = bool(flow["ephemeral"])
     payload["plan"] = plan
     if flow["ephemeral"]:

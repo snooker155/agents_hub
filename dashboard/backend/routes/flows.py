@@ -17,13 +17,12 @@ from pydantic import BaseModel
 
 from tasks import service as tasks_service
 from managers import run_manager
-from agents import agent_launcher
 from flow import launcher as flow_launcher
 from flow import store as flow_store
 from flow import templates as flow_templates
 from flow.engine import ON_ERROR_POLICIES
-from flow.estimate import estimate_flow_cost
 from models import FlowListItem, FlowDetail, FlowPage
+from flow.estimate import estimate_flow_cost
 from workspace import (
     create_workspace_folder,
     get_workspace_metadata,
@@ -123,10 +122,11 @@ class FlowRun(BaseModel):
     task_id: Optional[str] = None
 
 
-class FlowRunNode(BaseModel):
+class FlowRerun(BaseModel):
+    """Body of POST /{flow_id}/runs/{run_group}/rerun: the node to start
+    from, and ``single`` (that node only) or ``rest`` (it and all after it)."""
     node_id: str
-    workspace: Optional[str] = None
-    description: Optional[str] = None
+    mode: str = "rest"
 
 
 class FlowResume(BaseModel):
@@ -689,51 +689,18 @@ async def trigger_flow_webhook(flow_id: str, request: Request, req: Optional[Flo
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{flow_id}/run-node")
-async def run_flow_node(flow_id: str, req: FlowRunNode):
+@router.post("/{flow_id}/runs/{run_group}/rerun")
+async def rerun_flow_run(flow_id: str, run_group: str, req: FlowRerun):
+    """Run a past task run of the flow again from one node, as a new run
+    (flow/launcher.rerun_flow_run). A chat record runs again as a turn of
+    its own conversation instead (chat/pipelines.py, ``flow_rerun``)."""
     flow = next((f for f in _load() if f["id"] == flow_id), None)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
-
-    node = next((n for n in flow.get("nodes", []) if n["id"] == req.node_id), None)
-    if not node:
-        raise HTTPException(status_code=404, detail="Node not found")
-
-    node_data = node.get("data") if isinstance(node.get("data"), dict) else {}
-    agent_id = node.get("agent_id") or node_data.get("agent_id") or ""
-    if not agent_id:
-        raise HTTPException(status_code=400, detail="Node has no agent_id")
-
-    ws_name = req.workspace or flow.get("workspace")
-    if not ws_name:
-        ws_name = create_workspace_folder().name
-
-    label = node.get("label") or node_data.get("label") or agent_id
-    flow_task_id = flow.get("task_id")
-    t = (tasks_service.get_task(flow_task_id) if flow_task_id else None) or tasks_service.create_task(
-        title=f"Run {label} · {flow['name']}",
-        description=req.description or f"Running {label} from flow {flow['name']}",
-        workspace=ws_name,
-    )
-
-    params = {
-        "description": req.description or flow.get("description", ""),
-        "workspace": ws_name,
-        "flow_id": flow_id,
-        "node_id": req.node_id,
-        "task_id": flow.get("task_id"),
-    }
-
     try:
-        run_id, session_id = agent_launcher.start_run(str(t.id), agent_id, params)
-        tasks_service.assign_agent(t.id, agent_id, params, run_id=run_id)
-        return {
-            "status": "started",
-            "task_id": str(t.id),
-            "run_id": run_id,
-            "session_id": session_id,
-            "workspace": ws_name,
-        }
+        return flow_launcher.rerun_flow_run(flow_id, run_group, req.node_id, req.mode)
+    except flow_launcher.FlowResumeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -835,15 +802,70 @@ async def get_flow_instances(flow_id: str, active_only: bool = False):
     return [r for r in run_store.load_flow_runs() if r.get("flow_id") == flow_id]
 
 
+#: The log lines that end an agent node, which carry the node's run.
+_NODE_END_TYPES = ("agent_finish", "agent_error", "agent_stopped")
+
+
+def _attach_node_runs(events: List[Dict]) -> List[Dict]:
+    """Give the node lines written before they carried ``run_id`` their run.
+
+    The dashboard folds a node's steps (tool calls, thoughts) into its log line
+    from that run (``GET /messages/{run_id}/trail``). A flow chat's node run is
+    registered under the conversation as ``task_id``, with the node in its
+    ``extra``, and finishes at the very timestamp its log line carries, so the
+    line finds its run exactly. Lines that already name a run are left alone.
+    """
+    wanted = [ev for ev in events
+              if ev.get("type") in _NODE_END_TYPES and not ev.get("run_id")
+              and ev.get("kind") == "chat" and ev.get("run_group") and ev.get("node_id")]
+    if not wanted:
+        return events
+    groups = sorted({str(ev["run_group"]) for ev in wanted})
+    by_node: Dict[tuple, List[tuple]] = {}
+    try:
+        from common import db
+        conn = db.get_conn()
+        for i in range(0, len(groups), 400):
+            chunk = groups[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT run_id, task_id, finished_at, extra FROM runs WHERE task_id IN ({marks})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                r = dict(row)
+                extra = r.get("extra") or {}
+                if isinstance(extra, str):
+                    try:
+                        extra = json.loads(extra)
+                    except ValueError:
+                        extra = {}
+                node = (extra or {}).get("flow_node_id")
+                if node:
+                    by_node.setdefault((str(r["task_id"]), str(node)), []).append(
+                        (str(r.get("finished_at") or ""), str(r["run_id"])))
+    except Exception:  # noqa: BLE001 - the log reads fine without the links
+        log.debug("flow log: could not link node runs", exc_info=True)
+        return events
+    for ev in wanted:
+        runs = by_node.get((str(ev["run_group"]), str(ev["node_id"]))) or []
+        ts = str(ev.get("timestamp") or "")
+        exact = next((rid for fin, rid in runs if fin == ts), None)
+        if exact:
+            ev["run_id"] = exact
+        elif len(runs) == 1:
+            ev["run_id"] = runs[0][1]
+    return events
+
+
 @router.get("/{flow_id}/logs")
 async def get_flow_logs(flow_id: str, workspace: Optional[str] = None):
-    from flow import run_store
-    return run_store.read_flow_logs(flow_id)
+    return _read_flow_log(flow_id)
 
 
 def _read_flow_log(flow_id: str) -> List[Dict]:
     from flow import run_store
-    return run_store.read_flow_logs(flow_id)
+    return _attach_node_runs(run_store.read_flow_logs(flow_id))
 
 
 @router.get("/{flow_id}/runs")
@@ -913,6 +935,34 @@ async def get_flow_runs(flow_id: str, workspace: Optional[str] = None):
     records = [groups[k] for k in order]
     records.sort(key=lambda r: r.get("started_at") or "", reverse=True)
     return records
+
+
+@router.delete("/{flow_id}/runs/{run_group}")
+async def delete_flow_chat(flow_id: str, run_group: str):
+    """Drop one entry from the History tab: a chat, with its conversation, or a
+    task run, with its execution record (it can no longer be resumed).
+
+    The task a run worked on stays on the board, and the run ledger keeps the
+    node runs, as when a chat is deleted on the Chat page. Anything still
+    running is refused: its next event would write the log back.
+    """
+    from common import chat_store, live_runs
+    from flow import run_store
+    kind = run_store.flow_history_kind(flow_id, run_group)
+    if kind is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if kind == "chat":
+        if run_group in live_runs.running_conversations():
+            raise HTTPException(status_code=409, detail="The chat is still answering; stop it first")
+    else:
+        record = run_store.get_flow_run(run_group) or {}
+        if str(record.get("status") or "") in ("running", "pending", "stopping"):
+            raise HTTPException(status_code=409, detail="The run is still going; stop it first")
+    if run_store.delete_flow_history(flow_id, run_group) == "not_found":
+        raise HTTPException(status_code=404, detail="Run not found")
+    if kind == "chat":
+        chat_store.delete_chat(run_group)
+    return {"deleted": True, "kind": kind}
 
 
 # ── AI flow generation ─────────────────────────────────────────────────────────

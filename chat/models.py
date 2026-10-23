@@ -56,6 +56,13 @@ class ChatRequest(BaseModel):
     # A team target: the message is handed to a roster of agents that talk to
     # each other (teams/), rather than to one agent or a flow's DAG.
     team_id: Optional[str] = None
+    # A flow turn can start at one node instead of the flow's start
+    # (``flow_start_node``: the message is that node's input, the flow runs on
+    # to the end), or run the conversation's last turn again from a node
+    # (``flow_rerun``: ``{node_id, mode}``, mode ``single`` or ``rest``, with
+    # that turn's inputs). See flow/rerun.py.
+    flow_start_node: Optional[str] = None
+    flow_rerun: Optional[Dict[str, str]] = None
     message: str
     workspace: Optional[str] = None
     project_id: Optional[str] = None

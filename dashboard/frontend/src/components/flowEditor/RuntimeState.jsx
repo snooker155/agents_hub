@@ -2,6 +2,9 @@ import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, Workflow } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { INPUT_CLS } from './graphHelpers';
+import ProcessNode from '../ProcessNode';
+import ObjectTree from '../ObjectTree';
+import { initialFlowState, stateKeyLabel } from './stateKeys';
 
 // Graph-tab state block: edits the flow's seed/initial state JSON and can
 // auto-build the state structure by scanning every node's declared input/output
@@ -10,8 +13,9 @@ export function GraphStateBlock({ flow, nodes, onPatch }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(true);
   // Keyed on flow.id at the call site, so opening another flow remounts this
-  // block with that flow's state as the draft.
-  const [stateText, setStateText] = useState(JSON.stringify(flow.state || {}, null, 2));
+  // block with that flow's state as the draft: the state a run starts from,
+  // so `user_request` shows even when the flow declares nothing.
+  const [stateText, setStateText] = useState(JSON.stringify(initialFlowState(flow), null, 2));
   const [stateErr, setStateErr] = useState('');
 
   const commitState = (text) => {
@@ -93,21 +97,40 @@ export function GraphStateBlock({ flow, nodes, onPatch }) {
   );
 }
 
-// One value card in the runtime-state block. `accent` lets the second section
+// One value card in the runtime-state block, the Chat process panel's step
+// card: three lines of the value, the whole of it in a modal on a click (a
+// structured value as a tree there). `accent` lets the second section
 // (unkeyed node outputs) read visually distinct from declared state keys.
-export function StateEntry({ label, value, accent = 'cyan' }) {
+export function StateEntry({ label, stateKey = null, value, accent = 'cyan' }) {
+  const { t } = useI18n();
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   const isEmpty = text === '' || text === '""' || value == null;
   const labelColor = accent === 'slate'
     ? 'text-slate-500 dark:text-slate-400'
     : 'text-cyan-700 dark:text-cyan-400';
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-800/60">
-      <div className={`font-mono text-[10px] font-semibold ${labelColor}`}>{label}</div>
-      <pre className={`mt-0.5 max-h-28 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-[1.5] ${isEmpty ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
-        {isEmpty ? '(pending)' : text}
-      </pre>
+  const body = (
+    <div className={`whitespace-pre-wrap break-words text-[11px] leading-4 ${isEmpty ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+      {isEmpty ? t('flowEditor.status.pending') : text}
     </div>
+  );
+  const structured = value !== null && typeof value === 'object';
+  return (
+    <ProcessNode
+      label={label}
+      lines={3}
+      labelColor={labelColor}
+      borderColor="border-slate-200 dark:border-slate-700"
+      bgColor="bg-white dark:bg-slate-800/60"
+      detail={(
+        <>
+          {/* The key itself, which a node's inputs and outputs name. */}
+          {stateKey && stateKey !== label ? <div className="mb-2 font-mono text-[11px] text-slate-400">{stateKey}</div> : null}
+          {structured ? <ObjectTree value={value} /> : <div className="whitespace-pre-wrap break-words text-sm leading-6">{text}</div>}
+        </>
+      )}
+    >
+      {body}
+    </ProcessNode>
   );
 }
 
@@ -116,7 +139,9 @@ export function StateEntry({ label, value, accent = 'cyan' }) {
 // by the engine (`state` field), we render the latest snapshot seen. Agent node
 // outputs are NOT shared state: nodes that declare no output keys never write to
 // it, so when a flow declares no state fields this block shows nothing.
-export function RuntimeStateBlock({ logs }) {
+// `initial` is the flow's own starting state (its declared `state`, a
+// `user_request` among it): shown until a run brings a snapshot of its own.
+export function RuntimeStateBlock({ logs, initial = null }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(true);
 
@@ -126,8 +151,9 @@ export function RuntimeStateBlock({ logs }) {
     for (const log of logs) {
       if (log && log.state && typeof log.state === 'object') latest = log.state;
     }
-    return latest;
-  }, [logs]);
+    if (latest) return latest;
+    return initial && typeof initial === 'object' && !Array.isArray(initial) ? initial : null;
+  }, [logs, initial]);
 
   const entries = snapshot ? Object.entries(snapshot) : [];
   if (!entries.length) return null;
@@ -147,7 +173,7 @@ export function RuntimeStateBlock({ logs }) {
         <div className="max-h-[40vh] overflow-y-auto px-3 pb-2">
           <div className="space-y-1.5">
             {entries.map(([key, value]) => (
-              <StateEntry key={`k-${key}`} label={key} value={value} />
+              <StateEntry key={`k-${key}`} label={stateKeyLabel(key, t)} stateKey={key} value={value} />
             ))}
           </div>
         </div>

@@ -21,6 +21,11 @@ const show = (data, onPatch = vi.fn()) => {
   return onPatch;
 };
 
+const pick = (name) => {
+  fireEvent.click(screen.getByTestId('node-agent-picker'));
+  fireEvent.click(screen.getByRole('option', { name }));
+};
+
 describe('AgentPicker', () => {
   it('asks for an agent while none is chosen', () => {
     show({ label: 'Agent', category: 'agent', agent_id: '' });
@@ -29,7 +34,7 @@ describe('AgentPicker', () => {
 
   it('picks an agent and takes its name while the label is the default', () => {
     const onPatch = show({ label: 'Agent', category: 'agent', agent_id: '' });
-    fireEvent.change(screen.getByTestId('node-agent-picker'), { target: { value: 'writer' } });
+    pick(/Writer/);
     expect(onPatch).toHaveBeenCalledWith({
       agent_id: 'writer', label: 'Writer', description: 'Writes things', domain: 'design',
     });
@@ -37,9 +42,22 @@ describe('AgentPicker', () => {
 
   it('keeps a label the person wrote', () => {
     const onPatch = show({ label: 'Draft the reply', category: 'agent', agent_id: 'writer' });
-    fireEvent.change(screen.getByTestId('node-agent-picker'), { target: { value: 'coder' } });
+    pick(/Coder/);
     expect(onPatch.mock.calls[0][0].label).toBeUndefined();
     expect(onPatch.mock.calls[0][0].agent_id).toBe('coder');
+  });
+
+  it('finds an agent by its description', () => {
+    show({ label: 'Agent', category: 'agent', agent_id: '' });
+    fireEvent.click(screen.getByTestId('node-agent-picker'));
+    fireEvent.change(screen.getByPlaceholderText('Search agents'), { target: { value: 'code' } });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('option', { name: /Coder/ })).toBeInTheDocument();
+  });
+
+  it('keeps showing an agent the catalog no longer has', () => {
+    show({ label: 'Old', category: 'agent', agent_id: 'gone' });
+    expect(screen.getByTestId('node-agent-picker')).toHaveTextContent('gone');
   });
 });
 

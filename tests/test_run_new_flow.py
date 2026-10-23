@@ -71,7 +71,7 @@ def test_approved_it_stores_a_temporary_flow_and_starts_it(agents, launches):
     out = _call(user_approved=True)
     assert out["ok"], out
     flow_id = out["flow_id"]
-    assert out["link"] == f"/flows/{flow_id}?run=fr-1" and out["ephemeral"] is True
+    assert out["link"] == f"/flows/{flow_id}/runs/fr-1" and out["ephemeral"] is True
     assert launches == [{"flow_id": flow_id, "desc": "Check the article", "create_task": False}]
     stored = flow_store.get_flow(flow_id)
     assert stored["ephemeral"] is True

@@ -190,6 +190,13 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
     message_started = time.perf_counter()
 
     async def _run_agent_async():
+        # Who is running, in which conversation and run: tools read these
+        # (the delegation allowlist, the web log). Set inside the task, so the
+        # threads the run starts copy them and the request's context is untouched.
+        from common.agent_context import current_agent_id, current_run_id, current_session_id
+        current_agent_id.set(request.agent_id)
+        current_session_id.set(session_id)
+        current_run_id.set(run_id)
         # The record's model cascade, then this turn's version pin (its own or
         # its service's) and per-run overrides (chat/runs.py request_overrides).
         overrides = {**agent_overrides(request.agent_id), **request_overrides(request)}
@@ -651,7 +658,7 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
 
     Yielded events extend the single-agent shape with per-node markers:
     - {"type": "flow_meta", "flow_id", "flow_name", "session_id", "nodes": [{node_id, agent_id, label}]}
-    - {"type": "node_start", "node_id", "agent_id", "agent_label", "run_id"}
+    - {"type": "node_start", "node_id", "agent_id", "agent_label", "run_id", "input"}
     - token / thinking / tool_start / tool_end / tool_error / usage / error events
       (each carries node_id / agent_id so the frontend can route them to the right bubble)
     - {"type": "node_done", "node_id", "run_id", "ok", "response", "error", "usage", "tool_calls", "duration_ms", "entities"}
@@ -659,6 +666,7 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
     """
     # Local imports keep the surface narrow and avoid circulars at module load.
     from flow import run_store
+    from flow import rerun as flow_rerun
     from flow.engine import run_flow_engine
     from flow.validate import FlowValidationError
     from chat.flow_driver import build_chat_driver
@@ -701,9 +709,33 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
     # output (handled by the engine's build_agent_input, which the chat builder
     # below wraps). The history goes to a root node as messages, the same way
     # single-agent chat sends it.
-    history_messages = build_history_messages(request.history)
-    context_lines = context_block_lines(request)
+    history = list(request.history)
     user_message = request.message
+    # Where this turn starts (flow/rerun.py). A run again from a node takes
+    # the conversation's last turn: its checkpoint, and the message it
+    # answered (which then leaves the history, being this turn's message).
+    resume_cp = None
+    start_error = ""
+    try:
+        if request.flow_rerun:
+            node_id = str(request.flow_rerun.get("node_id") or "")
+            mode = str(request.flow_rerun.get("mode") or "rest")
+            stored = run_store.load_chat_checkpoint(request.flow_id, conv_id) or {}
+            source = stored.get("checkpoint") or flow_rerun.checkpoint_from_events(
+                run_store.read_run_group_events(request.flow_id, conv_id))
+            last_user = max((i for i, m in enumerate(history) if m.role == "user"), default=None)
+            if last_user is not None:
+                user_message = stored.get("message") or history[last_user].content
+                history = history[:last_user]
+            else:
+                user_message = stored.get("message") or ""
+            resume_cp = flow_rerun.rerun_checkpoint(flow, source, node_id, mode)
+        elif request.flow_start_node:
+            flow = flow_rerun.start_at(flow, request.flow_start_node)
+    except flow_rerun.RerunError as e:
+        start_error = str(e)
+    history_messages = build_history_messages(history)
+    context_lines = context_block_lines(request)
     # Project scope preamble (same text as single-agent chat); prepended to root
     # node prompts so flow agents also know they operate inside the project.
     proj_note = project_scope_note(request)
@@ -731,10 +763,40 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
         user_message=user_message, log_flow=_log_flow, project_note=proj_note,
     )
     node_meta = state.node_meta
+    # The turn's resume point, kept so the conversation can be run again from
+    # one of its nodes later (flow/rerun.py).
+    driver.on_checkpoint = lambda cp: run_store.save_chat_checkpoint(
+        request.flow_id, conv_id, cp, user_message)
+    # How the turn started rides on its flow_start log event, so the History
+    # record can show a run again from a node as what it was.
+    turn_start: dict = {}
+    if request.flow_rerun and not start_error:
+        rerun_node = str(request.flow_rerun.get("node_id") or "")
+        turn_start = {"rerun": {
+            "node_id": rerun_node, "label": flow_rerun.node_label(flow, rerun_node),
+            "mode": str(request.flow_rerun.get("mode") or "rest"),
+        }}
+    elif request.flow_start_node and not start_error:
+        turn_start = {"start_node": {
+            "node_id": request.flow_start_node,
+            "label": flow_rerun.node_label(flow, request.flow_start_node),
+        }}
+    if turn_start:
+        _flow_started = driver.on_flow_start
+        driver.on_flow_start = lambda ev: _flow_started({**ev, "turn": turn_start})
+
+    if start_error:
+        yield {
+            "type": "done", "ok": False, "flow_id": request.flow_id,
+            "flow_name": flow_name, "session_id": session_id,
+            "error": start_error, "responses": [],
+        }
+        return
 
     # ── Drive the shared engine, translating neutral events → SSE shapes ──────
     try:
-        engine = run_flow_engine(flow, flow_id=request.flow_id, shared_context=user_message, driver=driver)
+        engine = run_flow_engine(flow, flow_id=request.flow_id, shared_context=user_message,
+                                 driver=driver, resume=resume_cp)
         async for ev in engine:
             kind = ev.get("type")
             if kind == "flow_start":
@@ -764,6 +826,9 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
                     "type": "node_start", "node_id": ev["node_id"],
                     "agent_id": ev.get("entity_id"), "agent_label": ev.get("label"),
                     "run_id": run_id, "session_id": session_id,
+                    # What the node is given, so the live log shows it the
+                    # way the saved flow log does (agent_start "input").
+                    **({"input": ev.get("prompt") or ""} if ev.get("is_agent") else {}),
                 }
                 # Legacy "meta" anchor for older clients (agent nodes only).
                 if run_id:

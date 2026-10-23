@@ -185,6 +185,9 @@ function AppRoutes() {
         <Route path="/memory" element={guard(<MemoryManager />)} />
         <Route path="/flows" element={guard(<AgentFlows />)} />
         <Route path="/flows/:flowId" element={guard(<FlowRun />)} />
+        {/* One conversation or run of the flow, its own address: the same
+            page (kept mounted when the address changes), that record open. */}
+        <Route path="/flows/:flowId/runs/:runGroup" element={guard(<FlowRun />)} />
         <Route path="/flows/:flowId/edit" element={guard(<FlowEditor />)} />
         <Route path="/loops" element={guard(<Loops />)} />
         <Route path="/teams" element={guard(<Teams />)} />

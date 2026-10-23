@@ -7,4 +7,25 @@ export default {
   dropAgentsToStart: "Knoten ablegen, um zu beginnen",
   dragAgentsFromTheGraph: "Ziehen Sie den Agent-Knoten oder eine Registry-Entität aus dem linken Bereich auf die Leinwand.",
   noEntitiesAvailable: 'Keine Entitäten verfügbar.',
+  categories: {
+    processor: "Prozessoren",
+    condition: "Bedingungen",
+    map: "Pro Element",
+    transform: "Transformationen",
+    interrupt: "Unterbrechungen",
+    container: "Verschachtelte Läufe",
+  },
+  // Built-in registry entities by id; a user entity keeps its own text.
+  entities: {
+    state_branch: { name: "Zustandsverzweigung", description: "Leitet zu einem von zwei Zielen, je nachdem ob ein Zustandsschlüssel wahr ist." },
+    state_switch: { name: "Weiche", description: "Leitet zum ersten Fall, dessen Bedingung auf einen Zustandswert zutrifft." },
+    run_flow: { name: "Flow ausführen", description: "Führt einen anderen Flow als verschachtelten Lauf dieses Flows aus und wartet darauf. Seine letzte Ausgabe landet im Ausgabeschlüssel." },
+    run_loop: { name: "Schleife ausführen", description: "Führt eine Schleife bis zur Konvergenz als verschachtelten Lauf dieses Flows aus und wartet auf die angenommene Ausgabe. Die Ausgabe landet im Ausgabeschlüssel." },
+    run_team: { name: "Team ausführen", description: "Lässt ein Team als verschachtelten Lauf dieses Flows an einem Ziel arbeiten und wartet auf seine Antwort. Die Antwort landet im Ausgabeschlüssel." },
+    human_interrupt: { name: "Rückfrage an Menschen", description: "Hält den Flow an und fragt eine Person. Der Lauf wartet auf die Antwort und setzt am Checkpoint mit der Antwort im Zustand fort." },
+    map: { name: "Pro Element", description: "Führt einen Agenten pro Listenelement aus, mehrere gleichzeitig. Die Liste kommt aus einem Zustandsschlüssel oder der Ausgabe des vorigen Schritts; die Ergebnisse landen als Liste im Ausgabeschlüssel." },
+    summarize: { name: "Kürzen", description: "Kürzt den Eingabetext auf etwa die ersten N Wörter. Ohne Modell." },
+    present_view: { name: "Ansicht zeigen", description: "Zeigt die Eingabedaten als Ansicht: Diagramm, Tabelle, Graph oder Markdown." },
+    rename_keys: { name: "Schlüssel umbenennen", description: "Kopiert Werte von einer Gruppe von Zustandsschlüsseln in eine andere, um sie umzubenennen oder neu zuzuordnen." },
+  },
 };

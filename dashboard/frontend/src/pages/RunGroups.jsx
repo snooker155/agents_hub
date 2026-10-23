@@ -67,13 +67,13 @@ function KindBadge({ kind }) {
   );
 }
 
-/** The owning record's own page, opened on this run: every entity page takes
- * the run in its ?run= parameter (the loops page also names the loop with
- * ?loop=). */
+/** The owning record's own page, opened on this run: a flow's run has its
+ * own address under the flow, the other entity pages take the run in their
+ * ?run= parameter (the loops page also names the loop with ?loop=). */
 function entityLink(group) {
   switch (group.kind) {
     case 'flow':
-      return group.parent_id ? `/flows/${group.parent_id}?run=${group.id}` : null;
+      return group.parent_id ? `/flows/${group.parent_id}/runs/${encodeURIComponent(group.id)}` : null;
     case 'team':
       return group.parent_id ? `/teams/${group.parent_id}?run=${group.id}` : null;
     case 'loop':

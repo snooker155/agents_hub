@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { FlaskConical, MessageSquare, RotateCcw, SquareTerminal, Workflow } from 'lucide-react';
+import { FlaskConical, MessageSquare, RotateCcw, SquareTerminal, Trash2, Workflow } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { RUN_STATUS_STYLES, fmtDateTime } from './runFormat';
+import { RUN_STATUS_STYLES, fmtDateTime, rerunBubbleText } from './runFormat';
 import SaveAsEvalCaseDialog from '../evals/SaveAsEvalCaseDialog';
 
-export function FlowRunMessages({ run, messages = [], onClose, workspace }) {
+export function FlowRunMessages({ run, messages: given = [], onClose, workspace }) {
   const { t } = useI18n();
   const isChat = run?.kind === 'chat';
   const [caseDialogOpen, setCaseDialogOpen] = useState(false);
+  // A run again from a node has no message of its own (runFormat.js).
+  const messages = given.map((m) => (m.rerun && !m.content ? { ...m, content: rerunBubbleText(t, m.rerun) } : m));
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-slate-50">
       <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
@@ -58,7 +60,7 @@ export function FlowRunMessages({ run, messages = [], onClose, workspace }) {
             const isUser = msg.role === 'user';
             return (
               <div key={msg.id} className={`mb-4 flex gap-2.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-                <div className="flex shrink-0 flex-col items-center gap-1">
+                <div className={`flex shrink-0 flex-col items-center gap-1 ${isUser ? '' : 'w-14'}`}>
                   <div
                     className={`flex h-7 w-7 items-center justify-center rounded-full text-white ${
                       isUser ? 'bg-indigo-600' : 'bg-gray-800'
@@ -67,7 +69,7 @@ export function FlowRunMessages({ run, messages = [], onClose, workspace }) {
                     {isUser ? <SquareTerminal className="h-3.5 w-3.5" /> : <Workflow className="h-3.5 w-3.5" />}
                   </div>
                   {!isUser && msg.agent_label && (
-                    <span className="max-w-[52px] break-words text-center text-[9px] font-medium leading-tight text-gray-400">
+                    <span title={msg.agent_label} className="w-full truncate text-center text-[9px] font-medium leading-tight text-gray-400">
                       {msg.agent_label}
                     </span>
                   )}
@@ -95,7 +97,12 @@ export function FlowRunMessages({ run, messages = [], onClose, workspace }) {
 // carries it: the log-derived rows the list is built from do not.
 const RESUMABLE_STATUSES = new Set(['failed', 'awaiting_input']);
 
-export function FlowHistory({ runs = [], instances = {}, onResume, resumingRun, selectedRunGroup, onSelect }) {
+// Any entry can be deleted from the list (onDelete): a chat with its
+// conversation, a task run with its record (the task itself stays). Not one
+// still running, nor an entry of the old shared log, which has no file of its own.
+export function FlowHistory({
+  runs = [], instances = {}, onResume, onDelete, resumingRun, selectedRunGroup, onSelect,
+}) {
   const { t } = useI18n();
   if (!runs.length) {
     return (
@@ -104,8 +111,10 @@ export function FlowHistory({ runs = [], instances = {}, onResume, resumingRun, 
       </div>
     );
   }
+  // A compact list, one row per record: the kind as an icon, the title and
+  // the status dot on top, the kind, time and step count under it.
   return (
-    <div className="space-y-2">
+    <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
       {runs.map((run) => {
         const isActive = run.run_group === selectedRunGroup;
         const isChat = run.kind === 'chat';
@@ -113,52 +122,55 @@ export function FlowHistory({ runs = [], instances = {}, onResume, resumingRun, 
         const canResume = RESUMABLE_STATUSES.has(record.status) && !!record.checkpoint;
         const status = RUN_STATUS_STYLES[record.status] || RUN_STATUS_STYLES[run.status] || RUN_STATUS_STYLES.running;
         const nodeCount = (run.events || []).filter((e) => e.type === 'agent_start').length;
+        const KindIcon = isChat ? MessageSquare : Workflow;
         return (
-          <div
+          <li
             key={run.run_group}
-            className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-              isActive
-                ? 'border-cyan-300 bg-cyan-50'
-                : 'border-slate-200 bg-slate-50 hover:border-cyan-300 hover:bg-cyan-50'
-            }`}
+            className={`flex items-center gap-1 pr-1 transition ${isActive ? 'bg-cyan-50' : 'hover:bg-slate-50'}`}
           >
-          <button type="button" onClick={() => onSelect(run)} className="w-full text-left">
-            <div className="flex items-center justify-between gap-2">
-              <span
-                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                  isChat ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'
-                }`}
-              >
-                {isChat ? <MessageSquare className="h-3 w-3" /> : <Workflow className="h-3 w-3" />}
-                {isChat ? t('flowEditor.chat') : t('flowEditor.taskRun')}
+            <button type="button" onClick={() => onSelect(run)} className="flex min-w-0 flex-1 items-start gap-2 px-2.5 py-1.5 text-left">
+              <KindIcon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${isChat ? 'text-indigo-500' : 'text-emerald-500'}`} aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5">
+                  <span className={`min-w-0 flex-1 truncate text-[13px] font-medium ${isActive ? 'text-cyan-800' : 'text-slate-800'}`}>
+                    {run.title || (isChat ? t('flowEditor.flowChat') : t('flowEditor.flowRun'))}
+                  </span>
+                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${status.dot}`} title={status.label} />
+                  <span className="sr-only">{status.label}</span>
+                </span>
+                <span className="block truncate text-[11px] text-slate-400">
+                  {isChat ? t('flowEditor.chat') : t('flowEditor.taskRun')} · {fmtDateTime(run.started_at)} · {t('flowEditor.stepCount', { count: nodeCount })}
+                </span>
               </span>
-              <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${status.text}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
-                {status.label}
-              </span>
-            </div>
-            <div className="mt-1.5 truncate text-sm font-semibold text-slate-900">
-              {run.title || (isChat ? t('flowEditor.flowChat') : t('flowEditor.flowRun'))}
-            </div>
-            <div className="mt-0.5 text-[11px] text-slate-400">
-              {fmtDateTime(run.started_at)} · {t('flowEditor.stepCount', { count: nodeCount })}
-            </div>
-          </button>
-          {canResume ? (
-            <button
-              type="button"
-              onClick={() => onResume(run.run_group)}
-              disabled={resumingRun === run.run_group}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <RotateCcw className="h-3 w-3" />
-              {resumingRun === run.run_group ? t('flowEditor.resuming') : t('flowEditor.resume')}
             </button>
-          ) : null}
-          </div>
+            {canResume ? (
+              <button
+                type="button"
+                onClick={() => onResume(run.run_group)}
+                disabled={resumingRun === run.run_group}
+                title={resumingRun === run.run_group ? t('flowEditor.resuming') : t('flowEditor.resume')}
+                aria-label={resumingRun === run.run_group ? t('flowEditor.resuming') : t('flowEditor.resume')}
+                className="shrink-0 rounded-md p-1 text-amber-600 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+            {onDelete && (record.status || run.status) !== 'running' && !String(run.run_group).startsWith('legacy-') ? (
+              <button
+                type="button"
+                onClick={() => onDelete(run)}
+                title={isChat ? t('flowEditor.deleteChat') : t('flowEditor.deleteRun')}
+                aria-label={isChat ? t('flowEditor.deleteChat') : t('flowEditor.deleteRun')}
+                data-testid="flow-history-delete"
+                className="shrink-0 rounded-md p-1 text-slate-300 transition hover:bg-rose-50 hover:text-rose-600"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
