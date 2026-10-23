@@ -865,6 +865,16 @@ class AgentFactory:
         _spec = _ro.apply_to_spec(_spec, _run_overrides)
         override_params.update(_ro.model_params(_run_overrides))
 
+        # Built as a step of a flow (flow/task_driver.py, chat/flow_driver.py):
+        # the reply goes to the next node, not to a person, and a person is
+        # asked only by a human_interrupt node. So no clarification gate and
+        # no buttons or views block. Popped like memory_pool; it reached the
+        # cache key already.
+        _flow_step = bool(override_params.pop("flow_step", False))
+        if _flow_step and _spec is not None:
+            import dataclasses as _dc
+            _spec = _dc.replace(_spec, clarify_gate=False, response_format="none")
+
         # Pinning the memory pool for this build. Taken out of the overrides
         # before they are merged into the config, because it is not a definition
         # field — it decides which pool the memory tools are bound to and which
@@ -1019,6 +1029,10 @@ class AgentFactory:
         if _spec and _spec.clarify_gate:
             if not any(getattr(t, "name", None) == "ask_user" for t in tools):
                 tools.append(ask_user)
+        # A flow step cannot park on a question, even when its tool list
+        # names ask_user.
+        if _flow_step:
+            tools = [t for t in tools if getattr(t, "name", None) != "ask_user"]
 
         # Project-scoped runs (chat with a project selected, or a task tied to a
         # project) get a read tool for the project's structure graph plus a usage
@@ -1138,13 +1152,19 @@ class AgentFactory:
         # missing requirements (ask + stop) before executing, instead of acting on
         # assumptions. Toggled per registry record, so it lives here rather than in
         # instructions.md — same as the response-format snippet above.
-        from agents.clarification import build_clarification_prompt
+        from agents.clarification import build_clarification_prompt, build_flow_step_prompt
         _clarify_prompt = build_clarification_prompt(bool(_spec.clarify_gate) if _spec else False)
         if _clarify_prompt:
             config["system_prompt"] = (
                 config.get("system_prompt", "")
                 + "\n\n---\n\n"
                 + _clarify_prompt
+            )
+        if _flow_step:
+            config["system_prompt"] = (
+                config.get("system_prompt", "")
+                + "\n\n---\n\n"
+                + build_flow_step_prompt()
             )
 
         # Tools from the external MCP servers this record asks for, by group
