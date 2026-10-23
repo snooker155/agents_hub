@@ -15,12 +15,14 @@ import {
   EyeOff,
   ArrowRight,
 } from 'lucide-react';
-import { getWebLogs, getWebLogStats, getWebLogEntry, clearWebLogs } from '../api';
+import { Link } from 'react-router-dom';
+import { getAgents, getWebLogs, getWebLogStats, getWebLogEntry, clearWebLogs } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { ListLoadMore, ListPagingControls } from '../components/ListPaging';
 import { useListPaging } from '../components/listPagingState';
 import { useI18n } from '../i18n';
+import { useWorkspace } from '../components/workspace';
 import PageLoader from '../components/PageLoader';
 const SEVERITY_STYLES = {
   high: 'bg-red-50 text-red-700 border-red-200',
@@ -49,7 +51,7 @@ const Badge = ({ className = '', children, title }) => (
 /**
  * Web access log.
  *
- * Every fetch_url call, with the text the agent actually
+ * Every web_search and fetch_url call, with the text the agent actually
  * received. Two questions this page answers: did the tool read the response
  * correctly (extraction is lossy — HTML stripped, JSON re-serialised, text
  * truncated), and was the response trying something (injection phrasing,
@@ -65,6 +67,24 @@ const WebLogs = () => {
   const [entry, setEntry] = useState(null);
   const [entryLoading, setEntryLoading] = useState(false);
   const [filters, setFilters] = useState({ kind: '', status: '', min_severity: '', search: '' });
+  // Only the calls made in the workspace the person is in.
+  const { selectedWorkspace } = useWorkspace();
+  const workspace = selectedWorkspace || 'default';
+  // Agent names for the rows, which carry only the id.
+  const [agentNames, setAgentNames] = useState({});
+  useEffect(() => {
+    getAgents()
+      .then((r) => {
+        const list = Array.isArray(r.data) ? r.data : (r.data?.items || r.data?.agents || []);
+        setAgentNames(Object.fromEntries(list.map((a) => [a.id, a.name || a.id])));
+      })
+      .catch(() => setAgentNames({}));
+  }, []);
+  const agentLink = (id) => (
+    <Link to={`/agents/${encodeURIComponent(id)}`} className="text-indigo-600 hover:text-indigo-800" onClick={(e) => e.stopPropagation()}>
+      {agentNames[id] || id}
+    </Link>
+  );
   const [search, setSearch] = useState('');
 
   const paging = useListPaging('webLogs', {
@@ -77,16 +97,16 @@ const WebLogs = () => {
   // The rows on screen are for this query; a different one shows the loader
   // (or, with rows already shown, the load-more spinner), derived rather than
   // set inside the effect.
-  const queryKey = JSON.stringify([filters, pageParams]);
+  const queryKey = JSON.stringify([filters, pageParams, workspace]);
   const [loadedKey, setLoadedKey] = useState(null);
   const loading = loadedKey !== queryKey;
 
   // A promise chain rather than an async body, so the effect below may call it
   // without a synchronous setState.
   const fetchData = useCallback(() => {
-    const params = { ...pageParams };
+    const params = { ...pageParams, workspace };
     Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
-    return Promise.all([getWebLogs(params), getWebLogStats()])
+    return Promise.all([getWebLogs(params), getWebLogStats(workspace)])
       .then(([logs, s]) => {
         setRows(logs.data.items || []);
         setTotal(logs.data.total || 0);
@@ -94,7 +114,7 @@ const WebLogs = () => {
       })
       .catch((error) => { console.error('Error fetching web logs:', error); })
       .then(() => setLoadedKey(queryKey));
-  }, [filters, pageParams, queryKey]);
+  }, [filters, pageParams, queryKey, workspace]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -120,7 +140,7 @@ const WebLogs = () => {
   const handleClear = async () => {
     if (!window.confirm(t('webLogs.confirmClear'))) return;
     try {
-      const { data } = await clearWebLogs();
+      const { data } = await clearWebLogs(workspace);
       setEntry(null);
       setLoadedKey(null);
       await fetchData();
@@ -130,7 +150,7 @@ const WebLogs = () => {
     }
   };
 
-  const target = (row) => row.final_url || row.url;
+  const target = (row) => row.kind === 'search' ? row.query : (row.final_url || row.url);
   const when = (ts) => { try { return new Date(ts).toLocaleString(); } catch { return ts; } };
 
   return (
@@ -140,6 +160,8 @@ const WebLogs = () => {
         title={t('webLogs.webRequests')}
         description={<>
           {t('webLogs.descriptionBefore')}{' '}
+          <code className="text-xs bg-gray-100 px-1 rounded">web_search</code>{' '}
+          {t('webLogs.descriptionAnd')}{' '}
           <code className="text-xs bg-gray-100 px-1 rounded">fetch_url</code>{' '}
           {t('webLogs.descriptionAfter')}
         </>}
@@ -171,6 +193,7 @@ const WebLogs = () => {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           {[
             { label: t('webLogs.cards.callsRecorded'), value: stats.total, icon: Globe, tone: 'text-indigo-600' },
+            { label: t('webLogs.cards.searches'), value: stats.by_kind?.search || 0, icon: Search, tone: 'text-gray-600' },
             { label: t('webLogs.cards.fetches'), value: stats.by_kind?.fetch || 0, icon: Link2, tone: 'text-gray-600' },
             {
               label: t('webLogs.cards.failedOrRefused'),
@@ -201,6 +224,7 @@ const WebLogs = () => {
           className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
         >
           <option value="">{t('webLogs.allCalls')}</option>
+          <option value="search">{t('webLogs.searches')}</option>
           <option value="fetch">{t('webLogs.fetches')}</option>
         </select>
         <select
@@ -276,16 +300,20 @@ const WebLogs = () => {
                   <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">{when(row.ts)}</td>
                   <td className="px-4 py-2 max-w-[420px]">
                     <div className="flex items-center gap-2">
-                      <Link2 className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                      {row.kind === 'search'
+                        ? <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                        : <Link2 className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
                       <span className="truncate text-gray-800" title={target(row)}>{target(row) || '—'}</span>
                     </div>
                     <div className="text-[11px] text-gray-400 pl-5">
-                      {`${row.content_type || t('webLogs.unknownType')} · ${t('webLogs.charCount', { count: row.body_chars })}${row.truncated ? ` ${t('webLogs.truncatedSuffix')}` : ''}`}
+                      {row.kind === 'search'
+                        ? `${row.provider || t('webLogs.noProvider')} · ${t('webLogs.resultCount', { count: row.result_count ?? 0 })}${row.cache_hit ? ` · ${t('webLogs.cached')}` : ''}`
+                        : `${row.content_type || t('webLogs.unknownType')} · ${t('webLogs.charCount', { count: row.body_chars })}${row.truncated ? ` ${t('webLogs.truncatedSuffix')}` : ''}`}
                     </div>
                   </td>
                   <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">
                     {row.agent_id ? (
-                      <span className="inline-flex items-center gap-1"><Bot className="w-3 h-3" /> {row.agent_id}</span>
+                      <span className="inline-flex items-center gap-1"><Bot className="w-3 h-3" /> {agentLink(row.agent_id)}</span>
                     ) : <span className="text-gray-300">—</span>}
                     {row.workspace && (
                       <span className="inline-flex items-center gap-1 ml-2 text-gray-400">
@@ -337,9 +365,11 @@ const WebLogs = () => {
                 <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white z-10">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <Link2 className="w-4 h-4 text-indigo-600" />
+                      {entry.kind === 'search'
+                        ? <Search className="w-4 h-4 text-indigo-600" />
+                        : <Link2 className="w-4 h-4 text-indigo-600" />}
                       <h3 className="text-lg font-bold text-gray-800">
-                        {t('webLogs.pageFetchTitle')}
+                        {entry.kind === 'search' ? t('webLogs.webSearchTitle') : t('webLogs.pageFetchTitle')}
                       </h3>
                       <Badge className={STATUS_STYLES[entry.status] || STATUS_STYLES.unsupported}>
                         {entry.status === 'not_configured' ? t('webLogs.notConfiguredStatus') : entry.status}
@@ -363,14 +393,31 @@ const WebLogs = () => {
                     {[
                       [t('webLogs.facts.when'), when(entry.ts)],
                       [t('webLogs.facts.workspace'), entry.workspace || '—'],
-                      [t('webLogs.facts.agent'), entry.agent_id || '—'],
-                      [t('webLogs.facts.session'), entry.session_id || '—'],
-                      [t('webLogs.facts.task'), entry.task_id || '—'],
+                      [t('webLogs.facts.agent'), entry.agent_id ? agentLink(entry.agent_id) : '—'],
+                      [t('webLogs.facts.run'), entry.run_id ? (
+                        <Link to={`/messages/${encodeURIComponent(entry.run_id)}`} className="text-indigo-600 hover:text-indigo-800">
+                          {t('webLogs.openRun')}
+                        </Link>
+                      ) : '—'],
+                      [t('webLogs.facts.task'), entry.task_id ? (
+                        <Link to={`/tasks/${encodeURIComponent(entry.task_id)}`} className="text-indigo-600 hover:text-indigo-800">
+                          {entry.task_id}
+                        </Link>
+                      ) : '—'],
                       [t('webLogs.facts.duration'), `${entry.duration_ms ?? 0} ms`],
-                      [t('webLogs.facts.httpStatus'), entry.http_status ?? '—'],
-                      [t('webLogs.facts.contentType'), entry.content_type || '—'],
-                      [t('webLogs.facts.bytesReceived'), entry.response_bytes ?? '—'],
-                      [t('webLogs.facts.textExtracted'), `${t('webLogs.charCount', { count: (entry.body || '').length })}${entry.truncated ? ` ${t('webLogs.truncatedSuffix')}` : ''}`],
+                      ...(entry.kind === 'search'
+                        ? [
+                            [t('webLogs.facts.provider'), entry.provider || '—'],
+                            [t('webLogs.facts.resultsReturned'), `${entry.result_count ?? 0}`],
+                            [t('webLogs.facts.resultsBlocked'), `${entry.blocked_results ?? 0}`],
+                            [t('webLogs.facts.servedFromCache'), entry.cache_hit ? t('common.yes') : t('common.no')],
+                          ]
+                        : [
+                            [t('webLogs.facts.httpStatus'), entry.http_status ?? '—'],
+                            [t('webLogs.facts.contentType'), entry.content_type || '—'],
+                            [t('webLogs.facts.bytesReceived'), entry.response_bytes ?? '—'],
+                            [t('webLogs.facts.textExtracted'), `${t('webLogs.charCount', { count: (entry.body || '').length })}${entry.truncated ? ` ${t('webLogs.truncatedSuffix')}` : ''}`],
+                          ]),
                     ].map(([label, value]) => (
                       <div key={label}>
                         <div className="text-[11px] uppercase font-semibold text-gray-400">{label}</div>

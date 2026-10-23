@@ -566,7 +566,9 @@ class AgentFactory:
             memory_tools = [*_generic, *skills_tools]
 
         from tools.graph_builder import GRAPH_BUILDER_TOOLS
-        # fetch_url is a plain per-tool grant (no group alias). See tools/web.py.
+        # Web tools are plain per-tool grants (no group alias): web_search and
+        # fetch_url are separately grantable on purpose — search is a far
+        # smaller injection surface than page content. See tools/web.py.
         from tools.web import WEB_TOOLS
         # Sandboxed code execution: a plain per-tool grant, like the web
         # tool. See tools/run_code.py.

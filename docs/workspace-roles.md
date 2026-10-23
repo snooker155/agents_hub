@@ -17,6 +17,7 @@ delegates code. The code is `agents/roles.py`.
 | Visualizer | `@visualizer` | `visualizer` | the same, analyst |
 | Verifier | `@verifier` | `verifier` | writer (handoff) |
 | Researcher | `@researcher` | `researcher` | your own agents |
+| Web search | `@web_search` | `web_searcher` | your own agents |
 | Analyst | `@analyst` | `analyst` | your own agents |
 | Writer | `@writer` | `writer` | your own agents |
 

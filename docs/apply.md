@@ -53,9 +53,9 @@ structured fields; the body is the agent's `instructions.md`.
 ---
 id: team_researcher
 name: Team researcher
-description: Reads web pages and writes short, cited summaries.
+description: Finds sources on the web and writes short, cited summaries.
 domain: research
-tools: [fetch_url]
+tools: [web_search, fetch_url]
 memory: [team-notes]
 handoffs: [team_writer]
 ---

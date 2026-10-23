@@ -130,9 +130,12 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     "get_loop_run_tool": frozenset({READS_PRIVATE}),
 
     # ── web ──────────────────────────────────────────────────────────────────
-    # Fetch ingests third-party text and also *sends*: the agent chooses the host, path and query string, so
+    # Search returns third-party text — ingest, nothing more: the query goes to
+    # one fixed API endpoint, which is not a channel an attacker can aim.
+    "web_search": frozenset({INGESTS_UNTRUSTED}),
+    # Fetch also *sends*: the agent chooses the host, path and query string, so
     # a stolen secret can leave in the URL itself. Ingest and exfiltrate in one
-    # tool, which is why it is a restricted grant.
+    # tool, which is why it is the second, more restricted grant.
     "fetch_url": frozenset({INGESTS_UNTRUSTED, CAN_EXFILTRATE}),
 
     # ── outbound channels ────────────────────────────────────────────────────

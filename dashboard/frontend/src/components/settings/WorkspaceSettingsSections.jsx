@@ -741,6 +741,99 @@ function useSavedFlag() {
 }
 
 /**
+ * The search provider behind the ``web_search`` tool (tools/web.py): Brave,
+ * Tavily or Exa, its key and how many results a call returns. Without a
+ * provider the tool answers "not configured" and performs no search, which is
+ * the message an agent then relays. Machine-wide .env settings, read live.
+ */
+function WebSearchProviderCard({ s }) {
+  const { t } = useI18n();
+  const g = s.globalSettings || {};
+  // Edits are kept apart from the saved values (null = not edited), so a
+  // reload of the settings shows through without an effect copying state.
+  const [providerEdit, setProviderEdit] = useState(null);
+  const [maxResultsEdit, setMaxResultsEdit] = useState(null);
+  const [key, setKey] = useState('');
+  const [saved, flash] = useSavedFlag();
+  const savedProvider = g.web_search_provider || '';
+  const savedMax = Number(g.web_search_max_results || 5);
+  const provider = providerEdit ?? savedProvider;
+  const maxResults = maxResultsEdit ?? savedMax;
+  const dirty = provider !== savedProvider || key !== '' || Number(maxResults) !== savedMax;
+  // Anthropic and OpenAI search on the key the Models page holds, so the
+  // key field is for the search services only. With no provider chosen the
+  // backend picks a model provider whose key is set; the badge says which.
+  const modelProvider = provider === 'anthropic' || provider === 'openai';
+  const effective = g.web_search_effective_provider || '';
+  const configured = Boolean(effective) && Boolean(g.web_search_effective_key_set);
+  const providerNames = { brave: 'Brave Search', tavily: 'Tavily', exa: 'Exa', anthropic: 'Anthropic', openai: 'OpenAI' };
+  const save = async () => {
+    const patch = { web_search_provider: provider, web_search_max_results: Number(maxResults) || 5 };
+    if (key && !modelProvider) patch.web_search_api_key = key;
+    const ok = await s.saveWebAccess(patch);
+    if (ok) { setKey(''); setProviderEdit(null); setMaxResultsEdit(null); flash(); }
+  };
+  return (
+    <SectionCard
+      title={t('settings.webSearch')}
+      actions={(
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${configured ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'}`}>
+          {configured
+            ? (g.web_search_effective_source === 'model_key'
+              ? t('settings.webSearchViaModelKey', { provider: providerNames[effective] || effective })
+              : t('settings.webSearchConfigured'))
+            : t('settings.webSearchNotConfigured')}
+        </span>
+      )}
+    >
+      <p className="text-xs text-gray-500">{t('settings.webSearchIntro')}</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.webSearchProvider')}</label>
+          <select value={provider} onChange={e => setProviderEdit(e.target.value)} className={inputCls} aria-label={t('settings.webSearchProvider')}>
+            <option value="">{t('settings.webSearchProviderAuto')}</option>
+            <option value="anthropic">{t('settings.webSearchProviderModelKey', { provider: 'Anthropic' })}</option>
+            <option value="openai">{t('settings.webSearchProviderModelKey', { provider: 'OpenAI' })}</option>
+            <option value="brave">Brave Search</option>
+            <option value="tavily">Tavily</option>
+            <option value="exa">Exa</option>
+          </select>
+          {!provider && (
+            <p className="text-xs text-gray-400 mt-1">
+              {effective
+                ? t('settings.webSearchAutoPicks', { provider: providerNames[effective] || effective })
+                : t('settings.webSearchAutoNone')}
+            </p>
+          )}
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('settings.webSearchApiKey')}
+            {!modelProvider && g.web_search_api_key_masked && <span className="ml-2 font-mono text-xs text-gray-400">{g.web_search_api_key_masked}</span>}
+          </label>
+          {modelProvider ? (
+            <p className="text-xs text-gray-500 py-2">{t('settings.webSearchModelKeyHint', { provider: providerNames[provider] })}</p>
+          ) : (
+            <input type="password" value={key} onChange={e => setKey(e.target.value)}
+              placeholder={g.web_search_api_key_masked ? t('settings.webSearchKeyKeep') : t('settings.webSearchKeyPlaceholder')}
+              autoComplete="off" className={inputCls} aria-label={t('settings.webSearchApiKey')} />
+          )}
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings.webSearchMaxResults')}</label>
+          <input type="number" min={1} max={20} value={maxResults} onChange={e => setMaxResultsEdit(e.target.value)} className={inputCls} aria-label={t('settings.webSearchMaxResults')} />
+        </div>
+      </div>
+      <SaveRow s={s} dirty={dirty} onSave={save} label={t('settings.webSearchSave')} saved={saved} />
+      <p className="text-xs text-gray-400">
+        {t('settings.globalSettingWrittenTo')} <code className="bg-gray-100 rounded px-1">.env</code> {t('settings.as')}
+        <code className="bg-gray-100 rounded px-1 ml-1">WEB_SEARCH_PROVIDER</code>, <code className="bg-gray-100 rounded px-1">WEB_SEARCH_API_KEY</code>, <code className="bg-gray-100 rounded px-1">WEB_SEARCH_MAX_RESULTS</code>
+      </p>
+    </SectionCard>
+  );
+}
+
+/**
  * ``fetch_url`` limits (tools/web.py): how much text a page may return by
  * default, the request timeout and how many redirect hops are followed, each
  * hop re-checked against the private-address and domain rules.
@@ -949,12 +1042,13 @@ export function WorkspaceDomainPolicyCard({ workspace }) {
   );
 }
 
-/** The Web access page of Settings: fetch limits and the global
- * domain policy. A workspace's own policy is on the workspace page, Settings
+/** The Web access page of Settings: the search provider, fetch limits and
+ * the global domain policy. A workspace's own policy is on the workspace page, Settings
  * tab, "Web access" (WorkspaceDomainPolicyCard). */
 export function WebAccessSection({ s }) {
   return (
     <div className="space-y-5">
+      <WebSearchProviderCard s={s} />
       <WebFetchCard s={s} />
       <WebDomainPolicyCard s={s} />
     </div>

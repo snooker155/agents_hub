@@ -407,8 +407,9 @@ def _visualization_specs() -> List[ToolSpec]:
 
 
 def _web_specs() -> List[ToolSpec]:
-    # fetch_url is a plain per-tool grant (no group alias). See
-    # tools/capabilities.py.
+    # Web tools are plain per-tool grants (no group alias): web_search and
+    # fetch_url are separately grantable on purpose — search is a far smaller
+    # injection surface than page content. See tools/capabilities.py.
     from tools.web import WEB_TOOLS
     return [spec_from_tool(t, category="web") for t in WEB_TOOLS]
 

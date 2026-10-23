@@ -1,7 +1,7 @@
 # Web requests
 
-Every page an agent fetched from the web (`fetch_url`), recorded with the text
-it was actually handed. The **Web Requests** page is where you read them.
+Every web search (`web_search`) and every page an agent fetched from the web
+(`fetch_url`), recorded with the text it was actually handed. The **Web Requests** page is where you read them.
 
 ## The two questions it answers
 

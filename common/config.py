@@ -259,6 +259,23 @@ class Settings(BaseSettings):
     )
 
     # ── Web access (tools/web.py) ─────────────────────────────────────────────
+    # Search provider for the ``web_search`` tool. "brave", "tavily" and "exa"
+    # take WEB_SEARCH_API_KEY; "anthropic" and "openai" search through that
+    # provider's own server-side search tool on the model key. Empty
+    # (default) picks a model provider whose key is set, and with none the
+    # tool reports that it is not configured rather than failing mid-run.
+    web_search_provider: str = Field(
+        default="", validation_alias=AliasChoices("WEB_SEARCH_PROVIDER", "web_search_provider"))
+    web_search_api_key: str = Field(
+        default="", validation_alias=AliasChoices("WEB_SEARCH_API_KEY", "web_search_api_key"))
+    # The model that drives a model provider's search tool; empty picks a
+    # small one per provider (tools/web.py).
+    web_search_model: str = Field(
+        default="", validation_alias=AliasChoices("WEB_SEARCH_MODEL", "web_search_model"))
+    # Results per search. Kept small: every result is untrusted text entering
+    # the context window, and injection surface scales with it.
+    web_search_max_results: int = Field(
+        default=5, validation_alias=AliasChoices("WEB_SEARCH_MAX_RESULTS", "web_search_max_results"))
     # Hard cap on the text ``fetch_url`` returns, after HTML is stripped.
     web_fetch_max_chars: int = Field(
         default=20_000, validation_alias=AliasChoices("WEB_FETCH_MAX_CHARS", "web_fetch_max_chars"))
@@ -269,7 +286,7 @@ class Settings(BaseSettings):
     web_fetch_max_redirects: int = Field(
         default=5, validation_alias=AliasChoices("WEB_FETCH_MAX_REDIRECTS", "web_fetch_max_redirects"))
     # Opt-in domain policy, mirroring shell_allowlist_enabled. When on, only
-    # hosts matching ``web_allow_domains`` may be fetched.
+    # hosts matching ``web_allow_domains`` may be fetched or returned by search.
     # A workspace can turn it on via its settings (web_domain_policy_enabled)
     # and supply its own web_allow_domains / web_deny_domains.
     web_domain_policy_enabled: bool = Field(
@@ -284,7 +301,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("WEB_DENY_DOMAINS", "web_deny_domains"))
 
     # ── Web access log (tools/web_log.py) ─────────────────────────────────────
-    # Every fetch is recorded with the text the agent received, so a
+    # Every search and fetch is recorded with the text the agent received, so a
     # bad answer can be traced to what the tool actually read, and retrieved
     # content can be reviewed for injection attempts. On by default: the whole
     # point of wrapping untrusted content is being able to inspect it later.

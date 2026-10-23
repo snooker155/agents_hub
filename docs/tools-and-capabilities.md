@@ -31,7 +31,7 @@ against the single most dangerous tool.
 
 - **A web agent cannot also read your files or memory.** Split the work: one
   agent fetches, another reasons over the result.
-- **What a web tool actually read is recorded.** Every `fetch_url` call, with the text handed back and the flags raised against it,
+- **What a web tool actually read is recorded.** Every `web_search` and `fetch_url` call, with the text handed back and the flags raised against it,
   lands in the [web request log](web-logs.md).
 - **Adding a tool in the editor can be refused.** The message names the
   capabilities that collided.
@@ -176,18 +176,40 @@ against every corpus payload (the `hand-back fenced` count).
 
 ## Web access
 
-`fetch_url` opens a page by its address and returns its readable text; the hub has
-no search tool. Settings, "Web access" is where it is tuned. The page holds the `fetch_url` limits (`WEB_FETCH_MAX_CHARS`,
+Two separately grantable tools. `web_search` returns titles, snippets and links;
+it ingests untrusted text and nothing more, since the query goes to one fixed
+search endpoint. `fetch_url` opens a page by its address and returns its readable
+text; the agent chooses the host, path and query, so it also counts as an
+outbound channel. An agent that reads files or memory may hold `web_search`
+(the Researcher does) but not `fetch_url` (the Web Search Agent holds that and
+no private data).
+
+Settings, "Web access" is where both are tuned. The page holds the search
+provider, the `fetch_url` limits (`WEB_FETCH_MAX_CHARS`,
 `WEB_FETCH_TIMEOUT`, `WEB_FETCH_MAX_REDIRECTS`) and the global domain policy:
-a deny list that always applies to fetches
+a deny list that always applies to fetches and search results
 (`WEB_DENY_DOMAINS`), and an opt-in allow list (`WEB_DOMAIN_POLICY_ENABLED`,
-`WEB_ALLOW_DOMAINS`) that, once on, is the only set of hosts a fetch may reach.
+`WEB_ALLOW_DOMAINS`) that, once on, is the only set of hosts a fetch may reach
+or a search may return.
 A host matches itself and its subdomains. The file holds each list as a JSON
 array, which is how pydantic-settings reads a list field; a comma-separated
 line typed by hand is accepted too. A workspace's own lists replace the
 global ones for runs in that workspace: the workspace page, Settings tab,
 "Web access" (`GET`/`PUT /api/workspaces/{name}/web-policy`), stored in the
 workspace's metadata; an empty list there keeps the global one.
+
+### Web search provider
+
+`WEB_SEARCH_PROVIDER` picks the backend. `anthropic` and `openai` search through
+the vendor's own server-side search tool on the model key the Models page holds
+(a small model drives it, `WEB_SEARCH_MODEL` overrides which), so no second key is
+needed; `brave`, `tavily` and `exa` take `WEB_SEARCH_API_KEY`. Left empty, the hub
+picks a model provider with a key: the default provider when it is Anthropic or
+OpenAI, then Anthropic, then OpenAI, skipping OpenAI when `OPENAI_BASE_URL` points
+away from openai.com (a gateway rarely implements the search tool). With nothing
+to search with, the tool answers that it is not configured. `WEB_SEARCH_MAX_RESULTS`
+(default 5) caps the results per call, since every result is untrusted text in
+the context. A search is billed by its provider per call.
 
 ## Domain lists per agent
 
@@ -204,7 +226,8 @@ merge with the workspace's lists and the global ones above:
   subdomains.
 
 `fetch_url` refuses a host outside the merged lists with a tool result that
-names the list (`host 'x' is on this agent's blocked_domains`).
+names the list, and `web_search` drops such hosts from its results (and passes
+the lists to a backend that takes site filters) (`host 'x' is on this agent's blocked_domains`).
 `GET /api/agents/{id}/web-domains?workspace=` also answers the merged lists for
 that workspace.
 

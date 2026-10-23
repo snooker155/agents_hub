@@ -52,11 +52,15 @@ That is the escape hatch, and it is one-way.
 - **Verifier**: checks non-code work, reports, figures, texts, plans, against
   its sources and against a task's rubric, then passes or blocks the task.
   The non-code counterpart of the Code Reviewer.
-- **Researcher**: combines workspace and memory into a
-  conclusion. Holds no outbound channel. Its id is `researcher`; the old id
+- **Researcher**: combines workspace, memory and online search results into a
+  conclusion. Holds no outbound channel: it searches but cannot open pages. Its id is `researcher`; the old id
   `researcher_agent` still works everywhere an agent id is accepted, and an
   existing install has its stored references renamed once at startup, with a
   backup written first.
+- **Web Search Agent**: searches online and opens the pages it finds,
+  returning findings with links. Holds no files or memory, so it may open any
+  page. Its id is `web_searcher`. In a flow, put it before the Researcher when
+  the answer needs whole pages, not only snippets.
 - **Analyst**: answers questions from the workspace's spreadsheets and
   files, with the calculation behind every figure.
 - **Writer**: turns notes, research and data into a finished document, saved

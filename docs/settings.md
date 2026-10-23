@@ -31,7 +31,8 @@ The page has a menu with three groups.
   provider, images and limits, see
   [tools-and-capabilities](tools-and-capabilities.md)), the [tool
   policy](tool-policy.md) and the task assignment mode.
-- **Web access**: the `fetch_url` limits and the global domain policy,
+- **Web access**: the search provider behind `web_search`, the `fetch_url`
+  limits and the global domain policy,
   written to `.env` and read live
   ([tools-and-capabilities](tools-and-capabilities.md), "Web access").
 - **RAG & vectors**: the vector database and the embedding model.

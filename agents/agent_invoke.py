@@ -120,8 +120,9 @@ def invoke_agent(
     # Track which agent is executing so delegation tools (run_agent_tool, etc.)
     # can enforce the caller's delegation allowlist. Token-based set/reset keeps
     # nested runs (an agent delegating to another) correctly scoped.
-    from common.agent_context import current_agent_id
+    from common.agent_context import current_agent_id, current_run_id
     _agent_token = current_agent_id.set(getattr(agent, "agent_id", None))
+    _run_token = current_run_id.set(run_id) if run_id else None
 
     t0 = time.perf_counter()
     try:
@@ -153,6 +154,8 @@ def invoke_agent(
         result = _SyntheticFailed(f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
     finally:
         current_agent_id.reset(_agent_token)
+        if _run_token is not None:
+            current_run_id.reset(_run_token)
 
     # The run stopped on a gated tool call: report it as parked whatever the
     # executor made of the exception. The gate records the call on the agent's

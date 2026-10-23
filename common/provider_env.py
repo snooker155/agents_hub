@@ -34,6 +34,7 @@ PROVIDER_ENV_KEYS = (
     "GOOGLE_API_KEY", "GOOGLE_MODEL",
     "OLLAMA_BASE_URL", "OLLAMA_MODEL",
     "LMSTUDIO_BASE_URL", "LMSTUDIO_MODEL",
+    "WEB_SEARCH_PROVIDER", "WEB_SEARCH_API_KEY",
 )
 
 #: ``settings`` attribute for each key it mirrors (common/config.py).
@@ -49,6 +50,8 @@ _SETTINGS_FIELD = {
     "OLLAMA_MODEL": "ollama_model",
     "LMSTUDIO_BASE_URL": "lmstudio_base_url",
     "LMSTUDIO_MODEL": "lmstudio_model",
+    "WEB_SEARCH_PROVIDER": "web_search_provider",
+    "WEB_SEARCH_API_KEY": "web_search_api_key",
 }
 
 

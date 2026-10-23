@@ -8,7 +8,7 @@ const linesOf = (list) => (list || []).join('\n');
 const listOf = (text) => String(text || '').split(/[\n,\s]+/).map((x) => x.trim()).filter(Boolean);
 
 /**
- * The agent's own domain lists for fetch_url
+ * The agent's own domain lists for web_search, fetch_url and the browser
  * (`AgentSpec.allowed_domains` / `blocked_domains`, tools/web.py).
  *
  * Blocked hosts join the workspace's deny list; allowed hosts, when set,

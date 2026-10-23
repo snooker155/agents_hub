@@ -223,6 +223,32 @@ def test_fetch_url_logs_a_refusal_without_making_a_request(log_file):
     assert "policy.refused" in row["flag_codes"]
 
 
+def test_web_search_logs_that_it_was_not_configured(log_file, monkeypatch):
+    from common.config import settings
+    monkeypatch.setattr(settings, "web_search_provider", "")
+    web.web_search.invoke({"query": "anything"})
+    row = web_log.query()["items"][0]
+    assert row["kind"] == "search" and row["status"] == "not_configured"
+
+
+def test_web_search_logs_results_and_what_the_policy_withheld(log_file, monkeypatch):
+    from common.config import settings
+    monkeypatch.setattr(settings, "web_search_provider", "brave")
+    monkeypatch.setattr(settings, "web_search_api_key", "k")
+    monkeypatch.setattr(settings, "web_deny_domains", ("evil.test",))
+    monkeypatch.setattr(web, "_SEARCH_CACHE", {})
+    monkeypatch.setitem(web._PROVIDERS, "brave", lambda q, n, k, t: [
+        {"title": "good", "url": "https://ok.test/a", "snippet": "s"},
+        {"title": "bad", "url": "https://evil.test/a", "snippet": "s"},
+    ])
+    web.web_search.invoke({"query": "q"})
+    entry = web_log.get(web_log.query()["items"][0]["id"])
+    assert entry["result_count"] == 1 and entry["blocked_results"] == 1
+    assert "policy.results_blocked" in {f["code"] for f in entry["flags"]}
+    # The stored body is the prepared result text, not the envelope around it.
+    assert "ok.test" in entry["body"] and web._BEGIN not in entry["body"]
+
+
 def test_fetch_url_logs_the_extracted_text_and_the_hidden_payload(
     log_file, allow_any_host, monkeypatch
 ):
