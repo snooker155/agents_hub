@@ -10,6 +10,7 @@ import { NodeInspector } from '../components/flowEditor/NodeInspector';
 import { FlowSettings } from '../components/flowEditor/FlowSettings';
 import { GraphStateBlock } from '../components/flowEditor/RuntimeState';
 import { useFlowDocument } from '../components/flowEditor/useFlowDocument';
+import { upstreamOutputKeys } from '../components/flowEditor/graphHelpers';
 import PageLoader from '../components/PageLoader';
 
 // The flow editor (/flows/:flowId/edit): the graph and nothing that runs it.
@@ -89,13 +90,15 @@ function FlowEditor() {
             <Download className="mr-2 h-4 w-4 text-cyan-500" />
             {t('flowEditor.export')}
           </button>
+          {/* A way to the run page, not a run: drawn like Edit flow on that
+              page, the button that comes back here. */}
           <button
             onClick={openRunPage}
-            className="flex items-center rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-700"
+            className="flex items-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-100"
             title={dirty ? t('flowEditor.saveAndOpenRunPage') : t('flowEditor.openRunPage')}
             data-testid="flow-open-run-page"
           >
-            <Play className="mr-2 h-4 w-4" />
+            <Play className="mr-2 h-4 w-4 text-cyan-500" />
             {t('flowEditor.runPage')}
           </button>
         </>}
@@ -103,7 +106,7 @@ function FlowEditor() {
 
       <section className="flex min-h-0 flex-1 overflow-hidden bg-white">
         {/* Left column — registry palette */}
-        <div className="hidden w-[300px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 p-3 lg:flex">
+        <div className="hidden w-[220px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 p-3 lg:flex xl:w-[250px] 2xl:w-[300px]">
           <EntityPalette entitiesByCategory={entitiesByCategory} />
         </div>
 
@@ -121,7 +124,7 @@ function FlowEditor() {
         </div>
 
         {/* Right column — node inspector or graph settings */}
-        <div className="flex w-[340px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+        <div className="flex w-[220px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white xl:w-[260px] 2xl:w-[300px] min-[1800px]:w-[340px]">
           <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100">
               <SquareTerminal className="h-4 w-4 text-slate-600" />
@@ -134,15 +137,6 @@ function FlowEditor() {
                 {t('flowEditor.graphCounts', { nodes: nodes.length, edges: edges.length })}
               </div>
             </div>
-            {selected ? (
-              <button
-                type="button"
-                onClick={() => setSelectedNodeId(null)}
-                className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
-              >
-                {t('flowEditor.close')}
-              </button>
-            ) : null}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {selected ? (
@@ -156,6 +150,10 @@ function FlowEditor() {
                   id: e.target,
                   label: nodes.find((n) => n.id === e.target)?.data?.label || e.target,
                 }))}
+                stateKeys={{
+                  upstream: upstreamOutputKeys(selected.id, nodes, edges),
+                  declared: Object.keys(flow.state && typeof flow.state === 'object' ? flow.state : {}),
+                }}
               />
             ) : (
               <div className="space-y-3">

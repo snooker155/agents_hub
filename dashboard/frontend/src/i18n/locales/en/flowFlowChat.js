@@ -1,4 +1,10 @@
 export default {
+  messageFlow: 'Message {{name}}…',
+  messageNode: 'Message for {{node}}…',
+  toNode: 'To node “{{node}}”: the flow starts from it with your message and runs to the end',
+  toNodeCancel: 'Send to the start of the flow instead',
+  rerunSingle: 'Run node “{{node}}” again on its own, with the last turn’s inputs',
+  rerunRest: 'Run again from node “{{node}}” to the end, with the last turn’s inputs',
   chatWithFlow: 'Chat with flow',
   stop: 'Stop',
   sendEnter: 'Send (Enter)',

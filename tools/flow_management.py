@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 from uuid import uuid4
 
 from langchain_core.tools import tool
@@ -590,9 +591,9 @@ class RunNewFlowInput(BaseModel):
     user_approved: bool = Field(
         False,
         description=(
-            "Must be True to start. Show the user the plan (the steps and the estimate the "
-            "first call returns) and set it only after they said yes. In auto mode the "
-            "call runs without it."
+            "Must be True to start. Show the user the plan (the steps the first call "
+            "returns) and set it only after they said yes. In auto mode the call runs "
+            "without it."
         ),
     )
 
@@ -644,23 +645,6 @@ def _delegation_errors(flow: Dict[str, Any], ws: Optional[str]) -> List[str]:
     return errors
 
 
-def _estimate(flow: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """The cost of one run, with the map steps priced per item."""
-    try:
-        from flow.estimate import estimate_flow_cost
-        estimate = estimate_flow_cost(flow)
-    except Exception:  # noqa: BLE001 - a run without an estimate is still a run
-        return None
-    maps = [n.get("id") for n in flow.get("nodes", [])
-            if (n.get("data") or {}).get("entity_id") == "map"]
-    if maps:
-        estimate["note"] = (
-            "Map steps (" + ", ".join(str(m) for m in maps) + ") run their agent once per item; "
-            "the number of items is known only when the run gets there, so they are not in "
-            "the total.")
-    return estimate
-
-
 def run_new_flow(
     name: str,
     goal: str,
@@ -680,9 +664,9 @@ def run_new_flow(
     checked first (unknown agents, cycles, branch targets, agents you may not
     delegate to); nothing is saved or started while it has errors.
 
-    The first call without user_approved returns the plan and its cost
-    estimate: show both to the user and call again with the same arguments and
-    user_approved=True once they agree. The run goes on in the background:
+    The first call without user_approved returns the plan: show it to the
+    user and call again with the same arguments and user_approved=True once
+    they agree. The run goes on in the background:
     report that it started and give the link; do not poll it here.
 
     The flow is temporary unless save=True: it stays out of the flow list and
@@ -725,21 +709,18 @@ def run_new_flow(
             extra={"errors": errors, "warnings": warnings},
         )
 
-    estimate = _estimate(flow)
     plan = _simplify(flow)
     plan.pop("id", None)
     if not approved("run_new_flow_tool", user_approved,
                     {"name": flow["name"], "goal": goal, "steps": len(flow["nodes"])},
                     reason="Builds a flow for this request and runs it."):
         extra: Dict[str, Any] = {"plan": plan}
-        if estimate:
-            extra["estimate"] = estimate
         if warnings:
             extra["warnings"] = warnings
         return _json_err(
-            "This run is not approved yet. Show the user the plan and the estimate, ask "
-            "them to confirm, and only then call run_new_flow_tool again with the same "
-            "arguments and user_approved=True.",
+            "This run is not approved yet. Show the user the plan, ask them to confirm, "
+            "and only then call run_new_flow_tool again with the same arguments and "
+            "user_approved=True.",
             code="approval_required",
             extra=extra,
         )
@@ -748,7 +729,8 @@ def run_new_flow(
     record_entity("flow", flow["id"], "created", flow["name"])
     from tools.langchain_tools import launch_flow_run
     payload = launch_flow_run(flow["id"], flow, ws, goal.strip(), create_task=create_task)
-    payload["link"] = f"/flows/{flow['id']}?run={payload['run_id']}"
+    # The run's own page under the flow (dashboard App.jsx /flows/:id/runs/:run).
+    payload["link"] = f"/flows/{flow['id']}/runs/{quote(str(payload['run_id']), safe='')}"
     payload["ephemeral"] = bool(flow["ephemeral"])
     payload["plan"] = plan
     if flow["ephemeral"]:

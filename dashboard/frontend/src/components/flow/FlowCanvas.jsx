@@ -11,7 +11,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import { Bot, ChevronDown, ChevronRight, Link2, WandSparkles } from 'lucide-react';
 import FlowNode from './FlowNode';
-import { AGENT_SLOT_ID } from '../flowEditor/graphHelpers';
+import { AGENT_SLOT_ID, wireAgentToSwitch } from '../flowEditor/graphHelpers';
 import { useI18n } from '../../i18n';
 import { useThemeColors } from '../../lib/themeColors';
 
@@ -30,16 +30,6 @@ const nodeTypes = {
 // GET /api/flow-entities, except that agents are not listed one by one: the
 // palette offers a single abstract agent node, and which agent runs there is
 // picked in the node inspector.
-const CATEGORY_LABELS = {
-  agent: 'Agents',
-  processor: 'Processors',
-  condition: 'Conditions',
-  map: 'Per item',
-  transform: 'Transforms',
-  interrupt: 'Interrupts',
-  container: 'Nested runs',
-};
-
 // One background per category, so a list of entities reads by kind at a
 // glance. Only hues theme.css gives a dark counterpart for (bg-*-50,
 // border-*-200/300), written out in full for Tailwind to find.
@@ -69,6 +59,14 @@ export function EntityPalette({ entitiesByCategory = {} }) {
     const order = ['agent', 'processor', 'condition', 'map', 'transform', 'interrupt', 'container'];
     const ia = order.indexOf(a); const ib = order.indexOf(b);
     return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+
+  // A built-in entity's name and description come from the locale, so the
+  // node dropped on the canvas carries them too; a user entity keeps its own.
+  const localize = (entity) => ({
+    ...entity,
+    name: t(`flowFlowCanvas.entities.${entity.id}.name`, { defaultValue: entity.name }),
+    description: t(`flowFlowCanvas.entities.${entity.id}.description`, { defaultValue: entity.description || '' }),
   });
 
   const agentSlot = {
@@ -105,7 +103,7 @@ export function EntityPalette({ entitiesByCategory = {} }) {
         </div>
       ) : null}
       {cats.map((cat) => {
-        const items = entitiesByCategory[cat];
+        const items = entitiesByCategory[cat].map(localize);
         const isOpen = isOpenCat(cat);
         const style = CATEGORY_STYLES[cat] || OTHER_STYLE;
         return (
@@ -117,7 +115,7 @@ export function EntityPalette({ entitiesByCategory = {} }) {
             >
               {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
               <span className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} aria-hidden="true" />
-              <span>{CATEGORY_LABELS[cat] || cat}</span>
+              <span>{t(`flowFlowCanvas.categories.${cat}`, { defaultValue: cat })}</span>
               <span className="font-normal text-slate-300">· {items.length}</span>
             </button>
             {isOpen
@@ -131,8 +129,8 @@ export function EntityPalette({ entitiesByCategory = {} }) {
                     className={`block w-full cursor-grab rounded-xl border px-3 py-2.5 text-left transition active:cursor-grabbing ${style.item}`}
                   >
                     <div className="truncate text-sm font-semibold text-slate-900">{entity.name}</div>
-                    <div className="truncate text-[11px] text-slate-500">
-                      {entity.group || entity.category}
+                    <div className="line-clamp-3 text-[11px] leading-4 text-slate-500">
+                      {entity.description || entity.group || entity.category}
                     </div>
                   </button>
                 ))
@@ -187,6 +185,9 @@ function FlowCanvasInner({
         current
       )
     );
+    // An agent joined to a switch writes the key the switch tests.
+    const wired = wireAgentToSwitch(nodes, connection.source, connection.target);
+    if (wired !== nodes) setNodes(wired);
   };
 
   const handleDrop = (event) => {

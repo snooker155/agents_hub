@@ -62,6 +62,7 @@ log = marker_logger(__name__)
 # run records, flow-log writes, stop check) lives in flow.task_driver. run.py is
 # now just the subprocess entry point: preflight + drive the engine.
 from flow.engine import run_flow_engine
+from flow.rerun import node_label
 from flow.task_driver import (
     log_flow,
     _resolve_agent_id,
@@ -246,6 +247,11 @@ def main() -> None:
 
     _task = _ts.get_task(task_id) if task_id else None
     task_title = (getattr(_task, "title", "") or "").strip()
+    # What was asked, without the run's working rules: the task's title and
+    # description, else what the flow was started with. It is the run's
+    # ``user_request`` state value (flow/engine.py).
+    task_desc = (getattr(_task, "description", "") or "").strip()
+    request_text = "\n\n".join(p for p in (task_title, task_desc) if p) or "\n\n".join(p for p in parts if p)
 
     session_id = args.session_id
     _port = int(os.environ.get("DASHBOARD_PORT", "8000"))
@@ -271,10 +277,16 @@ def main() -> None:
         if resume_cp:
             _done = len(resume_cp.get("done") or [])
             log.info(f"[flow_resume] resuming {args.resume_from} from checkpoint ({_done} node(s) already done)")
+            # A run from one node of an earlier run (flow/rerun.py) says so.
+            _again = _rec.get("rerun_node")
             log_flow(flow_id, run_id, {
                 "timestamp": _utc_now_iso(), "type": "flow_resume",
-                "content": f"Resuming from checkpoint ({_done} node(s) already done)",
+                "content": (f"Running again from node {_again} ({_done} node(s) taken from the earlier run)"
+                            if _again else f"Resuming from checkpoint ({_done} node(s) already done)"),
                 "status": "running",
+                **({"rerun": {"node_id": _again, "label": node_label(flow, _again),
+                               "mode": _rec.get("rerun_mode") or "rest",
+                               "of": _rec.get("rerun_of")}} if _again else {}),
             })
         else:
             log.info(f"[flow_resume] {args.resume_from} has no checkpoint — running from the start")
@@ -295,7 +307,7 @@ def main() -> None:
 
     async def _drive() -> dict:
         final: dict = {}
-        async for ev in run_flow_engine(flow, flow_id=flow_id, shared_context=shared_context, driver=driver, seed_state=seed_state, resume=resume_cp):
+        async for ev in run_flow_engine(flow, flow_id=flow_id, shared_context=shared_context, driver=driver, seed_state=seed_state, resume=resume_cp, request=request_text):
             if ev["type"] == "flow_finish":
                 final = ev
         return final

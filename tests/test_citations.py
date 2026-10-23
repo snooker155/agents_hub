@@ -276,6 +276,9 @@ def test_a_flow_node_keeps_its_own_citations(monkeypatch):
         return [event async for event in pipelines._run_chat_flow_pipeline(request)]
 
     events = asyncio.run(_drive())
+    # The live node_start carries what the node is given, as its flow-log line does.
+    node_start = next(e for e in events if e["type"] == "node_start")
+    assert "How much leave?" in node_start["input"]
     node_done = next(e for e in events if e["type"] == "node_done")
     assert node_done["ok"]
     meta = seen["state"].node_meta["n1"]

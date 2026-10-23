@@ -63,7 +63,7 @@ def test_the_first_call_returns_the_plan_and_starts_nothing(agents, launches):
     steps = {n["id"]: n for n in out["plan"]["nodes"]}
     assert steps["find"]["task"] == "List the claims as a JSON array."
     assert steps["check"]["config"]["agent_id"] == "checker"
-    assert "per item" in out["estimate"]["note"]
+    assert "estimate" not in out
     assert launches == [] and flow_store.count_flows(include_ephemeral=True) == 0
 
 
@@ -71,7 +71,7 @@ def test_approved_it_stores_a_temporary_flow_and_starts_it(agents, launches):
     out = _call(user_approved=True)
     assert out["ok"], out
     flow_id = out["flow_id"]
-    assert out["link"] == f"/flows/{flow_id}?run=fr-1" and out["ephemeral"] is True
+    assert out["link"] == f"/flows/{flow_id}/runs/fr-1" and out["ephemeral"] is True
     assert launches == [{"flow_id": flow_id, "desc": "Check the article", "create_task": False}]
     stored = flow_store.get_flow(flow_id)
     assert stored["ephemeral"] is True

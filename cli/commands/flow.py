@@ -82,8 +82,6 @@ def flow_run(
     result = call(hub().request, "POST", f"/api/flows/{flow_id}/run", json=body)
     console.print(f"[green]Started[/green] flow run [bold]{str(result.get('run_id', ''))[:8]}[/bold] "
                   f"(task {str(result.get('task_id', ''))[:8]}, workspace {result.get('workspace')})")
-    if result.get("estimated_cost"):
-        console.print(f"[dim]Estimated cost: {result['estimated_cost']}[/dim]")
 
 
 @flow_app.command("stop")

@@ -15,7 +15,8 @@ describe('MapConfig', () => {
   it('picks the agent for each item and writes the task into config', () => {
     const onPatch = vi.fn();
     wrap(<MapConfig node={{ id: 'm', data: { entity_id: 'map', config: { max_items: 50 } } }} agents={AGENTS} onPatch={onPatch} />);
-    fireEvent.change(screen.getByTestId('map-agent'), { target: { value: 'checker' } });
+    fireEvent.click(screen.getByTestId('map-agent'));
+    fireEvent.click(screen.getByRole('option', { name: /Checker/ }));
     expect(onPatch).toHaveBeenLastCalledWith({ config: { max_items: 50, agent_id: 'checker' } });
     fireEvent.click(screen.getByLabelText(/Keep going when some items fail/));
     expect(onPatch).toHaveBeenLastCalledWith({ config: { max_items: 50, allow_failures: true } });
@@ -23,6 +24,41 @@ describe('MapConfig', () => {
 });
 
 describe('SwitchConfig', () => {
+  const UPSTREAM = [{ key: 'verdict', writers: ['Checker'] }];
+
+  it('offers the request and what the nodes before it write, and keeps a typed key', () => {
+    const onPatch = vi.fn();
+    wrap(<SwitchConfig node={{ id: 's', data: { entity_id: 'state_switch', config: {} } }}
+      successors={NEXT} onPatch={onPatch} stateKeys={{ upstream: UPSTREAM, declared: [] }} />);
+    fireEvent.focus(screen.getByTestId('switch-key'));
+    expect(screen.getByRole('option', { name: /user_request/ })).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole('option', { name: /verdict/ }));
+    expect(onPatch).toHaveBeenLastCalledWith({ config: { key: 'verdict' } });
+    fireEvent.change(screen.getByTestId('switch-key'), { target: { value: 'score' } });
+    expect(onPatch).toHaveBeenLastCalledWith({ config: { key: 'score' } });
+    expect(screen.getByText('A node writes the value through "Output state keys".')).toBeInTheDocument();
+  });
+
+  it('warns when no node before it writes the key', () => {
+    const show = (key, declared = []) => wrap(
+      <SwitchConfig node={{ id: 's', data: { entity_id: 'state_switch', config: { key } } }}
+        successors={NEXT} onPatch={vi.fn()} stateKeys={{ upstream: UPSTREAM, declared }} />,
+    );
+    show('score');
+    expect(screen.getByTestId('switch-key-unwritten')).toBeInTheDocument();
+  });
+
+  it('does not warn for the request, a written key or a key the flow declares', () => {
+    for (const [key, declared] of [['user_request', []], ['verdict', []], ['topic', ['topic']]]) {
+      const { unmount } = wrap(
+        <SwitchConfig node={{ id: 's', data: { entity_id: 'state_switch', config: { key } } }}
+          successors={NEXT} onPatch={vi.fn()} stateKeys={{ upstream: UPSTREAM, declared }} />,
+      );
+      expect(screen.queryByTestId('switch-key-unwritten')).toBeNull();
+      unmount();
+    }
+  });
+
   it('adds a case whose target is one of the next steps', () => {
     const onPatch = vi.fn();
     wrap(<SwitchConfig node={{ id: 's', data: { entity_id: 'state_switch', config: { key: 'score' } } }}

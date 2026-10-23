@@ -48,6 +48,17 @@ def _utc_now_iso() -> str:
 
 # ── DAG helpers (moved here from runtime/flow_run.py so both adapters share them) ───────
 
+#: Why a node was skipped, as a flow log line says it (both drivers).
+SKIP_REASON_TEXT = {
+    "branch_not_selected": "not on the selected branch",
+    "predecessor_failed": "a node it depends on failed",
+    "branch_isolated": "its branch was isolated after a failure",
+    "cancelled_after_failure": "the run stopped at the first failure",
+    "already_done": "already completed before this run resumed",
+    "already_skipped": "already skipped before this run resumed",
+}
+
+
 def _node_value(node: Dict[str, Any], key: str, default: Any = None) -> Any:
     data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
     return node[key] if key in node else data.get(key, default)
@@ -331,6 +342,7 @@ async def run_flow_engine(
     driver: FlowEngineDriver,
     seed_state: Optional[Dict[str, Any]] = None,
     resume: Optional[Dict[str, Any]] = None,
+    request: Optional[str] = None,
 ) -> AsyncGenerator[dict, None]:
     """Drive a flow DAG once, yielding neutral lifecycle events.
 
@@ -388,7 +400,14 @@ async def run_flow_engine(
     predecessors = _build_predecessors(edges)
     successors = _build_successors(edges)
 
-    seed = {"user_request": shared_context}
+    # ``user_request`` is what was asked, as a person would read it: shown in
+    # the run's state and handed to a node that declares it as an input. The
+    # shared context can carry the run's own working rules on top of it (a
+    # task run's instruction), so a caller that has the bare request passes it.
+    # A run that brings neither keeps the ``user_request`` the flow declares.
+    asked = request if (request or "").strip() else shared_context
+    declared = flow.get("state") if isinstance(flow.get("state"), dict) else {}
+    seed = {} if not (asked or "").strip() and "user_request" in declared else {"user_request": asked}
     if seed_state:
         seed.update(seed_state)
     flow_state = FlowState.from_flow(flow, seed=seed)

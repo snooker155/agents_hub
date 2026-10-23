@@ -156,7 +156,7 @@ or a script that wants the exact JSON a route returns, reaches it directly:
 ```bash
 ah api get /api/flows --param workspace=default
 ah api post /api/tasks --json '{"title": "from a script"}'
-ah api get /api/flows/<id>/estimate --json-out
+ah api get /api/flows/<id>/runs --json-out
 ```
 
 `--param k=v` is repeatable (query parameters); `--json` is the request body;

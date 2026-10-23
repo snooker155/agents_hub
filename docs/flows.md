@@ -81,8 +81,7 @@ The graph is checked before anything happens: unknown agents, cycles, branch
 targets, and every agent against the caller's delegation allowlist and
 workspace (an agent with an allowlist may not put a team, loop or flow node in
 it, since their members are out of its sight). The first call returns the plan
-and the cost estimate without saving or starting anything; the agent shows them
-and calls again with `user_approved=true` once you agree (in
+without saving or starting anything; the agent shows it and calls again with `user_approved=true` once you agree (in
 [auto mode](hooks.md#auto-mode) it runs at once).
 
 The flow is stored as a **temporary** flow (`ephemeral: true`): the run loads it
@@ -111,14 +110,6 @@ Retry and review now apply to flow results: the workspace's orchestrator
 retries a failed flow run up to `orchestrator.max_retries` times, and review
 starts on every resolve when the code_reviewer agent is available.
 
-## What a run costs before it runs
-
-`GET /api/flows/{id}/estimate` prices one pass: one call per agent node, at the
-model each agent resolves to, from the prices on the Models page. The same
-figure comes back as `estimated_cost` when you start a run. It is an estimate,
-not a quote: a node that uses tools takes several steps and costs more, and a
-branch that is not taken costs nothing.
-
 ## When a node fails
 
 `on_error` on the flow decides what a failure does to everything else:
@@ -142,6 +133,13 @@ and the run writes a checkpoint and ends. Answering resumes the flow from that
 checkpoint with the answer in flow state under the node's output key, so the
 node after it reads what the person actually said. In flow chat, where there is
 no task to park, the node simply answers with its question.
+
+An agent node never asks on its own. Its reply is the next node's input, so it
+is built as a flow step: the clarification gate is off, `ask_user` is taken
+away even when the agent lists it, the buttons and views formats fall back to
+plain text, and the prompt tells the agent to make reasonable assumptions,
+state them and do the work. Put a human interrupt node before it when a person
+has to decide something.
 
 ## Checkpoint and resume
 
