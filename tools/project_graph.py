@@ -75,16 +75,8 @@ def _load_graph(project_id: str, view: str) -> Optional[Dict[str, Any]]:
 
     from projects.graph import build_project_graph
 
-    tasks = None
-    if view == "process":
-        try:
-            from tasks import service as tasks_service
-            tasks = [t for t in tasks_service.list_tasks() if t.project_id == project_id]
-        except Exception:  # noqa: BLE001 - a graph without task links is still returned
-            log.debug("project tasks lookup failed", exc_info=True)
-            tasks = None
     try:
-        graph = build_project_graph(project, view, _resolve_root(project), tasks)
+        graph = build_project_graph(project, view, _resolve_root(project))
         graph["source"] = "auto"
         return graph
     except Exception:  # noqa: BLE001 - a graph that cannot be built reads as absent

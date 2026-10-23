@@ -118,6 +118,11 @@ async def delete_project(project_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found")
     _graph_store.delete_project(project_id)
+    # The planner chat and its history (routes/projects/planner.py).
+    from common.entity_chat_store import entity_chat_store
+    entity_chat_store().delete("projtasks", project_id)
+    for view in ("architecture", "process"):  # the architect chats
+        entity_chat_store().delete("project_graph", f"{project_id}:{view}")
     return {"deleted": True}
 
 
