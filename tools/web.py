@@ -745,7 +745,11 @@ def _search_anthropic(query: str, count: int, key: str, timeout: float,
         tool["allowed_domains"] = list(include)
     elif exclude:
         tool["blocked_domains"] = list(exclude)
-    client = anthropic.Anthropic(api_key=key, timeout=timeout, max_retries=1)
+    # The base URL is always passed: the SDK reads ANTHROPIC_BASE_URL itself,
+    # and an empty one (a .env line `ANTHROPIC_BASE_URL=""` loaded into the
+    # process) becomes an empty address that fails every call.
+    base = (os.environ.get("ANTHROPIC_BASE_URL") or "").strip() or "https://api.anthropic.com"
+    client = anthropic.Anthropic(api_key=key, base_url=base, timeout=timeout, max_retries=1)
     resp = client.messages.create(
         model=_search_model("anthropic"), max_tokens=1024, tools=[tool],
         messages=[{"role": "user", "content": _SEARCH_PROMPT.format(query=query)}],
@@ -782,7 +786,10 @@ def _search_openai(query: str, count: int, key: str, timeout: float,
     if include:
         tool["filters"] = {"allowed_domains": list(include)}
     # OpenAI's tool has no block list: blocked hosts are filtered out of the results.
-    base = (provider_env.live().get("OPENAI_BASE_URL") or "").strip() or None
+    # Never None: the SDK then reads OPENAI_BASE_URL from the environment,
+    # and the backend loads .env into it, so `OPENAI_BASE_URL=""` there made
+    # the address empty and every search a connection error.
+    base = (provider_env.live().get("OPENAI_BASE_URL") or "").strip() or "https://api.openai.com/v1"
     client = openai.OpenAI(api_key=key, base_url=base, timeout=timeout, max_retries=1)
     resp = client.responses.create(
         model=_search_model("openai"), tools=[tool],

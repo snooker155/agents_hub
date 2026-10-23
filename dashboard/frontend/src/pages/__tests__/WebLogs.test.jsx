@@ -12,11 +12,15 @@ const ok = (data) => Promise.resolve({ data });
 const row = (i) => ({ id: `w${i}`, kind: 'fetch', url: `https://ok.test/${i}`, status: 'ok', ts: '2026-10-11T10:00:00Z' });
 
 const getWebLogs = vi.fn();
+vi.mock('../../components/workspace', () => ({
+  useWorkspace: () => ({ selectedWorkspace: 'zerno' }),
+}));
 vi.mock('../../api', () => ({
   getWebLogs: (...a) => getWebLogs(...a),
   getWebLogStats: () => ok({ enabled: true, total: 45, by_kind: {}, by_status: {} }),
   getWebLogEntry: vi.fn(),
   clearWebLogs: vi.fn(),
+  getAgents: () => ok([{ id: 'bean_scout', name: 'Bean Scout' }]),
 }));
 
 import WebLogs from '../WebLogs';
@@ -36,7 +40,7 @@ describe('WebLogs paging', () => {
   it('loads the first batch and then the next one', async () => {
     show();
     await waitFor(() => expect(screen.getByText('https://ok.test/19')).toBeInTheDocument());
-    expect(getWebLogs.mock.calls[0][0]).toMatchObject({ limit: 20, offset: 0, sort: 'created', order: 'desc' });
+    expect(getWebLogs.mock.calls[0][0]).toMatchObject({ limit: 20, offset: 0, sort: 'created', order: 'desc', workspace: 'zerno' });
     expect(screen.queryByText('https://ok.test/20')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText(/load 20 more/i));

@@ -7,7 +7,7 @@ export default {
   loggingOffAfter: 'Neue Aufrufe werden nicht aufgezeichnet.',
   refresh: 'Aktualisieren',
   clearLog: 'Log leeren',
-  confirmClear: 'Alle aufgezeichneten Web-Aufrufe löschen? Das kann nicht rückgängig gemacht werden.',
+  confirmClear: 'Alle in diesem Arbeitsbereich aufgezeichneten Web-Aufrufe löschen? Das kann nicht rückgängig gemacht werden.',
   clearedEntries: '{{count}} Einträge gelöscht.',
   cards: {
     callsRecorded: 'Aufgezeichnete Aufrufe',
@@ -50,11 +50,12 @@ export default {
   webSearchTitle: 'Websuche',
   pageFetchTitle: 'Seitenabruf',
   riskLevel: 'Risiko: {{level}}',
+  openRun: 'Lauf öffnen',
   facts: {
     when: 'Wann',
     workspace: 'Workspace',
     agent: 'Agent',
-    session: 'Sitzung',
+    run: 'Lauf',
     task: 'Aufgabe',
     duration: 'Dauer',
     provider: 'Anbieter',

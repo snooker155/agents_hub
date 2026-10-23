@@ -7,8 +7,8 @@ Good fits:
 - Any lookup where being out of date would be worse than being slow
 
 Poor fits:
-- Weighing findings against your own files or memory — that is the Researcher, which calls this
-  agent and adds the parts it cannot see
+- Weighing findings against your own files or memory — that is the Researcher. It searches the
+  web too but cannot open pages, so in a flow put this agent before it when full pages matter
 - Anything needing your private data alongside the web; that combination is blocked on purpose
 
 How to invoke:

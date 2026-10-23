@@ -7,7 +7,7 @@ export default {
   loggingOffAfter: 'Новые вызовы не записываются.',
   refresh: 'Обновить',
   clearLog: 'Очистить журнал',
-  confirmClear: 'Удалить все записанные веб-вызовы? Это действие необратимо.',
+  confirmClear: 'Удалить все веб-вызовы, записанные в этом пространстве? Это действие необратимо.',
   clearedEntries: 'Удалено записей: {{count}}.',
   cards: {
     callsRecorded: 'Записано вызовов',
@@ -50,11 +50,12 @@ export default {
   webSearchTitle: 'Веб-поиск',
   pageFetchTitle: 'Загрузка страницы',
   riskLevel: 'риск: {{level}}',
+  openRun: 'Открыть запуск',
   facts: {
     when: 'Когда',
     workspace: 'Пространство',
     agent: 'Агент',
-    session: 'Сессия',
+    run: 'Запуск',
     task: 'Задача',
     duration: 'Длительность',
     provider: 'Провайдер',

@@ -220,13 +220,27 @@ The same page holds the `fetch_url` limits (`WEB_FETCH_MAX_CHARS`,
 `WEB_FETCH_TIMEOUT`, `WEB_FETCH_MAX_REDIRECTS`) and the global domain policy:
 a deny list that always applies to fetches and to search results
 (`WEB_DENY_DOMAINS`), and an opt-in allow list (`WEB_DOMAIN_POLICY_ENABLED`,
-`WEB_ALLOW_DOMAINS`) that, once on, is the only set of hosts a fetch may reach.
+`WEB_ALLOW_DOMAINS`) that, once on, is the only set of hosts a fetch may reach
+or a search may return.
 A host matches itself and its subdomains. The file holds each list as a JSON
 array, which is how pydantic-settings reads a list field; a comma-separated
 line typed by hand is accepted too. A workspace's own lists replace the
 global ones for runs in that workspace: the workspace page, Settings tab,
 "Web access" (`GET`/`PUT /api/workspaces/{name}/web-policy`), stored in the
 workspace's metadata; an empty list there keeps the global one.
+
+### Web search provider
+
+`WEB_SEARCH_PROVIDER` picks the backend. `anthropic` and `openai` search through
+the vendor's own server-side search tool on the model key the Models page holds
+(a small model drives it, `WEB_SEARCH_MODEL` overrides which), so no second key is
+needed; `brave`, `tavily` and `exa` take `WEB_SEARCH_API_KEY`. Left empty, the hub
+picks a model provider with a key: the default provider when it is Anthropic or
+OpenAI, then Anthropic, then OpenAI, skipping OpenAI when `OPENAI_BASE_URL` points
+away from openai.com (a gateway rarely implements the search tool). With nothing
+to search with, the tool answers that it is not configured. `WEB_SEARCH_MAX_RESULTS`
+(default 5) caps the results per call, since every result is untrusted text in
+the context. A search is billed by its provider per call.
 
 ## Domain lists per agent
 

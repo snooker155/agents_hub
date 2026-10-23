@@ -1028,6 +1028,22 @@ def step_features(a: Asker, plan: Plan) -> None:
     elif plan.cur("WEB_SEARCH_PROVIDER"):
         plan.env.update({"WEB_SEARCH_PROVIDER": "", "WEB_SEARCH_API_KEY": ""})
 
+    search = a.choose("web_search", "Web search for the web_search tool", [
+        ("auto", "Automatic", "an Anthropic or OpenAI key searches through that provider; fetch_url always works"),
+        ("anthropic", "Anthropic", "its own search tool, on the model key"),
+        ("openai", "OpenAI", "its own search tool, on the model key"),
+        ("brave", "Brave Search", "API key"),
+        ("tavily", "Tavily", "API key"),
+        ("exa", "Exa", "API key"),
+    ], default=plan.cur("WEB_SEARCH_PROVIDER") or "auto")
+    if search in ("anthropic", "openai"):
+        plan.env.update({"WEB_SEARCH_PROVIDER": search})
+    elif search != "auto":
+        key = a.secret("web_search_key", "Its API key", current=plan.cur("WEB_SEARCH_API_KEY"))
+        plan.env.update({"WEB_SEARCH_PROVIDER": search, "WEB_SEARCH_API_KEY": key})
+    elif plan.cur("WEB_SEARCH_PROVIDER"):
+        plan.env.update({"WEB_SEARCH_PROVIDER": "", "WEB_SEARCH_API_KEY": ""})
+
     rag = a.confirm("rag", "Retrieval over workspace files (RAG with a local vector store; the image "
                     "or install grows by about 2 GB)?", plan.cur("WITH_RAG", "false").lower() == "true"
                     or (plan.shape == "docker" and plan.cur("AGENTS_HUB_TAG").endswith("-rag")))

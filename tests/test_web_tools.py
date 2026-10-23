@@ -438,6 +438,31 @@ def test_openai_search_uses_the_configured_base_url(monkeypatch):
     assert got["base_url"] == "https://api.openai.com/v1" and got["api_key"] == "sk-oai"
 
 
+@pytest.mark.parametrize("provider,var,default", [
+    ("openai", "OPENAI_BASE_URL", "https://api.openai.com/v1"),
+    ("anthropic", "ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+])
+def test_an_empty_base_url_in_the_environment_falls_back_to_the_vendor(monkeypatch, provider, var, default):
+    # The backend loads .env into its environment, so `OPENAI_BASE_URL=""`
+    # there is an empty variable; left to the SDK it became an empty address
+    # and every search a connection error.
+    import anthropic
+    import openai
+    got = {}
+
+    def _client(**kw):
+        got.update(kw)
+        empty = _Obj(create=lambda **k: _Obj(output=[], content=[]))
+        return _Obj(responses=empty, messages=empty)
+
+    monkeypatch.setattr(openai, "OpenAI", _client)
+    monkeypatch.setattr(anthropic, "Anthropic", _client)
+    monkeypatch.setenv(var, "")
+    search = web._search_openai if provider == "openai" else web._search_anthropic
+    assert search("q", 3, "sk", 20.0) == []
+    assert got["base_url"] == default
+
+
 def test_search_model_can_be_overridden(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_MODEL", "my-small-model")
     assert web._search_model("anthropic") == "my-small-model"

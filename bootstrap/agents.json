@@ -573,7 +573,7 @@
       "name": "Researcher",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Synthesis agent: combines the workspace, shared memory, and the open web (delegated to the Web Search Agent) into a reasoned answer with sources. Reads widely and writes nothing.",
+      "description": "Synthesis agent: combines the workspace, shared memory and web search results into a reasoned answer with sources. Reads widely and writes nothing.",
       "domain": "research",
       "system": true,
       "tools": [
@@ -583,8 +583,7 @@
         "read_memory",
         "search_memory",
         "calculator",
-        "run_agent_tool",
-        "list_models_tool",
+        "web_search",
         "search_docs",
         "read_doc"
       ],
@@ -619,11 +618,7 @@
         "think_mode": "deep"
       },
       "response_format": "buttons",
-      "clarify_gate": true,
-      "delegates": [
-        "@web_search"
-      ],
-      "capability_override": true
+      "clarify_gate": true
     },
     {
       "id": "web_searcher",

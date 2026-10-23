@@ -34,9 +34,9 @@ export const getMarketplaceSkills = (workspace) =>
 // Web access log — recorded web_search / fetch_url calls, their responses and
 // the security flags raised against them.
 export const getWebLogs = (params) => api.get('/web-logs', { params });
-export const getWebLogStats = () => api.get('/web-logs/stats');
+export const getWebLogStats = (workspace) => api.get('/web-logs/stats', { params: workspace ? { workspace } : {} });
 export const getWebLogEntry = (id) => api.get(`/web-logs/${encodeURIComponent(id)}`);
-export const clearWebLogs = () => api.delete('/web-logs');
+export const clearWebLogs = (workspace) => api.delete('/web-logs', { params: workspace ? { workspace } : {} });
 
 // Orchestrator
 export const getOrchestratorSettings = (workspace) =>

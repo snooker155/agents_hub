@@ -275,7 +275,7 @@ class WebCall:
 def _caller_context() -> Dict[str, Any]:
     """Who made this call — workspace, agent, session, task. Best effort."""
     ctx: Dict[str, Any] = {
-        "workspace": None, "agent_id": None, "session_id": None, "task_id": None,
+        "workspace": None, "agent_id": None, "session_id": None, "task_id": None, "run_id": None,
     }
     try:
         from common.workspace_context import resolve_active_workspace
@@ -283,10 +283,15 @@ def _caller_context() -> Dict[str, Any]:
     except Exception:  # noqa: BLE001 - a missing workspace only leaves the log entry untagged
         log.debug("_caller_context: best-effort step failed", exc_info=True)
     try:
-        from common.agent_context import current_agent_id, current_session_id, current_task_id
+        from common.agent_context import (
+            current_agent_id, current_run_id, current_session_id, current_task_id,
+        )
         ctx["agent_id"] = current_agent_id.get()
         ctx["session_id"] = current_session_id.get()
         ctx["task_id"] = current_task_id.get()
+        # A delegated run's own id when the call happens inside one.
+        from common.stream_sink import current_run_id as delegated_run_id
+        ctx["run_id"] = delegated_run_id() or current_run_id.get()
     except Exception:  # noqa: BLE001 - missing agent context only leaves the log entry untagged
         log.debug("_caller_context: best-effort step failed", exc_info=True)
     return ctx
@@ -369,6 +374,14 @@ def _read_all() -> List[Dict[str, Any]]:
     return list(_store.values())
 
 
+def _in_workspace(record: Dict[str, Any], workspace: Optional[str]) -> bool:
+    """Whether a call was made in ``workspace``; None means every workspace.
+    A call made outside any named workspace counts as the default one."""
+    if not workspace:
+        return True
+    return (record.get("workspace") or "default") == workspace
+
+
 def _summarize(record: Dict[str, Any]) -> Dict[str, Any]:
     """List-row shape: everything except the stored bodies."""
     row = {k: v for k, v in record.items() if k not in ("body", "hidden_text")}
@@ -421,7 +434,7 @@ def query(
             return False
         if status and r.get("status") != status:
             return False
-        if workspace and (r.get("workspace") or "") != workspace:
+        if not _in_workspace(r, workspace):
             return False
         if agent_id and (r.get("agent_id") or "") != agent_id:
             return False
@@ -452,9 +465,10 @@ def get(entry_id: str) -> Optional[Dict[str, Any]]:
     return _store.get(entry_id)
 
 
-def stats() -> Dict[str, Any]:
-    """Counters for the log header: volume, failures, flagged calls, top hosts."""
-    records = _read_all()
+def stats(workspace: Optional[str] = None) -> Dict[str, Any]:
+    """Counters for the log header: volume, failures, flagged calls, top hosts,
+    over the calls made in ``workspace`` (every workspace when None)."""
+    records = [r for r in _read_all() if _in_workspace(r, workspace)]
     by_kind: Dict[str, int] = {}
     by_status: Dict[str, int] = {}
     by_severity: Dict[str, int] = {"none": 0, "low": 0, "medium": 0, "high": 0}
@@ -494,11 +508,19 @@ def stats() -> Dict[str, Any]:
     }
 
 
-def clear() -> int:
-    """Delete every entry. Returns how many were removed."""
+def clear(workspace: Optional[str] = None) -> int:
+    """Delete every entry, or only the calls made in ``workspace``. Returns
+    how many were removed."""
     _ensure_legacy_imported()
     try:
-        return _store.clear()
+        if not workspace:
+            return _store.clear()
+        removed = 0
+        with _store.transaction():
+            for key, record in _store.all().items():
+                if isinstance(record, dict) and _in_workspace(record, workspace):
+                    removed += 1 if _store.delete(key) else 0
+        return removed
     except Exception as e:  # noqa: BLE001 - a failed clear reports zero removed instead of raising
         log.warning("web_log clear failed: %s", e)
         return 0
