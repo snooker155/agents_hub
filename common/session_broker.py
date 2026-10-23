@@ -68,6 +68,7 @@ re-fetching everything.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
 import os
 import threading
@@ -531,6 +532,8 @@ APP_CHANNEL = "app"
 # fire it directly rather than reaching into the Timer for its function.
 _relay_timers: Dict[str, Tuple[threading.Timer, Any]] = {}
 _relay_lock = threading.Lock()
+# Set once the first relay of this process registered its exit flush.
+_relay_flush_registered = False
 _RELAY_DEBOUNCE = 0.25  # seconds — coalesce bursts of subprocess events
 
 
@@ -562,7 +565,15 @@ def _relay_notify(resource: str, meta: dict, *, delta: bool = False,
         except Exception:  # noqa: BLE001 - best-effort same-machine relay, must not break the caller
             log.debug("relay notify failed for %s", resource, exc_info=True)
 
+    global _relay_flush_registered
     with _relay_lock:
+        # An agent subprocess finalizes its task and exits right after, well
+        # inside the debounce window, and the daemon timer dies with it: the
+        # last status change never reached an open tab. Flushing on exit sends
+        # whatever is still waiting.
+        if not _relay_flush_registered:
+            atexit.register(flush_relayed_notifications)
+            _relay_flush_registered = True
         existing = _relay_timers.get(key)
         if existing:
             existing[0].cancel()
