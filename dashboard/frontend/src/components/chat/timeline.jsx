@@ -3,6 +3,7 @@
  * its own trail inside it.
  */
 import { SKILL_TOOL, shortText } from '../processUtils';
+import { displayToolOutput } from '../webOutput';
 import { useI18n } from '../../i18n';
 import ToolStatusMark from '../ToolStatusMark';
 import { toolStatus } from '../toolStatus';
@@ -45,7 +46,7 @@ function TimelineToolCard({ entry }) {
           )}
           {entry.output != null && (
             <div className={`text-[11px] whitespace-pre-wrap break-all ${failed ? 'text-red-700' : 'text-emerald-800'}`}>
-              <span className={failed ? 'text-red-500' : 'text-emerald-600'}>{t('chat.out2')}</span> {shortText(entry.output, 1000)}
+              <span className={failed ? 'text-red-500' : 'text-emerald-600'}>{t('chat.out2')}</span> {shortText(displayToolOutput(entry.output), 1000)}
             </div>
           )}
         </div>

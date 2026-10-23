@@ -13,6 +13,7 @@ import ToolStatusMark from './ToolStatusMark';
 import { toolStatus } from './toolStatus';
 import PolicyBadge from './PolicyBadge';
 import { parseToolOutput } from './toolFormatters';
+import { displayToolOutput, parseWebOutput } from './webOutput';
 import { useI18n } from '../i18n';
 
 function ParsedSection({ title, raw, tone }) {
@@ -20,11 +21,14 @@ function ParsedSection({ title, raw, tone }) {
   const [showRaw, setShowRaw] = useState(false);
   const { value: parsed, truncated } = parseToolOutput(raw);
   const structured = parsed !== null && typeof parsed === 'object';
+  // A web page result shows the found text under its address; Raw shows the
+  // envelope the model received.
+  const web = !structured && parseWebOutput(raw) !== null;
   return (
     <section>
       <div className="flex items-center justify-between mb-1.5">
         <h4 className={`text-xs font-semibold ${tone}`}>{title}</h4>
-        {structured && (
+        {(structured || web) && (
           <button
             type="button"
             onClick={() => setShowRaw((r) => !r)}
@@ -40,7 +44,7 @@ function ParsedSection({ title, raw, tone }) {
       <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 font-mono text-xs leading-5 overflow-x-auto">
         {structured && !showRaw
           ? <ObjectTree value={parsed} />
-          : <pre className="whitespace-pre-wrap break-words font-mono">{String(raw ?? '')}</pre>}
+          : <pre className="whitespace-pre-wrap break-words font-mono">{String((web && !showRaw ? displayToolOutput(raw) : raw) ?? '')}</pre>}
       </div>
     </section>
   );

@@ -11,6 +11,7 @@ import { useI18n } from '../../i18n';
 import { SKILL_TOOL, shortText } from '../processUtils';
 import { foldDelegationTools } from './trail';
 import ToolStatusMark from '../ToolStatusMark';
+import { tidyThought } from './reasoningText';
 
 function Dots({ tone = 'bg-indigo-400' }) {
   return (
@@ -23,7 +24,8 @@ function Dots({ tone = 'bg-indigo-400' }) {
 }
 
 // The last three lines of text still being written.
-function Tail({ icon: Icon, iconCls, text }) {
+function Tail({ icon: Icon, iconCls, text: raw }) {
+  const text = tidyThought(raw);
   return (
     <div className="flex items-start gap-1.5">
       <Icon className={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${iconCls}`} />

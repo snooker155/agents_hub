@@ -10,7 +10,19 @@
 // framework delivers their argument as a stringified payload — sometimes plain
 // text, sometimes a JSON object like {"thought": "..."} or {"plan": "..."}.
 // Extract the human-readable text so we never show raw JSON to the user.
+// Models often open a thought (or a reasoning summary part) with one or two
+// empty lines; shown with pre-wrap they push the text down. Drop blank lines
+// at the start and whitespace at the end, keep the first line's indentation.
+function tidyThought(raw) {
+  if (raw == null) return '';
+  return String(raw).replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd();
+}
+
 function parseReasoningContent(raw) {
+  return tidyThought(rawReasoningContent(raw));
+}
+
+function rawReasoningContent(raw) {
   if (raw == null) return '';
   const text = typeof raw === 'string' ? raw : String(raw);
   const trimmed = text.trim();
@@ -32,4 +44,4 @@ function parseReasoningContent(raw) {
   return text;
 }
 
-export { parseReasoningContent };
+export { parseReasoningContent, tidyThought };

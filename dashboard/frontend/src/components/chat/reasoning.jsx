@@ -3,7 +3,7 @@
  * imported agent's graph, and the live ticker while it is still thinking.
  */
 import { useI18n } from '../../i18n';
-import { parseReasoningContent } from './reasoningText';
+import { parseReasoningContent, tidyThought } from './reasoningText';
 import { BrainCircuit, ChevronDown, ChevronUp, ListChecks, Workflow } from 'lucide-react';
 import { useState } from 'react';
 
@@ -106,8 +106,9 @@ function ReasoningStep({ step, defaultOpen = false }) {
 // The tail is shown without JS scrolling: a fixed-height clipped box whose flex
 // content is bottom-aligned overflows past its own top edge, so the newest lines
 // stay in view.
-function LiveThoughts({ text }) {
-  if (!text || !text.trim()) return null;
+function LiveThoughts({ text: raw }) {
+  const text = tidyThought(raw);
+  if (!text) return null;
   return (
     <div className="mt-2 flex items-start gap-1.5">
       <BrainCircuit className="w-3.5 h-3.5 text-violet-500 flex-shrink-0 mt-0.5 animate-pulse" />
