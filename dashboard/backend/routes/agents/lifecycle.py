@@ -31,6 +31,10 @@ async def create_custom_agent(data: AgentCreateCustom, request: Request):
     field not given is inherited from the parent, ``system_prompt`` is
     optional and holds only the child's own additions, and ``tools``, when
     given, is the child's full effective tool list."""
+    data.id = (data.id or "").strip()
+    if not data.id:
+        from agents.agent_ids import new_agent_id
+        data.id = new_agent_id(data.name, lambda i: registry.get_agent(i) is not None)
     if registry.get_agent(data.id) is not None:
         raise HTTPException(status_code=400, detail=f"Agent '{data.id}' already exists")
     # Checked before anything is written, so a bad target leaves no folder behind.
@@ -148,7 +152,12 @@ async def create_custom_agent(data: AgentCreateCustom, request: Request):
             # Best-effort; the agent itself is created and owner_workspace is set.
             log.debug("create_custom_agent: best-effort step failed", exc_info=True)
 
-    return spec.to_dict()
+    # The main agent may delegate to it and hand the chat to it, unless that
+    # would close a blocked capability combination (agents/main_links.py).
+    from agents.main_links import link_new_agent
+    out = spec.to_dict()
+    out["main_agent_link"] = link_new_agent(data.id)
+    return out
 
 
 @router.post("/{agent_id}/clone-to-workspace")

@@ -6,6 +6,7 @@ import { Bot, Radio, UsersRound, Workflow } from 'lucide-react';
 import React from 'react';
 import { useChatPage } from './context';
 import { useChatScroll } from './useChatScroll';
+import { withHandoffLine } from './handoff';
 
 // A prompt that can stay on screen for its reply: the user's own message, not
 // one sent while the turn worked (that one steers the reply, it does not start it).
@@ -34,7 +35,7 @@ function groupTurns(messages) {
  */
 export default function ChatMessageList() {
   const {
-    agentName, agents, artifacts, currentConvId, flows, jumpToArtifact,
+    agentName, agents, currentConvId, flows, jumpToArtifact,
     liveMessages, liveTurn, loading, messages, renderedMessages,
     runTimelineByRunId, selectedFlow, selectedTeam, selectedWorkspace, sendMessage, t,
     targetMode, teams, viewMode,
@@ -43,7 +44,13 @@ export default function ChatMessageList() {
   const { scrollerRef, contentRef, onScroll, onPromptClick } = useChatScroll({
     convId: currentConvId, lastUserId, messages: renderedMessages, stuckHint: t('chat.pinnedPromptHint'),
   });
-  const renderMessage = (msg, idx) => {
+  const renderMessage = (rawMsg, idx) => {
+    // A bubble that handed the chat over says to whom (chat/handoff.js).
+    const nextMsg = renderedMessages[idx + 1];
+    const msg = withHandoffLine(rawMsg, nextMsg, t('handoffs.passing', {
+      agent: (nextMsg?.handoff && (agents.find((a) => a.id === nextMsg.handoff.to_agent_id)?.name
+        || nextMsg.handoff.to_agent_name || nextMsg.handoff.to_agent_id)) || '',
+    }));
     // A refused turn is retried with the message that started it.
     const retryText = msg.refusal
       ? [...renderedMessages.slice(0, idx)].reverse().find((m) => m.role === 'user')?.content
@@ -104,7 +111,6 @@ export default function ChatMessageList() {
             || (msg.id === 'live-agent' && liveTurn?.status === 'running')
           }
           agentName={msgAgentName}
-          artifactsByPath={artifacts}
           onAction={sendMessage}
           onRetry={retryText ? () => sendMessage(retryText) : undefined}
         />

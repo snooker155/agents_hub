@@ -88,3 +88,51 @@ export function liveHandoffBubbles(handoffs) {
     ...(i > 0 ? { handoff: handoffs[i - 1] } : {}),
   }));
 }
+
+/**
+ * The handing agent's bubble as the person should read it: it says whom the
+ * chat goes to (`line`, localized by the caller). When the model wrote nothing
+ * of its own, the turn's answer is just the handoff reason, which reads as if
+ * the handing agent will do the work itself; that text is replaced by the
+ * line (the reason stays on the divider above the receiving bubble). Text of
+ * its own is kept, with the line after it. `next` is the message after `msg`:
+ * the receiving bubble carries the handoff. Returns `msg` unchanged when it
+ * did not hand over.
+ */
+export function withHandoffLine(msg, next, line) {
+  const handoff = next?.role === 'agent' ? next.handoff : null;
+  if (!handoff || msg?.role !== 'agent') return msg;
+  if (handoff.from_agent_id && msg.agent_id && handoff.from_agent_id !== msg.agent_id) return msg;
+  const reason = String(handoff.reason || '').trim();
+  const own = (text) => {
+    const v = String(text || '').trim();
+    return v && v !== reason ? v : '';
+  };
+  const content = own(msg.content);
+  const out = { ...msg, content: content ? `${content}\n\n${line}` : line };
+  if (Array.isArray(msg.timeline) && msg.timeline.length) {
+    out.timeline = [
+      ...msg.timeline.filter((e) => e?.type !== 'text' || own(e.text)),
+      { type: 'text', text: line },
+    ];
+  }
+  return out;
+}
+
+/**
+ * What the page should talk to for the open conversation `conv`, or null
+ * when nothing can be decided yet: `{key, targetMode, agentId|flowId|teamId}`.
+ * `key` changes whenever the stored target does (opened by link, moved by a
+ * handoff, changed in another tab). An agent target waits for the agent list
+ * (`selectableIds`), and one the workspace does not offer gives no agent.
+ */
+export function conversationTarget(conv, selectableIds) {
+  if (!conv) return null;
+  const key = [conv.id, conv.target_mode || '', conv.agent_id || '', conv.flow_id || '', conv.team_id || ''].join('|');
+  if (conv.target_mode === 'flow' && conv.flow_id) return { key, targetMode: 'flow', flowId: conv.flow_id };
+  if (conv.target_mode === 'team' && conv.team_id) return { key, targetMode: 'team', teamId: conv.team_id };
+  if (!selectableIds || selectableIds.length === 0) return null;
+  if (conv.agent_id && selectableIds.includes(conv.agent_id)) return { key, targetMode: 'agent', agentId: conv.agent_id };
+  return { key, targetMode: null };
+}
+

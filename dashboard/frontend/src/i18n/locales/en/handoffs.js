@@ -32,6 +32,7 @@ export default {
   lastNLabel: 'Number of messages',
   lastNUnit: 'messages',
   lastNInvalid: 'Enter a number of messages from 1 to {{max}}.',
+  passing: 'Passing the chat to {{agent}}.',
   divider: 'Handed over to {{agent}}: {{reason}}',
   dividerNoReason: 'Handed over to {{agent}}',
   openRun: 'Open the run',
