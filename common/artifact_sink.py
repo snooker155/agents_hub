@@ -43,13 +43,21 @@ def reset_recorder(token) -> None:
         pass
 
 
-def record_artifact(op: str, path: str, before: Optional[str], after: Optional[str]) -> None:
-    """Report a file change to the active recorder, if any. Never raises."""
+def record_artifact(op: str, path: str, before: Optional[str], after: Optional[str],
+                    url: Optional[str] = None) -> None:
+    """Report a file change to the active recorder, if any. Never raises.
+
+    ``url`` is the file's page in the dashboard when the tool knows it, so a
+    chat can link the file instead of showing its diff.
+    """
     recorder = _artifact_recorder.get()
     if recorder is None:
         return
     try:
-        recorder(op, path, before, after)
+        if url:
+            recorder(op, path, before, after, url=url)
+        else:
+            recorder(op, path, before, after)
     except Exception:  # noqa: BLE001 - artifact reporting is best-effort; never let it break a tool call
         log.debug("artifact_sink: record failed for %s %s", op, path, exc_info=True)
 

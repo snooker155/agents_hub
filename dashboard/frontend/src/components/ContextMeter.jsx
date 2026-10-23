@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, Trash2 } from 'lucide-react';
+import { AlertTriangle, MessageSquarePlus } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { CONTEXT_HIGH, CONTEXT_WARN } from './contextUsage';
 
@@ -46,7 +46,7 @@ export default function ContextMeter({ usage, onClear = null, className = '', co
       onClick={onClear}
       className="inline-flex items-center gap-1 shrink-0 text-[11px] font-medium underline decoration-dotted hover:no-underline"
     >
-      <Trash2 className="w-3 h-3" /> {t('contextMeter.clearChat')}
+      <MessageSquarePlus className="w-3 h-3" /> {t('contextMeter.clearChat')}
     </button>
   ) : null;
 

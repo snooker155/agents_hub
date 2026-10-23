@@ -34,11 +34,14 @@ function mergeMessageFile(files, event) {
     path: event.path,
     additions: event.additions || 0,
     deletions: event.deletions || 0,
+    // The file's page, when the tool that wrote it knew it.
+    ...(event.url ? { url: event.url } : {}),
   };
   if (idx === -1) return [...list, entry];
   const next = [...list];
   // A file the agent created and then edited again is still an "add" overall.
   if (next[idx].op === 'add' && entry.op === 'modify') entry.op = 'add';
+  if (!entry.url && entry.op !== 'delete' && next[idx].url) entry.url = next[idx].url;
   next[idx] = entry;
   return next;
 }

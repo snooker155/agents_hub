@@ -34,6 +34,8 @@ export const getMessageLogs = (runId) => api.get(`/messages/${runId}/logs`);
 // its log and payloads, a running one can only answer from here.
 export const getMessageLive = (runId) => api.get(`/messages/${runId}/live`);
 export const getMessageInsights = (runId) => api.get(`/messages/${runId}/insights`);
+// One run's steps as a chat timeline: thoughts, tool calls, final text, files.
+export const getRunTrail = (runId) => api.get(`/messages/${runId}/trail`);
 export const stopMessage = (runId) => api.post(`/messages/${runId}/stop`);
 export const deleteMessage = (runId, params) => api.delete(`/messages/${runId}`, { params });
 

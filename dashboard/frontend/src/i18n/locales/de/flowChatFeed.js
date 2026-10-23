@@ -2,6 +2,8 @@ export default {
   added: 'hinzugefügt',
   // Die Beschriftung eines eingeklappten Gedankens im Chat-Feed.
   thought: 'Gedanke',
+  changesCount_one: '{{count}} Änderung',
+  changesCount_other: '{{count}} Änderungen',
   // „und 4 weitere Änderungen“ — das Ende einer zu langen Änderungsliste.
   moreChanges: 'und {{count}} weitere Änderungen',
   // Was der Agent mit dem bearbeiteten Objekt gemacht hat, wie es im Chat steht.
@@ -13,6 +15,8 @@ export default {
   },
   // Woran. Singular: jede Zeile benennt genau eine Sache.
   kinds: {
+    node: 'Knoten',
+    edge: 'Verbindung',
     locations: 'Ort',
     items: 'Gegenstand',
     entities: 'Objekt',
