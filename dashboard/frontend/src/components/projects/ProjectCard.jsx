@@ -17,17 +17,17 @@ export default function ProjectCard({ project }) {
       onClick={open}
       onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) open(); }}
       data-testid={`project-card-${project.id}`}
-      className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-xl hover:-translate-y-1 hover:border-indigo-400 hover:ring-4 hover:ring-indigo-100 transition-all duration-200 ease-out flex flex-col h-full cursor-pointer focus:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200"
+      className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 ease-out flex flex-col h-full cursor-pointer focus:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200"
     >
-      <div className="p-5 flex-1">
+      <div className="p-3.5 flex-1">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${typeConf.color}`}>
-              <TypeIcon className="w-4 h-4" />
+            <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${typeConf.color}`}>
+              <TypeIcon className="w-3.5 h-3.5" />
             </div>
             <div className="min-w-0">
-              {/* The title keeps its colour on hover: the card's lift and ring say it is clickable. */}
-              <h3 className="font-semibold text-gray-900 truncate">{project.name}</h3>
+              {/* The title keeps its colour on hover: the card's lift and shadow say it is clickable. */}
+              <h3 className="text-sm font-semibold text-gray-900 truncate">{project.name}</h3>
               <span className="text-xs text-gray-400">{project.workspace}</span>
             </div>
           </div>
@@ -38,14 +38,14 @@ export default function ProjectCard({ project }) {
           </div>
         </div>
 
-        {/* Always three lines tall, so every card is the same height whether or
+        {/* Always two lines tall, so every card is the same height whether or
             not it has a description, and a long one is clamped rather than grown. */}
-        <p className="text-sm text-gray-500 mt-3 line-clamp-3 min-h-[3.75rem] leading-5">
+        <p className="text-xs text-gray-500 mt-2 line-clamp-2 min-h-[2rem] leading-4">
           {project.description || ''}
         </p>
 
         {/* Indicators */}
-        <div className="flex items-center gap-2 mt-3 flex-wrap">
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
           {project.repo?.type && project.repo.type !== 'none' && (
             <span className="flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
               <RepoIcon className="w-3 h-3" />

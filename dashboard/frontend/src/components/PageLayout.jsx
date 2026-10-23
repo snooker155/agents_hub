@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { ChevronLeft, Info } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -60,23 +61,50 @@ export const PageContainer = ({
 // ⓘ next to a heading: click to reveal the page's description, click away (or
 // press Escape) to dismiss. Used by both PageHeader and AppBar so the hint
 // behaves identically on tall and compact pages.
+//
+// The popover is drawn into <body>, placed from the button's position: a hint
+// in a narrow column with clipped overflow (a flow page's side panel) would
+// otherwise be cut at the column's edge and slide under the panel beside it.
+const HINT_WIDTH = 320;
+const HINT_GAP = 8;
+const VIEWPORT_MARGIN = 12;
+
+function hintPosition(anchor, align) {
+  const r = anchor.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const width = Math.min(HINT_WIDTH, vw - VIEWPORT_MARGIN * 2);
+  const preferred = align === 'right' ? r.right - width : r.left;
+  const left = Math.max(VIEWPORT_MARGIN, Math.min(preferred, vw - width - VIEWPORT_MARGIN));
+  return { top: r.bottom + HINT_GAP, left, width };
+}
+
 export const InfoHint = ({ text, label, align = 'left', className = '' }) => {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
   const ref = useRef(null);
+  const popRef = useRef(null);
 
   useEffect(() => {
     if (!open) return undefined;
+    const place = () => { if (ref.current) setPos(hintPosition(ref.current, align)); };
+    place();
     const onPointer = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (ref.current?.contains(e.target) || popRef.current?.contains(e.target)) return;
+      setOpen(false);
     };
     const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onPointer);
     document.addEventListener('keydown', onKey);
+    // Follow the button when the page or a panel under it scrolls or resizes.
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
     return () => {
       document.removeEventListener('mousedown', onPointer);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
     };
-  }, [open]);
+  }, [open, align]);
 
   if (!text) return null;
 
@@ -96,15 +124,16 @@ export const InfoHint = ({ text, label, align = 'left', className = '' }) => {
       >
         <Info className="h-4 w-4" />
       </button>
-      {open && (
+      {open && pos && createPortal(
         <div
+          ref={popRef}
           role="tooltip"
-          className={`absolute top-full z-50 mt-2 w-80 max-w-[calc(100vw-3rem)] rounded-xl border border-gray-200 bg-white p-3 text-sm leading-relaxed text-gray-600 shadow-lg ${
-            align === 'right' ? 'right-0' : 'left-0'
-          }`}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
+          className="z-[1000] max-h-[60vh] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 text-sm font-normal normal-case tracking-normal leading-relaxed text-gray-600 shadow-lg"
         >
           {text}
-        </div>
+        </div>,
+        document.body,
       )}
     </span>
   );

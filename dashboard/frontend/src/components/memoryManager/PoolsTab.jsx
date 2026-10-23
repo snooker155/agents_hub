@@ -23,6 +23,7 @@ import { DEFAULT_BLOCK_NAMES, fmt } from './helpers';
 import { EpisodesPanel } from './EpisodesPanel';
 import { GraphPanel } from './GraphPanel';
 import { useColumnHeight } from '../ChatColumn';
+import { InfoHint } from '../PageLayout';
 import { MemoryHistoryPanel } from './MemoryHistoryPanel';
 import { MemoryConsolidationPanel } from './MemoryConsolidationPanel';
 import ChatMarkdown from '../chat/ChatMarkdown';
@@ -408,7 +409,11 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                     </span>
                   )}
                 </p>
-                <p className="text-xs text-gray-500 truncate">{poolDescription(m, t) || t('memoryManager.noDescription')}</p>
+                {/* The personal pool's hint lives behind its badge and the ⓘ by
+                    its title, not repeated on every row. */}
+                {!isPersonalPool(m) && (
+                  <p className="text-xs text-gray-500 truncate">{poolDescription(m, t) || t('memoryManager.noDescription')}</p>
+                )}
                 {(() => {
                   const all = m.notes || [];
                   const journalCount = all.filter(n => n.title?.startsWith('journal:')).length;
@@ -444,9 +449,16 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
             {/* Pool header */}
             <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between">
               <div>
-                <h2 className="text-lg font-bold text-gray-900">{poolName(selected, t, !workspaceFilter)}</h2>
+                {/* The personal pool's long explanation waits behind an ⓘ by
+                    the title; a pool's own description stays in view. */}
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-1">
+                  {poolName(selected, t, !workspaceFilter)}
+                  {isPersonalPool(selected) && (
+                    <InfoHint text={poolDescription(selected, t)} label={t('memoryManager.aboutPersonal')} className="font-normal" />
+                  )}
+                </h2>
                 <p className="text-xs text-gray-400 mt-0.5">{selected.id}</p>
-                {poolDescription(selected, t) && <p className="text-sm text-gray-600 mt-1">{poolDescription(selected, t)}</p>}
+                {!isPersonalPool(selected) && poolDescription(selected, t) && <p className="text-sm text-gray-600 mt-1">{poolDescription(selected, t)}</p>}
               </div>
               <div className="flex gap-2">
                 <button

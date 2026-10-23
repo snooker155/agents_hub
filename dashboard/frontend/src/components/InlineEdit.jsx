@@ -63,10 +63,10 @@ export default function InlineEdit({ value, onSave, multiline = false, className
         <textarea
           ref={ref}
           className={`border border-indigo-300 rounded px-2 py-1 text-sm resize-none w-full focus:outline-none ${className}`}
-          rows={4}
+          rows={Math.min(16, Math.max(4, (draft || '').split('\n').length + 1))}
           value={draft}
           onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Escape') cancel(); if (e.key === 'Enter' && e.metaKey) commit(); }}
+          onKeyDown={e => { if (e.key === 'Escape') cancel(); if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) commit(); }}
         />
       ) : (
         <input

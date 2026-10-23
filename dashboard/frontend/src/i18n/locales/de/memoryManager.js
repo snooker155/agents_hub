@@ -231,5 +231,6 @@ export default {
   askChatPickPool: 'Wählen Sie links einen Pool und fragen Sie danach. Ist keiner offen, antwortet er aus dem Pool, der dem Agenten in diesem Workspace zugewiesen ist.',
   personal: 'persönlich',
   personalTitle: 'Mein persönlicher Speicher',
+  aboutPersonal: 'Über den persönlichen Speicher',
   personalHint: 'Was Agenten in diesem Workspace über Sie erfahren haben. Nur Sie sehen ihn. Alle Agenten mit eingeschaltetem persönlichem Speicher lesen und ergänzen diesen einen Pool, standardmäßig ist das der Hauptagent des Workspace.',
 };
