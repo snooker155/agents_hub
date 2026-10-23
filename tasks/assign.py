@@ -120,7 +120,7 @@ def assign_agent_to_task(
     if agent_id == "orchestrator":
         subtasks = tasks_service.get_subtasks(task_id)
         if subtasks:
-            promoted = tasks_service.activate_parent_container(task_id)
+            promoted = tasks_service.activate_parent_container(task_id, agent_id=agent_id)
             updated = tasks_service.get_task(task_id)
             return {
                 "task": task_to_dict(updated),
@@ -135,6 +135,30 @@ def assign_agent_to_task(
     # unknown override key or a tool set the capability guard refuses is a
     # 400/409 to the caller, not a run that fails after it was started.
     validate_launch_params(agent_id, params)
+
+    # Any other worker assigned to a parent does the subtasks, not the
+    # parent: they are the work, broken down. The agent takes them one by one
+    # in their order (tasks.service.promote_runnable_subtasks), and the
+    # parent completes, after its outcome is graded on their results, when
+    # the last one is done. Once every subtask is done there is nothing left
+    # to split, so the agent runs on the parent itself (an outcome fix, say).
+    if agent_id != "decomposer":
+        open_subtasks = [s for s in tasks_service.get_subtasks(task_id) if s.status != TaskStatus.done]
+        if open_subtasks:
+            promoted = tasks_service.activate_parent_container(task_id, agent_id=agent_id)
+            tasks_service.append_task_activity_log(
+                task_id, "container_agent",
+                f"{agent_id} assigned: it works through the {len(open_subtasks)} open subtask(s)",
+                agent=agent_id,
+            )
+            updated = tasks_service.get_task(task_id)
+            return {
+                "task": task_to_dict(updated),
+                "run_id": None,
+                "pending_approval": False,
+                "container": True,
+                "subtasks_promoted": promoted,
+            }
 
     ws_name = str(getattr(t, "workspace", "") or "default")
     execution_mode = get_workspace_metadata(ws_name).get("orchestrator", {}).get("execution_mode", "subprocess")

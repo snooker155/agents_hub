@@ -228,3 +228,16 @@ def test_block_task_and_stop_task_default_to_system_actor():
     assert blocked.status == TaskStatus.blocked
     stopped = ts.stop_task(t.id)
     assert stopped.status == TaskStatus.stopped
+
+
+def test_a_person_may_reset_a_finished_task_to_todo():
+    """Resolved and reviewed reopen to todo like done does; an agent may not."""
+    for frm in (TaskStatus.resolved, TaskStatus.reviewed, TaskStatus.done):
+        check_transition(frm, TaskStatus.todo, Actor.user)
+        with pytest.raises(IllegalTransition):
+            check_transition(frm, TaskStatus.todo, Actor.agent)
+    t = ts.create_task("reopen me")
+    ts.update_task(t.id, status=TaskStatus.in_progress)
+    ts.update_task(t.id, status=TaskStatus.resolved)
+    ts.update_task(t.id, status=TaskStatus.todo, actor=Actor.user)
+    assert ts.get_task(t.id).status == TaskStatus.todo

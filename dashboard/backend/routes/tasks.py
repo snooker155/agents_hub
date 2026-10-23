@@ -20,7 +20,7 @@ from agents import agent_launcher
 from tasks import Actor, AgentState, CreatedBy, TaskStatus
 from workspace import create_workspace_folder, resolve_project_root, project_folder_name, resolve_task_project_name
 from workspace import get_workspace_metadata
-from agents.agent_factory import create_agent
+from routes import task_decompose
 from tasks.assign import assign_agent_to_task, assign_executor_to_task, AssignError
 from tasks.serialize import task_to_dict
 from models import TaskCreate, TaskWorkspaceUpdate, AgentAssign, DecomposeRequest, TaskUpdate, TaskAnswer, TaskListItem, TaskDetail, TaskPage
@@ -184,6 +184,14 @@ async def create_task(task: TaskCreate):
         tasks_service.update_task(t.id, actor=Actor.user, **extra)
         t = tasks_service.get_task(t.id) or t
 
+    # The "decompose" box on the create form starts the decomposer right away,
+    # the same run the Decompose button on the task starts. The flag alone was
+    # stored and never acted on.
+    if task.should_decompose and t.created_by == CreatedBy.user:
+        await decompose_task(t.id, DecomposeRequest(client_id=task.client_id,
+                                                    channel=task.decompose_channel))
+        t = tasks_service.get_task(t.id) or t
+
     return task_to_dict(t)
 
 
@@ -250,7 +258,8 @@ async def update_task(task_id: UUID, update: TaskUpdate):
             fields["status"] = TaskStatus(fields["status"])
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {fields['status']}")
-    if "priority" in fields and fields["priority"] not in ("low", "medium", "high", "critical"):
+    # null clears the priority (the "No priority" choice).
+    if "priority" in fields and fields["priority"] not in (None, "low", "medium", "high", "critical"):
         raise HTTPException(status_code=400, detail=f"Invalid priority: {fields['priority']}")
     if "depends" in fields and fields["depends"] is not None:
         fields["depends"] = [_resolve_task_ref(d) for d in fields["depends"]]
@@ -988,13 +997,15 @@ async def get_task_execution_log(task_id: UUID):
     t = tasks_service.get_task(task_id)
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
-    # Derive the task's runs from its session (canonical run list) rather than
-    # the assigned_agent_run_id pointer, which is cleared once a run completes.
-    runs = tasks_service.get_task_runs(task_id)
+    # Every run of the task and of its subtasks (tasks.service.get_task_runs),
+    # oldest first: the decomposer, the work, the grader, and for a parent
+    # whose agent works through its subtasks, the work done there.
+    runs = tasks_service.get_task_runs(task_id, include_subtasks=True)
     entries = []
     for r in runs:
         tokens = (r.get("process") or {}).get("token_usage") or {}
         entries.append({
+            "subtask": r.get("subtask"),
             "run_id": r.get("run_id"),
             "agent_id": r.get("agent_id"),
             "status": r.get("status"),
@@ -1025,12 +1036,55 @@ async def get_task_result(task_id: UUID):
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
     results = tasks_service.get_task_results(task_id)
-    # Backward-compat: expose latest result/files at top level
+    # Backward-compat: expose the latest result at top level
     latest = results[-1] if results else {}
+    # Every file any run changed, not the latest run's alone: a retry that
+    # changed nothing must not hide what the first attempt made.
+    files: list = []
+    for e in results:
+        for f in (e.get("files") or []):
+            if f not in files:
+                files.append(f)
+    subtasks = sorted(tasks_service.get_subtasks(task_id), key=lambda s: (
+        s.order if s.order is not None else 1_000_000, str(s.created_at or "")))
+    # Saved results by run, the task's and its subtasks'; a subtask's files
+    # join the list, since a parent's work may have happened there.
+    stored: dict = {}
+    for owner, mark in [(task_id, None)] + [
+            (s.id, {"id": str(s.id), "key": s.key, "title": s.title}) for s in subtasks]:
+        entries = tasks_service.get_task_results(owner)
+        for e in entries:
+            stored[str(e.get("run_id") or id(e))] = {**e, "subtask": mark} if mark else dict(e)
+        if mark:
+            for e in entries:
+                for f in (e.get("files") or []):
+                    if f not in files:
+                        files.append(f)
+    # One entry per run of the task and of its subtasks, so every agent that
+    # worked on it is listed: the run's saved result, or its own answer when
+    # it saved none (the decomposer's passes, the outcome grader). Saved
+    # results whose run is gone follow.
+    listed = []
+    for r in tasks_service.get_task_runs(task_id, include_subtasks=True):
+        rid = str(r.get("run_id") or "")
+        entry = stored.pop(rid, None)
+        if entry is None:
+            text = str(r.get("output") or "").strip()
+            if not text:
+                continue
+            entry = {"task_id": str(task_id), "run_id": rid, "agent_id": r.get("agent_id"),
+                     "result": text, "files": [],
+                     "updated_at": r.get("finished_at") or r.get("started_at")}
+            if r.get("subtask"):
+                entry["subtask"] = r["subtask"]
+        entry["status"] = r.get("status")
+        entry["started_at"] = r.get("started_at")
+        listed.append(entry)
+    listed.extend(stored.values())
     return {
-        "results": results,
+        "results": sorted(listed, key=lambda e: str(e.get("started_at") or e.get("updated_at") or "")),
         "result": latest.get("result"),
-        "files": latest.get("files") or [],
+        "files": files,
     }
 
 
@@ -1046,6 +1100,8 @@ async def set_task_result(task_id: UUID, payload: dict):
 
 @router.post("/{task_id}/decompose")
 async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None):
+    """Split the task into subtasks, then go over the tree once more
+    (routes/task_decompose.py). Returns the first pass's run id at once."""
     t = tasks_service.get_task(task_id)
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1054,31 +1110,19 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
     if getattr(t, "created_by", None) != CreatedBy.user:
         raise HTTPException(status_code=400, detail="Decomposer can only run on user-created tasks")
 
-    # Prepare run id and log file in the task's workspace
-    run_id = str(uuid4())
+    channel = ((payload.channel if payload else None) or "").strip() or None
+    if channel and not channel.startswith("decompose:"):
+        raise HTTPException(status_code=400, detail="channel must start with 'decompose:'")
+    if channel and payload and payload.client_id:
+        from common.session_broker import broker
+        broker.add_channel(payload.client_id, channel)
+
     try:
         root = create_workspace_folder(t.workspace or None)
     except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
         log.debug("decompose_task: falling back after a failure", exc_info=True)
         root = create_workspace_folder()
-    log_dir = root / ".logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"agent_run_{run_id}.log"
 
-    # Mark assignment/state for visibility in UI
-    try:
-        tasks_service.assign_agent(task_id, "decomposer", None, run_id=run_id)
-    except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
-        log.debug("decompose_task: best-effort step failed", exc_info=True)
-
-    prompt = (
-        "Decompose the following high-level task into concrete, small, and verifiable subtasks. "
-        f"Create subtasks ONLY using the add_subtask tool with parent_id={task_id}. "
-        "Do not create other high-level tasks. When a subtask must wait for others, "
-        "pass their IDs in the depends parameter of add_subtask so execution order is enforced.\n\n"
-        f"Task Data:\nID: {task_id}\nTITLE: {t.title}\nDESCRIPTION: {t.description or ''}\n\n"
-        "Provide a brief summary of the created subtasks at the end."
-    )
     build_overrides = {k: v for k, v in (
         ("model", payload.model if payload and payload.model else None),
         ("temperature", payload.temperature if payload and payload.temperature is not None else None),
@@ -1086,60 +1130,45 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
         ("verbose", payload.verbose if payload and payload.verbose is not None else True),
     ) if v is not None}
 
-    # The decomposer runs on a runner replica (docs/services.md): an
-    # ``invoke`` job, not waited for, writing its log where the thread below
-    # would have.
+    # The decomposer runs on a runner replica (docs/services.md): the split
+    # pass as an ``invoke`` job, not waited for, writing its log where the
+    # thread below would have. The review pass needs the backend thread
+    # (routes/task_decompose.py) and does not run there.
     from services import jobs as _jobs
     if _jobs.enabled():
+        run_id = str(uuid4())
+        log_dir = root / ".logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"agent_run_{run_id}.log"
+        try:
+            tasks_service.assign_agent(task_id, "decomposer", None, run_id=run_id)
+        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+            log.debug("decompose_task: best-effort step failed", exc_info=True)
         try:
             with log_file.open("w", encoding="utf-8") as fh:
                 fh.write("[decomposer] start\n")
             _jobs.submit(t.workspace or root.name, "invoke", {
                 "agent_id": "decomposer", "workspace": str(root),
                 "workspace_name": t.workspace or root.name, "overrides": build_overrides,
-                "prompt": prompt, "run_id": run_id, "log_file": str(log_file),
+                "prompt": task_decompose.split_prompt(t), "run_id": run_id, "log_file": str(log_file),
             }, label=f"decompose {task_id}")
         except _jobs.JobError as e:
             raise HTTPException(status_code=e.status, detail=str(e))
         return {"run_id": run_id}
 
-    # The worker is a plain thread, which inherits no context: the secret
-    # scope (and who asked) are captured here and re-entered inside it.
-    from common import secrets as _secrets
-    from common.identity import current_user_id as _current_user_id
-    launched_by = _current_user_id()
+    try:
+        return task_decompose.start(t, root=root, channel=channel, overrides=build_overrides,
+                                    thread_factory=threading.Thread)
+    except task_decompose.DecomposeBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
-    # Background worker to run decomposer and write logs
-    def _worker():
-        with _secrets.activate(t.workspace or root.name, "decomposer", launched_by):
-            _worker_body()
 
-    def _worker_body():
-        try:
-            with log_file.open("w", encoding="utf-8") as fh:
-                fh.write("[decomposer] start\n")
-                fh.flush()
-                try:
-                    # Use factory instead of legacy run_decomposing_agent
-                    agent = create_agent(
-                        "decomposer",
-                        workspace=str(root),
-                        model=(payload.model if payload and payload.model else None),
-                        temperature=(payload.temperature if payload and payload.temperature is not None else None),
-                        max_tokens=(payload.max_tokens if payload and payload.max_tokens else None),
-                        verbose=(payload.verbose if payload and payload.verbose is not None else True)
-                    )
-
-                    result = agent.run(prompt, run_id=run_id)
-                    if result.ok:
-                        fh.write(str(result.agent_output) + "\n")
-                    else:
-                        fh.write(f"error: {result.error}\n")
-                except Exception as e:  # noqa: BLE001 - a failed decomposition is written to the run log
-                    fh.write(f"error: {e}\n")
-                fh.flush()
-        finally:
-            pass  # Decomposition does not complete the parent task
-
-    threading.Thread(target=_worker, daemon=True).start()
-    return {"run_id": run_id}
+@router.get("/{task_id}/decompose")
+async def decompose_status(task_id: UUID):
+    """Where the task's latest decomposition stands and the tree under it
+    (key and title of each task, depth first)."""
+    if not tasks_service.get_task(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": task_decompose.status(task_id),
+            "tree": [{k: n[k] for k in ("id", "key", "title", "status", "parent_id", "depth")}
+                     for n in task_decompose.subtree(task_id)]}

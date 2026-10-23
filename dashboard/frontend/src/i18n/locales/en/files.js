@@ -103,6 +103,8 @@ export default {
   task: {
     title: 'Files',
     hint: 'Copied into the working directory of each run (task_files/) and named in the prompt. Subtasks get them too.',
+    add: 'Add files',
+    about: 'About task files',
     saveFailed: 'Could not save the task files',
   },
   evalCase: {

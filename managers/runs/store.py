@@ -679,6 +679,21 @@ def update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]
     return merged
 
 
+def detach_runs_from_task(task_id: str) -> int:
+    """Unlink a task's runs from it, keeping the runs themselves.
+
+    A task reset to todo starts over: its execution history goes, but the runs
+    stay where everything else reads them (Messages, spend, the agent's own
+    history). Returns how many runs were unlinked.
+    """
+    with db.transaction() as conn:
+        cur = conn.execute("UPDATE runs SET task_id = NULL WHERE task_id = ?", (str(task_id),))
+        count = cur.rowcount or 0
+    if count:
+        notify_change("runs", task_id=str(task_id))
+    return count
+
+
 def delete_run(run_id: str) -> bool:
     """Delete one run record and its structured payload. Returns True if removed."""
     with db.transaction() as conn:

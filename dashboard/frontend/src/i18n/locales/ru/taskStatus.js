@@ -1,6 +1,6 @@
 export default {
   todo: 'К выполнению',
-  ready: 'Готово к назначению',
+  ready: 'К назначению',
   pending: 'Ждёт подтверждения',
   in_progress: 'В работе',
   blocked: 'Заблокировано',

@@ -136,6 +136,11 @@ def _delegation_blocked(agent_id: str) -> Optional[str]:
     allow = _caller_delegates()
     if allow is None or agent_id in allow:
         return None
+    # Not linked for security (agents/main_links.py): say so, not just "not allowed".
+    from agents.main_links import refusal_message
+    refused = refusal_message(reg_get_agent(caller_id) if caller_id else None, agent_id, "delegate to")
+    if refused:
+        return refused
     return (
         f"Agent '{caller_id}' is not allowed to delegate to '{agent_id}'. "
         f"Allowed delegation targets: {sorted(allow)}. {_DELEGATION_STOP_GUIDANCE}"
@@ -257,7 +262,11 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
             if run_status == "awaiting_approval" and existing_agent:
                 spec = reg_get_agent(existing_agent)
                 return _json_ok({
-                    "message": "Task already has a pending assignment.",
+                    "message": (
+                        "Task already has an assignment waiting for the user's approval. "
+                        "STOP: do not call start_agent_tool, the user approves it."
+                    ),
+                    "assignment_mode": "manual",
                     "existing_assignment": True,
                     "run_id": str(existing_run_id),
                     "assigned_agent_id": existing_agent,
@@ -332,6 +341,11 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
         # Live mode: pre-register with "pending" so the task shows as pending (not awaiting_approval).
         # Manual mode: pre-register with "awaiting_approval" for the approval gate.
         run_id = rm_preregister_run(str(task.id), agent_id, session_id=session_id)
+        # The run that made the assignment cannot approve it: start_agent_tool
+        # refuses it (see _approval_pending_for_caller).
+        assigned_by = _calling_run_id()
+        if assigned_by:
+            run_manager.update_run(run_id, {"assigned_by_run": assigned_by})
         if assignment_mode == "live":
             run_manager.update_run(run_id, {"status": "pending"})
             # Link to session immediately in live mode — start_agent_tool follows right away.
@@ -358,6 +372,8 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
             svc_update_task(task.id, status=TaskStatus.reviewing)
         if assignment_mode != "live":
             svc_update_task(task.id, status=TaskStatus.pending)
+            from managers.runs.notifications import notify_assignment_awaiting_approval
+            notify_assignment_awaiting_approval(svc_get_task(task.id) or task, agent_id, reason)
 
         updated = svc_get_task(task.id)
         
@@ -952,6 +968,13 @@ def start_agent_tool(task_id: str) -> str:
                     code="invalid_task",
                     extra={"run_id": str(existing_run_id), "run_status": run_status},
                 )
+            if run_status == "awaiting_approval" and _approval_pending_for_caller(run):
+                return _json_err(
+                    "This assignment is waiting for the user's approval. Do not start it: "
+                    "STOP and report that the user must approve it.",
+                    code="awaiting_approval",
+                    extra={"run_id": str(existing_run_id), "agent_id": agent_id},
+                )
             if run_status not in {"awaiting_approval", "pending", ""}:
                 return _json_err(
                     "Task is not awaiting approval; it has already been started. "
@@ -990,9 +1013,11 @@ def start_agent_tool(task_id: str) -> str:
         # Register a session continuation only in fire-and-forget mode.
         # When wait_for_completion=true the orchestrator polls and handles followup
         # itself — registering a continuation would spawn a second orchestrator.
+        # Inside an orchestrator instance that takes tasks the same holds: its
+        # sweep picks the finished task up as a follow-up, in either execution mode.
         try:
             _fmode = _get_followup_mode(_task_ws or ws)
-            if _fmode == "continuous" and not wait_for_completion:
+            if _fmode == "continuous" and not wait_for_completion and not _in_task_taking_orchestrator():
                 from common.agent_context import current_session_id as _sess_ctx
                 from common.session_service import register_continuation
                 _sid = _sess_ctx.get() or os.environ.get("AGENT_SESSION_ID")
@@ -1120,6 +1145,37 @@ def _get_followup_mode(workspace: Optional[str]) -> str:
     except Exception:  # noqa: BLE001 - unreadable workspace settings mean the default mode
         log.debug("followup mode lookup failed", exc_info=True)
         return "single"
+
+
+def _calling_run_id() -> Optional[str]:
+    """The run this tool call belongs to: the context of an in-process run
+    (chat, an instance sweep), or the env of an agent subprocess."""
+    from common.agent_context import current_run_id
+    return current_run_id.get() or os.environ.get("AGENT_RUN_ID") or None
+
+
+def _approval_pending_for_caller(run: Optional[Dict[str, Any]]) -> bool:
+    """True when ``run`` awaits approval and the caller is the very run that
+    assigned it. Approval belongs to a person: the approve button, or their
+    "yes" in a later chat turn (a run of its own). An agent that assigns in
+    manual mode and then starts the run itself would skip that person."""
+    by = str((run or {}).get("assigned_by_run") or "")
+    return bool(by) and by == (_calling_run_id() or "")
+
+
+def _in_task_taking_orchestrator() -> bool:
+    """True when this process is an orchestrator instance whose task sweep
+    (runtime/instance_run.py) follows up on the tasks it routes."""
+    instance_id = os.environ.get("AGENT_INSTANCE_ID")
+    if not instance_id:
+        return False
+    try:
+        from instances import store as _instance_store
+        instance = _instance_store.get(instance_id) or {}
+    except Exception:  # noqa: BLE001 - unknown instance: keep the continuation
+        log.debug("instance lookup failed for %s", instance_id, exc_info=True)
+        return False
+    return instance.get("agent_id") == "orchestrator" and bool(instance.get("take_tasks"))
 
 
 def _get_wait_for_completion(workspace: Optional[str]) -> bool:
@@ -1454,6 +1510,10 @@ def create_agent_tool(
             payload["message"] = (
                 f"Agent '{name}' created and added to workspace '{added_to_workspace}'"
             )
+        # The main agent may delegate to it and hand the chat to it, unless
+        # that would close a blocked capability combination (agents/main_links.py).
+        from agents.main_links import link_new_agent
+        payload["main_agent_link"] = link_new_agent(agent_id)
         return _json_ok(payload)
     except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to create agent: {e}")

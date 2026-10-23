@@ -21,10 +21,14 @@ import {
   RefreshCw, Play, Download, ExternalLink, CheckSquare, AlertCircle,
   Edit3, Save, X, Send, Code2, BookOpen, FileText, Tag, Clock,
   ArrowUpDown, Terminal, Folder, FolderOpen, ChevronRight, ChevronDown,
-  Search, ChevronUp, Zap, Link2, PanelRightOpen, Trash2, Eye,
+  Search, ChevronUp, Zap, Link2, PanelRightOpen, PanelRightClose, ListTodo, Trash2, Eye,
 } from 'lucide-react';
 
+import { ActivityText } from '../components/task/ActivityEntry';
+import { StatusBadge } from '../components/task/TaskFields';
+import { ALL_STATUSES, entryAgent, statusCfg } from '../components/task/taskUtils';
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { TabRow } from '../components/PageTabs';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
 import PageLoader from '../components/PageLoader';
@@ -94,10 +98,15 @@ export default function ProjectDetails() {
   // file by its registry id, a path from an old link still opens.
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedFile = searchParams.get('file') || '';
-  const [activeTab, setActiveTab] = useState(linkedFile ? 'Files' : 'Overview');
+  // ?tab=<name> opens that tab: a task opened from the Tasks tab links back
+  // with ?tab=Tasks (task/taskBack.js).
+  const [activeTab, setActiveTab] = useState(linkedFile ? 'Files' : (searchParams.get('tab') || 'Overview'));
   const [taskToolbar, setTaskToolbar] = useState(null);
-  const [plannerToolbar, setPlannerToolbar] = useState(null);
   const [showPlanner, setShowPlanner] = useState(false);
+  // "Generate from architecture" opens the planner and asks it for a plan;
+  // the panel clears this once the run starts (PlannerChat).
+  const [generateRequested, setGenerateRequested] = useState(false);
+  const onGenerateStarted = useCallback(() => setGenerateRequested(false), []);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
@@ -602,9 +611,9 @@ export default function ProjectDetails() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200 shrink-0 flex items-end justify-between gap-3">
-        <nav className="flex flex-wrap gap-2 -mb-px">
-          {[
+      <TabRow
+        className="shrink-0"
+        tabs={[
             ...TABS,
             ...(project.type === 'code' || (project.repo?.type && project.repo.type !== 'none') ? ['Repository'] : []),
             'Deploy',
@@ -623,21 +632,8 @@ export default function ProjectDetails() {
               {t(`projectDetails.tabs.${tab.toLowerCase()}`)}
             </button>
           ))}
-        </nav>
-        {activeTab === 'Tasks' && (
-          <div className="flex items-center gap-2 shrink-0">
-            <div ref={setPlannerToolbar} className="flex items-center" />
-            <div ref={setTaskToolbar} className="flex items-center" />
-            {!showPlanner && (
-              <button onClick={() => setShowPlanner(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-emerald-600 hover:bg-emerald-50"
-                title={t('projectDetails.showTheTaskPlanner')}>
-                <PanelRightOpen className="w-4 h-4" /> {t('projectDetails.planner')}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+        actions={activeTab === 'Tasks' && <div ref={setTaskToolbar} className="flex items-center" />}
+      />
 
       {/* Tab Content */}
       {activeTab === 'Overview' && (
@@ -687,33 +683,37 @@ export default function ProjectDetails() {
               showWorkspaceColumn={false}
               liveUpdates={liveUpdates}
               toolbarTarget={taskToolbar}
+              // After the board's search box, before its List/Kanban and New task.
+              extraControls={<>
+                <button onClick={() => { setShowPlanner(true); setGenerateRequested(true); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-emerald-600 hover:bg-emerald-50"
+                  title={t('flowPlannerChat.createAFullTaskPlan')}>
+                  <ListTodo className="w-4 h-4" /> {t('flowPlannerChat.generateFromArchitecture')}
+                </button>
+                <button onClick={() => setShowPlanner((v) => !v)} aria-pressed={showPlanner}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    showPlanner ? 'text-emerald-700 bg-emerald-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
+                  title={showPlanner ? t('flowPlannerChat.hidePlanner') : t('projectDetails.showTheTaskPlanner')}>
+                  {showPlanner ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />} {t('projectDetails.planner')}
+                </button>
+              </>}
             />
           </div>
           {showPlanner && (
             <PlannerChat projectId={project.id} onGenerated={loadTasks}
-              onClose={() => setShowPlanner(false)} toolbarTarget={plannerToolbar} />
+              onClose={() => setShowPlanner(false)}
+              generateRequested={generateRequested}
+              onGenerateStarted={onGenerateStarted} />
           )}
         </div>
       )}
 
       {activeTab === 'Overview' && (() => {
-        const statusOrder = ['done', 'in_progress', 'ready', 'blocked', 'stopped', 'todo'];
-        const statusLabels = {
-          done: t('projectDetails.taskStatuses.done'),
-          in_progress: t('projectDetails.taskStatuses.in_progress'),
-          ready: t('projectDetails.taskStatuses.ready'),
-          blocked: t('projectDetails.taskStatuses.blocked'),
-          stopped: t('projectDetails.taskStatuses.stopped'),
-          todo: t('projectDetails.taskStatuses.todo'),
-        };
-        const statusColors = {
-          done: { bar: 'bg-green-500', badge: 'bg-green-100 text-green-700' },
-          in_progress: { bar: 'bg-yellow-400', badge: 'bg-yellow-100 text-yellow-700' },
-          ready: { bar: 'bg-blue-400', badge: 'bg-blue-100 text-blue-700' },
-          blocked: { bar: 'bg-red-500', badge: 'bg-red-100 text-red-700' },
-          stopped: { bar: 'bg-gray-400', badge: 'bg-gray-100 text-gray-500' },
-          todo: { bar: 'bg-gray-300', badge: 'bg-gray-100 text-gray-500' },
-        };
+        // Every task status, with the colours and names the task pages use
+        // (task/taskUtils.js), done first; a resolved or reviewed task is
+        // shown as what it is, not as an unknown grey word.
+        const statusOrder = ['done', ...ALL_STATUSES.map((s) => s.value).filter((v) => v !== 'done')];
+        const statusLabel = (s) => t(`taskStatus.${statusCfg(s).value}`);
         const total = tasks.length;
         const doneCnt = tasks.filter(t => t.status === 'done').length;
         const pct = total > 0 ? Math.round((doneCnt / total) * 100) : 0;
@@ -746,12 +746,9 @@ export default function ProjectDetails() {
                     {statusOrder.map(s => {
                       const cnt = byCounts[s] || 0;
                       if (!cnt) return null;
-                      const color = statusColors[s] || { badge: 'bg-gray-100 text-gray-500' };
                       return (
                         <div key={s} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-gray-100 bg-gray-50">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${color.badge}`}>
-                            {statusLabels[s] || s}
-                          </span>
+                          <StatusBadge status={s} size="xs" />
                           <span className="text-sm font-bold text-gray-700">{cnt}</span>
                         </div>
                       );
@@ -764,17 +761,17 @@ export default function ProjectDetails() {
                     {/* Small cards: a task here is its name and where it stands. */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
                       {tasks.map(task => {
-                        const color = statusColors[task.status] || { bar: 'bg-gray-300', badge: 'bg-gray-100 text-gray-500' };
+                        const cfg = statusCfg(task.status);
                         return (
                           <Link
                             key={task.id}
                             to={`/tasks/${task.id}`}
                             className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:border-indigo-300 hover:shadow-sm transition-all min-w-0"
                           >
-                            <span className={`w-1 self-stretch rounded-full shrink-0 ${color.bar}`} />
+                            <span className={`w-1 self-stretch rounded-full shrink-0 ${cfg.dot}`} />
                             <span className="text-sm text-gray-800 truncate flex-1" title={task.title}>{task.title}</span>
-                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0 ${color.badge}`}>
-                              {statusLabels[task.status] || task.status}
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0 ${cfg.bg} ${cfg.text}`} title={statusLabel(task.status)}>
+                              {statusLabel(task.status)}
                             </span>
                           </Link>
                         );
@@ -800,7 +797,7 @@ export default function ProjectDetails() {
                         <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">{t('projectDetails.activityLog')}</h4>
                         <div className="space-y-0 max-h-80 overflow-y-auto">
                           {logEntries.map((e, i) => {
-                            const style = typeStyle[e.type] || { dot: 'bg-gray-300', text: 'text-gray-600' };
+                            const style = typeStyle[e.type] || { dot: 'bg-gray-300' };
                             const ts = new Date(e.timestamp);
                             return (
                               <div key={i} className="flex gap-3 pb-3">
@@ -810,7 +807,7 @@ export default function ProjectDetails() {
                                 </div>
                                 <div className="pb-1 min-w-0">
                                   <div className="flex items-baseline gap-2 flex-wrap">
-                                    <span className={`text-xs font-medium ${style.text}`}>{e.message}</span>
+                                    <span className="text-xs text-gray-700"><ActivityText entry={e} agent={entryAgent(e)} /></span>
                                     <Link to={`/tasks/${e.taskId}`} className="text-xs text-gray-400 hover:text-indigo-500 truncate max-w-xs">{e.taskTitle}</Link>
                                   </div>
                                   <span className="text-[10px] text-gray-400">{ts.toLocaleString()}</span>
@@ -845,12 +842,13 @@ export default function ProjectDetails() {
           ) : filesError ? (
             <p className="text-sm text-red-500">{filesError}</p>
           ) : files.length ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
-              <div className="lg:col-span-4 border border-gray-200 rounded-lg p-2 min-h-0 overflow-y-auto">
+            // One block: the list, a divider, the file.
+            <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border border-gray-200 rounded-lg overflow-hidden">
+              <div className="lg:col-span-4 p-2 min-h-0 overflow-y-auto border-b lg:border-b-0 lg:border-r border-gray-200">
                 {renderFileNodes(fileTree)}
               </div>
-              <div className="lg:col-span-8 border border-gray-200 rounded-lg overflow-hidden min-h-0 flex flex-col">
-                <div className="px-4 py-2 border-b bg-gray-50 shrink-0 flex items-center justify-between gap-2">
+              <div className="lg:col-span-8 min-w-0 min-h-0 flex flex-col">
+                <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 shrink-0 flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <div className="text-xs text-gray-500">{t('projectDetails.selectedFile')}</div>
                     <div className="text-sm text-gray-700 truncate">{selectedFilePath || '-'}</div>

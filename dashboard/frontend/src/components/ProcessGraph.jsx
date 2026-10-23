@@ -161,8 +161,11 @@ const RUN_STATUS_CLS = {
 // `nested`: the graph of a delegated run, drawn inside its parent's step. Its
 // runs hang off that step, not off a timeline of their own, so they have no
 // timeline dot or connector.
+// `newestFirst`: the latest step on top (the task page), each step keeping
+// its number in the run order.
 export default function ProcessGraph({
   messageRuns = [], showDetailsLink = true, titleByAgent = false, evalCaseWorkspace = undefined, nested = false,
+  followLast = true, newestFirst = false,
 }) {
   const { t } = useI18n();
   // "To eval case" is offered where the host passes a workspace for it (the
@@ -190,12 +193,14 @@ export default function ProcessGraph({
     setExpandedNodes(new Set());
   }, []);
 
+  // `followLast`: bring the newest step into view as steps arrive (the chat
+  // panel); the task page leaves the scroll where the reader put it.
   useEffect(() => {
-    if (!messageRuns.length || nested) return;
+    if (!messageRuns.length || nested || !followLast) return;
     const isFirst = prevLengthRef.current === null;
     prevLengthRef.current = messageRuns.length;
     lastNodeRef.current?.scrollIntoView({ behavior: isFirst ? 'instant' : 'smooth', block: 'nearest' });
-  }, [messageRuns.length, nested]);
+  }, [messageRuns.length, nested, followLast]);
 
   if (!messageRuns.length) {
     return <p className="text-xs text-gray-500 italic">{t('processGraph.noProcessMessageDataYet')}</p>;
@@ -219,12 +224,13 @@ export default function ProcessGraph({
           </button>
         </div>
       )}
-      {messageRuns.map((mr, idx) => {
+      {(newestFirst ? [...messageRuns].reverse() : messageRuns).map((mr, pos) => {
+        const idx = newestFirst ? messageRuns.length - 1 - pos : pos;
         const key = mr.message_id || idx;
         // A delegated run's block always shows its steps: the delegation card
         // around it is what folds.
         const isExpanded = nested || expandedNodes.has(idx);
-        const hasNext = idx < messageRuns.length - 1;
+        const hasNext = pos < messageRuns.length - 1;
         const tools = mr.tools || [];
         const toolCount = Number(mr.tool_calls || tools.length || 0);
         const toolNames = Array.from(
@@ -267,6 +273,12 @@ export default function ProcessGraph({
                     <div className="font-medium text-sm text-indigo-900 truncate">
                       {shortText(mr.input || 'Message', 100)}
                     </div>
+                  )}
+                  {/* A run made on a subtask, shown on its parent's flow. */}
+                  {mr.subtask && (
+                    <span className="text-xs text-indigo-700 truncate min-w-0" title={mr.subtask.title}>
+                      {mr.subtask.key ? `${mr.subtask.key} · ` : ''}{mr.subtask.title}
+                    </span>
                   )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -344,15 +356,16 @@ export default function ProcessGraph({
                   );
                 })()}
               </div>
-              {/* Two rows: the tokens, then tool calls and time. The second row's
-                  pills never wrap apart; the links go under them when the
-                  panel is too narrow for both. */}
-              <div className="flex flex-wrap gap-1 mb-1" data-testid="run-stats-tokens">
-                <TokenPill label={t('processGraph.in')} value={mr.inbound_tokens} />
-                <TokenPill label={t('processGraph.out')} value={mr.outbound_tokens} />
-                <TokenPill label={t('processGraph.total')} value={mr.total_tokens} />
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+              {/* One line when it fits: the tokens, then tool calls and time,
+                  then the link on the right. On a narrow panel the groups
+                  wrap as wholes (tools and time never part); the link goes
+                  under them. */}
+              <div className="flex flex-wrap items-center gap-x-1 gap-y-1" data-testid="run-stats">
+                <div className="flex flex-wrap gap-1" data-testid="run-stats-tokens">
+                  <TokenPill label={t('processGraph.in')} value={mr.inbound_tokens} />
+                  <TokenPill label={t('processGraph.out')} value={mr.outbound_tokens} />
+                  <TokenPill label={t('processGraph.total')} value={mr.total_tokens} />
+                </div>
                 <div className="flex shrink-0 gap-1" data-testid="run-stats-run">
                   <TokenPill label={t('processGraph.tools2')} value={toolCount} />
                   <TokenPill label={t('processGraph.duration')} value={fmtDurationMs(mr.duration_ms)} />

@@ -293,9 +293,13 @@ def update_task(
                 if "session_id" not in fields:
                     fields["session_id"] = None
 
-            # Clear results only when explicitly moving back to todo. Run history
-            # lives on the session (message_ids) and is not reset here.
+            # Back to todo is starting over: the results, the gradings (or the
+            # outcome's attempt count starts at its limit) and the execution
+            # history go. The runs and sessions themselves are kept and only
+            # unlinked, after the write below (_clear_task_history).
             if new_status in _RESET_STATUSES:
+                if "outcome_evaluations" not in fields:
+                    fields["outcome_evaluations"] = []
                 try:
                     delete_task_result_file(task_id)
                 except Exception:  # noqa: BLE001 - a missing result file must not block the status change
@@ -305,20 +309,36 @@ def update_task(
     current = store.get(task_id)
     updated = store.update(task_id, **fields)
     if updated and current:
+        # The agent on the task when this happened, so the activity says who
+        # worked on it: the one assigned now, or the one this write releases.
+        acting = updated.assigned_agent_type or current.assigned_agent_type
+        acting_extra = {"agent": acting} if acting else {}
         if "status" in fields and str(fields["status"]) != str(current.status):
+            old_s = getattr(current.status, "value", current.status)
+            new_s = getattr(fields["status"], "value", fields["status"])
             append_task_activity_log(
                 task_id,
                 "status_change",
-                f"Status: {current.status} → {fields['status']}",
-                **{"from": str(current.status), "to": str(fields["status"])},
+                f"Status: {old_s} → {new_s}",
+                **{"from": str(old_s), "to": str(new_s)}, **acting_extra,
             )
+        # An assignment writes ``executor``; ``assigned_agent_type`` follows
+        # it on read (tasks.storage._sync_executor), so read the agent from either.
         new_agent = fields.get("assigned_agent_type")
+        executor = fields.get("executor")
+        if not new_agent and executor:
+            kind = executor.get("kind") if isinstance(executor, dict) else getattr(executor, "kind", None)
+            ex_id = executor.get("id") if isinstance(executor, dict) else getattr(executor, "id", None)
+            new_agent = ex_id if kind == "agent" else (f"{kind}:{ex_id}" if kind and ex_id else None)
         old_agent = current.assigned_agent_type
         if new_agent and new_agent != old_agent:
             append_task_activity_log(task_id, "agent_assigned", f"Agent assigned: {new_agent}", agent=new_agent)
-        elif old_agent and new_agent is None and "assigned_agent_type" in fields:
-            append_task_activity_log(task_id, "agent_cleared", "Agent assignment cleared")
+        elif old_agent and new_agent is None and ("assigned_agent_type" in fields or "executor" in fields):
+            append_task_activity_log(task_id, "agent_cleared", "Agent assignment cleared", agent=old_agent)
     if updated:
+        if current and "status" in fields and fields["status"] == TaskStatus.todo \
+                and current.status != TaskStatus.todo:
+            _clear_task_history(task_id)
         notify_change("tasks", task_id=str(task_id))
         # Cascade blocked-state to/from descendants on a status transition.
         if current and "status" in fields:
@@ -355,6 +375,23 @@ def update_task(
         if "depends" in fields:
             _reevaluate_dependency_block(task_id, store=store)
     return updated
+
+
+def _clear_task_history(task_id: UUID) -> None:
+    """Unlink a task reset to todo from its runs and sessions, so its
+    execution history starts empty. Best effort: the reset itself is done."""
+    try:
+        from managers.runs.store import detach_runs_from_task
+        from common.session_service import detach_task_sessions
+        runs = detach_runs_from_task(str(task_id))
+        sessions = detach_task_sessions(str(task_id))
+        if runs or sessions:
+            append_task_activity_log(
+                task_id, "history_cleared",
+                f"Reset to todo: execution history and results cleared ({runs} run(s) unlinked)",
+            )
+    except Exception:  # noqa: BLE001 - a history that cannot be cleared leaves the reset standing
+        log.warning("clearing the history of task %s failed", task_id, exc_info=True)
 
 
 def _collect_descendants(root_id: UUID, tasks: List[Task]) -> List[Task]:
@@ -641,6 +678,100 @@ def _start_orchestrator_on_subtask(task: Task, *, store: TaskStore) -> bool:
         return False
 
 
+def _start_agent_on_subtask(task: Task, agent_id: str, *, store: TaskStore) -> bool:
+    """Hand a runnable subtask to the agent its container was assigned.
+
+    Claims the subtask first, like :func:`_start_orchestrator_on_subtask`,
+    then assigns it the ordinary way (``tasks.assign.assign_agent_to_task``),
+    which knows node and subprocess mode and turns a subtask that has
+    subtasks of its own into a container for the same agent. A launch that
+    fails releases the claim and blocks the subtask with the reason, so the
+    container stops on it visibly instead of retrying it on every pass.
+    """
+    claimed = store.claim(
+        task.id,
+        waiting_statuses=("todo", "ready"),
+        assigned_agent_type=agent_id,
+        status=TaskStatus.in_progress,
+    )
+    if claimed is None:
+        return False
+    try:
+        from tasks.assign import assign_agent_to_task
+        from tasks.serialize import task_to_dict
+        assign_agent_to_task(task.id, agent_id, None, task_to_dict=task_to_dict)
+        append_task_activity_log(
+            task.id, "agent_assigned",
+            f"{agent_id} started on this subtask (assigned to the parent task)",
+            agent=agent_id,
+        )
+        notify_change("tasks", task_id=str(task.id))
+        return True
+    except Exception as exc:  # noqa: BLE001 - a launch failure blocks this subtask, the rest of the container waits on it
+        log.warning("container agent %s could not start subtask %s", agent_id, task.id, exc_info=True)
+        clear_agent(task.id, store=store)
+        detail = getattr(exc, "detail", None) or str(exc)
+        update_task(task.id, store=store, status=TaskStatus.blocked,
+                    blocked_reason=f"{agent_id} could not start on this subtask: {detail}")
+        return False
+
+
+def finish_container_subtask(task_id: UUID, *, store: TaskStore = default_store) -> bool:
+    """Close a subtask whose container agent just finished its work run.
+
+    In a container with its own agent nobody reviews the subtasks one by one
+    (the parent's outcome, when it has one, is graded once they are all
+    done), so a finished subtask is done: that releases its dependents,
+    starts the next subtask and may complete the parent. Returns False, and
+    changes nothing, for a task that is not such a subtask.
+    """
+    task = store.get(task_id)
+    if task is None or task.parent_id is None:
+        return False
+    parent = store.get(task.parent_id)
+    agent = str(getattr(parent, "container_agent", "") or "") if parent else ""
+    if not agent:
+        return False
+    if task.status in (TaskStatus.done, TaskStatus.blocked, TaskStatus.stopped,
+                       TaskStatus.awaiting_input, TaskStatus.awaiting_approval):
+        return False
+    clear_agent(task_id, store=store)
+    append_task_activity_log(task_id, "container_subtask_done",
+                             f"{agent} finished this subtask", agent=agent)
+    update_task(task_id, store=store, status=TaskStatus.done)
+    return True
+
+
+def finish_container_parent(task_id: UUID, *, store: TaskStore = default_store) -> bool:
+    """Complete a container whose agent just finished a run on the parent itself.
+
+    That run is another attempt after the outcome grader found the subtasks'
+    work short (tasks.outcome.on_container_completed). Its result has been
+    graded by the time this runs, and the subtasks are all done, so the work
+    is finished and checked: the parent is done, not left resolved for a
+    review that has already happened. Returns False, and changes nothing,
+    for a task that is not such a container.
+    """
+    task = store.get(task_id)
+    if task is None or not str(getattr(task, "container_agent", "") or ""):
+        return False
+    if task.status in (TaskStatus.done, TaskStatus.blocked, TaskStatus.stopped,
+                       TaskStatus.awaiting_input, TaskStatus.awaiting_approval):
+        return False
+    subtasks = [t for t in store.list() if t.parent_id == task_id]
+    if not subtasks or any(t.status != TaskStatus.done for t in subtasks):
+        return False
+    agent = str(task.container_agent)
+    clear_agent(task_id, store=store)
+    append_task_activity_log(
+        task_id, "container_completed",
+        f"{agent} finished the work and all {len(subtasks)} subtasks are done: completing the task",
+        agent=agent,
+    )
+    update_task(task_id, store=store, status=TaskStatus.done)
+    return True
+
+
 # Subtask states that count as "being worked on": while any sibling is in one
 # of these, the container does not start the next subtask (strict one-at-a-time
 # execution). `ready` counts only in node mode, where it means "queued for the
@@ -667,20 +798,22 @@ def promote_runnable_subtasks(parent_id: UUID, *, store: TaskStore = default_sto
     ``depends`` is always honoured; genuinely independent subtasks run in
     parallel. Candidates are taken in explicit ``order`` then creation order.
     Node mode marks them ready for the polling loop; subprocess mode starts an
-    orchestrator run on each directly. Each dispatch atomically claims its
-    subtask, so concurrent promoters never double-dispatch. Returns the number
-    of subtasks dispatched.
+    orchestrator run on each directly. A container with its own agent
+    (``container_agent``) hands each subtask to that agent instead, in either
+    mode. Each dispatch atomically claims its subtask, so concurrent promoters
+    never double-dispatch. Returns the number of subtasks dispatched.
     """
     parent = store.get(parent_id)
     if parent is None:
         return 0
     mode = _execution_mode(parent.workspace)
     cap = _max_parallel_subtasks(parent.workspace)
+    container_agent = str(getattr(parent, "container_agent", "") or "")
     tasks = store.list()
     index = {t.id: t for t in tasks}
     children = [t for t in tasks if t.parent_id == parent_id]
 
-    active_states = _SUBTASK_ACTIVE if mode != "node" else (_SUBTASK_ACTIVE | {TaskStatus.ready})
+    active_states = _SUBTASK_ACTIVE if (mode != "node" or container_agent) else (_SUBTASK_ACTIVE | {TaskStatus.ready})
     active_count = sum(
         1 for c in children
         if c.status in active_states or (c.assigned_agent_type and c.status != TaskStatus.done)
@@ -689,7 +822,7 @@ def promote_runnable_subtasks(parent_id: UUID, *, store: TaskStore = default_sto
     if slots <= 0:
         return 0
 
-    waiting = TaskStatus.todo if mode == "node" else (TaskStatus.todo, TaskStatus.ready)
+    waiting = TaskStatus.todo if (mode == "node" and not container_agent) else (TaskStatus.todo, TaskStatus.ready)
     candidates = [
         c for c in children
         if (c.status == waiting if isinstance(waiting, TaskStatus) else c.status in waiting)
@@ -707,7 +840,10 @@ def promote_runnable_subtasks(parent_id: UUID, *, store: TaskStore = default_sto
     for nxt in candidates:
         if dispatched >= slots:
             break
-        if mode == "node":
+        if container_agent:
+            if _start_agent_on_subtask(nxt, container_agent, store=store):
+                dispatched += 1
+        elif mode == "node":
             # Claim atomically (todo → ready) so a second promoter can't grab the
             # same subtask; the polling loop then picks it up.
             claimed = store.claim(nxt.id, waiting_statuses=("todo",), status=TaskStatus.ready)
@@ -726,11 +862,15 @@ def promote_runnable_subtasks(parent_id: UUID, *, store: TaskStore = default_sto
     return dispatched
 
 
-def activate_parent_container(parent_id: UUID, *, store: TaskStore = default_store) -> int:
+def activate_parent_container(parent_id: UUID, *, agent_id: Optional[str] = None,
+                              store: TaskStore = default_store) -> int:
     """Start container processing for a parent task that has subtasks.
 
     Clears any pending agent assignment on the parent (the parent itself is not
     work), moves it to in_progress, and promotes its runnable subtasks to ready.
+    ``agent_id`` is the agent that works through the subtasks; None (or the
+    orchestrator) leaves each one to the orchestrator to route. Called without
+    it, a container keeps the agent it was given before (a resume).
     Returns the number of subtasks promoted.
     """
     parent = store.get(parent_id)
@@ -738,6 +878,10 @@ def activate_parent_container(parent_id: UUID, *, store: TaskStore = default_sto
         return 0
     if parent.assigned_agent_type:
         clear_agent(parent_id, store=store)
+    if agent_id is not None:
+        container_agent = None if agent_id == "orchestrator" else agent_id
+        if getattr(parent, "container_agent", None) != container_agent:
+            store.update(parent_id, container_agent=container_agent)
     if parent.status != TaskStatus.in_progress:
         store.update(parent_id, status=TaskStatus.in_progress, blocked_reason=None)
         append_task_activity_log(
@@ -870,18 +1014,36 @@ def _maybe_complete_parent(task_id: UUID, *, store: TaskStore) -> None:
     t = store.get(task_id)
     if t is None or t.parent_id is None:
         return
+    _complete_parent_when_done(t.parent_id, store=store)
+
+
+def _complete_parent_when_done(parent_id: UUID, *, store: TaskStore) -> None:
+    """Complete ``parent_id`` once every subtask it has left is done."""
     tasks = store.list()
-    siblings = [x for x in tasks if x.parent_id == t.parent_id]
+    siblings = [x for x in tasks if x.parent_id == parent_id]
     if not siblings or any(x.status != TaskStatus.done for x in siblings):
         return
-    parent = next((x for x in tasks if x.id == t.parent_id), None)
+    parent = next((x for x in tasks if x.id == parent_id), None)
     if parent is None or parent.status in (TaskStatus.done, TaskStatus.stopped):
         return
     append_task_activity_log(
         parent.id, "container_completed",
         f"All {len(siblings)} subtasks are done — completing parent task",
     )
+    # The parent's definition of done is about the whole of the work, so it
+    # is graded on the subtasks' results now; an unmet outcome starts another
+    # attempt on the parent or blocks it instead of completing it.
+    if getattr(parent, "container_agent", None) and (getattr(parent, "outcome", None) or {}).get("rubric"):
+        try:
+            from tasks.outcome import on_container_completed
+            if on_container_completed(parent.id):
+                return
+        except Exception:  # noqa: BLE001 - a broken grading completes the parent as before
+            log.warning("outcome grading of container %s failed", parent.id, exc_info=True)
     update_task(parent.id, store=store, status=TaskStatus.done)
+    # No run of the parent's own finished, so the run hooks never announce it.
+    from managers.runs.notifications import notify_container_completed
+    notify_container_completed(parent, len(siblings))
 
 
 def _prune_dependencies(deleted_ids: set, *, store: TaskStore) -> None:
@@ -899,7 +1061,33 @@ def _prune_dependencies(deleted_ids: set, *, store: TaskStore) -> None:
 
 
 def delete_task(task_id: UUID, *, cascade: bool = False, store: TaskStore = default_store) -> int:
-    """Delete a task by id. Returns the number of deleted tasks."""
+    """Delete a task by id. Returns the number of deleted tasks.
+
+    Deleting a subtask settles its parent: when every subtask left is done
+    the parent completes, as if the last one had just finished, and an
+    active container goes on with the next one."""
+    doomed = store.get(task_id)
+    parent_id = doomed.parent_id if doomed else None
+    deleted = _delete_task(task_id, cascade=cascade, store=store)
+    if deleted and parent_id:
+        try:
+            _settle_parent_after_delete(parent_id, store=store)
+        except Exception:  # noqa: BLE001 - the delete is done; the parent waits for its next change
+            log.warning("settling parent %s after a delete failed", parent_id, exc_info=True)
+    return deleted
+
+
+def _settle_parent_after_delete(parent_id: UUID, *, store: TaskStore) -> None:
+    parent = store.get(parent_id)
+    if parent is None or parent.status != TaskStatus.in_progress:
+        return
+    _complete_parent_when_done(parent_id, store=store)
+    parent = store.get(parent_id)
+    if parent is not None and parent.status == TaskStatus.in_progress:
+        promote_runnable_subtasks(parent_id, store=store)
+
+
+def _delete_task(task_id: UUID, *, cascade: bool, store: TaskStore) -> int:
     if cascade:
         # Collect all descendant IDs before deletion to clean up sidecars
         tasks = store.list()
@@ -1373,16 +1561,19 @@ def append_routing_log_entry(
 
 # -------------------- Task runs --------------------
 
-def get_task_runs(task_id: UUID) -> list:
-    """Return the agent runs for a task, derived from its session context.
+def get_task_runs(task_id: UUID, *, include_subtasks: bool = False) -> list:
+    """Return the agent runs for a task, oldest first.
 
-    Runs are linked to a session via ``session.message_ids``; the task points at
-    that session via ``task.session_id`` (one-session-per-task invariant). This
-    is the canonical source for "all runs of a task" and stays correct even
-    after ``assigned_agent_run_id`` is cleared when a run completes.
+    Two links lead from a task to its runs, and neither alone has them all:
+    the session (``session.message_ids``, which ``task.session_id`` points
+    at) holds the runs launched on it, while runs made beside it, the
+    decomposer's passes and the outcome grader's records, only carry
+    ``run.task_id``; a reset to todo also drops the session. Both are read
+    and merged, so the list stays complete after ``assigned_agent_run_id``
+    is cleared.
 
-    Falls back to runs filtered by ``run.task_id`` if the task has no session
-    context yet (e.g. a run recorded before its session link was established).
+    ``include_subtasks`` adds the runs of every descendant, each marked with
+    ``subtask`` ({id, key, title}), for a parent whose work happened there.
     """
     from managers import run_manager
     from common.session_service import get_context_by_id, load_contexts
@@ -1404,14 +1595,29 @@ def get_task_runs(task_id: UUID) -> list:
     all_runs = run_manager.load_runs()
     runs_by_id = {r.get("run_id"): r for r in all_runs}
 
+    runs: list = []
+    seen: set = set()
     if ctx:
-        message_ids = ctx.get("message_ids") or []
-        runs = [runs_by_id[rid] for rid in message_ids if rid in runs_by_id]
-        if runs:
-            return runs
+        for rid in ctx.get("message_ids") or []:
+            if rid in runs_by_id and rid not in seen:
+                seen.add(rid)
+                runs.append(runs_by_id[rid])
+    for r in all_runs:
+        if r.get("task_id") == str(task_id) and r.get("run_id") not in seen:
+            seen.add(r.get("run_id"))
+            runs.append(r)
 
-    # Fallback: runs that back-reference this task directly.
-    return [r for r in all_runs if r.get("task_id") == str(task_id)]
+    if include_subtasks:
+        for sub in _collect_descendants(t.id, list_tasks()):
+            mark = {"id": str(sub.id), "key": sub.key, "title": sub.title}
+            for r in get_task_runs(sub.id):
+                if r.get("run_id") not in seen:
+                    seen.add(r.get("run_id"))
+                    runs.append({**r, "subtask": mark})
+
+    def _when(r: dict) -> str:
+        return str(r.get("started_at") or r.get("created_at") or "")
+    return sorted(runs, key=_when)
 
 
 # -------------------- Result --------------------
@@ -1507,6 +1713,11 @@ def assign_executor(
                       task_id, executor.id, exc_info=True)
     updated = store.update(task_id, **fields)
     if updated:
+        # Who now works on the task, in its activity (a relaunch of the same
+        # executor, or one that claimed the task first, is not a new entry).
+        name = executor.id if executor.kind == "agent" else f"{executor.kind}:{executor.id}"
+        if current is not None and current.assigned_agent_type != name:
+            append_task_activity_log(task_id, "agent_assigned", f"Agent assigned: {name}", agent=name)
         notify_change("tasks", task_id=str(task_id))
     return updated
 
@@ -1575,6 +1786,7 @@ __all__ = [
     "get_subtasks",
     "promote_runnable_subtasks",
     "activate_parent_container",
+    "finish_container_subtask",
     "pause_container",
     "resume_container",
     "PAUSE_MARKER",

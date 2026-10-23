@@ -55,6 +55,9 @@ describe('TaskOutcomeCard', () => {
 
   it('is a compact affordance when the task has no outcome', () => {
     render(<TaskOutcomeCard task={taskWith(null)} onChanged={vi.fn()} />);
+    // The hint waits behind the ⓘ by the title.
+    expect(screen.queryByText('outcomes.noneHint')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'outcomes.about' }));
     expect(screen.getByText('outcomes.noneHint')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /outcomes.add/ })).toBeInTheDocument();
     expect(screen.queryByTestId('task-outcome-card')).toBeNull();
@@ -87,15 +90,17 @@ describe('TaskOutcomeCard', () => {
     expect(outcomesApi.setTaskOutcome).not.toHaveBeenCalled();
   });
 
-  it('lists gradings newest first with per-criterion feedback and cost', () => {
+  it('lists gradings newest first with per-criterion feedback, the grader and the date', () => {
     const evals = [evaluation(), evaluation({ iteration: 2, passed: true, score: 1, cost_usd: 0.01,
       criteria: [{ name: 'Tests pass', passed: true, score: 1 }, { name: 'Docs', passed: true, score: 1 }] })];
     render(<TaskOutcomeCard task={taskWith({ rubric: RUBRIC, max_iterations: 3, threshold: null }, evals)} />);
     const rows = screen.getAllByTestId('outcome-evaluation');
     expect(rows).toHaveLength(2);
     expect(within(rows[0]).getByText(/outcomes.iteration .*"n":2/)).toBeInTheDocument();
-    expect(within(rows[0]).getByText('$0.0100')).toBeInTheDocument();
-    // The newest is open; the older one opens on click and shows what failed.
+    // The grader model and the date stand where the cost used to.
+    expect(within(rows[0]).getByTestId('outcome-graded-by')).toHaveTextContent(/^openai\/gpt-grader · .+/);
+    expect(within(rows[0]).queryByText(/\$0\.0100/)).toBeNull();
+    // Every grading starts folded; one opens on click and shows what failed.
     fireEvent.click(within(rows[1]).getByRole('button'));
     expect(within(rows[1]).getByText('README does not mention --flag.')).toBeInTheDocument();
     expect(within(rows[1]).getByText('outcomes.notMet')).toBeInTheDocument();
@@ -124,6 +129,8 @@ describe('TaskOutcomeCard', () => {
     render(<TaskOutcomeCard task={taskWith({ rubric: RUBRIC, max_iterations: 3 },
       [evaluation({ error: 'the grader did not return per-criterion JSON', criteria: [] })])} />);
     expect(screen.getAllByText('outcomes.graderError').length).toBeGreaterThan(0);
+    // Gradings start folded; the error shows once the row is opened.
+    fireEvent.click(within(screen.getByTestId('outcome-evaluation')).getByRole('button'));
     expect(screen.getByText('the grader did not return per-criterion JSON')).toBeInTheDocument();
   });
 
@@ -134,6 +141,6 @@ describe('TaskOutcomeCard', () => {
     expect(screen.getByLabelText('outcomes.grader')).toHaveValue('x/custom');
     fireEvent.click(screen.getByRole('button', { name: /outcomes.remove/ }));
     await waitFor(() => expect(outcomesApi.deleteTaskOutcome).toHaveBeenCalledWith('t1'));
-    expect(await screen.findByText('outcomes.noneHint')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'outcomes.about' })).toBeInTheDocument();
   });
 });

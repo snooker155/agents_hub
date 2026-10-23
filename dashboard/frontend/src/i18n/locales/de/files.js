@@ -103,6 +103,8 @@ export default {
   task: {
     title: 'Dateien',
     hint: 'Werden in das Arbeitsverzeichnis jeder Ausführung kopiert (task_files/) und im Prompt genannt. Unteraufgaben erhalten sie ebenfalls.',
+    add: 'Dateien hinzufügen',
+    about: 'Über die Dateien der Aufgabe',
     saveFailed: 'Die Dateien der Aufgabe konnten nicht gespeichert werden',
   },
   evalCase: {
