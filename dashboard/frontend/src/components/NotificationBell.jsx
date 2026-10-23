@@ -12,6 +12,8 @@ import { Bell, MailOpen, Loader } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from './toast';
 import PageLoader from './PageLoader';
+import { NOTIFICATIONS_CHANGED, announceNotificationsChanged } from './notificationsSync';
+import { notificationText } from './notificationText';
 
 function timeAgo(iso, t) {
   if (!iso) return '';
@@ -51,6 +53,13 @@ export default function NotificationBell() {
   // Unread badge: initial load; live push (below) keeps it current thereafter.
   useEffect(() => { refreshCount(); }, [refreshCount]);
 
+  // Marked read or deleted elsewhere in this tab (the Plan page): recount.
+  useEffect(() => {
+    const onChanged = (e) => { if (e.detail?.source !== 'bell') { refreshCount(); setItems([]); } };
+    window.addEventListener(NOTIFICATIONS_CHANGED, onChanged);
+    return () => window.removeEventListener(NOTIFICATIONS_CHANGED, onChanged);
+  }, [refreshCount]);
+
   // Live push over the shared multiplexed stream.
   useStreamEvent('__notifications__', 'notification', (event) => {
     const n = event.notification;
@@ -69,6 +78,9 @@ export default function NotificationBell() {
     if (seenIdsRef.current.size > 500) seenIdsRef.current.clear();
     setUnread(u => u + 1);
     setItems(prev => (prev.some(i => i.id === n.id) ? prev : [n, ...prev].slice(0, 12)));
+    // Said out loud, so a notification is noticed without watching the bell.
+    const text = notificationText(n, t);
+    toast.info(text.title || t('components.notifications.newNotification'), text.body || undefined);
   });
 
   // Close on outside click
@@ -92,6 +104,7 @@ export default function NotificationBell() {
       await markNotificationRead(n.id, true);
       setItems(prev => prev.map(i => (i.id === n.id ? { ...i, read: true } : i)));
       setUnread(u => Math.max(0, u - 1));
+      announceNotificationsChanged('bell');
     } catch (e) {
       // The badge keeps its unread count, so say why nothing moved.
       toast.error(t('components.notifications.markReadFailed'), errorDetail(e));
@@ -103,6 +116,7 @@ export default function NotificationBell() {
       await markAllNotificationsRead(workspaceFilter);
       setItems(prev => prev.map(i => ({ ...i, read: true })));
       setUnread(0);
+      announceNotificationsChanged('bell');
     } catch (e) {
       toast.error(t('components.notifications.markReadFailed'), errorDetail(e));
     }
@@ -152,8 +166,8 @@ export default function NotificationBell() {
                   <div className="flex items-start gap-2">
                     <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${n.read ? 'bg-transparent' : 'bg-indigo-500'}`} />
                     <div className="min-w-0 flex-1">
-                      <div className={`text-sm truncate ${n.read ? 'text-gray-600' : 'font-semibold text-gray-900'}`}>{n.title}</div>
-                      {n.body && <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.body}</div>}
+                      <div className={`text-sm truncate ${n.read ? 'text-gray-600' : 'font-semibold text-gray-900'}`}>{notificationText(n, t).title}</div>
+                      {notificationText(n, t).body && <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{notificationText(n, t).body}</div>}
                       <div className="text-[11px] text-gray-400 mt-0.5 flex items-center gap-2">
                         <span>{timeAgo(n.created_at, t)}</span>
                         {n.source?.task_id && (
