@@ -13,6 +13,11 @@ class TaskCreate(BaseModel):
     workspace: Optional[str] = None
     project: Optional[str] = None
     should_decompose: bool = False
+    # With should_decompose: the page's stream connection and the channel
+    # (decompose:<id>) it follows the decomposer on. The client is subscribed
+    # before the decomposer starts, so no early event is lost.
+    client_id: Optional[str] = None
+    decompose_channel: Optional[str] = None
     parent_id: Optional[str] = None
     priority: Optional[str] = None
     project_id: Optional[str] = None
@@ -54,7 +59,8 @@ class TaskUpdate(BaseModel):
 
 
 class AgentCreateCustom(BaseModel):
-    id: str
+    # Left empty, the id is made from ``name`` (agents/agent_ids.py).
+    id: str = ""
     name: str
     description: str = ""
     domain: str = "general"
@@ -301,6 +307,10 @@ class DecomposeRequest(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     verbose: bool = True
+    # The page's stream connection and the channel (decompose:<id>) it follows
+    # the decomposer on, as on TaskCreate.
+    client_id: Optional[str] = None
+    channel: Optional[str] = None
 
 
 class WorkspaceCreate(BaseModel):

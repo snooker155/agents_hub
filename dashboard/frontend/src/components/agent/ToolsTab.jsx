@@ -119,7 +119,9 @@ export default function ToolsTab() {
 
           {/* ── Regular Tools ── */}
           <div className="bg-white p-6 shadow-md rounded-lg">
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            {/* The title row with Save stays at the top of the page while the
+                tool list below it scrolls. */}
+            <div className="sticky top-0 z-20 -mx-6 px-6 py-3 -mt-3 mb-3 bg-white border-b border-gray-100 flex flex-wrap items-center justify-between gap-3" data-testid="tools-header">
               <h3 className="text-lg font-bold flex items-center">
                 <Wrench className="w-5 h-5 mr-2 text-indigo-600" />
                 {t('agentDetails.tools')}

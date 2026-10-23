@@ -7,7 +7,6 @@ import {
   Play,
   Radio,
   Box,
-  Shield,
   Trash2,
   RefreshCw,
   FileCode,
@@ -48,6 +47,8 @@ import ImportAgentModal from '../components/ImportAgentModal';
 import DeployServiceModal from '../components/services/DeployServiceModal';
 import AgentParentPicker from '../components/agent/inheritance/AgentParentPicker';
 import AgentTemplatePicker, { ConnectorChip } from '../components/agent/AgentTemplatePicker';
+import ToolPicker from '../components/agent/ToolPicker';
+import AgentVersionBadge from '../components/agent/AgentVersionBadge';
 import { templateText } from '../components/agent/agentTemplates';
 import { instancePath } from '../components/instanceUtils';
 import { useToast, errorDetail } from '../components/toast';
@@ -77,14 +78,17 @@ const AgentManager = () => {
   const [importPreset, setImportPreset] = useState('');
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
-  const [wizardType, setWizardType] = useState('template'); // 'template' | 'creator' | 'custom' | 'remote' | 'clone'
+  const [wizardType, setWizardType] = useState('template'); // 'template' | 'inherit' | 'creator' | 'custom'
   // The template picked on the template path, loaded in full (prompt included).
   const [wizardTemplate, setWizardTemplate] = useState(null);
+  // No id here: the backend makes one from the name (agents/agent_ids.py).
   const [wizardData, setWizardData] = useState({
-    id: '', name: '', description: '', domain: 'general',
+    name: '', description: '', domain: 'general',
     system_prompt: '', tools: ['read_file', 'write_file', 'list_files'], capacity: 1,
-    agent_url: '', original_id: '', extends: '', extends_version: null,
+    extends: '', extends_version: null,
   });
+  // The parent picked on the inherit path, in full, for its summary card.
+  const [wizardParent, setWizardParent] = useState(null);
   const [availableTools, setAvailableTools] = useState([]);
   const [assignData, setAssignData] = useState({ task_id: '', agent_id: '' });
   const [agentOrder, setAgentOrder] = useState([]);
@@ -214,7 +218,8 @@ const AgentManager = () => {
     setWizardStep(1);
     setWizardType('template');
     setWizardTemplate(null);
-    setWizardData({ id: '', name: '', description: '', domain: 'general', system_prompt: '', tools: ['read_file', 'write_file', 'list_files'], capacity: 1, agent_url: '', original_id: '', extends: '', extends_version: null });
+    setWizardParent(null);
+    setWizardData({ name: '', description: '', domain: 'general', system_prompt: '', tools: ['read_file', 'write_file', 'list_files'], capacity: 1, extends: '', extends_version: null });
     setCreatorInput('');
     setCreatorStreaming(false);
     setCreatorOutput('');
@@ -295,21 +300,24 @@ const AgentManager = () => {
 
   // Picking a parent in the wizard preloads its own effective tools, so the
   // review step shows what the child would run with before anyone touches
-  // the tools list — leaving it untouched means the child inherits them as
+  // the tools list. Leaving it untouched means the child inherits them as
   // is (agents/inheritance.py: equal to the parent's value stays inherited).
+  // A different parent replaces the list with its own.
   const handleWizardParentChange = async (next) => {
-    const hadNoParent = !wizardData.extends;
+    const changed = next.extends !== wizardData.extends;
     setWizardData((d) => ({ ...d, extends: next.extends, extends_version: next.extends_version }));
-    if (next.extends && hadNoParent) {
-      try {
-        const { data } = await getAgent(next.extends);
-        if (Array.isArray(data?.tools)) {
-          setWizardData((d) => ({ ...d, tools: data.tools }));
-        }
-      } catch {
-        // The tools list stays whatever it was; the create call still sends
-        // extends, so the backend resolves the merge regardless.
+    if (!changed) return;
+    setWizardParent(null);
+    if (!next.extends) return;
+    try {
+      const { data } = await getAgent(next.extends);
+      setWizardParent(data || null);
+      if (Array.isArray(data?.tools)) {
+        setWizardData((d) => (d.extends === next.extends ? { ...d, tools: data.tools } : d));
       }
+    } catch {
+      // The tools list stays whatever it was; the create call still sends
+      // extends, so the backend resolves the merge regardless.
     }
   };
 
@@ -320,7 +328,6 @@ const AgentManager = () => {
     setWizardTemplate(template);
     setWizardData((d) => ({
       ...d,
-      id: template.suggested_id || template.id,
       name,
       description,
       domain: template.domain || 'general',
@@ -331,11 +338,18 @@ const AgentManager = () => {
     }));
   };
 
+  // The backend links a new agent to the main agent (delegate and handoff)
+  // unless the security guard refuses it (agents/main_links.py); say which.
+  const reportMainLink = (link, name) => {
+    if (!link || link.skipped) return;
+    if (link.linked) toast.success(t('agentManager.linkedToMain', { name }));
+    else toast.error(t('agentManager.notLinkedToMain', { name }), link.reason || undefined);
+  };
+
   const handleWizardSubmit = async () => {
     try {
       if (wizardType === 'template') {
         const { data } = await createAgentFromTemplate(wizardTemplate.id, {
-          id: wizardData.id,
           name: wizardData.name,
           description: wizardData.description,
           system_prompt: wizardData.system_prompt,
@@ -346,6 +360,7 @@ const AgentManager = () => {
         closeWizard();
         fetchData();
         toast.success(t('agentTemplates.created', { name: wizardData.name }), data?.next_steps || undefined);
+        reportMainLink(data?.agent?.main_agent_link, wizardData.name);
         if (data?.agent?.id) navigate(`/agents/${encodeURIComponent(data.agent.id)}`);
         return;
       }
@@ -354,20 +369,20 @@ const AgentManager = () => {
         await handleCreatorSubmit();
         return;
       }
-      await createCustomAgent({
-        id: wizardData.id,
-        name: wizardData.name,
+      const { data: created } = await createCustomAgent({
+        name: wizardData.name.trim(),
         description: wizardData.description,
         domain: wizardData.domain,
         system_prompt: wizardData.system_prompt,
         tools: wizardData.tools,
         capacity: wizardData.capacity,
         workspace: selectedWorkspace || null,
-        ...(wizardType === 'custom' && wizardData.extends
+        ...(wizardType === 'inherit' && wizardData.extends
           ? { extends: wizardData.extends, extends_version: wizardData.extends_version ?? undefined }
           : {}),
       });
-      const newAgentId = wizardData.id;
+      const newAgentId = created?.id;
+      reportMainLink(created?.main_agent_link, wizardData.name.trim());
       // The backend already registers the agent in its owning workspace's
       // allowed_agents when a non-default workspace is passed above; this call
       // is a no-op safety net for the default workspace.
@@ -381,14 +396,7 @@ const AgentManager = () => {
     }
   };
 
-  const toggleWizardTool = (toolName) => {
-    setWizardData(prev => ({
-      ...prev,
-      tools: prev.tools.includes(toolName)
-        ? prev.tools.filter(t => t !== toolName)
-        : [...prev.tools, toolName],
-    }));
-  };
+  const setWizardTools = (tools) => setWizardData(prev => ({ ...prev, tools }));
 
   const handleAssign = async (e) => {
     e.preventDefault();
@@ -588,7 +596,6 @@ const AgentManager = () => {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
           {visibleAgents.map((agent) => {
             const metrics = getAgentMetrics(agent);
-            const isHealthy = true;
             const serving = servingFor(agent.id);
             const liveInstances = serving.live;
             const instancesAtCap = serving.serving.length > 0 && liveInstances >= serving.cap;
@@ -608,15 +615,13 @@ const AgentManager = () => {
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <GripVertical className="w-4 h-4 text-gray-300 cursor-grab flex-shrink-0 mt-0.5" />
                   <div className="flex items-start gap-2 min-w-0 flex-1">
-                    <div className={`p-1.5 rounded ${isHealthy ? 'bg-indigo-50 text-indigo-600' : 'bg-red-50 text-red-600'}`}>
-                      <Shield className="w-4 h-4" />
-                    </div>
                     <div className="min-w-0">
                       <Link to={`/agents/${agent.id}`} className="text-sm font-semibold text-gray-900 hover:text-indigo-600 truncate block">
                         {agent.name}
                       </Link>
                       <div className="text-[11px] text-gray-400 truncate flex items-center gap-1">
-                        {agent.id}
+                        <span className="truncate">{agent.id}</span>
+                        <AgentVersionBadge agent={agent} />
                         {agent.definition_id && agent.definition_id !== agent.id && (
                           <span
                             className="inline-flex items-center text-[9px] bg-indigo-50 text-indigo-500 px-1 py-0.5 rounded uppercase font-semibold"
@@ -774,21 +779,50 @@ const AgentManager = () => {
 
       {/* Agent Creation Wizard */}
       {showWizard && (() => {
-        const STEPS =
-          wizardType === 'creator' ? [t('agentManager.steps.type'), t('agentManager.steps.launch')] :
-          wizardType === 'template' ? [t('agentManager.steps.type'), t('agentTemplates.stepTemplate'), t('agentManager.steps.identity'), t('agentManager.steps.review')] :
-          wizardType === 'clone'   ? [t('agentManager.steps.type'), t('agentManager.steps.source'), t('agentManager.steps.identity'), t('agentManager.steps.review')] :
-                                     [t('agentManager.steps.type'), t('agentManager.steps.identity'), t('agentManager.steps.capabilities'), t('agentManager.steps.review')];
-        const totalSteps = STEPS.length;
-        const isLastStep = wizardStep === totalSteps;
+        // Each path is a list of step keys; the body and the Next check
+        // follow the key, so a path can add or drop a step freely.
+        const STEP_KEYS = {
+          template: ['type', 'template', 'identity', 'review'],
+          inherit: ['type', 'parent', 'identity', 'capabilities', 'review'],
+          creator: ['type', 'launch'],
+          custom: ['type', 'identity', 'capabilities', 'review'],
+        }[wizardType];
+        const STEP_LABELS = {
+          type: t('agentManager.steps.type'),
+          template: t('agentTemplates.stepTemplate'),
+          parent: t('agentManager.steps.parent'),
+          identity: t('agentManager.steps.identity'),
+          capabilities: t('agentManager.steps.capabilities'),
+          launch: t('agentManager.steps.launch'),
+          review: t('agentManager.steps.review'),
+        };
+        const STEPS = STEP_KEYS.map((k) => STEP_LABELS[k]);
+        const step = STEP_KEYS[wizardStep - 1];
+        const isLastStep = wizardStep === STEP_KEYS.length;
 
         const toolList = availableTools.filter((t, i, arr) => arr.findIndex(x => x.name === t.name) === i);
+        const toolLabel = (id) => toolList.find((tool) => tool.name === id)?.label || id;
+        const typeLabel = {
+          template: t('agentTemplates.template'),
+          inherit: t('agentManager.inheritAgent'),
+          custom: t('agentManager.customAgent'),
+        }[wizardType];
+
+        const nextBlocked =
+          creatorStreaming ||
+          (step === 'launch' && !creatorDone && !creatorInput.trim()) ||
+          (step === 'template' && !wizardTemplate) ||
+          (step === 'parent' && !wizardData.extends) ||
+          (step === 'identity' && !wizardData.name.trim()) ||
+          (step === 'identity' && wizardType === 'template' && !wizardData.system_prompt.trim()) ||
+          (step === 'capabilities' && wizardType === 'custom' && !wizardData.system_prompt.trim());
 
         return (
           <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
             {/* The template step lays its cards out four across, so the
-                dialog widens for it and narrows again for the form steps. */}
-            <div className={`bg-white rounded-2xl w-full ${wizardStep === 2 && wizardType === 'template' ? 'max-w-6xl' : 'max-w-lg'} shadow-2xl border border-gray-100 flex flex-col max-h-[90vh]`}>
+                dialog widens for it; every form step shares one width so the
+                dialog does not jump between them. */}
+            <div className={`bg-white rounded-2xl w-full ${step === 'template' ? 'max-w-6xl' : 'max-w-3xl'} shadow-2xl border border-gray-100 flex flex-col max-h-[90vh]`}>
               {/* Header */}
               <div className="p-6 pb-4 border-b border-gray-100">
                 <div className="flex items-center justify-between mb-4">
@@ -826,12 +860,13 @@ const AgentManager = () => {
               {/* Body */}
               <div className="flex-1 overflow-y-auto p-6 space-y-4">
 
-                {/* Step 1 — Type selection */}
-                {wizardStep === 1 && (
+                {/* Type selection */}
+                {step === 'type' && (
                   <div className="space-y-3">
                     <p className="text-sm text-gray-500">{t('agentManager.chooseHowYouWantTo')}</p>
                     {[
                       { value: 'template', icon: LayoutTemplate, label: t('agentTemplates.optionLabel'), desc: t('agentTemplates.optionDesc') },
+                      { value: 'inherit', icon: GitBranch, label: t('agentManager.inheritAgent'), desc: t('agentManager.inheritAgentDesc') },
                       { value: 'creator', icon: Sparkles, label: t('agentManager.useAgentCreator'), desc: t('agentManager.useAgentCreatorDesc') },
                       { value: 'custom', icon: Box, label: t('agentManager.customAgent'), desc: t('agentManager.customAgentDesc') },
                     ].map(({ value, icon: Icon, label, desc }) => (
@@ -854,8 +889,8 @@ const AgentManager = () => {
                   </div>
                 )}
 
-                {/* Step 2 (template) — pick a ready agent */}
-                {wizardStep === 2 && wizardType === 'template' && (
+                {/* Template: pick a ready agent */}
+                {step === 'template' && (
                   <AgentTemplatePicker
                     workspace={selectedWorkspace}
                     selectedId={wizardTemplate?.id}
@@ -863,8 +898,43 @@ const AgentManager = () => {
                   />
                 )}
 
-                {/* Step 2 (creator) — inline chat */}
-                {wizardStep === 2 && wizardType === 'creator' && (
+                {/* Inherit: pick the parent agent */}
+                {step === 'parent' && (
+                  <div className="space-y-4">
+                    <AgentParentPicker
+                      agents={agents}
+                      value={{ extends: wizardData.extends, extends_version: wizardData.extends_version }}
+                      onChange={handleWizardParentChange}
+                      allowClear={false}
+                      idPrefix="wizard-parent"
+                    />
+                    {wizardParent && wizardParent.id === wizardData.extends && (
+                      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <GitBranch className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+                          <span className="text-sm font-semibold text-gray-800 truncate">{wizardParent.name || wizardParent.id}</span>
+                        </div>
+                        {wizardParent.description && (
+                          <p className="text-xs text-gray-600 line-clamp-3">{wizardParent.description}</p>
+                        )}
+                        {Array.isArray(wizardParent.tools) && wizardParent.tools.length > 0 && (
+                          <div>
+                            <div className="text-[11px] font-bold uppercase text-gray-400 mb-1">{t('agentManager.parentTools', { count: wizardParent.tools.length })}</div>
+                            <div className="flex flex-wrap gap-1">
+                              {wizardParent.tools.map((id) => (
+                                <span key={id} className="text-[11px] bg-white border border-gray-200 text-gray-600 px-1.5 py-0.5 rounded">{toolLabel(id)}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <p className="text-[11px] text-gray-500">{t('agentManager.inheritNextHint')}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Creator: inline chat */}
+                {step === 'launch' && (
                   <div className="space-y-4">
                     {/* Model info — always visible */}
                     <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
@@ -943,38 +1013,9 @@ const AgentManager = () => {
                   </div>
                 )}
 
-                {/* Step 2 (clone) — Source agent */}
-                {wizardStep === 2 && wizardType === 'clone' && (
+                {/* Identity */}
+                {step === 'identity' && (
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.sourceAgent')}</label>
-                      <select
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                        value={wizardData.original_id}
-                        onChange={e => setWizardData(d => ({ ...d, original_id: e.target.value }))}
-                      >
-                        <option value="">{t('agentManager.selectAgentToClone')}</option>
-                        {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.id})</option>)}
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                {/* Step 2 (non-clone, non-creator) / Step 3 (clone) — Identity */}
-                {((wizardStep === 2 && wizardType !== 'clone' && wizardType !== 'creator' && wizardType !== 'template') || (wizardStep === 3 && (wizardType === 'clone' || wizardType === 'template'))) && (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.agentId')} <span className="text-red-500">*</span></label>
-                        <input
-                          type="text" required placeholder={t('agentManager.eGCodeReviewer')}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                          value={wizardData.id}
-                          onChange={e => setWizardData(d => ({ ...d, id: e.target.value.replace(/\s/g, '_').toLowerCase() }))}
-                        />
-                        <p className="text-[10px] text-gray-400 mt-1">{t('agentManager.lowercaseNoSpaces')}</p>
-                      </div>
-                    </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.displayName')} <span className="text-red-500">*</span></label>
                       <input
@@ -1002,17 +1043,6 @@ const AgentManager = () => {
                         onChange={e => setWizardData(d => ({ ...d, capacity: parseInt(e.target.value) || 1 }))}
                       />
                     </div>
-                    {wizardType === 'custom' && (
-                      <div className="pt-2 border-t border-gray-100">
-                        <AgentParentPicker
-                          agents={agents}
-                          excludeId={wizardData.id || undefined}
-                          value={{ extends: wizardData.extends, extends_version: wizardData.extends_version }}
-                          onChange={handleWizardParentChange}
-                          idPrefix="wizard-parent"
-                        />
-                      </div>
-                    )}
                     {wizardType === 'template' && (
                       <details className="pt-2 border-t border-gray-100 group">
                         <summary className="cursor-pointer text-xs font-bold text-gray-500 uppercase select-none">
@@ -1030,24 +1060,7 @@ const AgentManager = () => {
                           </div>
                           <div>
                             <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{t('agentTemplates.tools')}</label>
-                            <select
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
-                              value=""
-                              onChange={e => { if (e.target.value) toggleWizardTool(e.target.value); }}
-                            >
-                              <option value="">{t('agentManager.addATool')}</option>
-                              {toolList.filter(tool => !wizardData.tools.includes(tool.name)).map(tool => (
-                                <option key={tool.name} value={tool.name}>{tool.name}{tool.description ? ` — ${tool.description}` : ''}</option>
-                              ))}
-                            </select>
-                            <div className="flex flex-wrap gap-1.5 mt-2">
-                              {wizardData.tools.map(name => (
-                                <span key={name} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs px-2 py-1 rounded-full">
-                                  {name}
-                                  <button type="button" onClick={() => toggleWizardTool(name)} className="text-indigo-400 hover:text-indigo-700 leading-none">×</button>
-                                </span>
-                              ))}
-                            </div>
+                            <ToolPicker tools={toolList} value={wizardData.tools} onChange={setWizardTools} />
                           </div>
                         </div>
                       </details>
@@ -1055,80 +1068,48 @@ const AgentManager = () => {
                   </div>
                 )}
 
-                {/* Step 3 (non-clone) — Capabilities */}
-                {wizardStep === 3 && wizardType !== 'clone' && wizardType !== 'template' && (
+                {/* Capabilities: prompt (or additions on top of the parent's) and tools */}
+                {step === 'capabilities' && (
                   <div className="space-y-4">
-                    {wizardType === 'custom' && (
-                      <>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                            {wizardData.extends ? t('agentManager.yourAdditions') : t('agentManager.systemPrompt')}
-                            {!wizardData.extends && <span className="text-red-500"> *</span>}
-                          </label>
-                          {wizardData.extends && (
-                            <p className="text-[11px] text-gray-400 mb-1.5">{t('agentManager.yourAdditionsHint')}</p>
-                          )}
-                          <textarea
-                            rows="5" placeholder={wizardData.extends ? t('agentManager.eGSameHeadingHint') : t('agentManager.youAreASpecializedAgent')}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                            value={wizardData.system_prompt}
-                            onChange={e => setWizardData(d => ({ ...d, system_prompt: e.target.value }))}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase mb-2">{t('agentManager.tools')}</label>
-                          <select
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
-                            value=""
-                            onChange={e => { if (e.target.value) toggleWizardTool(e.target.value); }}
-                          >
-                            <option value="">{t('agentManager.addATool')}</option>
-                            {toolList.filter(t => !wizardData.tools.includes(t.name)).map(t => (
-                              <option key={t.name} value={t.name}>{t.name}{t.description ? ` — ${t.description}` : ''}</option>
-                            ))}
-                          </select>
-                          {wizardData.tools.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 mt-2">
-                              {wizardData.tools.map(name => (
-                                <span key={name} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs px-2 py-1 rounded-full">
-                                  {name}
-                                  <button type="button" onClick={() => toggleWizardTool(name)} className="text-indigo-400 hover:text-indigo-700 leading-none">×</button>
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
-                    {wizardType === 'remote' && (
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.agentEndpointUrl')} <span className="text-red-500">*</span></label>
-                        <input
-                          type="url" required placeholder="https://agent-service.internal/api"
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                          value={wizardData.agent_url}
-                          onChange={e => setWizardData(d => ({ ...d, agent_url: e.target.value }))}
-                        />
-                      </div>
-                    )}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                        {wizardType === 'inherit' ? t('agentManager.yourAdditions') : t('agentManager.systemPrompt')}
+                        {wizardType === 'custom' && <span className="text-red-500"> *</span>}
+                      </label>
+                      {wizardType === 'inherit' && (
+                        <p className="text-[11px] text-gray-400 mb-1.5">{t('agentManager.yourAdditionsHint')}</p>
+                      )}
+                      <textarea
+                        rows="5" placeholder={wizardType === 'inherit' ? t('agentManager.eGSameHeadingHint') : t('agentManager.youAreASpecializedAgent')}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        value={wizardData.system_prompt}
+                        onChange={e => setWizardData(d => ({ ...d, system_prompt: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{t('agentManager.tools')}</label>
+                      {wizardType === 'inherit' && (
+                        <p className="text-[11px] text-gray-400 mb-1.5">{t('agentManager.inheritToolsHint')}</p>
+                      )}
+                      <ToolPicker tools={toolList} value={wizardData.tools} onChange={setWizardTools} />
+                    </div>
                   </div>
                 )}
 
-                {/* Last step — Review (not shown for creator, which has its own output panel) */}
-                {isLastStep && wizardType !== 'creator' && (
+                {/* Review (the creator path has its own output panel instead) */}
+                {step === 'review' && (
                   <div className="space-y-3">
                     <p className="text-sm text-gray-500">{t('agentManager.reviewYourAgentBeforeCreating')}</p>
                     <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
-                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.type')}</span><span className="font-semibold capitalize text-gray-800">{wizardType === 'template' ? t('agentTemplates.template') : wizardType}</span></div>
-                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">ID</span><span className=" text-gray-800">{wizardData.id || wizardData.original_id}</span></div>
+                      <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.type')}</span><span className="font-semibold text-gray-800">{typeLabel}</span></div>
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.name')}</span><span className="text-gray-800">{wizardData.name}</span></div>
                       {wizardData.description && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.description')}</span><span className="text-gray-700">{wizardData.description}</span></div>}
                       <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.capacity')}</span><span className="text-gray-800">{t('agentManager.slotCount', { count: wizardData.capacity })}</span></div>
-                      {wizardType === 'custom' && wizardData.extends && (
+                      {wizardType === 'inherit' && wizardData.extends && (
                         <div className="flex gap-2">
                           <span className="text-gray-400 w-24 flex-shrink-0">{t('agentInheritance.basedOn')}</span>
                           <span className="text-gray-800">
-                            {wizardData.extends}
+                            {wizardParent?.name || wizardData.extends}
                             {wizardData.extends_version != null && ` · ${t('agentInheritance.versionN', { n: wizardData.extends_version })}`}
                           </span>
                         </div>
@@ -1150,33 +1131,17 @@ const AgentManager = () => {
                           )}
                         </>
                       )}
-                      {(wizardType === 'custom' || wizardType === 'template') && wizardData.tools.length > 0 && (
+                      {wizardData.tools.length > 0 && (
                         <div className="flex gap-2">
                           <span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.tools')}</span>
                           <div className="flex flex-wrap gap-1">
-                            {wizardData.tools.map(t => <span key={t} className="text-[11px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">{t}</span>)}
+                            {wizardData.tools.map(id => <span key={id} className="text-[11px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded" title={id}>{toolLabel(id)}</span>)}
                           </div>
                         </div>
                       )}
-                      {wizardType === 'remote' && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">URL</span><span className=" text-gray-700 break-all">{wizardData.agent_url}</span></div>}
-                      {wizardType === 'clone' && <div className="flex gap-2"><span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.source')}</span><span className=" text-gray-800">{wizardData.original_id}</span></div>}
-                      {wizardType === 'template' && wizardTemplate?.outcome?.rubric && (
+                      {wizardType !== 'template' && wizardData.system_prompt && (
                         <div className="flex gap-2 flex-col">
-                          <span className="text-gray-400">{t('agentTemplates.rubric')}</span>
-                          <p className="text-gray-700 text-xs bg-white border border-gray-200 rounded-lg p-2 whitespace-pre-wrap max-h-24 overflow-y-auto">{wizardTemplate.outcome.rubric}</p>
-                        </div>
-                      )}
-                      {wizardType === 'template' && wizardTemplate?.starters?.length > 0 && (
-                        <div className="flex gap-2 flex-col">
-                          <span className="text-gray-400">{t('agentTemplates.tryAsking')}</span>
-                          <ul className="list-disc list-inside text-xs text-gray-600 space-y-0.5">
-                            {wizardTemplate.starters.map((s) => <li key={s}>{s}</li>)}
-                          </ul>
-                        </div>
-                      )}
-                      {wizardType === 'custom' && wizardData.system_prompt && (
-                        <div className="flex gap-2 flex-col">
-                          <span className="text-gray-400">{wizardData.extends ? t('agentManager.yourAdditions') : t('agentManager.systemPrompt')}</span>
+                          <span className="text-gray-400">{wizardType === 'inherit' ? t('agentManager.yourAdditions') : t('agentManager.systemPrompt')}</span>
                           <p className="text-gray-700 text-xs bg-white border border-gray-200 rounded-lg p-2 whitespace-pre-wrap max-h-24 overflow-y-auto">{wizardData.system_prompt}</p>
                         </div>
                       )}
@@ -1192,22 +1157,12 @@ const AgentManager = () => {
                   onClick={wizardStep === 1 ? closeWizard : wizardBack}
                   className="flex items-center gap-1.5 px-4 py-2 text-sm text-gray-500 hover:text-gray-700 font-medium"
                 >
-                  {wizardStep === 1 ? 'Cancel' : <><ChevronLeft className="w-4 h-4" />{t('agentManager.back')}</>}
+                  {wizardStep === 1 ? t('common.cancel') : <><ChevronLeft className="w-4 h-4" />{t('agentManager.back')}</>}
                 </button>
                 <button
                   type="button"
                   onClick={isLastStep ? handleWizardSubmit : wizardNext}
-                  disabled={
-                    creatorStreaming ||
-                    (wizardStep === 2 && wizardType === 'creator' && !creatorDone && !creatorInput.trim()) ||
-                    (wizardStep === 2 && wizardType === 'clone' && !wizardData.original_id) ||
-                    (wizardStep === 2 && wizardType === 'template' && !wizardTemplate) ||
-                    (wizardStep === 2 && wizardType !== 'clone' && wizardType !== 'creator' && wizardType !== 'template' && (!wizardData.id || !wizardData.name)) ||
-                    (wizardStep === 3 && wizardType === 'template' && (!wizardData.id || !wizardData.name || !wizardData.system_prompt.trim())) ||
-                    (wizardStep === 3 && wizardType === 'clone' && (!wizardData.id || !wizardData.name)) ||
-                    (wizardStep === 3 && wizardType === 'custom' && !wizardData.system_prompt && !wizardData.extends) ||
-                    (wizardStep === 3 && wizardType === 'remote' && !wizardData.agent_url)
-                  }
+                  disabled={nextBlocked}
                   className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-sm font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
                 >
                   {isLastStep

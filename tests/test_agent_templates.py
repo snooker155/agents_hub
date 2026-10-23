@@ -119,3 +119,28 @@ def test_create_with_overrides_keeps_the_guard(client):
                     json={"tools": ["run_shell"], "id": "risky_data"})
     assert r.status_code == 409, r.text
     assert get_agent("risky_data") is None
+
+
+def test_slug_from_name_transliterates_and_falls_back():
+    from agents.agent_ids import slug_from_name
+    assert slug_from_name("Ревьюер кода") == "revyuer_koda"
+    assert slug_from_name("Prüfer für Verträge") == "pruefer_fuer_vertraege"
+    assert slug_from_name("  SQL / Reviewer!  ") == "sql_reviewer"
+    assert slug_from_name("42 checks") == "agent_42_checks"
+    assert slug_from_name("日本語") == "agent"
+
+
+def test_create_from_template_names_the_id_after_the_chosen_name(client):
+    r = client.post("/api/agent-templates/sre_agent/create", json={"name": "Дежурный SRE"})
+    assert r.status_code == 200, r.text
+    assert r.json()["agent"]["id"] == "dezhurnyy_sre"
+
+
+def test_create_custom_agent_without_id_makes_a_free_one(client):
+    body = {"name": "Code reviewer", "system_prompt": "Review code.", "tools": ["read_file"]}
+    first = client.post("/api/agents/create", json=body)
+    second = client.post("/api/agents/create", json=body)
+    assert first.status_code == second.status_code == 200, second.text
+    assert first.json()["id"] == "code_reviewer"
+    assert second.json()["id"] == "code_reviewer_2"
+    assert get_agent("code_reviewer_2").name == "Code reviewer"
