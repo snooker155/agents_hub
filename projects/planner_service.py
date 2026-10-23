@@ -32,7 +32,7 @@ def ensure_planner_agent() -> bool:
         return False
 
 
-def build_prompt(history: List[dict], user_message: str) -> str:
+def build_prompt(history: List[dict], user_message: str, *, project: bool = True) -> str:
     """One turn's prompt: the recent conversation, then the instruction.
 
     The task tree and the project's structure graphs are not inlined — the
@@ -43,15 +43,30 @@ def build_prompt(history: List[dict], user_message: str) -> str:
     for "also split X" / "reprioritise Y" follow-ups to have context.
     """
     convo = "\n".join(f"{m.get('role')}: {m.get('content')}" for m in history[-12:])
+    if project:
+        role = ("You are the project's task planner: read its structure graphs and manage the "
+                "task tree in the shared tracker.\n\n")
+        rules = (
+            "Rules:\n"
+            "1. Call list_tasks first to see what already exists — extend/refine it, do not duplicate.\n"
+            "2. Call get_project_graph for view='process' AND for view='architecture' to read both graphs.\n"
+            "3. Create top-level tasks for the major components/stages with create_task, break them into "
+            "steps with add_subtask, and use create_sequence for work that must run in order. Align task "
+            "titles with the project's structure. For a refinement request, change only what's asked.\n\n"
+        )
+    else:
+        # The Tasks page: the whole workspace, no project and so no graphs.
+        role = ("You are the workspace's task planner: manage the task tree in the shared "
+                "tracker for this workspace.\n\n")
+        rules = (
+            "Rules:\n"
+            "1. Call list_tasks first to see what already exists — extend/refine it, do not duplicate.\n"
+            "2. Create top-level tasks with create_task, break them into steps with add_subtask, and use "
+            "create_sequence for work that must run in order. For a refinement request, change only "
+            "what's asked.\n\n"
+        )
     return (
-        "You are the project's task planner: read its structure graphs and manage the "
-        "task tree in the shared tracker.\n\n"
-        "Rules:\n"
-        "1. Call list_tasks first to see what already exists — extend/refine it, do not duplicate.\n"
-        "2. Call get_project_graph for view='process' AND for view='architecture' to read both graphs.\n"
-        "3. Create top-level tasks for the major components/stages with create_task, break them into "
-        "steps with add_subtask, and use create_sequence for work that must run in order. Align task "
-        "titles with the project's structure. For a refinement request, change only what's asked.\n\n"
+        role + rules +
         f"--- CONVERSATION SO FAR ---\n{convo or '(none)'}\n\n"
         f"--- USER REQUEST ---\n{user_message}\n\n"
         "After applying the changes, reply with ONE short sentence summarising what you did."

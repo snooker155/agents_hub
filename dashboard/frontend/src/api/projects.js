@@ -95,6 +95,25 @@ export const streamProjectTasksGenerate = async ({ projectId, message, onEvent, 
   }
   await consumeSSE(response, onEvent);
 };
+// The Tasks page planner: the same turn over a whole workspace, without the
+// project graphs (routes/projects/planner.py, /api/task-planner).
+const wsPlannerParams = (workspace) => ({ params: { workspace } });
+export const getWorkspacePlannerChat = (workspace) => api.get('/task-planner/chat', wsPlannerParams(workspace));
+export const clearWorkspacePlannerChat = (workspace) => api.delete('/task-planner/chat', wsPlannerParams(workspace));
+export const stopWorkspacePlanner = (workspace) => api.post('/task-planner/stop', null, wsPlannerParams(workspace));
+export const streamWorkspacePlanner = async ({ workspace, message, onEvent, signal }) => {
+  const response = await fetch(`${API_ORIGIN}/api/task-planner/generate?workspace=${encodeURIComponent(workspace)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
+    body: JSON.stringify({ message: message || null }),
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    const detail = await response.text();
+    throw new Error(detail || 'Failed to start the planner');
+  }
+  await consumeSSE(response, onEvent);
+};
 export const getProjectFiles = (id) => api.get(`/projects/${id}/files`);
 // { path, size, content, kind: 'text' | 'pdf' | 'binary', mime_type, truncated }: read the
 // way workspace files are, a PDF's text extracted.

@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { autoGrowTextarea } from '../../lib/autoGrow';
-import { createPortal } from 'react-dom';
-import { ListTodo, Brain, Trash2, Square, MessageSquare, PanelRightClose, Send } from 'lucide-react';
-import { FeedItem } from './ChatFeed';
+import { Square, MessageSquare, MessageSquarePlus, PanelRightClose, Send } from 'lucide-react';
+import AgentTranscript from '../chat/AgentTranscript';
+import ViewModeToggle from '../chat/ViewModeToggle';
+import { useChatViewMode } from '../chat/viewMode';
+import { agentMessage, applyTurnEvent, settleTurn } from '../chat/turnEvents';
+import { messagesFromChatData } from '../chat/traceMessages';
+import { genId } from '../chat/turnState';
+import ChatSessionList, { ChatSessionsToggle } from '../ChatSessionList';
+import { useChatSessions } from '../chatSessions';
 import ContextMeter from '../ContextMeter';
 import { useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
@@ -10,103 +16,149 @@ import { useInlineChatOpen } from '../pageChat/pageChat';
 import {
   getProjectTasksChat, clearProjectTasksChat,
   streamProjectTasksGenerate, stopProjectGraphChat,
+  getWorkspacePlannerChat, clearWorkspacePlannerChat,
+  streamWorkspacePlanner, stopWorkspacePlanner,
 } from '../../api';
 
-// Sidebar chat panel for the Tasks tab (same style as the architect chat). The
-// "Generate tasks from graphs" button (top) runs the default plan; the chat
-// input (bottom) sends free-text refinements. Shows thinking + tool calls live
-// and replays the full session on reload. Calls onGenerated when tasks change.
-function PlannerChat({ projectId, onGenerated, onClose, toolbarTarget }) {
+// The calls behind one planner: a project's (its Tasks tab, which reads the
+// project graphs) or a workspace's (the Tasks page, no graphs).
+const plannerCalls = (projectId, workspace) => (projectId ? {
+  load: () => getProjectTasksChat(projectId),
+  clear: () => clearProjectTasksChat(projectId),
+  stop: () => stopProjectGraphChat(projectId),
+  stream: (opts) => streamProjectTasksGenerate({ projectId, ...opts }),
+} : {
+  load: () => getWorkspacePlannerChat(workspace),
+  clear: () => clearWorkspacePlannerChat(workspace),
+  stop: () => stopWorkspacePlanner(workspace),
+  stream: (opts) => streamWorkspacePlanner({ workspace, ...opts }),
+});
+
+// Sidebar chat panel for the Tasks tab. The page's "Generate from
+// architecture" button opens it with `generateRequested` set, and the panel
+// runs the default plan once its transcript is loaded (then calls
+// `onGenerateStarted` so the page clears the request); the chat input sends
+// free-text refinements. Shows thinking + tool calls live and replays the
+// session on reload. "New chat" files the thread in the history, the same
+// way the other build chats do (common/entity_chat_store.py, kind projtasks).
+// Calls onGenerated when tasks change. With `workspace` instead of
+// `projectId` it plans over the whole workspace (the Tasks page).
+function PlannerChat({ projectId, workspace, onGenerated, onClose, generateRequested = false, onGenerateStarted }) {
   const { t } = useI18n();
   // Drawn only while the Tasks tab has the planner open, so being mounted is
   // being on screen: the floating launcher stands down meanwhile.
   useInlineChatOpen();
-  const [feed, setFeed] = useState([]);
+  const calls = React.useMemo(() => plannerCalls(projectId, workspace), [projectId, workspace]);
+  // The conversation, in the Chat page's message shape.
+  const [messages, setMessages] = useState([]);
+  const [streamingId, setStreamingId] = useState(null);
+  const [viewMode, setViewMode] = useChatViewMode();
   // Planning sessions run long and re-send their transcript each turn: the
   // meter under the composer says how much of the model's window is left.
   const { usage: contextUsage, observe: observeContext, reset: resetContext } = useContextUsage();
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [showThinking, setShowThinking] = useState(true);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const abortRef = useRef(null);
   const feedRef = useRef(null);
   const textareaRef = useRef(null);
+  // The thread store key the server reports, the history list it opens, and
+  // whether the transcript has arrived (a requested run waits for it, or the
+  // load would overwrite the run's first lines).
+  const [chatRef, setChatRef] = useState(null);
+  const [sessionsKey, setSessionsKey] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const sessionHistory = useChatSessions(chatRef, sessionsKey);
+
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await getProjectTasksChat(projectId);
+        const { data } = await calls.load();
         if (cancelled) return;
         setError('');
-        const trace = data.trace;
-        if (Array.isArray(trace) && trace.length) setFeed(trace);
-        else setFeed((data.messages || []).map((x) => ({ k: x.role, text: x.content })));
+        setMessages(messagesFromChatData(data));
+        setChatRef(data.chat_ref || null);
       } catch (e) {
         if (cancelled) return;
         setError(e?.response?.data?.detail || e.message || t('flowPlannerChat.loadFailed'));
-        setFeed([]);
+        setMessages([]);
       }
+      if (!cancelled) setLoaded(true);
     })();
     return () => { cancelled = true; };
-  }, [projectId, t]);
+  }, [calls, t]);
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
-  useEffect(() => { if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight; }, [feed]);
+  useEffect(() => { if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight; }, [messages]);
 
   // Run one planning turn. `message` empty → the default "generate from graphs".
   const run = useCallback(async (message) => {
     if (busy) return;
     setBusy(true); setError('');
     const shown = message || t('flowPlannerChat.generatePrompt');
-    setFeed((f) => [...f, { k: 'user', text: shown }]);
-    const append = (item) => setFeed((f) => [...f, item]);
+    const replyId = genId();
+    setMessages((list) => [...list, { id: genId(), role: 'user', content: shown }, agentMessage({ id: replyId })]);
+    setStreamingId(replyId);
+    const patch = (fn) => setMessages((list) => list.map((m) => (m.id === replyId ? fn(m) : m)));
+    let stopped = false;
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      await streamProjectTasksGenerate({
-        projectId, message: message || undefined, signal: ac.signal,
+      await calls.stream({
+        // The Generate button sends the prompt in the interface language too,
+        // so the planner answers in it (the server's default is English).
+        message: shown, signal: ac.signal,
         onEvent: (ev) => {
           observeContext(ev);
           switch (ev.type) {
-            case 'tool_start':
-              append({ k: 'tool', tool: ev.tool, status: 'running' });
-              break;
-            case 'think':
-              if (ev.content) append({ k: 'thinking', text: ev.content });
-              break;
-            case 'thinking':
-            case 'native_reasoning': {
-              const t = ev.message || ev.content || '';
-              if (t && !t.startsWith('[')) append({ k: 'thinking', text: t });
-              break;
-            }
-            case 'error':
-              append({ k: 'error', text: ev.error || 'error' });
-              break;
-            case 'stopped':
-              append({ k: 'tool', tool: t('flowPlannerChat.stoppedByYou'), status: 'done' });
+            case 'meta':
+              if (ev.run_id) patch((m) => ({ ...m, run_id: ev.run_id }));
               break;
             case 'message':
-              if (ev.content) append({ k: 'assistant', text: ev.content });
+              if (ev.content) patch((m) => settleTurn({ ...m, run_id: ev.run_id || m.run_id }, { content: ev.content }));
+              break;
+            case 'error': {
+              const text = ev.error || t('flowPlannerChat.generationFailed');
+              patch((m) => ({ ...m, error: true, content: m.content ? `${m.content}\n\n${text}` : text }));
+              break;
+            }
+            case 'stopped':
+              stopped = true;
               break;
             case 'done':
               if (ev.created > 0 && typeof onGenerated === 'function') onGenerated();
               break;
+            case 'thinking':
+            case 'native_reasoning':
+              // Log markers: the reasoning itself arrives as think events.
+              break;
             default:
+              patch((m) => applyTurnEvent(m, ev));
               break;
           }
         },
       });
     } catch (e) {
-      if (e.name !== 'AbortError') append({ k: 'error', text: e.message || t('flowPlannerChat.generationFailed') });
+      if (e.name !== 'AbortError') {
+        patch((m) => ({ ...m, error: true, content: m.content || e.message || t('flowPlannerChat.generationFailed') }));
+      }
     } finally {
+      // A run that ended (stopped, failed, or a tool whose end never came)
+      // leaves nothing spinning.
+      patch((m) => {
+        const settled = settleTurn(m);
+        if (stopped && !(settled.content || '').trim()) return { ...settled, content: t('flowPlannerChat.stoppedByYou') };
+        return settled;
+      });
+      setStreamingId(null);
       setBusy(false);
       setStopping(false);
       abortRef.current = null;
     }
-  }, [busy, t, projectId, onGenerated, observeContext]);
+  }, [busy, t, calls, onGenerated, observeContext]);
 
   const onSend = useCallback(() => {
     const m = input.trim();
@@ -125,62 +177,79 @@ function PlannerChat({ projectId, onGenerated, onClose, toolbarTarget }) {
     if (!busy || stopping) return;
     setStopping(true);
     try {
-      await stopProjectGraphChat(projectId);
+      await calls.stop();
     } catch (e) {
       setError(e?.response?.data?.detail || e.message || t('flowPlannerChat.stopFailed'));
       setStopping(false);
     }
-  }, [busy, stopping, projectId, t]);
+  }, [busy, stopping, calls, t]);
 
-  const clearChat = useCallback(async () => {
+  // "New chat": the server files the current thread in the history.
+  const newChat = useCallback(async () => {
     if (busy) return;
     setError('');
     try {
-      await clearProjectTasksChat(projectId);
-      setFeed([]);
+      await calls.clear();
+      setMessages([]);
       resetContext();
+      setSessionsKey((k) => k + 1);
     } catch (e) {
       setError(e?.response?.data?.detail || e.message || t('flowPlannerChat.clearFailed'));
     }
-  }, [busy, projectId, resetContext, t]);
+  }, [busy, calls, resetContext, t]);
 
-  // "Generate tasks" button — portaled up next to "New Task" in the tab toolbar
-  // when a target is provided, otherwise shown inline in the planner header.
-  const generateButton = (
-    <button onClick={() => run()} disabled={busy}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
-      title={t('flowPlannerChat.createAFullTaskPlan')}>
-      <ListTodo className="w-4 h-4" /> {t('flowPlannerChat.generateFromArchitecture')}
-    </button>
-  );
+  // The page asked for a generation (its button opened this panel).
+  // On a microtask, not straight from the effect body: starting the run sets
+  // state, which an effect should not do synchronously.
+  useEffect(() => {
+    if (!generateRequested || !loaded || busy) return undefined;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (onGenerateStarted) onGenerateStarted();
+      setHistoryOpen(false);
+      run();
+    });
+    return () => { cancelled = true; };
+  }, [generateRequested, loaded, busy, onGenerateStarted, run]);
+
+  const pickSession = useCallback(async (session) => {
+    if (session.active) { setHistoryOpen(false); return; }
+    const data = await sessionHistory.activate(session.id);
+    if (!data) return;
+    setMessages(messagesFromChatData(data));
+    setError('');
+    resetContext();
+    setHistoryOpen(false);
+  }, [sessionHistory, resetContext]);
+
+  const toggleHistory = useCallback(() => {
+    setHistoryOpen((open) => {
+      if (!open) sessionHistory.reload();
+      return !open;
+    });
+  }, [sessionHistory]);
 
   return (
-    <div className="w-[28rem] shrink-0 flex flex-col bg-white border border-gray-200 rounded-xl overflow-hidden">
-      {toolbarTarget && createPortal(generateButton, toolbarTarget)}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 gap-2">
-        <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 min-w-0">
-          <MessageSquare className={`w-4 h-4 shrink-0 ${busy ? 'text-emerald-500 animate-pulse' : 'text-gray-400'}`} /> {t('flowPlannerChat.taskPlanner')}
+    <div className="w-[36rem] max-w-[50%] shrink-0 flex flex-col bg-white border border-gray-200 rounded-xl overflow-hidden">
+      {/* A fixed height: the controls come and go with the conversation and
+          the history list, and the row must not move when they do. */}
+      <div className="flex items-center justify-between h-11 shrink-0 px-3 border-b border-gray-100 gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium text-gray-700 min-w-0">
+          <MessageSquare className={`w-4 h-4 shrink-0 ${busy ? 'text-emerald-500 animate-pulse' : 'text-gray-400'}`} />
+          <span className="truncate">{t('flowPlannerChat.taskPlanner')}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {!toolbarTarget && (
-            <button onClick={() => run()} disabled={busy}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-emerald-600 hover:bg-emerald-50 disabled:opacity-40"
-              title={t('flowPlannerChat.createAFullTaskPlan')}>
-              <ListTodo className="w-4 h-4" /> {t('flowPlannerChat.generateFromArchitecture')}
+          {messages.length > 0 && !historyOpen && (
+            <button onClick={newChat} disabled={busy} title={t('entityChat.clearChat')}
+              className="inline-flex items-center gap-1 text-[11px] font-normal text-gray-400 hover:text-indigo-600 disabled:opacity-40">
+              <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
             </button>
           )}
-          <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none"
-            title={t('flowPlannerChat.showOrHideTheAgent')}>
-            <input type="checkbox" checked={showThinking}
-              onChange={(e) => setShowThinking(e.target.checked)}
-              className="w-3.5 h-3.5 accent-indigo-600 cursor-pointer" />
-            <Brain className="w-3.5 h-3.5 text-amber-400" /> {t('flowPlannerChat.thinking')}
-          </label>
-          <button onClick={clearChat} disabled={busy}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-50 px-2 py-1 rounded-md disabled:opacity-40"
-            title={t('flowPlannerChat.clearThePlannerChatTasks')}>
-            <Trash2 className="w-3.5 h-3.5" /> {t('flowPlannerChat.clearChat')}
-          </button>
+          {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
+          {sessionHistory.hasHistory && (
+            <ChatSessionsToggle open={historyOpen} count={sessionHistory.count} disabled={busy} onToggle={toggleHistory} />
+          )}
           {onClose && (
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600" title={t('flowPlannerChat.hidePlanner')}>
               <PanelRightClose className="w-4 h-4" />
@@ -191,23 +260,42 @@ function PlannerChat({ projectId, onGenerated, onClose, toolbarTarget }) {
 
       {error ? <div className="px-4 py-2 text-xs text-red-600 bg-red-50 border-b border-red-100">{error}</div> : null}
 
+      {/* History replaces the conversation in the same column; picking a
+          thread turns it back into the chat showing that one. */}
+      {historyOpen ? (
+        <ChatSessionList
+          sessions={sessionHistory.sessions}
+          working={sessionHistory.working}
+          error={sessionHistory.error}
+          onPick={pickSession}
+          onDelete={(session) => sessionHistory.remove(session.id)}
+          onClose={() => setHistoryOpen(false)}
+          className="flex-1 min-h-0 overflow-y-auto px-3 py-2"
+        />
+      ) : (<>
       <div ref={feedRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-2">
-        {feed.length === 0 && !busy ? (
+        {messages.length === 0 && !busy ? (
           <div className="text-xs text-gray-400 mt-2">
-            The Planner reads this project's <span className="font-medium">{t('flowPlannerChat.architecture')}</span> and{' '}
-            <span className="font-medium">{t('flowPlannerChat.process')}</span> graphs and manages the task tree. Hit{' '}
-            <span className="text-emerald-600 font-medium">{t('flowPlannerChat.generateTasks')}</span>, or ask for a change —
-            e.g. <span className="italic">{t('flowPlannerChat.breakThePaymentsTaskInto')}</span>
+            {projectId
+              ? t('flowPlannerChat.emptyIntro', { button: t('flowPlannerChat.generateFromArchitecture') })
+              : t('flowPlannerChat.emptyIntroWorkspace')}{' '}
+            <span className="italic">{t('flowPlannerChat.breakThePaymentsTaskInto')}</span>
           </div>
         ) : null}
-        {feed.map((e, i) => (
-          (showThinking || e.k !== 'thinking') ? <FeedItem key={i} e={e} /> : null
-        ))}
-        {busy ? <div className="text-[11px] text-emerald-500 animate-pulse">{stopping ? 'stopping…' : 'planning…'}</div> : null}
+        {messages.length > 0 && (
+          <AgentTranscript
+            messages={messages}
+            viewMode={viewMode}
+            streamingId={streamingId}
+            compact
+            onAction={busy ? null : run}
+          />
+        )}
+        {busy ? <div className="text-[11px] text-emerald-500 animate-pulse">{stopping ? t('flowPlannerChat.stopping') : t('flowPlannerChat.planning')}</div> : null}
       </div>
 
       <div className="border-t border-gray-100 p-3">
-        <ContextMeter usage={contextUsage} onClear={busy ? null : clearChat} className="mb-2" />
+        <ContextMeter usage={contextUsage} onClear={busy ? null : newChat} className="mb-2" />
         <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-2xl px-4 py-2.5
           shadow-sm transition-all">
           <textarea
@@ -236,6 +324,7 @@ function PlannerChat({ projectId, onGenerated, onClose, toolbarTarget }) {
           {busy ? (stopping ? t('flowPlannerChat.stopping') : t('flowPlannerChat.pressStop')) : t('flowPlannerChat.enterToSend')}
         </p>
       </div>
+      </>)}
     </div>
   );
 }
