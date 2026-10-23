@@ -29,4 +29,4 @@ export const REPO_ICONS = {
  * width keeps every card the same shape wherever the grid sits: the Projects
  * page and a workspace's Projects tab alike.
  */
-export const PROJECT_GRID = 'grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(22rem,1fr))] gap-4 items-stretch';
+export const PROJECT_GRID = 'grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(15.5rem,1fr))] gap-4 items-stretch';

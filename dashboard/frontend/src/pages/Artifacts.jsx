@@ -60,9 +60,11 @@ import { ownerLink } from '../views/owner';
 const SOURCES = ['upload', 'chat', 'agent', 'memory', 'task', 'eval', 'api'];
 // The virtual folder the views sit in; `?folder=` and the tree use the same key.
 const VIEWS_PATH = '__views__';
-// A panel lies over the right of the list instead of taking a grid column:
-// the list keeps its width, so opening or closing one reflows nothing.
-const PANEL_CLASS = 'absolute inset-y-0 right-0 z-20 w-full sm:w-[28rem] lg:w-[40%] bg-white border-l border-gray-200 rounded-r-xl shadow-2xl p-4';
+// A panel is a column of its own beside the list on a wide screen, so the
+// list narrows to make room for it rather than going under it. A narrower
+// screen has no room for two columns: there the panel lies over the list.
+const PANEL_CLASS = 'absolute inset-y-0 right-0 z-20 w-full sm:w-[28rem] bg-white border-l border-gray-200 rounded-r-xl shadow-2xl p-4 '
+  + 'lg:static lg:z-auto lg:w-[40%] lg:flex-shrink-0 lg:rounded-xl lg:border lg:shadow-none';
 // The right side of a tree row, as columns shared by folders, files and
 // views so they line up: source or kind, size, date, actions. Narrow windows
 // keep size and actions only.
@@ -1152,12 +1154,12 @@ export default function Artifacts() {
         </div>
       </div>
 
-      {/* The list, with a panel laid over its right side when one is open. The
-          wrapper, not the scrolling list, positions the panel, so the panel
-          stays put while the list scrolls under it. */}
-      <div className="relative flex-1 lg:min-h-0 flex flex-col">
+      {/* The list, and the open panel beside it (over it on a narrow
+          screen). The wrapper, not the scrolling list, holds the panel, so the
+          panel stays put while the list scrolls. */}
+      <div className="relative flex-1 lg:min-h-0 flex flex-col lg:flex-row lg:gap-4">
         <div
-          className={`relative flex-1 bg-white rounded-xl border overflow-hidden lg:min-h-0 lg:overflow-y-auto ${
+          className={`relative flex-1 min-w-0 bg-white rounded-xl border overflow-hidden lg:min-h-0 lg:overflow-y-auto ${
             dragging ? (canDrop ? 'border-indigo-400' : 'border-red-300') : 'border-gray-200'}`}
           onDragEnter={onDragEnter}
           onDragOver={onDragOver}

@@ -231,5 +231,6 @@ export default {
   askChatPickPool: 'Pick a pool on the left and ask about it. With none open it answers from the pool the agent is assigned in this workspace.',
   personal: 'personal',
   personalTitle: 'My personal memory',
+  aboutPersonal: 'About personal memory',
   personalHint: 'What agents have learned about you in this workspace. Only you see it. Every agent with personal memory on reads and adds to this one pool, by default that is the main agent of the workspace.',
 };

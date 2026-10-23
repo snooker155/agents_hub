@@ -110,6 +110,9 @@ export const FILL_COLUMN = {
 /** Gap left below the column, and the smallest it is allowed to get. */
 const BOTTOM_GAP = 24;
 const MIN_HEIGHT = 320;
+// The column's sticky offset (`lg:top-6`): where its top sits once the page
+// has scrolled past the row.
+const STICKY_TOP = 24;
 
 /**
  * The column itself: the rest of the screen from where it starts, pinned while
@@ -141,7 +144,7 @@ const MIN_HEIGHT = 320;
  * a card that should end on the same line as the column beside it.
  */
 // eslint-disable-next-line react-refresh/only-export-components -- see the note above `useChatColumn`.
-export function useColumnHeight() {
+export function useColumnHeight({ followScroll = false } = {}) {
   const ref = useRef(null);
   const [height, setHeight] = useState(null);
 
@@ -149,22 +152,36 @@ export function useColumnHeight() {
     const el = ref.current;
     if (!el || typeof window === 'undefined') return undefined;
 
+    // The column starts where its row does, or at the sticky offset once the
+    // page has scrolled the row up past it; either way it runs to the floor.
+    // So it is measured again on every scroll, and a column pinned to the top
+    // reaches the bottom of the screen instead of keeping the height it had
+    // further down.
+    // A block that does not stick (`followScroll` off) keeps the height it
+    // has where it stands, capped so a measurement taken mid-scroll does not
+    // overshoot the screen.
     const measure = () => {
       const row = el.parentElement;
       if (!row) return;
-      const top = row.getBoundingClientRect().top;
+      const rowTop = row.getBoundingClientRect().top;
       const floor = window.innerHeight - currentDockHeight();
-      const available = floor - Math.max(top, 0) - BOTTOM_GAP;
-      // Capped as well as floored: if a recalculation lands while the page is
-      // scrolled, the row's top is above the fold and `available` overshoots
-      // the screen.
-      const capped = Math.min(available, floor - BOTTOM_GAP * 2);
-      setHeight(Math.max(MIN_HEIGHT, capped));
+      const next = followScroll
+        ? Math.max(MIN_HEIGHT, Math.round(floor - Math.max(rowTop, STICKY_TOP) - BOTTOM_GAP))
+        : Math.max(MIN_HEIGHT, Math.min(floor - Math.max(rowTop, 0) - BOTTOM_GAP, floor - BOTTOM_GAP * 2));
+      setHeight((prev) => (prev === next ? prev : next));
+    };
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => { frame = 0; measure(); });
     };
 
     measure();
     window.addEventListener('resize', measure);
     window.addEventListener(DOCK_RESIZE_EVENT, measure);
+    // The page scrolls inside the layout's <main>, not the window; scroll
+    // events do not bubble, so they are caught on the way down.
+    if (followScroll) document.addEventListener('scroll', onScroll, true);
     // What sits above the column can change height on its own — a banner
     // appears, a filter row wraps — and the column has to follow it.
     const observer = typeof ResizeObserver === 'undefined'
@@ -174,15 +191,17 @@ export function useColumnHeight() {
     return () => {
       window.removeEventListener('resize', measure);
       window.removeEventListener(DOCK_RESIZE_EVENT, measure);
+      if (followScroll) document.removeEventListener('scroll', onScroll, true);
+      if (frame) window.cancelAnimationFrame(frame);
       observer?.disconnect();
     };
-  }, []);
+  }, [followScroll]);
 
   return { ref, height };
 }
 
 export function ChatColumn({ children }) {
-  const { ref, height } = useColumnHeight();
+  const { ref, height } = useColumnHeight({ followScroll: true });
   return (
     <aside
       ref={ref}

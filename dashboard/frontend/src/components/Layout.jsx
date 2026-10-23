@@ -24,6 +24,7 @@ import HelpPanel from './help/HelpPanel';
 import { isEmbedded } from './embed';
 import WakeListener from './assistant/WakeListener';
 import InstallAppButton from './InstallAppButton';
+import WorkspacePicker from './WorkspacePicker';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
@@ -305,8 +306,7 @@ const Layout = ({ children }) => {
     setMenuChoice(next);
   };
 
-  const handleWorkspaceChange = (e) => {
-    const newWs = e.target.value;
+  const handleWorkspaceChange = (newWs) => {
     setSelectedWorkspace(newWs);
     if (location.pathname.startsWith('/workspaces/')) {
       navigate('/workspaces');
@@ -493,18 +493,13 @@ const Layout = ({ children }) => {
               {narrow ? <Menu className="w-5 h-5" /> : sidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
             </button>
             <span className="hidden sm:inline text-sm font-bold text-gray-400 uppercase tracking-widest">{t('layout.workspaceLabel')}</span>
-            <select
-              aria-label={t('layout.workspaceLabel')}
-              className="min-w-0 max-w-[9rem] sm:max-w-none truncate bg-gray-50 border border-gray-200 rounded-lg px-2 sm:px-3 py-1.5 text-sm font-semibold text-gray-700 focus:outline-none"
+            <WorkspacePicker
+              workspaces={workspaces}
               value={selectedWorkspace}
               onChange={handleWorkspaceChange}
-            >
-              {workspaces.map(ws => (
-                <option key={ws.name} value={ws.name}>
-                  {workspaceLabel(ws)}
-                </option>
-              ))}
-            </select>
+              label={workspaceLabel}
+              compact={narrow}
+            />
             <span className="hidden sm:contents"><IsolationBadge workspace={selectedWorkspace} /></span>
             <div className="hidden sm:block h-5 w-px bg-gray-200" />
             {/* Global model picker; on a phone the chip is its icon alone */}

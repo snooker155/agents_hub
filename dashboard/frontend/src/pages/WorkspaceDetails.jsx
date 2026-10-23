@@ -4,6 +4,7 @@ import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
 import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert, Sparkles, Repeat } from 'lucide-react';
+import { isHtmlFile } from '../lib/fileKind';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
 import ProjectCard from '../components/projects/ProjectCard';
@@ -28,6 +29,7 @@ import {
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { TabRow } from '../components/PageTabs';
 import PageLoader from '../components/PageLoader';
 import { useI18n } from '../i18n';
 // Tab ids the page can open, so a ?tab= deep-link can be validated before use.
@@ -603,9 +605,9 @@ const WorkspaceDetails = () => {
         }
       />
 
-      <div className="border-b border-gray-200 shrink-0 flex items-end justify-between gap-3">
-        <nav className="flex flex-wrap gap-2 -mb-px">
-          {tabs.map((tab) => {
+      <TabRow
+        className="shrink-0"
+        tabs={tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
@@ -625,9 +627,8 @@ const WorkspaceDetails = () => {
               </button>
             );
           })}
-        </nav>
-        {activeTab === 'tasks' && <div ref={setTaskToolbar} className="flex items-center shrink-0" />}
-      </div>
+        actions={activeTab === 'tasks' && <div ref={setTaskToolbar} className="flex items-center" />}
+      />
 
       {activeTab === 'tasks' && (
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -859,15 +860,16 @@ const WorkspaceDetails = () => {
             </button>
           </div>
           {(files.length || folders.length) ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
-              {/* The tree is a picker; the file is the thing being read. Two
-                  of twelve columns is enough for names, and the other ten stop
-                  wrapping every other line of the file beside it. */}
-              <div className="lg:col-span-2 border border-gray-200 rounded-lg p-2 overflow-auto min-h-0">
+            <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border border-gray-200 rounded-lg overflow-hidden">
+              {/* One block: the tree, a divider, the file. The tree is a
+                  picker; the file is the thing being read. Two of twelve
+                  columns is enough for names, and the other ten stop wrapping
+                  every other line of the file beside it. */}
+              <div className="lg:col-span-2 p-2 overflow-auto min-h-0 border-b lg:border-b-0 lg:border-r border-gray-200">
                 {renderFileNodes(fileTree)}
               </div>
-              <div className="lg:col-span-10 border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-0">
-                <div className="px-4 py-2 border-b bg-gray-50 flex items-center justify-between gap-2 shrink-0">
+              <div className="lg:col-span-10 min-w-0 flex flex-col min-h-0">
+                <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-2 shrink-0">
                   <div className="min-w-0">
                     <div className="text-xs text-gray-500">{t('workspaceDetails.selectedFile')}</div>
                     <div className="text-sm text-gray-700 truncate flex items-center gap-2">
@@ -901,7 +903,7 @@ const WorkspaceDetails = () => {
                         </button>
                       </div>
                     )}
-                    {!selectedFileIsPdf && isMarkdownPath(selectedFilePath) && (
+                    {!selectedFileIsPdf && (isMarkdownPath(selectedFilePath) || isHtmlFile({ name: selectedFilePath })) && (
                       <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
                         <button
                           type="button"
@@ -931,7 +933,7 @@ const WorkspaceDetails = () => {
                     </button>
                   </div>
                 </div>
-                <div className={`${selectedFileIsPdf && pdfViewMode === 'render' ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
+                <div className={`${(selectedFileIsPdf && pdfViewMode === 'render') || (isHtmlFile({ name: selectedFilePath }) && mdViewMode === 'rendered') ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
                   {fileContentLoading ? (
                     <p className="text-sm text-gray-500 p-4">{t('workspaceDetails.loadingFileContent')}</p>
                   ) : fileContentError ? (
@@ -944,6 +946,15 @@ const WorkspaceDetails = () => {
                     />
                   ) : selectedFilePath && isMarkdownPath(selectedFilePath) && mdViewMode === 'rendered' ? (
                     <MarkdownRenderer content={selectedFileContent} />
+                  ) : selectedFilePath && isHtmlFile({ name: selectedFilePath }) && mdViewMode === 'rendered' ? (
+                    // The page as a browser shows it, sandboxed (no scripts),
+                    // like an HTML file on a project's Files tab.
+                    <iframe
+                      title={selectedFilePath}
+                      srcDoc={selectedFileContent}
+                      sandbox=""
+                      className="w-full h-full min-h-[60vh] border-0 bg-white block"
+                    />
                   ) : selectedFilePath ? (
                     <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words">{selectedFileContent}</pre>
                   ) : (
