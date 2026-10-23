@@ -29,7 +29,7 @@ function useDefinitionChatDescriptor(agentId, workspace, onChanged) {
     scope: `agent:${agentId}`,
     path: agentDefinitionChatUrl(agentId, workspace),
     loadChat, clearChat, stopChat, onEvent,
-    title: t('agentDetails.definitionChat'),
+    title: t('agentDetails.definitionChatTitle'),
     emptyHint: t('agentDetails.definitionChatHint'),
     suggestions: [
       t('agentDetails.chatSuggestSharpen'),

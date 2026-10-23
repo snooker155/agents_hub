@@ -216,6 +216,17 @@ class AgentSpec:
     # settings.capability_override_requires_container the override is only
     # honoured at build time for container-isolated, no-network runs.
     capability_override: bool = False
+    # The stored version (agents/versions.py) every run of this agent builds
+    # from instead of the live definition, until it is cleared. A run's own
+    # pin (a task, a deployment, a chat request) still wins. Not part of the
+    # version fingerprint, so setting it never writes a version, and never
+    # inherited: a child follows its own pin, or its parent's extends_version.
+    pinned_version: Optional[int] = None
+    # Agents this one was not linked to (delegates / handoffs) because the
+    # link would close a blocked capability combination, ``{agent_id: reason}``
+    # (agents/main_links.py). Read at build time so the agent can tell the
+    # user it knows such an agent but may not pass work or the chat to it.
+    link_refusals: Dict[str, str] = field(default_factory=dict)
     # Per-agent tweaks to the tool-approval gate (tools/approval.py). Both are
     # empty by default, so the agent follows the shared NEEDS_APPROVAL list:
     # ``approval_tools`` adds tool ids that this agent may not call unapproved,
@@ -476,6 +487,10 @@ class AgentSpec:
         # Only write when the operator has accepted a blocked combination.
         if self.capability_override:
             d["capability_override"] = self.capability_override
+        if self.pinned_version is not None:
+            d["pinned_version"] = int(self.pinned_version)
+        if self.link_refusals:
+            d["link_refusals"] = dict(self.link_refusals)
         # Loop policies: only written when set, so default records stay clean.
         if self.tool_policy:
             d["tool_policy"] = dict(self.tool_policy)
@@ -814,6 +829,12 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     clarify_gate = bool(ad.get("clarify_gate", False))
     allow_self_delegation = bool(ad.get("allow_self_delegation", False))
     capability_override = bool(ad.get("capability_override", False))
+    try:
+        pinned_version = int(ad["pinned_version"]) if ad.get("pinned_version") is not None else None
+    except (TypeError, ValueError):
+        pinned_version = None
+    link_refusals = {str(k): str(v) for k, v in (ad.get("link_refusals") or {}).items()} \
+        if isinstance(ad.get("link_refusals"), dict) else {}
 
     remote = ad.get("remote") or {}
     if not isinstance(remote, dict):
@@ -965,6 +986,8 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         clarify_gate=clarify_gate,
         allow_self_delegation=allow_self_delegation,
         capability_override=capability_override,
+        pinned_version=pinned_version,
+        link_refusals=link_refusals,
         delegates=delegates,
         max_concurrent_delegates=max_concurrent_delegates,
         data_class=data_class,

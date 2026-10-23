@@ -723,6 +723,15 @@ class AgentFactory:
                 override_params = {**override_params, "definition_version": int(pin["version"])}
                 _record_experiment_assignment(pin)
 
+        # The agent's own version pin (AgentSpec.pinned_version) when the run
+        # brings none: added to the overrides so the cache key carries it like
+        # any other pin and _build_agent loads that stored version.
+        if override_params.get("definition_version") is None:
+            from agents.versions import agent_pin
+            _pin = agent_pin(agent_id)
+            if _pin is not None:
+                override_params = {**override_params, "definition_version": _pin}
+
         # Per-run overrides (agents/run_overrides.py): the old separate
         # ``tool_policy``/``output_schema`` keywords fold into the one object,
         # normalised so the cache key below is the same for two requests that

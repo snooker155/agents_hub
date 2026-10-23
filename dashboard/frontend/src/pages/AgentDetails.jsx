@@ -10,6 +10,7 @@ import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentC
 import EntityChat from '../components/EntityChat';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
+import { TabRow } from '../components/PageTabs';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -924,9 +925,8 @@ const AgentDetails = () => {
         </div>
       </div>
 
-      <div className="border-b border-gray-200 flex items-end justify-between gap-4">
-        <nav className="flex flex-wrap gap-2 -mb-px">
-          {[
+      <TabRow
+        tabs={[
             { id: 'overview', label: t('agentDetails.tabs.overview'), icon: Activity },
             { id: 'inheritance', label: t('agentDetails.tabs.inheritance'), icon: GitBranch },
             { id: 'config', label: t('agentDetails.tabs.config'), icon: FileCode },
@@ -967,16 +967,21 @@ const AgentDetails = () => {
               </button>
             );
           })}
-        </nav>
-        {/* The definition chat belongs to the Config tab only, so its toggle
-            rides beside the tabs and disappears with them. */}
-        {activeTab === 'config' && (
-          <div className="pb-2 shrink-0">
-            <ChatToggle open={defChat.open} onToggle={defChat.toggle}
-                        label={t('agentDetails.definitionChat')} />
-          </div>
-        )}
-      </div>
+        /* The definition chat opens beside the Config tab. Its toggle stays
+           in the tab row on every tab, so switching tabs never reflows the
+           row: from another tab it opens Config with the chat. */
+        actions={
+          <ChatToggle
+            open={activeTab === 'config' && defChat.open}
+            onToggle={() => {
+              if (activeTab === 'config') { defChat.toggle(); return; }
+              setActiveTab('config');
+              defChat.setOpen(true);
+            }}
+            label={t('agentDetails.definitionChat')}
+          />
+        }
+      />
 
       {/* Live quality (online evals) sits under the overview; the experiment
           card sits under the version history it picks its arms from. */}
@@ -1036,6 +1041,7 @@ const AgentDetails = () => {
         open={showStartInstance}
         onClose={() => setShowStartInstance(false)}
         agentId={id}
+        agentName={agent?.name || ''}
         defaultWorkspace={selectedWorkspace}
       />
       <DeployServiceModal

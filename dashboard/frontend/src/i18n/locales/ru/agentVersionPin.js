@@ -2,6 +2,7 @@ export default {
   title: 'Версия агента',
   live: 'Версия агента: текущая (v{{version}})',
   pinned: 'Версия агента: закреплена на v{{version}}',
+  badgeUnsaved: 'текущая',
   versionOption: 'v{{version}}',
   jobFieldLabel: 'Версия агента',
   jobFieldLive: 'Текущая',

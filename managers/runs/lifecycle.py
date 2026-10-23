@@ -105,6 +105,19 @@ def _agent_version_for(
         return None
 
 
+def _pin_for(agent_id: Optional[str], requested: Optional[int]) -> Optional[int]:
+    """The run's own pin, else the agent's (``AgentSpec.pinned_version``),
+    the same choice the factory makes when it builds the run. Never raises."""
+    if requested is not None:
+        return requested
+    try:
+        from agents.versions import agent_pin
+        return agent_pin(agent_id)
+    except Exception:  # noqa: BLE001 - best-effort, like agent_version: a run record never fails over it
+        log.debug("could not read the version pin of '%s'", agent_id, exc_info=True)
+        return None
+
+
 def _agent_chain_for(agent_id: Optional[str], version: Optional[int]) -> Optional[list]:
     """The inheritance chain a run of a child agent built from, root first:
     ``[{id, version}]`` (agents/inheritance.py ``run_chain``), the one the
@@ -198,6 +211,7 @@ def preopen_run(
         if dh:
             record["definition_hash"] = dh
     if "agent_version" not in record:
+        agent_version_pin = _pin_for(agent_id, agent_version_pin)
         av = _agent_version_for(
             agent_id, requested_version=agent_version_pin,
             definition_hash=record.get("definition_hash"),
@@ -277,6 +291,7 @@ def open_run(
     _upsert_run(record)
     _route_experiment(run_id, agent_id, record)
     if "agent_version" not in record:
+        agent_version_pin = _pin_for(agent_id, agent_version_pin)
         av = _agent_version_for(
             agent_id, requested_version=agent_version_pin,
             definition_hash=record.get("definition_hash"), route_experiment=True,

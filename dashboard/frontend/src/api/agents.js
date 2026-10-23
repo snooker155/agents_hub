@@ -27,6 +27,9 @@ export const getAgentVersions = (id) => api.get(`/agents/${id}/versions`);
 export const getAgentVersionDiff = (id, version, against = 'current') =>
   api.get(`/agents/${id}/versions/${version}/diff`, { params: { against } });
 export const rollbackAgentVersion = (id, version) => api.post(`/agents/${id}/versions/${version}/rollback`);
+// Pin every run of the agent to a stored version: a number, 'current' (the
+// live state is stored as a version and pinned) or null to follow live again.
+export const pinAgentVersion = (id, version) => api.put(`/agents/${id}/version-pin`, { version });
 export const disconnectAgent = (id) => api.delete(`/agents/${id}`);
 export const updateAgentMemory = (id, data) => api.post(`/agents/${id}/memory`, data);
 export const eraseAgentMemory = (id, workspace) => api.delete(`/agents/${id}/memory`, { params: workspace ? { workspace } : {} });

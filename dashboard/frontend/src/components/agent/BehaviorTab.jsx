@@ -4,8 +4,15 @@ import AgentSecretsCard from './AgentSecretsCard';
 import AgentWebDomainsCard from './AgentWebDomainsCard';
 import AgentConsentCard from './AgentConsentCard';
 import AgentOutcomeCard from './AgentOutcomeCard';
+import { Fragment } from 'react';
 import { BrainCircuit, HelpCircle, Layers, MessageSquare, Repeat } from 'lucide-react';
 import { useAgentPage } from './context';
+
+// Put elements into a translated string at its {{name}} slots.
+const withSlots = (text, slots) => String(text).split(/(\{\{\w+\}\})/).map((part, i) => {
+  const name = part.match(/^\{\{(\w+)\}\}$/)?.[1];
+  return name && name in slots ? <Fragment key={i}>{slots[name]}</Fragment> : part;
+});
 
 /** How the agent thinks and answers (reasoning, clarification gate,
  * self-delegation, response format) and the secrets a run may receive. */
@@ -88,13 +95,14 @@ export default function BehaviorTab() {
                           blockEnabled ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {blockEnabled ? 'Enabled' : 'Disabled'}
+                        {blockEnabled ? t('common.enabled') : t('common.disabled')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600 mb-3">
-                      <span className="font-medium">{t('agentDetails.nativeThinking')}</span> is a model parameter — how much the model reasons on its
-                      own. The <span className="font-medium">{t('agentDetails.thinkTool')}</span> is a separate scratchpad the agent can call; pick its
-                      depth or turn it off.
+                      {withSlots(t('agentDetails.thinkExplain'), {
+                        native: <span className="font-medium">{t('agentDetails.nativeThinking')}</span>,
+                        tool: <span className="font-medium">{t('agentDetails.thinkTool')}</span>,
+                      })}
                     </p>
 
                     {blockEnabled && (
@@ -165,7 +173,7 @@ export default function BehaviorTab() {
                           enabled ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {enabled ? 'Enabled' : 'Disabled'}
+                        {enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600 mb-3">
@@ -225,11 +233,11 @@ export default function BehaviorTab() {
                           enabled ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {enabled ? 'Enabled' : 'Disabled'}
+                        {enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600">
-                      When the agent lacks key information, it asks a few clarifying questions and waits instead of guessing. In a task it pauses (awaiting input) until you answer; in chat it asks and continues once you reply.
+                      {t('agentDetails.clarifyExplain')}
                     </p>
                   </div>
                 );
@@ -267,11 +275,14 @@ export default function BehaviorTab() {
                           enabled ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {enabled ? 'Enabled' : 'Disabled'}
+                        {enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600">
-                      Allows the agent to target its own id in <code>{t('agentDetails.runAgentTool')}</code> / <code>{t('agentDetails.assignAgentTool')}</code>. Off by default because a self-run recurses the same agent. Enable only for agents meant to hand a sub-goal back to themselves, and keep an eye on runaway loops.
+                      {withSlots(t('agentDetails.selfDelegationExplain'), {
+                        run: <code>{t('agentDetails.runAgentTool')}</code>,
+                        assign: <code>{t('agentDetails.assignAgentTool')}</code>,
+                      })}
                     </p>
                   </div>
                 );

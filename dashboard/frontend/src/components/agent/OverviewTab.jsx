@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { API_ORIGIN } from '../../api';
 import { useAgentPage } from './context';
+import AgentVersionBadge from './AgentVersionBadge';
 
 /**
  * The agent's own A2A card, for pointing an outside client at it.
@@ -166,6 +167,16 @@ export default function OverviewTab() {
                   })()}
                 </div>
               )}
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('agentVersionPin.title')}</span>
+                <span className="flex items-center gap-2">
+                  {agent.pinned_version != null || agent.current_version != null
+                    ? <AgentVersionBadge agent={agent} />
+                    : <span className="text-xs text-gray-500">{t('agentVersionPin.badgeUnsaved')}</span>}
+                  <button type="button" onClick={() => setActiveTab('versions')}
+                    className="text-xs text-indigo-600 hover:text-indigo-800">{t('agentDetails.versions.openVersions')}</button>
+                </span>
+              </div>
             </div>
             <A2ACardLink agentId={agent.id} t={t} />
           </div>
