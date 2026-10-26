@@ -29,6 +29,15 @@ For an `agent_task` job these are passed straight into
 `tasks_service.create_task` when the job fires. A `flow` or `loop` job creates
 its task through that launcher's own path.
 
+## From the chat
+
+The Planner (`@planner`) creates and looks after deployments for you:
+`schedule_task`, `schedule_flow` and `schedule_loop` take the fields above and the resources
+below, `get_scheduled` reads the firing journal, `pause_scheduled`,
+`resume_scheduled` and `run_scheduled_now` do what the page's buttons do.
+Secrets are the exception: no tool sets them, because a secret is a grant of
+private data to another agent's runs. Add them on this page.
+
 ## Resources
 
 An `agent_task` deployment can carry what its runs need, the way a session

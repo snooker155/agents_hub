@@ -43,7 +43,7 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "create_task", "add_subtask", "update_task", "set_task_dependencies",
     "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow", "run_new_flow_tool",
     "send_message", "notify", "create_notification", "post_webhook",
-    "schedule_job", "create_view", "view_serve", "delegate",
+    "schedule_job", "create_view", "view_serve", "delegate", "run_scheduled_now",
     # A workspace created or deleted from the chat (tools/workspace_management.py).
     "create_workspace", "delete_workspace",
 })
@@ -191,6 +191,12 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # title and description carry, so list_scheduled is read under the same
     # grant as list_tasks.
     "list_scheduled": frozenset({READS_PRIVATE}),
+    # One job with its firing journal: the same authored content, plus the
+    # errors its firings hit.
+    "get_scheduled": frozenset({READS_PRIVATE}),
+    # Fires a job now: a notification job delivers its message at once, the
+    # same channel schedule_notification opens.
+    "run_scheduled_now": frozenset({CAN_EXFILTRATE}),
 
     # slides_export writes a .pptx of a slides view the agent authored into the
     # agent's own workspace: nothing is read from outside the system (remote
@@ -304,6 +310,11 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # and update_scheduled report/change a job the caller named by id. Reading
     # the roster (list_scheduled) is classified above.
     "schedule_task", "cancel_scheduled", "update_scheduled",
+    # schedule_flow, schedule_loop and schedule_memory_consolidation create a
+    # job for a flow, a loop or a pool of the workspace; pause/resume change a job's status. None
+    # can set a deployment's secrets, the one resource that is a grant.
+    "schedule_flow", "schedule_loop", "schedule_memory_consolidation", "pause_scheduled",
+    "resume_scheduled",
 
     # ── flow / team / loop management ─────────────────────
     # All of these are configuration the operator authored *for* the agents —

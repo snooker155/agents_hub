@@ -208,6 +208,25 @@ def _validate_consolidate(kind: JobKind, workspace: Optional[str],
     return {"consolidate_pool_id": pool_id, "consolidate_session_limit": limit}
 
 
+def _validate_loop(kind: JobKind, workspace: Optional[str], loop_id: Optional[str]) -> Optional[str]:
+    """A loop job's loop: required, and one of the job's workspace. Other
+    kinds carry none. Without this a loop job could be saved with no loop
+    (the field was not passed through) and every firing failed."""
+    loop_id = str(loop_id or "").strip() or None
+    if kind != JobKind.loop:
+        if loop_id:
+            raise ValueError("loop_id applies to loop jobs only")
+        return None
+    if not loop_id:
+        raise ValueError("a loop job requires loop_id")
+    from loops import store as loop_store
+    loop = loop_store.get_loop(loop_id)
+    ws = (workspace or "").strip() or None
+    if loop is None or (loop.workspace and ws and loop.workspace != ws):
+        raise ValueError(f"loop '{loop_id}' does not exist in workspace '{ws or 'default'}'")
+    return loop_id
+
+
 def create_job(
     *,
     kind: JobKind,
@@ -234,6 +253,7 @@ def create_job(
     memory_access: Optional[str] = None,
     consolidate_pool_id: Optional[str] = None,
     consolidate_session_limit: Optional[int] = None,
+    loop_id: Optional[str] = None,
 ) -> ScheduledJob:
     tz_name = _validate_timezone(timezone)
     cron_expr = _validate_cron(cron) if recurrence == Recurrence.cron else None
@@ -242,6 +262,7 @@ def create_job(
                                     secrets=secrets, memory_pool_ids=memory_pool_ids,
                                     memory_access=memory_access)
     consolidate = _validate_consolidate(kind, workspace, consolidate_pool_id, consolidate_session_limit)
+    loop_id = _validate_loop(kind, workspace, loop_id)
     job = ScheduledJob(
         kind=kind,
         title=title,
@@ -257,6 +278,7 @@ def create_job(
         flow_id=flow_id,
         seed=seed,
         max_concurrent=max_concurrent,
+        loop_id=loop_id,
         channels=channels or ["dashboard"],
         agent_version=agent_version,
         auto_pause_after=auto_pause_after,
@@ -831,7 +853,7 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
                 )
                 result["notification_id"] = str(n.id)
             elif job.kind == JobKind.flow:
-                result["task_id"] = _fire_flow(job)
+                result["flow_run_id"] = _fire_flow(job)
             elif job.kind == JobKind.loop:
                 fired = _fire_loop(job)
                 result["task_id"] = fired.get("task_id")
@@ -1021,7 +1043,8 @@ def _fire_agent_task(
 
 
 def _fire_flow(job: ScheduledJob) -> str:
-    """Trigger a flow run for a scheduled ``flow`` job. Returns the task id.
+    """Trigger a flow run for a scheduled ``flow`` job. Returns the flow run
+    id: a scheduled run is a run, it makes no task.
 
     Reuses ``flow.launcher.trigger_flow`` so scheduled and API triggers share
     concurrency + authorization semantics. A concurrency-capped skip raises, which
@@ -1044,11 +1067,11 @@ def _fire_flow(job: ScheduledJob) -> str:
     create_notification(
         title=f"Scheduled flow started: {job.title}",
         body=f"Flow '{job.flow_id}' was triggered by scheduled job {job.id}.",
-        source={"job_id": str(job.id), "task_id": result["task_id"], "flow_id": job.flow_id},
+        source={"job_id": str(job.id), "flow_run_id": result["run_id"], "flow_id": job.flow_id},
         workspace=job.workspace,
         channels=job.channels,
     )
-    return result["task_id"]
+    return result["run_id"]
 
 
 def _fire_loop(job: ScheduledJob) -> Dict[str, Any]:
