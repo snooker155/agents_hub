@@ -26,6 +26,15 @@ def test_plain_agent_only_lists_the_project_graph_reader():
     assert _ids(_spec()) == {"get_project_graph": "project"}
 
 
+def test_the_project_graph_reader_is_not_counted_as_always_there():
+    """Only a project-scoped run gets it, so the Tools tab leaves it out of
+    the count of tools every chat holds."""
+    out = auto_injected_tools(_spec(handoffs=["b"]), None)
+    always = {t["id"]: t["always"] for t in out}
+    assert always["get_project_graph"] is False
+    assert always.get("handoff_to_agent", True) is True
+
+
 def test_handoff_targets_bring_the_handoff_tool_with_a_description():
     out = auto_injected_tools(_spec(handoffs=["b"]), None)
     h = next(t for t in out if t["id"] == "handoff_to_agent")

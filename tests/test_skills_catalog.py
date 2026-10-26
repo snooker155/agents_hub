@@ -162,6 +162,8 @@ def test_a_copy_of_a_copy_still_points_at_the_original(store_file):
     skill = make_skill("alpha")
     run(skills_routes.update_skill_sharing(skill["id"], SkillSharingUpdate(shared=True)))
     copy = run(skills_routes.install_skill(skill["id"], SkillInstall(workspace="beta")))
+    # The marketplace keeps one skill per name (common/marketplace_names.py).
+    run(skills_routes.update_skill(copy["id"], SkillUpdate(name="Triage a bug, beta")))
     run(skills_routes.update_skill_sharing(copy["id"], SkillSharingUpdate(shared=True)))
     second = run(skills_routes.install_skill(copy["id"], SkillInstall(workspace="gamma")))
     assert second["origin_skill_id"] == skill["id"]
@@ -190,6 +192,30 @@ def test_an_attached_skill_reaches_its_agents_prompt(store_file, agent):
     assert inject_skills_catalog("someone_else", "alpha", "SYSTEM") == "SYSTEM"
     assert inject_skills_catalog("test_helper", "beta", "SYSTEM") == "SYSTEM"
 
+
+
+def test_the_catalog_tells_the_agent_to_fetch_the_steps(store_file, agent):
+    """Only names and descriptions are in the prompt, so the agent must be told
+    to call get_skill, never that the steps arrive on their own."""
+    from memory.procedural import inject_skills_catalog
+
+    make_skill("alpha", agent_id="test_helper")
+    prompt = inject_skills_catalog("test_helper", "alpha", "SYSTEM")
+    assert "call `get_skill`" in prompt
+    assert "automatically" not in prompt
+
+
+def test_a_skill_with_a_non_latin_name_exports(store_file):
+    """Response headers are latin-1: a Cyrillic name goes in filename* only."""
+    from urllib.parse import unquote
+
+    skill = make_skill("alpha", name="Латте-арт: сердце")
+    response = run(skills_routes.export_skill(skill["id"]))
+    disposition = response.headers["content-disposition"]
+    disposition.encode("latin-1")
+    assert 'filename="' in disposition
+    assert "латте-арт--сердце-SKILL.md" in unquote(disposition.split("filename*=UTF-8''")[1])
+    assert "Латте-арт: сердце" in response.body.decode()
 
 def test_attaching_to_an_unshared_agent_from_another_workspace_is_refused(store_file, agent):
     skill = make_skill("beta")

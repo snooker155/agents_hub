@@ -68,14 +68,17 @@ def auto_injected_tools(spec: Any, workspace: Optional[str] = None) -> List[Dict
     """The tools the factory would add to *spec* in *workspace*, in the order
     the factory adds them, each with a ``reason`` key naming the setting
     (``handoffs``, ``think``, ``plan``, ``skills``, ``clarify_gate``,
-    ``memory_pool``, ``project``). Tools already on the record are left out."""
+    ``memory_pool``, ``project``) and ``always``, False for one only some
+    runs get. Tools already on the record are left out."""
     own = [str(t) for t in (getattr(spec, "tools", None) or [])]
     out: List[Dict[str, Any]] = []
 
-    def add(tool_id: str, reason: str) -> None:
+    def add(tool_id: str, reason: str, *, always: bool = True) -> None:
         e = _entry(tool_id, reason, own=own)
         if e is not None and all(x["id"] != tool_id for x in out):
-            out.append(e)
+            # ``always`` False: only some runs get it (the reason says which),
+            # so the Tools tab does not count it in what every chat holds.
+            out.append({**e, "always": always})
 
     # Shared memory pool (memory/injection.py): the conversational memory
     # tools once a pool is bound in this workspace, its own or the user's
@@ -144,5 +147,5 @@ def auto_injected_tools(spec: Any, workspace: Optional[str] = None) -> List[Dict
 
     # Project-scoped runs only: listed so the operator knows it exists, the
     # reason says when.
-    add("get_project_graph", "project")
+    add("get_project_graph", "project", always=False)
     return out
