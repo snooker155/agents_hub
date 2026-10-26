@@ -28,7 +28,7 @@ describe('FlowHistory', () => {
     expect(screen.getByText('Running')).toBeInTheDocument();
     // The kind leads each row's second line.
     expect(screen.getByText(/^Chat · /)).toBeInTheDocument();
-    expect(screen.getByText(/^Task run · /)).toBeInTheDocument();
+    expect(screen.getByText(/^Background run · /)).toBeInTheDocument();
   });
 
   it('offers Delete on a chat and on a task run, and passes the entry without selecting it', () => {

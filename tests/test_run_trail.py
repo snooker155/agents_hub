@@ -182,3 +182,102 @@ def test_old_flow_log_lines_find_their_node_run(monkeypatch):
     assert out[1]["run_id"] == "r-c"          # the node's only run
     assert out[2]["run_id"] == "kept"         # already linked
     assert "run_id" not in out[3]             # a start line is not a node's end
+
+
+def test_a_flow_node_run_without_recorded_changes_lists_the_files_its_tools_wrote(tmp_path, monkeypatch):
+    """A flow node run from before the task driver caught file changes: the
+    files come from its log's tool lines, shown as they are now."""
+    log = tmp_path / "node.log"
+    log.write_text(
+        "--- Node run started at now ---\nAgent: writer\n\n=== EXECUTION ===\n"
+        "[tool_start] tool=read_file input={'path': 'notes.md'}\n[tool_end] output=x\n"
+        "[tool_start] tool=create_file input={'path': 'out/a.md', 'content': 'x'}\n[tool_end] output=ok\n"
+        "[tool_start] tool=write_file input={'path': 'out/a.md', 'content': 'y'}\n[tool_end] output=ok\n"
+        "[tool_start] tool=write_file input={'path': 'out/b.md', 'content': 'z'}\n[tool_end] output=ok\n",
+        encoding="utf-8")
+    _patch(monkeypatch, {"run_id": "n1", "log_file": str(log), "output": "done"})
+    files = messages.build_run_trail("n1")["files"]
+    assert files == [{"op": "add", "path": "out/a.md", "run_id": "n1"},
+                     {"op": "modify", "path": "out/b.md", "run_id": "n1"}]
+
+
+def test_a_background_flow_node_is_recorded_as_a_chat_node_is(monkeypatch, tmp_path):
+    """flow/task_driver.py watches a node with the chat callback: its log is a
+    chat log (read by the same parser), its record holds the tool calls and
+    the files its tools changed, and its flow-log line gets the step counts."""
+    import argparse
+    from common import artifact_sink
+    from flow import task_driver
+    from agents.callbacks import ChatStreamCallback
+
+    closed = {}
+    log_path = tmp_path / "node.log"
+    monkeypatch.setattr(task_driver, "open_run", lambda *a, **k: None)
+    monkeypatch.setattr(task_driver, "update_run", lambda *a, **k: None)
+    monkeypatch.setattr(task_driver, "run_log_path", lambda rid: log_path)
+    monkeypatch.setattr(task_driver, "close_run", lambda rid, **kw: closed.update(kw))
+
+    class _Inv:
+        duration_ms = 5
+        process = {}
+
+    def _lifecycle(agent_id, ws, prompt, *, on_success, extra_callbacks, **kw):
+        cb = next(c for c in extra_callbacks if isinstance(c, ChatStreamCallback))
+        cb.on_tool_start({"name": "write_file"}, "{'path': 'out/a.md'}")
+        artifact_sink.record_artifact("add", "out/a.md", None, "hello\n")
+        cb.on_tool_end("ok")
+        return on_success(type("R", (), {"agent_output": "done"})(), _Inv())
+
+    monkeypatch.setattr(task_driver, "run_agent_lifecycle", _lifecycle)
+    monkeypatch.setattr(task_driver._SessionPublishCallback, "_post", lambda self, payload: None)
+    monkeypatch.setattr(task_driver._SessionPublishCallback, "publish_done", lambda self, *a: None)
+    args = argparse.Namespace(flow_id="f", run_id="fr", task_id=None, session_id="s", workspace=str(tmp_path))
+    result = task_driver._run_agent_node(
+        {"id": "n1", "data": {"agent_id": "writer", "label": "Writer"}}, "n1", "write it",
+        args=args, flow_state=None, agent_overrides={}, port=0,
+    )
+    assert result.ok and result.extras["stats"]["tools"] == 1
+    assert result.extras["files"] == [{"op": "add", "path": "out/a.md"}]
+    process = closed["process"]
+    assert [c["tool"] for c in process["tool_calls"]] == ["write_file"]
+    assert [a["path"] for a in process["artifacts"]] == ["out/a.md"]
+    # Outside the node the sink is gone again.
+    assert artifact_sink._artifact_recorder.get() is None
+
+    # The log is a chat log: the chat parser reads its steps.
+    text = log_path.read_text(encoding="utf-8")
+    assert "=== Message at " in text and "--- Node run started at" not in text
+    run = {"run_id": "n1", "log_file": str(log_path), "output": "done", "input": "write it"}
+    monkeypatch.setattr(messages.run_manager, "get_run_by_id", lambda rid: run)
+    monkeypatch.setattr(messages.run_manager, "get_run_process", lambda rid: process)
+    trail = messages.build_run_trail("n1")
+    assert [e.get("tool") for e in trail["timeline"] if e["type"] == "tool"] == ["write_file"]
+    assert trail["files"][0]["path"] == "out/a.md"
+
+
+def test_a_flow_node_run_shows_its_thoughts_tool_calls_and_input(tmp_path, monkeypatch):
+    """A flow node run's own log (flow/task_driver.py) has no step numbers:
+    its thoughts and tool calls are read in order, each tool line matched to
+    the run's recorded call, and the run's input rides on the trail."""
+    log = tmp_path / "node.log"
+    log.write_text(
+        "--- Node run started at now ---\nAgent: researcher\n\n=== EXECUTION ===\n"
+        "[llm_start] model=M\n"
+        f"[reasoning] content={json.dumps('look for sources first')}\n[llm_end]\n"
+        "[tool_start] tool=web_search input={'query': 'coffee'}\n[tool_end] output=found\n"
+        "[tool_start] tool=read_file input={'path': 'a.md'}\n[tool_end] output=text\n",
+        encoding="utf-8")
+    run = {"run_id": "n2", "log_file": str(log), "output": "the notes", "input": "find coffee trends"}
+    monkeypatch.setattr(messages.run_manager, "get_run_by_id", lambda rid: run if rid == "n2" else None)
+    monkeypatch.setattr(messages.run_manager, "get_run_process", lambda rid: {"tool_calls": [
+        {"tool": "web_search", "input": "{'query': 'coffee'}", "output": "found it all", "status": "ok", "step": 1},
+    ]})
+    trail = messages.build_run_trail("n2")
+    kinds = [(e["type"], e.get("tool")) for e in trail["timeline"]]
+    assert kinds == [("reasoning", None), ("tool", "web_search"), ("tool", "read_file"), ("text", None)]
+    assert trail["timeline"][0]["content"] == "look for sources first"
+    # The recorded call carries the whole output; a line past them keeps the log's.
+    assert trail["timeline"][1]["output"] == "found it all"
+    assert trail["timeline"][2]["input"] == "{'path': 'a.md'}"
+    assert trail["input"] == "find coffee trends"
+    assert trail["stats"]["tools"] == 2 and trail["stats"]["thoughts"] == 1

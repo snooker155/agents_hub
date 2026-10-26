@@ -5,7 +5,6 @@ Single-purpose callbacks that are not stats collectors:
 
 - ``SharedProgressCallback`` — console/file progress logger for worker runs.
 - ``RunStopCallback`` — interrupts a run when it is stopped via the run manager.
-- ``NodeFileCallback`` — writes a flow node's LLM/tool events to its own file.
 
 Run guards (ToolRepetitionGuard, AskUserGuard, ContextWindowGuard and their
 signals) live in ``agents.callbacks.guards``.
@@ -210,47 +209,3 @@ class RunStopCallback(BaseCallbackHandler):
     def on_tool_end(self, output, **kwargs) -> None:
         self._check_stop()
 
-
-class NodeFileCallback(BaseCallbackHandler):
-    """Writes LLM/tool events for a single flow node to its own log file."""
-
-    raise_error = False
-
-    def __init__(self, log_path: Path) -> None:
-        self._f = open(log_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
-
-    def _w(self, line: str) -> None:
-        try:
-            self._f.write(line + "\n")
-        except (OSError, ValueError):
-            log.debug("_w: ignored error", exc_info=True)
-
-    def on_llm_start(self, serialized, prompts, **_):
-        model = (serialized or {}).get("name", "unknown") if isinstance(serialized, dict) else "unknown"
-        self._w(f"[llm_start] model={model}")
-
-    def on_llm_end(self, response, **_):
-        self._w("[llm_end]")
-
-    def on_llm_error(self, error, **_):
-        self._w(f"[llm_error] {type(error).__name__}: {error}")
-
-    def on_tool_start(self, serialized, input_str, **_):
-        name = (serialized or {}).get("name", "tool") if isinstance(serialized, dict) else "tool"
-        preview = str(input_str or "")[:500]
-        self._w(f"[tool_start] tool={name} input={preview}")
-
-    def on_tool_end(self, output, **_):
-        self._w(f"[tool_end] output={str(output or '')[:500]}")
-
-    def on_tool_error(self, error, **_):
-        self._w(f"[tool_error] {type(error).__name__}: {error}")
-
-    def on_chain_error(self, error, **_):
-        self._w(f"[chain_error] {type(error).__name__}: {error}")
-
-    def close(self) -> None:
-        try:
-            self._f.close()
-        except (OSError, ValueError):
-            log.debug("close: ignored error", exc_info=True)
