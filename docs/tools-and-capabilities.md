@@ -225,8 +225,8 @@ or a search may return.
 A host matches itself and its subdomains. The file holds each list as a JSON
 array, which is how pydantic-settings reads a list field; a comma-separated
 line typed by hand is accepted too. A workspace's own lists replace the
-global ones for runs in that workspace: the workspace page, Settings tab,
-"Web access" (`GET`/`PUT /api/workspaces/{name}/web-policy`), stored in the
+global ones for runs in that workspace: Settings, "Web access", for the
+workspace picked in the header (`GET`/`PUT /api/workspaces/{name}/web-policy`), stored in the
 workspace's metadata; an empty list there keeps the global one.
 
 ### Web search provider

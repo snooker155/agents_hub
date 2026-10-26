@@ -6,7 +6,7 @@ Three modes decide what an agent's tool call can do: `always_allow` runs it, `al
 
 **Per agent**, from the Tools tab or `PUT /api/agents/{id}/tool-policy`: a map of tool ids to modes, plus a `"*"` entry (fallback).
 
-**Per workspace**, from Settings, Tool policy block, or `PUT /api/workspaces/{name}/policy`: the same.
+**Per workspace**, from the Tool policy section of Settings, for the workspace picked in the header, or `PUT /api/workspaces/{name}/policy`: the same.
 
 An `mcp:<server>` group on the agent is shown on the card as the tools that server offered on its last connect, each with its own mode, since a call carries the tool's own id (`mcp__<server>__<tool>`). A server never connected yet stays a group, and the `"*"` entries apply to its tools.
 

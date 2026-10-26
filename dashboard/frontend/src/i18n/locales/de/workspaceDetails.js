@@ -10,7 +10,7 @@ export default {
   },
   settingsTab: {
     description: 'Überschreibungen nur für diesen Workspace. Ein leeres Feld übernimmt den globalen Wert.',
-    globalHint: 'Provider-Schlüssel, RAG, Beobachtbarkeit und Logging gelten nicht pro Workspace.',
+    globalHint: 'Ausführung, Tool-Richtlinie, Webzugriff, Aufgabenzuweisung, Provider-Schlüssel, RAG und Logging werden in den allgemeinen Einstellungen eingestellt.',
     openSettings: 'Einstellungen öffnen →',
     groups: {
       agents: 'Agenten',
@@ -166,8 +166,8 @@ export default {
     saveFailed: 'Rolle konnte nicht geändert werden',
     names: {
       coder: 'Programmierer', reviewer: 'Code-Reviewer', planner: 'Planer', researcher: 'Rechercheur',
-      web_search: 'Websuche', analyst: 'Analyst', writer: 'Autor', verifier: 'Prüfer',
-      visualizer: 'Visualisierer',
+      analyst: 'Analyst', writer: 'Autor', verifier: 'Prüfer',
+      visualizer: 'Visualisierer', web_search: 'Websuche',
     },
     summaries: {
       coder: 'Schreibt und ändert Code und Dateien in den Projekten des Arbeitsbereichs.',
@@ -179,6 +179,7 @@ export default {
       writer: 'Macht aus Notizen und Daten ein fertiges Dokument.',
       verifier: 'Prüft Berichte, Zahlen und Texte unabhängig.',
       visualizer: 'Baut Ansichten: Diagramme, 3D-Szenen, Folien, Webseiten.',
+      web_search: 'Durchsucht das offene Web und liest die gefundenen Seiten.',
     },
   },
   specialModels: {

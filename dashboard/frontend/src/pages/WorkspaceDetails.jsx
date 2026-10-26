@@ -22,11 +22,6 @@ import { useTheme, resolvePalette } from '../components/theme';
 import { invalidateWorkspaceSummary } from '../api/workspaceSummary';
 import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
 import { inputCls } from '../components/settingsUi';
-import {
-  SaveWorkspaceSettingsButton, WorkspaceSettingsStatus,
-  ExecutionModeSection, ToolPolicySection, TaskAssignmentSection, WorkspaceDomainPolicyCard,
-} from '../components/settings/WorkspaceSettingsSections';
-import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { TabRow } from '../components/PageTabs';
@@ -1220,23 +1215,21 @@ const WorkspaceDetails = () => {
 
 // ── settings tab ─────────────────────────────────────────────────────────────
 
-// What is configured per workspace, laid out the way the Settings page lays
-// out its sections: a left-hand menu and one content column. Provider keys,
-// RAG, observability and logging are not here: they are not a property of a
-// workspace, so they live on the Settings page only. `saves` marks the
-// sections whose fields ride on the Save button; the others save themselves.
+// What only a workspace has, laid out the way the Settings page lays out its
+// sections: a left-hand menu and one content column. Execution, tool policy,
+// web access and task assignment are workspace overrides too, but they sit
+// beside their global values on the Settings page (for the workspace picked
+// in the header), so they are not repeated here. Isolation and the special
+// models stay here, with personal memory, secrets and the palette. `saves`
+// marks the sections whose fields ride on the Save button; the others save themselves.
 const SETTINGS_GROUPS = [
   {
     key: 'agents',
     items: [
-      { id: 'execution', icon: Server, saves: true },
       { id: 'roles', icon: Repeat },
       { id: 'specialModels', icon: Sparkles },
-      { id: 'toolPolicy', icon: Shield },
-      { id: 'webPolicy', icon: Globe },
       { id: 'personalMemory', icon: UserRound },
       { id: 'isolation', icon: ShieldAlert },
-      { id: 'tasks', icon: CheckSquare, saves: true },
     ],
   },
   {
@@ -1252,17 +1245,13 @@ const SETTINGS_GROUPS = [
 ];
 
 /**
- * The workspace's own settings. The override fields are drawn by the shared
- * components/settings/WorkspaceSettingsSections.jsx, the same ones the
- * Settings page shows for the workspace picked in the header, so the two
- * never drift. The open section lives in the URL (?tab=settings&section=…).
+ * The workspace's own settings: agent roles, personal memory, secrets and the
+ * default palette. The open section lives in the URL (?tab=settings&section=…).
  */
 function WorkspaceSettingsTab({ workspace, agents }) {
   const { t } = useI18n();
   const auth = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const s = useWorkspaceSettings(workspace);
-
   // The palette card renders nothing for a non-admin in multi mode, so its
   // menu entry would lead to an empty page.
   const canSeePalette = !isMultiUser(auth) || isAdmin(auth);
@@ -1337,26 +1326,6 @@ function WorkspaceSettingsTab({ workspace, agents }) {
             </select>
           </div>
 
-          {active.saves && (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-gray-500 max-w-xl">{t('workspaceDetails.settingsTab.description')}</p>
-              <SaveWorkspaceSettingsButton s={s} />
-            </div>
-          )}
-          <WorkspaceSettingsStatus s={s} />
-
-          {s.loading && (active.saves || active.id === 'toolPolicy') ? (
-            <p className="text-sm text-gray-500 flex items-center gap-2">
-              <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-            </p>
-          ) : (
-            <>
-              {active.id === 'execution' && <ExecutionModeSection s={s} />}
-              {active.id === 'toolPolicy' && <ToolPolicySection s={s} />}
-              {active.id === 'tasks' && <TaskAssignmentSection s={s} />}
-            </>
-          )}
-          {active.id === 'webPolicy' && <WorkspaceDomainPolicyCard key={workspace} workspace={workspace} />}
           {active.id === 'roles' && <WorkspaceRoles key={workspace} workspace={workspace} />}
           {active.id === 'specialModels' && <WorkspaceSpecialModels key={workspace} workspace={workspace} />}
           {active.id === 'personalMemory' && <WorkspacePersonalMemory workspace={workspace} agents={agents} />}

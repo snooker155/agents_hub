@@ -10,7 +10,7 @@ export default {
   },
   settingsTab: {
     description: 'Overrides for this workspace only. An empty field inherits the global value.',
-    globalHint: 'Provider keys, RAG, observability and logging are not per workspace.',
+    globalHint: 'Execution, tool policy, web access, task assignment, provider keys, RAG and logging are set in the general Settings.',
     openSettings: 'Open Settings →',
     groups: {
       agents: 'Agents',
@@ -166,8 +166,8 @@ export default {
     saveFailed: 'Could not change the role',
     names: {
       coder: 'Coder', reviewer: 'Code reviewer', planner: 'Planner', researcher: 'Researcher',
-      web_search: 'Web search', analyst: 'Analyst', writer: 'Writer', verifier: 'Verifier',
-      visualizer: 'Visualizer',
+      analyst: 'Analyst', writer: 'Writer', verifier: 'Verifier',
+      visualizer: 'Visualizer', web_search: 'Web search',
     },
     summaries: {
       coder: 'Writes and changes code and files in the workspace\'s projects.',
@@ -179,6 +179,7 @@ export default {
       writer: 'Turns notes and data into a finished document.',
       verifier: 'Checks reports, figures and texts independently.',
       visualizer: 'Builds views: charts, diagrams, 3D scenes, slides, web pages.',
+      web_search: 'Searches the open web and reads the pages it finds.',
     },
   },
   specialModels: {

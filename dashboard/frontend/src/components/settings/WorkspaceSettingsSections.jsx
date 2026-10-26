@@ -1117,52 +1117,49 @@ export function WorkspaceDomainPolicyCard({ workspace }) {
   );
 }
 
-/** The Web search page of Settings: provider, fetch limits and the global
- * domain policy. A workspace's own policy is on the workspace page, Settings
- * tab, "Web access" (WorkspaceDomainPolicyCard). */
-export function WebSearchSection({ s }) {
+/** The Web access page of Settings: the search provider, fetch limits, the
+ * global domain policy and, under it, the policy of the workspace picked in
+ * the header (WorkspaceDomainPolicyCard). */
+export function WebAccessSection({ s }) {
   return (
     <div className="space-y-5">
       <WebSearchProviderCard s={s} />
       <WebFetchCard s={s} />
       <WebDomainPolicyCard s={s} />
+      {s.workspace && <WorkspaceDomainPolicyCard key={s.workspace} workspace={s.workspace} />}
     </div>
   );
 }
 
 /**
- * Agent execution on the Settings page: the three sections above. `showGlobal`
- * adds the token streaming switch, which is a machine-wide .env setting rather
- * than a workspace one, so only the Settings page shows it.
+ * The Execution page of Settings: the streaming switch, where the picked
+ * workspace's agents run, the capability guard and the code runner. Tool
+ * policy and task assignment are pages of their own beside it.
  */
-export function ExecutionSection({ s, showGlobal = false }) {
+export function ExecutionSection({ s }) {
   const { t } = useI18n();
   return (
     <div className="space-y-5">
-      {showGlobal && (
-        <SectionCard title={t('settings.liveStreaming')}>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <label className="text-sm font-medium text-gray-700">{t('settings.streamAgentOutput')}</label>
-              <p className="text-xs text-gray-500 mt-1">
-                {t('settings.streamingHintBefore')} <strong>{t('settings.stop')}</strong>{t('settings.streamingHintAfter')}
-              </p>
-              <p className="text-xs text-gray-400 mt-1">
-                {t('settings.globalSettingWrittenTo')} <code className="bg-gray-100 rounded px-1">.env</code> {t('settings.as')}
-                <code className="bg-gray-100 rounded px-1 ml-1">AGENT_STREAMING</code>{t('settings.appliesToEvery')}{' '}
-                {t('settings.streamingAgentOverrideBefore')} <code className="bg-gray-100 rounded px-1">{t('settings.streaming')}</code> {t('settings.streamingAgentOverrideAfter')}
-              </p>
-            </div>
-            <Toggle checked={!!s.globalSettings.agent_streaming} disabled={s.streamingSaving} onChange={s.toggleStreaming} />
+      <SectionCard title={t('settings.liveStreaming')}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <label className="text-sm font-medium text-gray-700">{t('settings.streamAgentOutput')}</label>
+            <p className="text-xs text-gray-500 mt-1">
+              {t('settings.streamingHintBefore')} <strong>{t('settings.stop')}</strong>{t('settings.streamingHintAfter')}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              {t('settings.globalSettingWrittenTo')} <code className="bg-gray-100 rounded px-1">.env</code> {t('settings.as')}
+              <code className="bg-gray-100 rounded px-1 ml-1">AGENT_STREAMING</code>{t('settings.appliesToEvery')}{' '}
+              {t('settings.streamingAgentOverrideBefore')} <code className="bg-gray-100 rounded px-1">streaming</code> {t('settings.streamingAgentOverrideAfter')}
+            </p>
           </div>
-        </SectionCard>
-      )}
+          <Toggle checked={!!s.globalSettings.agent_streaming} disabled={s.streamingSaving} onChange={s.toggleStreaming} />
+        </div>
+      </SectionCard>
 
       <ExecutionModeSection s={s} />
-      {showGlobal && <CapabilityGuardSection s={s} />}
-      {showGlobal && <CodeRunnerSection s={s} />}
-      <ToolPolicySection s={s} />
-      <TaskAssignmentSection s={s} />
+      <CapabilityGuardSection s={s} />
+      <CodeRunnerSection s={s} />
     </div>
   );
 }
