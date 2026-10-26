@@ -142,6 +142,60 @@ def list_chats(workspace: Optional[str] = None, limit: int = 200,
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
+#: How much text a search hit shows around the words it found.
+_SNIPPET_CHARS = 140
+
+
+def _snippet(text: str, at: int, length: int) -> str:
+    start = max(0, at - _SNIPPET_CHARS // 3)
+    end = min(len(text), at + length + _SNIPPET_CHARS)
+    piece = " ".join(text[start:end].split())
+    return ("…" if start else "") + piece + ("…" if end < len(text) else "")
+
+
+def search_chats(q: str, workspace: Optional[str] = None, limit: int = 50) -> Dict[str, Any]:
+    """The conversations whose title or messages hold ``q`` (any case), newest
+    activity first, without transcripts; a hit in a message carries the text
+    around it as ``match``.
+
+    Read in Python, not by SQL: the transcript is a JSON document, and
+    matching its text case-blind in any script (Cyrillic too) the same way on
+    SQLite and Postgres is simplest where the document is decoded."""
+    needle = " ".join(str(q or "").split()).casefold()
+    if not needle:
+        return {"items": [], "total": 0, "q": q}
+    where, params = "", []
+    if workspace:
+        where = "WHERE workspace = ?"
+        params.append(workspace)
+    rows = db.get_conn().execute(
+        f"SELECT doc FROM chats {where} ORDER BY COALESCE(updated_at, created_at) DESC, chat_id DESC",
+        params,
+    ).fetchall()
+    cap = max(1, min(int(limit), 200))
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        chat = _row_to_chat(row)
+        if chat is None:
+            continue
+        title = str(chat.get("title") or "")
+        if needle in " ".join(title.split()).casefold():
+            items.append(_summary(chat))
+        else:
+            for m in reversed(_messages(chat)):
+                if m.get("role") not in ("user", "agent"):
+                    continue
+                text = str(m.get("content") or "")
+                at = text.casefold().find(needle)
+                if at < 0:
+                    continue
+                items.append({**_summary(chat), "match": _snippet(text, at, len(needle))})
+                break
+        if len(items) >= cap:
+            break
+    return {"items": items, "total": len(items), "q": q}
+
+
 def get_chat(chat_id: str) -> Optional[Dict[str, Any]]:
     """One conversation with its full transcript."""
     row = db.get_conn().execute(
@@ -208,11 +262,19 @@ def _mirror(chat_id: str, origin: Any) -> None:
         log.debug("chat store: mirror hook failed", exc_info=True)
 
 
+def _notice_text(notice: Dict[str, Any]) -> str:
+    """A notice in words, for a reader that does not word it itself."""
+    if notice.get("type") == "background_run_finished":
+        return f"{notice.get('kind') or 'run'} '{notice.get('name') or ''}' finished: {notice.get('status') or ''}"
+    return str(notice.get("text") or "")
+
+
 def append_turn(chat_id: str, *, run_id: str, user_message: str,
                 agent_message: str, agent_id: Optional[str] = None,
                 usage: Optional[Dict[str, Any]] = None,
                 duration_ms: Optional[int] = None,
-                extra: Optional[Dict[str, Any]] = None) -> bool:
+                extra: Optional[Dict[str, Any]] = None,
+                notice: Optional[Dict[str, Any]] = None) -> bool:
     """Add one completed exchange to a stored chat. Returns whether it was added.
 
     This is the safety net under the browser, not the normal path: the page that
@@ -235,6 +297,9 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
     ``extra`` is merged into the agent bubble: a reply that took the
     conversation over by handoff carries its ``handoff`` there, which is what
     the chat draws the "handed over" divider from (chat/handoff.py).
+
+    ``notice`` is what started a turn the hub began by itself (a background
+    run that ended, chat/background_runs.py): a system line above the reply.
     """
     if not chat_id or not run_id:
         return False
@@ -272,6 +337,9 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
             _mirror(chat_id, chat.get("origin"))
             return True
         turn = []
+        if notice:
+            turn.append({"id": f"srv-n-{run_id}", "role": "system", "notice": notice,
+                         "content": _notice_text(notice)})
         if (user_message or "").strip():
             turn.append({"id": f"srv-u-{run_id}", "role": "user",
                          "content": user_message})
