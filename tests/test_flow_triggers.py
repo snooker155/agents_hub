@@ -33,7 +33,8 @@ def test_trigger_flow_success_forwards_seed(monkeypatch):
     res = fl.trigger_flow("f1", seed={"x": 1}, max_concurrent=1)
     assert res["run_id"] == "rid"
     assert res["session_id"] == "sid"
-    assert res["task_id"] == cap["task_id"]
+    # A triggered run is a run: no task is made for it.
+    assert res["task_id"] is None and cap["task_id"] is None
     assert cap["params"]["seed"] == {"x": 1}
     assert cap["params"]["flow_id"] == "f1"
 
@@ -71,7 +72,7 @@ def test_scheduled_flow_job_fires(monkeypatch):
     def _fake_trigger(flow_id, **kw):
         captured["flow_id"] = flow_id
         captured.update(kw)
-        return {"task_id": "t1", "run_id": "r1", "session_id": "s1", "workspace": "ws"}
+        return {"task_id": None, "run_id": "r1", "session_id": "s1", "workspace": "ws"}
 
     monkeypatch.setattr("flow.launcher.trigger_flow", _fake_trigger)
     monkeypatch.setattr(ps, "create_notification", lambda **k: None)
@@ -84,14 +85,15 @@ def test_scheduled_flow_job_fires(monkeypatch):
     result = ps.fire_job(job)
 
     assert result["ok"] is True
-    assert result["task_id"] == "t1"
+    assert result["flow_run_id"] == "r1"
     assert captured["flow_id"] == "f1"
     assert captured["seed"] == {"a": 1}
     assert captured["max_concurrent"] == 3
     assert captured["created_by"] == "schedule"
 
+    # No task was made, so none is listed on the job.
     refreshed = ps.get_job(job.id)
-    assert "t1" in refreshed.created_task_ids
+    assert refreshed.created_task_ids == []
 
 
 def test_scheduled_flow_job_concurrency_skips(monkeypatch):

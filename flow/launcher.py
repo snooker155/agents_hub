@@ -9,6 +9,10 @@ one tied to the task for finalization purposes.
 Public API:
 - start_flow_run(task_id, flow_id, params) -> (run_id, session_id)
 
+A run works on a task only when it is given one (a task a person assigned
+the flow to). Nothing here makes a task: a flow started by an agent, a
+schedule, a trigger, another flow or the API is a run, not a task.
+
 Like a task run (agents/agent_launcher.py), a flow launch is a database half
 and a process half. ``start_flow_run`` and ``resume_flow_run`` do the first
 and, in the default role, the second right away; in the ``api`` role they put
@@ -43,7 +47,7 @@ def _set_flow_running(flow_id: str, running: bool) -> None:
 
 
 def start_flow_run(
-    task_id: str,
+    task_id: Optional[str],
     flow_id: str,
     params: Optional[Dict[str, Any]] = None,
     *,
@@ -66,33 +70,42 @@ def start_flow_run(
     """
     from tasks import service as _ts
     from common.session_service import get_or_create_task_session
-    from workspace import as_param_dict, resolve_task_workspace
+    from workspace import as_param_dict, create_workspace_folder, resolve_task_workspace
     from flow import store as flow_store
 
-    if not flow_store.get_flow(flow_id):
+    flow = flow_store.get_flow(flow_id)
+    if not flow:
         raise ValueError(f"Flow not found: {flow_id}")
 
-    task = _ts.get_task(task_id)
-    if not task:
-        raise ValueError(f"Task not found: {task_id}")
+    task = None
+    if task_id:
+        task = _ts.get_task(task_id)
+        if not task:
+            raise ValueError(f"Task not found: {task_id}")
 
     # Flow nodes operate in the same directory as standalone runs of an attached
     # task: ws_path is the project subfolder when set, else the workspace root,
     # else cwd. The workspace root holds .logs/ (metadata lives in workspaces.json).
     params = as_param_dict(params)
+    if task is None:
+        ws = params.get("workspace") or flow.get("workspace")
+        params["workspace"] = create_workspace_folder(ws).name if ws else create_workspace_folder().name
     ws_name, ws_path = resolve_task_workspace(task, params)
+    title = (getattr(task, "title", None) or params.get("title")
+             or f"Flow: {flow.get('name') or flow_id}")
 
     # One session for the entire flow
     session_id = get_or_create_task_session(
-        title=task.title,
+        title=title,
         workspace=ws_name,
         is_flow=True,
-        task_id=str(task_id),
+        task_id=str(task_id) if task else None,
     )
-    try:
-        _ts.update_task(task_id, session_id=session_id)
-    except Exception:  # noqa: BLE001 - the task session link is best effort
-        log.debug("task session link failed", exc_info=True)
+    if task is not None:
+        try:
+            _ts.update_task(task_id, session_id=session_id)
+        except Exception:  # noqa: BLE001 - the task session link is best effort
+            log.debug("task session link failed", exc_info=True)
 
     # run_id is the flow-run id (passed to the subprocess as --run-id and used as
     # flow_run_id / run_group for the per-node runs and log events). A flow is not
@@ -108,8 +121,8 @@ def start_flow_run(
 
     run_store.open_flow_run(
         run_id, flow_id,
-        task_id=str(task_id), session_id=session_id, workspace=ws_name,
-        title=task.title, log_file=str(log_file), status="pending",
+        task_id=str(task_id) if task else None, session_id=session_id, workspace=ws_name,
+        title=title, log_file=str(log_file), status="pending",
         parent_run_id=parent_run_id,
     )
     extra: Dict[str, Any] = dict(record or {})
@@ -140,10 +153,11 @@ def start_flow_run(
     cli_args = [
         "--flow-id", flow_id,
         "--workspace", str(ws_path),
-        "--task-id", str(task_id),
         "--run-id", run_id,
         "--session-id", session_id,
     ]
+    if task is not None:
+        cli_args += ["--task-id", str(task_id)]
     if checkpoint:
         cli_args += ["--resume-from", run_id]
 
@@ -160,7 +174,7 @@ def start_flow_run(
 
     _dispatch({
         "kind": QUEUE_KIND, "run_id": run_id, "entity_id": flow_id, "flow_id": flow_id,
-        "entrypoint": "flow_run", "cli_args": cli_args, "task_id": str(task_id),
+        "entrypoint": "flow_run", "cli_args": cli_args, "task_id": str(task_id) if task else None,
         "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
         "log_file": str(log_file), "header": "Flow run started", "mode": "w",
         "execution_mode": "local", "resume": False,
@@ -247,7 +261,7 @@ def resume_flow_run(
     if not flow_store.get_flow(flow_id):
         raise FlowResumeError(f"Flow not found: {flow_id}")
     task = _ts.get_task(task_id) if task_id else None
-    if task is None:
+    if task_id and task is None:
         raise FlowResumeError(f"Task not found for flow run {flow_run_id}")
 
     # Fold the answer into the checkpoint: the interrupt node becomes a node
@@ -288,30 +302,32 @@ def resume_flow_run(
     cli_args = [
         "--flow-id", flow_id,
         "--workspace", str(ws_path),
-        "--task-id", task_id,
         "--run-id", flow_run_id,
         "--session-id", session_id,
         "--resume-from", flow_run_id,
     ]
+    if task is not None:
+        cli_args += ["--task-id", task_id]
     _dispatch({
         "kind": QUEUE_KIND, "run_id": flow_run_id, "entity_id": flow_id, "flow_id": flow_id,
-        "entrypoint": "flow_run", "cli_args": cli_args, "task_id": task_id,
+        "entrypoint": "flow_run", "cli_args": cli_args, "task_id": task_id or None,
         "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
         "log_file": str(log_file), "header": "Flow run resumed", "mode": "a",
         "execution_mode": "local", "resume": True,
     })
     rec = run_store.get_flow_run(flow_run_id) or {}
     return {
-        "flow_run_id": flow_run_id, "flow_id": flow_id, "task_id": task_id,
+        "flow_run_id": flow_run_id, "flow_id": flow_id, "task_id": task_id or None,
         "session_id": session_id, "pid": rec.get("pid"), "resume_attempts": attempts,
         "resumed_nodes": len(checkpoint.get("done") or []),
     }
 
 
 def rerun_flow_run(flow_id: str, run_group: str, node_id: str, mode: str) -> Dict[str, Any]:
-    """Run a past task run of a flow again from one node, as a new run.
+    """Run a past run of a flow again from one node, as a new run.
 
-    The new run works on the same task and starts from the past run's
+    The new run works on the past run's task, if it had one, and starts from
+    the past run's
     checkpoint with the chosen part taken out (flow/rerun.py): ``single``
     runs only that node, ``rest`` that node and everything after it. The
     past run stays as it was. A run without a stored checkpoint is rebuilt
@@ -339,30 +355,26 @@ def rerun_flow_run(flow_id: str, run_group: str, node_id: str, mode: str) -> Dic
     task_id = str(rec.get("task_id") or "")
     task = _ts.get_task(task_id) if task_id else None
     ws_name = rec.get("workspace") or (getattr(task, "workspace", None) if task else None) or flow.get("workspace")
-    if task is None:
-        from workspace import create_workspace_folder
-        ws_name = ws_name or create_workspace_folder().name
-        task = _ts.create_task(
-            title=f"Flow: {flow.get('name') or flow_id}",
-            description=flow.get("description", "") or "",
-            workspace=ws_name,
-        )
     params: Dict[str, Any] = {
         "workspace": ws_name,
         "description": flow.get("description", "") or "",
         "flow_id": flow_id,
     }
+    if rec.get("title"):
+        params["title"] = rec["title"]
     run_id, session_id = start_flow_run(
-        str(task.id), flow_id, params, checkpoint=checkpoint,
+        str(task.id) if task else None, flow_id, params, checkpoint=checkpoint,
         record={"rerun_of": run_group, "rerun_node": node_id, "rerun_mode": mode},
     )
-    try:
-        _ts.assign_agent(task.id, flow.get("name") or flow_id, params, run_id=run_id)
-    except Exception:  # noqa: BLE001 - the run is already going, the task just shows no executor
-        log.debug("executor assignment failed", exc_info=True)
+    if task is not None:
+        try:
+            _ts.assign_agent(task.id, flow.get("name") or flow_id, params, run_id=run_id)
+        except Exception:  # noqa: BLE001 - the run is already going, the task just shows no executor
+            log.debug("executor assignment failed", exc_info=True)
+    rec_after = run_store.get_flow_run(run_id) or {}
     return {
-        "status": "started", "task_id": str(task.id), "run_id": run_id,
-        "session_id": session_id, "workspace": ws_name,
+        "status": "started", "task_id": str(task.id) if task else None, "run_id": run_id,
+        "session_id": session_id, "workspace": rec_after.get("workspace") or ws_name,
         "rerun_of": run_group, "node_id": node_id, "mode": mode,
     }
 
@@ -397,15 +409,15 @@ def trigger_flow(
     max_concurrent: int = 0,
     created_by: str = "trigger",
 ) -> Dict[str, Any]:
-    """Create a task and start a flow run, guarded by concurrency + authorization.
+    """Start a flow run, guarded by concurrency + authorization. No task is
+    made: a triggered run is a run.
 
     Shared by the ``/trigger`` webhook and the scheduled ``flow`` job so both get
     identical semantics. ``max_concurrent`` (0 = unlimited) caps how many
     instances of this flow may run at once. Raises ``FlowNotFoundError`` /
     ``FlowNotAuthorizedError`` / ``FlowConcurrencyError`` on the respective
-    failures. Returns ``{task_id, run_id, session_id, workspace}``.
+    failures. Returns ``{task_id: None, run_id, session_id, workspace}``.
     """
-    from tasks import service as _ts
     from flow import store as flow_store
     from flow.run_store import get_active_flow_runs
     from workspace import create_workspace_folder, get_workspace_metadata
@@ -431,18 +443,6 @@ def trigger_flow(
         if active >= max_concurrent:
             raise FlowConcurrencyError(flow_id, active, max_concurrent)
 
-    task = _ts.create_task(
-        title=f"Flow: {flow.get('name') or flow_id}",
-        description=description or flow.get("description", "") or "",
-        workspace=ws_name,
-    )
-    try:
-        _ts.append_task_activity_log(
-            task.id, "flow_triggered", f"Flow triggered ({created_by})", flow_id=flow_id
-        )
-    except Exception:  # noqa: BLE001 - the activity entry is a courtesy to the new task
-        log.debug("flow trigger activity log failed", exc_info=True)
-
     params: Dict[str, Any] = {
         "workspace": ws_name,
         "description": description or flow.get("description", "") or "",
@@ -451,13 +451,10 @@ def trigger_flow(
     if isinstance(seed, dict) and seed:
         params["seed"] = seed
 
-    run_id, session_id = start_flow_run(str(task.id), flow_id, params)
-    try:
-        _ts.assign_agent(task.id, flow.get("name") or flow_id, params, run_id=run_id)
-    except Exception:  # noqa: BLE001 - the run is already going, the task just shows no executor
-        log.debug("executor assignment failed", exc_info=True)
+    params["title"] = f"Flow: {flow.get('name') or flow_id} ({created_by})"
+    run_id, session_id = start_flow_run(None, flow_id, params)
     return {
-        "task_id": str(task.id),
+        "task_id": None,
         "run_id": run_id,
         "session_id": session_id,
         "workspace": ws_name,

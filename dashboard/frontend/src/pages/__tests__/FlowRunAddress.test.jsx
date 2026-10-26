@@ -16,14 +16,27 @@ const chatRecord = {
   ],
 };
 
+// A task run whose log has no last line (a loop pass written before the loop
+// logged its end): picked, it must stay picked.
+const openTaskRun = {
+  run_group: 'fr-open', kind: 'task', title: 'Loop — iteration 1', started_at: '2026-10-22T09:00:00Z',
+  status: 'running',
+  events: [
+    { type: 'flow_start', timestamp: '2026-10-22T09:00:00Z', run_group: 'fr-open', kind: 'task' },
+    { type: 'agent_start', node_id: 'n1', agent_name: 'Writer', timestamp: '2026-10-22T09:00:01Z', run_group: 'fr-open', kind: 'task' },
+    { type: 'agent_finish', node_id: 'n1', agent_name: 'Writer', output: 'pass output', timestamp: '2026-10-22T09:00:05Z', run_group: 'fr-open', kind: 'task' },
+  ],
+};
+
 vi.mock('../../api', async (importOriginal) => ({
   ...(await importOriginal()),
   getFlow: vi.fn(() => ok({ id: 'f1', name: 'F', workspace: 'ws', nodes: [], edges: [] })),
   getAgents: vi.fn(() => ok([])),
   getTasks: vi.fn(() => ok([])),
-  getFlowLogs: vi.fn(() => ok(chatRecord.events)),
-  getFlowRuns: vi.fn(() => ok([chatRecord])),
+  getFlowLogs: vi.fn(() => ok([...openTaskRun.events, ...chatRecord.events])),
+  getFlowRuns: vi.fn(() => ok([chatRecord, openTaskRun])),
   getFlowInstances: vi.fn(() => ok([])),
+  resumeFlowRun: vi.fn(() => ok({})),
   getRunTrail: vi.fn(() => ok(null)),
 }));
 vi.mock('../../components/workspace', () => ({ useWorkspace: () => ({ selectedWorkspace: 'ws', liveUpdates: false }) }));
@@ -79,6 +92,42 @@ describe('FlowRun: a conversation has its own address', () => {
     expect(screen.getByText('write the report', { selector: 'p' })).toBeInTheDocument();
     expect(screen.getByText('Done.', { selector: 'p' })).toBeInTheDocument();
     expect(seen.location.pathname).toBe('/flows/f1/runs/flow-chat-f1-7');
+  });
+
+  it('keeps a task run picked even when its log has no last line', async () => {
+    show('/flows/f1/runs/fr-open');
+    expect((await screen.findAllByText('pass output')).length).toBeGreaterThan(0);
+    // Still there once the page has settled: the pick was not dropped for a
+    // run that only looks live, for an empty new chat.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getAllByText('pass output').length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('flow-chat')).not.toBeInTheDocument();
+  });
+
+  it('answers the question a run without a task parked on, from its History record', async () => {
+    const api = await import('../../api');
+    const parked = {
+      run_group: 'fr-wait', kind: 'task', title: 'Digest', started_at: '2026-10-22T08:00:00Z', status: 'running',
+      events: [
+        { type: 'flow_start', timestamp: '2026-10-22T08:00:00Z', run_group: 'fr-wait', kind: 'task' },
+        { type: 'flow_interrupt', node_id: 'ask', question: 'Publish it?', choices: ['yes', 'no'],
+          timestamp: '2026-10-22T08:00:02Z', run_group: 'fr-wait', kind: 'task' },
+      ],
+    };
+    api.getFlowRuns.mockImplementation(() => ok([chatRecord, openTaskRun, parked]));
+    api.getFlowLogs.mockImplementation(() => ok([...parked.events, ...chatRecord.events]));
+    api.getFlowInstances.mockImplementation(() => ok([{ flow_run_id: 'fr-wait', status: 'awaiting_input', checkpoint: { done: [] } }]));
+    try {
+      show('/flows/f1/runs/fr-wait');
+      const box = await screen.findByTestId('flow-run-question');
+      expect(box).toHaveTextContent('Publish it?');
+      fireEvent.click(screen.getByRole('button', { name: 'yes' }));
+      await waitFor(() => expect(api.resumeFlowRun).toHaveBeenCalledWith('fr-wait', 'yes'));
+    } finally {
+      api.getFlowRuns.mockImplementation(() => ok([chatRecord, openTaskRun]));
+      api.getFlowLogs.mockImplementation(() => ok([...openTaskRun.events, ...chatRecord.events]));
+      api.getFlowInstances.mockImplementation(() => ok([]));
+    }
   });
 
   it('moves an older ?run= link to the address', async () => {
