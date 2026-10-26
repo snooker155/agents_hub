@@ -159,14 +159,11 @@ def _branching_errors(nodes: List[Dict], edges: List[Dict]) -> List[str]:
         if not isinstance(config, dict):
             config = {}
         if ref == "state_switch":
-            from flow.entities.conditions.state_switch import OPERATORS, case_targets
+            from flow.entities.conditions.state_switch import case_targets, config_errors
             for target in case_targets(config):
                 if target not in nexts:
                     errors.append(f"switch '{label}': target '{target}' is not a step it leads to")
-            for case in config.get("cases") or []:
-                op = str((case or {}).get("op") or "equals") if isinstance(case, dict) else ""
-                if op not in OPERATORS:
-                    errors.append(f"switch '{label}': unknown operator '{op}'")
+            errors.extend(config_errors(config, label))
         if ref == branching.MAP_ENTITY_ID and not str(config.get("agent_id") or "").strip():
             errors.append(f"map node '{label}' has no agent (config.agent_id)")
     return errors
@@ -433,6 +430,35 @@ def resolve_entities(nodes: List[Dict[str, Any]]) -> Dict[str, flow_registry.Flo
     if errors:
         raise FlowValidationError("entity resolution", errors)
     return resolved
+
+
+def workspace_agent_errors(nodes: List[Dict[str, Any]], workspace: Optional[str]) -> List[str]:
+    """Agents a flow names that the workspace may not run.
+
+    The same rule as the flow palette (flow.registry._agent_visible_in_workspace):
+    system and shared agents run everywhere, an agent a workspace owns only
+    there, and a workspace's ``allowed_agents`` list narrows the rest. Covers
+    agent nodes and the agent of a map node; nodes that name no agent, or an
+    agent the registry does not know (resolve_entities reports that), pass.
+    """
+    errors: List[str] = []
+    for node in nodes:
+        nid = node.get("id")
+        label = flow_dispatch.node_field(node, "label") or nid
+        spec = flow_dispatch.resolve_entity(node)
+        refs: List[str] = []
+        if spec is not None and spec.category == "agent":
+            refs.append(spec.id)
+        elif spec is not None and spec.category == "map":
+            config = flow_dispatch.node_field(node, "config") or {}
+            agent_ref = str(config.get("agent_id") or "").strip() if isinstance(config, dict) else ""
+            if agent_ref:
+                refs.append(agent_ref)
+        for ref in refs:
+            if not flow_registry._agent_visible_in_workspace(ref, workspace):
+                errors.append(f"node '{label}': agent '{ref}' is not available in workspace "
+                              f"'{workspace or 'default'}'")
+    return errors
 
 
 # ── stage 4: execution order from entry_point ─────────────────────────────────

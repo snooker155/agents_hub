@@ -53,6 +53,17 @@ export function EntityPalette({ entitiesByCategory = {} }) {
   const handleDragStart = (event, entity) => {
     event.dataTransfer.setData('application/agent-flow', JSON.stringify(entity));
     event.dataTransfer.effectAllowed = 'move';
+    // Chrome snapshots the drag image from the item's paint layer, which in a
+    // scrolling column is the whole column. A copy outside it is just the item.
+    const item = event.currentTarget;
+    const rect = item.getBoundingClientRect();
+    const ghost = item.cloneNode(true);
+    Object.assign(ghost.style, {
+      position: 'fixed', top: '-1000px', left: '-1000px', width: `${rect.width}px`, pointerEvents: 'none',
+    });
+    document.body.appendChild(ghost);
+    event.dataTransfer.setDragImage(ghost, event.clientX - rect.left, event.clientY - rect.top);
+    setTimeout(() => ghost.remove(), 0);
   };
 
   const cats = Object.keys(entitiesByCategory).filter((c) => c !== 'agent').sort((a, b) => {

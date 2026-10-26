@@ -2,9 +2,8 @@ import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, Workflow } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { INPUT_CLS } from './graphHelpers';
-import ProcessNode from '../ProcessNode';
-import ObjectTree from '../ObjectTree';
-import { initialFlowState, stateKeyLabel } from './stateKeys';
+import ProcessStepModal from '../ProcessStepModal';
+import { initialFlowState } from './stateKeys';
 
 // Graph-tab state block: edits the flow's seed/initial state JSON and can
 // auto-build the state structure by scanning every node's declared input/output
@@ -97,40 +96,27 @@ export function GraphStateBlock({ flow, nodes, onPatch }) {
   );
 }
 
-// One value card in the runtime-state block, the Chat process panel's step
-// card: three lines of the value, the whole of it in a modal on a click (a
-// structured value as a tree there). `accent` lets the second section
-// (unkeyed node outputs) read visually distinct from declared state keys.
-export function StateEntry({ label, stateKey = null, value, accent = 'cyan' }) {
-  const { t } = useI18n();
-  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-  const isEmpty = text === '' || text === '""' || value == null;
-  const labelColor = accent === 'slate'
-    ? 'text-slate-500 dark:text-slate-400'
-    : 'text-cyan-700 dark:text-cyan-400';
-  const body = (
-    <div className={`whitespace-pre-wrap break-words text-[11px] leading-4 ${isEmpty ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
-      {isEmpty ? t('flowEditor.status.pending') : text}
-    </div>
-  );
-  const structured = value !== null && typeof value === 'object';
+// One key of the runtime-state object, as a line of JSON cut to two lines; a
+// click opens the whole state (RuntimeStateBlock's modal).
+// Folded, a value keeps no more than this many characters: two lines of the
+// block hold fewer, so the cut never shows, but a huge value is not laid out.
+const FOLDED_CHARS = 300;
+
+function StateLine({ name, value, last, onOpen }) {
+  const isEmpty = value == null || value === '';
+  let text = JSON.stringify(value ?? null);
+  if (text.length > FOLDED_CHARS) text = `${text.slice(0, FOLDED_CHARS)}…`;
   return (
-    <ProcessNode
-      label={label}
-      lines={3}
-      labelColor={labelColor}
-      borderColor="border-slate-200 dark:border-slate-700"
-      bgColor="bg-white dark:bg-slate-800/60"
-      detail={(
-        <>
-          {/* The key itself, which a node's inputs and outputs name. */}
-          {stateKey && stateKey !== label ? <div className="mb-2 font-mono text-[11px] text-slate-400">{stateKey}</div> : null}
-          {structured ? <ObjectTree value={value} /> : <div className="whitespace-pre-wrap break-words text-sm leading-6">{text}</div>}
-        </>
-      )}
-    >
-      {body}
-    </ProcessNode>
+    // The clamp sits on an inner block: a button's own display would
+    // override the -webkit-box that line-clamp needs.
+    <button type="button" onClick={onOpen} className="block w-full pl-4 text-left">
+      <span className="line-clamp-2 break-words" data-testid="state-line">
+        <span className="text-cyan-700 dark:text-cyan-400">{JSON.stringify(name)}</span>
+        <span className="text-slate-400">: </span>
+        <span className={isEmpty ? 'text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}>{text}</span>
+        {last ? null : <span className="text-slate-400">,</span>}
+      </span>
+    </button>
   );
 }
 
@@ -144,6 +130,8 @@ export function StateEntry({ label, stateKey = null, value, accent = 'cyan' }) {
 export function RuntimeStateBlock({ logs, initial = null }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(true);
+  // The whole state in a modal, every value in full.
+  const [shown, setShown] = useState(false);
 
   // Latest snapshot wins: walk the stream and keep the most recent `state`.
   const snapshot = useMemo(() => {
@@ -171,12 +159,36 @@ export function RuntimeStateBlock({ logs, initial = null }) {
       </button>
       {open ? (
         <div className="max-h-[40vh] overflow-y-auto px-3 pb-2">
-          <div className="space-y-1.5">
-            {entries.map(([key, value]) => (
-              <StateEntry key={`k-${key}`} label={stateKeyLabel(key, t)} stateKey={key} value={value} />
+          {/* The whole state as one JSON object, a line per key. */}
+          <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 font-mono text-[11px] leading-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <div className="text-slate-400">{'{'}</div>
+            {entries.map(([key, value], i) => (
+              <StateLine key={`k-${key}`} name={key} value={value} last={i === entries.length - 1} onOpen={() => setShown(true)} />
             ))}
+            <div className="text-slate-400">{'}'}</div>
           </div>
         </div>
+      ) : null}
+      {shown ? (
+        <ProcessStepModal title={t('flowEditor.runtimeState')} labelColor="text-cyan-700" onClose={() => setShown(false)}>
+          {/* A plain list: each field's name, then its value whole (a
+              structured one as indented JSON), nothing to fold. */}
+          <dl className="space-y-3">
+            {entries.map(([key, value]) => (
+              <div key={`m-${key}`}>
+                <dt className="font-mono text-xs font-semibold text-cyan-700 dark:text-cyan-400">{key}</dt>
+                <dd className={`mt-1 whitespace-pre-wrap break-words text-sm leading-6 ${
+                  value !== null && typeof value === 'object' ? 'font-mono text-xs' : ''
+                } ${value == null || value === '' ? 'text-slate-400' : 'text-slate-800 dark:text-slate-200'}`}
+                >
+                  {value !== null && typeof value === 'object'
+                    ? JSON.stringify(value, null, 2)
+                    : value == null || value === '' ? '""' : String(value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </ProcessStepModal>
       ) : null}
     </div>
   );

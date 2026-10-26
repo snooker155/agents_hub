@@ -6,9 +6,10 @@ import { useI18n } from '../../i18n';
 
 /**
  * Create flow: name and describe it, then the blank canvas opens in the
- * editor.
+ * editor. The flow belongs to `workspace`, the one it is created in, until it
+ * is published.
  */
-export default function CreateFlowDialog({ onClose }) {
+export default function CreateFlowDialog({ workspace, onClose }) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: '', description: '' });
@@ -22,7 +23,9 @@ export default function CreateFlowDialog({ onClose }) {
     setCreating(true);
     setError('');
     try {
-      const { data } = await createFlow({ name, description: form.description.trim() });
+      const { data } = await createFlow({
+        name, description: form.description.trim(), workspace: workspace || undefined,
+      });
       navigate(`/flows/${data.id}/edit`);
     } catch (err) {
       setError(err.response?.data?.detail || err.message);
@@ -88,7 +91,7 @@ export default function CreateFlowDialog({ onClose }) {
             <button
               type="submit"
               disabled={creating || !form.name.trim()}
-              className="flex items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-cyan-300"
+              className="flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               data-testid="create-flow-submit"
             >
               <Plus className="h-4 w-4" />

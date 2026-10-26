@@ -197,6 +197,9 @@ class NodeResult:
     outputs: Dict[str, Any] = field(default_factory=dict)
     goto: Optional[List[str]] = None
     text: str = ""  # human-readable summary for logs / downstream agents
+    #: What the node decided, in a form a surface can word itself (a switch:
+    #: the key, the cases it checked, the one that held). None for most nodes.
+    detail: Optional[Dict[str, Any]] = None
 
 
 @dataclass
