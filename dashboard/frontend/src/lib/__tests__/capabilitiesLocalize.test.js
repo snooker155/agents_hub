@@ -16,6 +16,11 @@ describe('localizeViolation', () => {
     expect(capabilityLabel('ingests_untrusted', tRu)).toBe('принимает недоверенный текст');
   });
 
+  it('names the agent\'s own tools in the sources, not by id', () => {
+    const out = localizeViolation({ rule_id: 'mystery', title: 'Mystery', explanation: 'x', sources: { can_exfiltrate: ['notify_user', 'custom_tool'] } }, tRu);
+    expect(out.sources.can_exfiltrate).toEqual(['Уведомление пользователю', 'custom_tool']);
+  });
+
   it('folds the delegation suffix back on and translates the via of each hop', () => {
     const server = {
       rule_id: 'lethal_trifecta_via_delegation',

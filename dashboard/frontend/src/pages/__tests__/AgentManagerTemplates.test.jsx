@@ -138,7 +138,7 @@ describe('AgentManager: create based on an agent', () => {
     // The tool picker holds the parent's tools; search by group adds one more.
     expect(screen.getByText('Database query')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Search by tool name or group'), { target: { value: 'files' } });
-    fireEvent.click(screen.getByRole('option', { name: /Write file/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Write File/ }));
     fireEvent.click(next());
 
     const create = screen.getAllByRole('button', { name: /create agent/i });

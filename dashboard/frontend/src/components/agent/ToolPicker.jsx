@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Search, Wrench, X } from 'lucide-react';
 import { useI18n } from '../../i18n';
-
-const formatCategory = (c) => c.replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
+import { toolCategoryLabel, toolDescription, toolLabel } from '../../lib/toolText';
 
 /**
  * Multi select for an agent's tools: the chosen ones as chips, and a panel
@@ -23,13 +22,20 @@ export default function ToolPicker({ tools, value, onChange }) {
   const inputRef = useRef(null);
 
   const selected = useMemo(() => new Set(value || []), [value]);
+  // Each tool with its name and description in the interface language.
   const byId = useMemo(() => {
     const out = {};
-    (tools || []).forEach((tool) => { out[tool.name] = tool; });
+    (tools || []).forEach((tool) => {
+      out[tool.name] = {
+        ...tool,
+        label: toolLabel(t, tool.name, tool.label),
+        description: toolDescription(t, tool.name, tool.description),
+      };
+    });
     return out;
-  }, [tools]);
+  }, [tools, t]);
 
-  const categoryLabel = (c) => t(`toolPicker.categories.${c}`, { defaultValue: formatCategory(c) });
+  const categoryLabel = (c) => toolCategoryLabel(t, c);
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -82,7 +88,7 @@ export default function ToolPicker({ tools, value, onChange }) {
           <span className="text-xs text-gray-400">{t('toolPicker.none')}</span>
         )}
         {(value || []).map((id) => (
-          <span key={id} className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs pl-2 pr-1 py-0.5 rounded-full" title={byId[id]?.description || id}>
+          <span key={id} className="inline-flex items-center gap-1 max-w-full break-words bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs pl-2 pr-1 py-0.5 rounded-full" title={byId[id]?.description || id}>
             {byId[id]?.label || id}
             <button
               type="button"
@@ -171,12 +177,12 @@ export default function ToolPicker({ tools, value, onChange }) {
                             {on && <Check className="w-3 h-3" />}
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="flex items-baseline gap-2 min-w-0">
-                              <span className={`text-sm truncate ${on ? 'font-semibold text-gray-900' : 'text-gray-800'}`}>{tool.label || tool.name}</span>
-                              <span className="text-[10px] font-mono text-gray-400 truncate">{tool.name}</span>
+                            <span className="flex flex-wrap items-baseline gap-x-2 min-w-0">
+                              <span className={`text-sm break-words min-w-0 ${on ? 'font-semibold text-gray-900' : 'text-gray-800'}`}>{tool.label || tool.name}</span>
+                              <span className="text-[10px] font-mono text-gray-400 break-all">{tool.name}</span>
                             </span>
                             {tool.description && (
-                              <span className="block text-[11px] text-gray-500 line-clamp-1">{tool.description}</span>
+                              <span className="block text-[11px] text-gray-500 line-clamp-2">{tool.description}</span>
                             )}
                           </span>
                         </button>
