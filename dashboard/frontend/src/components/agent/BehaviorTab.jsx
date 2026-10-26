@@ -1,11 +1,11 @@
-import { updateAgentClarifyGate, updateAgentReasoning, updateAgentResponseFormat, updateAgentSelfDelegation } from '../../api';
+import { updateAgentClarifyGate, updateAgentReasoning, updateAgentResponseFormat, updateAgentSelfDelegation, updateAgentStreaming } from '../../api';
 import SystemAgentWarning from './SystemAgentWarning';
 import AgentSecretsCard from './AgentSecretsCard';
 import AgentWebDomainsCard from './AgentWebDomainsCard';
 import AgentConsentCard from './AgentConsentCard';
 import AgentOutcomeCard from './AgentOutcomeCard';
-import { Fragment } from 'react';
-import { BrainCircuit, HelpCircle, Layers, MessageSquare, Repeat } from 'lucide-react';
+import { Fragment, useEffect, useState } from 'react';
+import { BrainCircuit, HelpCircle, Layers, MessageSquare, Radio, Repeat } from 'lucide-react';
 import { useAgentPage } from './context';
 
 // Put elements into a translated string at its {{name}} slots.
@@ -15,7 +15,7 @@ const withSlots = (text, slots) => String(text).split(/(\{\{\w+\}\})/).map((part
 });
 
 /** How the agent thinks and answers (reasoning, clarification gate,
- * self-delegation, response format) and the secrets a run may receive. */
+ * self-delegation, streaming, response format) and the secrets a run may receive. */
 export default function BehaviorTab() {
   const {
     PLAN_FORMATS, THINKING_LEVELS, THINK_MODES, agent, clarifyGate, clarifyGateSaving, id,
@@ -23,6 +23,11 @@ export default function BehaviorTab() {
     setClarifyGate, setClarifyGateSaving, setReasoningSettings, setResponseFormat,
     setResponseFormatSaving, setSelfDelegation, setSelfDelegationSaving, t,
   } = useAgentPage();
+  // Kept here rather than on the page: nothing else on it reads the flag.
+  const [streaming, setStreaming] = useState(!!agent?.streaming);
+  const [streamingSaving, setStreamingSaving] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- follows the record when the page reloads it
+  useEffect(() => { setStreaming(!!agent?.streaming); }, [agent?.streaming]);
   return (
         <div className="space-y-6">
           {agent.system && <SystemAgentWarning scope="tools" />}
@@ -287,6 +292,42 @@ export default function BehaviorTab() {
                   </div>
                 );
               })()}
+
+              {/* Streaming card: on forces token streaming in background runs,
+                  off leaves it to the global switch in Settings. */}
+              <div className={`rounded-xl border-2 p-4 transition-colors ${streaming ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className={`p-2 rounded-lg ${streaming ? 'bg-indigo-100' : 'bg-gray-200'}`}>
+                      <Radio className={`w-4 h-4 ${streaming ? 'text-indigo-600' : 'text-gray-400'}`} />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-gray-900 text-sm">{t('agentDetails.streamingTitle')}</div>
+                      <div className="text-xs text-gray-500">{t('agentDetails.streamingSubtitle')}</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={streamingSaving}
+                    onClick={() => {
+                      const next = !streaming;
+                      const prev = streaming;
+                      setStreaming(next);
+                      setStreamingSaving(true);
+                      updateAgentStreaming(id, next)
+                        .then((r) => setStreaming(!!r.data?.streaming))
+                        .catch(() => setStreaming(prev))
+                        .finally(() => setStreamingSaving(false));
+                    }}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 disabled:opacity-50 ${
+                      streaming ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-500 border-gray-300'
+                    }`}
+                  >
+                    {streaming ? t('agentDetails.streamingAlways') : t('agentDetails.streamingFollow')}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-600">{t('agentDetails.streamingExplain')}</p>
+              </div>
             </div>
           </div>
 

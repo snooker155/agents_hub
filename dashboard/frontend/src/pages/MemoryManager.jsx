@@ -37,7 +37,7 @@ export default function MemoryManager() {
   // Lifted out of PoolsTab: the chat beside it is bound to whichever pool is
   // open, and the toggle for the column lives in the page header.
   const [selectedPoolId, setSelectedPoolId] = useState(null);
-  const chat = useChatColumn(true);
+  const chat = useChatColumn(false, { wide: true });
   const chatVisible = chat.open && activeTab === 'pools';
 
   const fetchMemories = useCallback(async () => {

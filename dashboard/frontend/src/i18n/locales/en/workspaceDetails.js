@@ -179,7 +179,6 @@ export default {
       writer: 'Turns notes and data into a finished document.',
       verifier: 'Checks reports, figures and texts independently.',
       visualizer: 'Builds views: charts, diagrams, 3D scenes, slides, web pages.',
-      web_search: 'Searches the open web and reads the pages it finds.',
     },
   },
   specialModels: {

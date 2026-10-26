@@ -51,12 +51,16 @@ export const updateAgentResponseFormat = (id, response_format) => api.post(`/age
 export const updateAgentClarifyGate = (id, clarify_gate) => api.post(`/agents/${id}/clarify-gate`, { clarify_gate });
 export const getAgentSelfDelegation = (id) => api.get(`/agents/${id}/self-delegation`);
 export const updateAgentSelfDelegation = (id, allow_self_delegation) => api.post(`/agents/${id}/self-delegation`, { allow_self_delegation });
+export const updateAgentStreaming = (id, streaming) => api.post(`/agents/${id}/streaming`, { streaming });
 // Capability guard escape hatch for one agent (agents/capability_guard.py):
 // with the override on, a blocked tool combination, own or reached by
 // delegation, is saved and reported as a warning instead of refused.
 export const getAgentCapabilityOverride = (id) => api.get(`/agents/${id}/capability-override`);
 // Tools the factory adds at build time on top of the record (agents/auto_tools.py).
 export const getAgentAutoTools = (id, workspace) => api.get(`/agents/${id}/auto-tools`, workspace ? { params: { workspace } } : {});
+// How many tools the agent's model is shown, the tool search threshold and
+// which tools sit behind search (agents/loop_ext/tool_search.py visibility).
+export const getAgentToolVisibility = (id, workspace) => api.get(`/agents/${id}/tool-visibility`, workspace ? { params: { workspace } } : {});
 export const updateAgentCapabilityOverride = (id, capability_override) => api.post(`/agents/${id}/capability-override`, { capability_override });
 export const getAgentModel = (id) => api.get(`/agents/${id}/model`);
 export const updateAgentModel = (id, data) => api.post(`/agents/${id}/model`, data);

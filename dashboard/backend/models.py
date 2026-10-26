@@ -159,6 +159,12 @@ class AgentSelfDelegationUpdate(BaseModel):
     allow_self_delegation: bool = False
 
 
+class AgentStreamingUpdate(BaseModel):
+    # When True, the agent streams tokens in background runs whatever the
+    # global AGENT_STREAMING flag says. False only means "follow the flag".
+    streaming: bool = False
+
+
 class AgentCapabilityOverrideUpdate(BaseModel):
     # When True, the capability guard reports a blocked tool combination on
     # this agent (own tools or reached by delegation) as a warning instead of
