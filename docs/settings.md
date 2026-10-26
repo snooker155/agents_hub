@@ -18,31 +18,39 @@ The page has a menu with three groups.
   key, default model and extra headers.
 - **Temperature**: the global value every model runs at unless it has its own
   on the [models](models.md) page or the agent sets one (`LLM_TEMPERATURE`, 0
-  to 2, applied at once). Machine-wide, so the Settings tab of a workspace does
-  not show it.
+  to 2, applied at once). Machine-wide.
+
+**Agents**
+
+Global values and the overrides of the workspace picked in the header, side
+by side:
+
+- **Execution**: streaming in background runs (chat always streams; an agent
+  can be set to always stream on its Behavior tab), the execution mode
+  (in-process or Docker, with the image and network for Docker runs, per
+  workspace), the capability guard's mode (block, warn, off;
+  `CAPABILITY_GUARD`, read live) and whether a per-agent exemption requires a
+  container (`CAPABILITY_OVERRIDE_REQUIRES_CONTAINER`), the code runner
+  (`run_code` provider, images and limits, see
+  [tools-and-capabilities](tools-and-capabilities.md)).
+- **Tool policy**: the workspace's [tool policy](tool-policy.md), approval
+  gate, agent loop and hooks.
+- **Web access**: the search provider behind `web_search`, the `fetch_url`
+  limits and the global domain policy, written to `.env` and read live, and
+  under them the workspace's own domain lists
+  ([tools-and-capabilities](tools-and-capabilities.md), "Web access").
+- **Task assignment**: which agents the workspace's tasks may go to.
 
 **System**
 
-- **Agent execution**: live token streaming, the execution mode (in-process
-  or Docker, with the image and network for Docker runs), the capability
-  guard's mode (block, warn, off; `CAPABILITY_GUARD`, read live) and whether a
-  per-agent exemption requires a container
-  (`CAPABILITY_OVERRIDE_REQUIRES_CONTAINER`), the code runner (`run_code`
-  provider, images and limits, see
-  [tools-and-capabilities](tools-and-capabilities.md)), the [tool
-  policy](tool-policy.md) and the task assignment mode.
-- **Web access**: the search provider behind `web_search`, the `fetch_url`
-  limits and the global domain policy,
-  written to `.env` and read live
-  ([tools-and-capabilities](tools-and-capabilities.md), "Web access").
 - **RAG & vectors**: the vector database and the embedding model.
 - **Logging**: the log level.
 - **Demo workspace**: adds or removes the `demo` workspace ([demo](demo.md)).
 - **First setup**: runs the first-run screen again.
 
-Anything set here is global. A workspace's own Settings tab overrides the
-parts that make sense per workspace ([workspaces](workspaces.md), "The
-Settings tab").
+Personal memory and agent roles have no global value, so they are only on
+the workspace's own Settings tab ([workspaces](workspaces.md), "The Settings
+tab"); a note in this page's menu links there.
 
 Connectors are not here. Jira and GitLab live on the Connectors page
 ([connectors](connectors.md)), because a connector is something you attach

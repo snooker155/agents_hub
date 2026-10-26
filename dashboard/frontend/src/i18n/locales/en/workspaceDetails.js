@@ -10,7 +10,7 @@ export default {
   },
   settingsTab: {
     description: 'Overrides for this workspace only. An empty field inherits the global value.',
-    globalHint: 'Provider keys, RAG and logging are not per workspace.',
+    globalHint: 'Execution, tool policy, web access, task assignment, provider keys, RAG and logging are set in the general Settings.',
     openSettings: 'Open Settings →',
     groups: {
       agents: 'Agents',
@@ -165,17 +165,18 @@ export default {
     names: {
       coder: 'Coder', reviewer: 'Code reviewer', planner: 'Planner', researcher: 'Researcher',
       analyst: 'Analyst', writer: 'Writer', verifier: 'Verifier',
-      visualizer: 'Visualizer',
+      visualizer: 'Visualizer', web_search: 'Web search',
     },
     summaries: {
       coder: 'Writes and changes code and files in the workspace\'s projects.',
       reviewer: 'Reviews code changes for correctness, style and tests.',
       planner: 'Turns a project\'s plans and structure into a task tree.',
-      researcher: 'Answers questions that need the workspace and memory together.',
+      researcher: 'Answers questions that need the workspace, memory and the open web together.',
       analyst: 'Answers questions from the workspace\'s data.',
       writer: 'Turns notes and data into a finished document.',
       verifier: 'Checks reports, figures and texts independently.',
       visualizer: 'Builds views: charts, diagrams, 3D scenes, slides, web pages.',
+      web_search: 'Searches the open web and reads the pages it finds.',
     },
   },
 };

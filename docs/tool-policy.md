@@ -6,7 +6,7 @@ Three modes decide what an agent's tool call can do: `always_allow` runs it, `al
 
 **Per agent**, from the Tools tab or `PUT /api/agents/{id}/tool-policy`: a map of tool ids to modes, plus a `"*"` entry (fallback).
 
-**Per workspace**, from the Tool policy section of Settings (Agent execution) or of the workspace's Settings tab, or `PUT /api/workspaces/{name}/policy`: the same.
+**Per workspace**, from the Tool policy section of Settings, for the workspace picked in the header, or `PUT /api/workspaces/{name}/policy`: the same.
 
 The first match wins: the agent's tool entry, the agent's `"*"`, the workspace's tool entry, the workspace's `"*"`. With nothing set, the [approval gate](hooks.md) decides as before when `require_tool_approval` is on.
 

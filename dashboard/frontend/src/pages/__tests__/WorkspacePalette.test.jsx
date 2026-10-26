@@ -58,6 +58,8 @@ vi.mock('../../components/theme', () => ({
 }));
 vi.mock('../../components/workspace/WorkspaceMembers', () => ({ default: () => null }));
 vi.mock('../../components/workspace/WorkspaceSecrets', () => ({ default: () => <section>SECRETS CARD</section> }));
+vi.mock('../../components/workspace/WorkspaceRoles', () => ({ default: () => <section>ROLES CARD</section> }));
+vi.mock('../../components/workspace/WorkspacePersonalMemory', () => ({ default: () => <section>PERSONAL MEMORY CARD</section> }));
 vi.mock('../../components/settings/ToolPolicySettings', () => ({ default: () => null }));
 vi.mock('../../components/settings/LoopSettingsWorkspace', () => ({ default: () => null }));
 vi.mock('../../components/TaskBoard', () => ({ default: () => null }));
@@ -77,7 +79,7 @@ function show() {
 
 async function openPalette() {
   show();
-  await screen.findAllByText('Agent Execution Mode');
+  await screen.findByText('ROLES CARD');
   const menu = document.querySelector('nav.md\\:block');
   fireEvent.click(within(menu).getByText('Palette'));
   await screen.findByText('Default palette');

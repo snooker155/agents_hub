@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import {
-  RefreshCw, Key, Cpu, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, Thermometer, RotateCcw,
+  RefreshCw, Key, Cpu, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, Thermometer, RotateCcw, Shield, CheckSquare, UserRound,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { getDemo, setDemo } from '../api/demo';
@@ -13,6 +13,7 @@ import { useI18n } from '../i18n';
 import {
   ProviderStatusBadge, SaveWorkspaceSettingsButton, WorkspaceSettingsStatus,
   ProvidersSection, GlobalTemperatureSection, LocalServersSection, ExecutionSection, RagSection, LoggingSection, WebAccessSection,
+  ToolPolicySection, TaskAssignmentSection,
 } from '../components/settings/WorkspaceSettingsSections';
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 import PageLoader from '../components/PageLoader';
@@ -25,10 +26,11 @@ const api = axios.create({ baseURL: 'http://localhost:8000' });
 // nine panels used to be nine tabs in a single row that ran off the page, with
 // model settings and connectors sitting side by side for no reason.
 //
-// `workspaceScoped` marks the sections whose fields are workspace overrides
-// (written by the page's Save button). They are drawn by
-// components/settings/WorkspaceSettingsSections.jsx, which the Settings tab of
-// a workspace renders too.
+// `workspaceScoped` marks the sections whose fields are overrides
+// of the workspace picked in the header (written by the page's Save button).
+// They are drawn by components/settings/WorkspaceSettingsSections.jsx. The
+// Settings tab of a workspace keeps only what has no global value: agent
+// roles, personal memory, secrets and the palette.
 //
 // Git used to be a group here. It is a connector —
 // things you attach — and they now live under Connect → Connectors, which is
@@ -45,10 +47,20 @@ const GROUPS = [
     ],
   },
   {
-    key: 'system',
+    // The same names the workspace page once used for these: they are
+    // workspace overrides of the workspace picked in the header, so they live
+    // here only, and the workspace's own tab keeps what has no global value.
+    key: 'agents',
     items: [
       { id: 'execution',     key: 'execution',     icon: Wrench,     workspaceScoped: true },
+      { id: 'toolPolicy',    key: 'toolPolicy',    icon: Shield },
       { id: 'webAccess',     key: 'webAccess',     icon: Globe },
+      { id: 'tasks',         key: 'tasks',         icon: CheckSquare, workspaceScoped: true },
+    ],
+  },
+  {
+    key: 'system',
+    items: [
       { id: 'rag',           key: 'rag',           icon: Database,   workspaceScoped: true },
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
       { id: 'demo',          key: 'demo',          icon: Sparkles },
@@ -399,7 +411,9 @@ export default function Settings() {
             {t('settings.fieldsMarkedBefore')} <span className="inline-flex items-center gap-0.5 text-amber-600"><Lock className="w-3 h-3" /> {t('settings.fromEnv')}</span> {t('settings.fieldsMarkedAfter')}
           </p>
         </>}
-        actions={active.workspaceScoped && <SaveWorkspaceSettingsButton s={ws} />}
+        // On the title line, right after the heading, rather than out at the
+        // far edge of the header away from the sections it saves.
+        badges={active.workspaceScoped && <SaveWorkspaceSettingsButton s={ws} />}
       />
 
       <div className="flex min-h-0 flex-1 gap-6">
@@ -441,6 +455,18 @@ export default function Settings() {
               <Link2 className="mb-1 h-3.5 w-3.5" />
               {t('settings.connectorsMoved')}
             </Link>
+            {/* What has no global value stays on the workspace's own
+                Settings tab; say where, for the workspace picked in the header. */}
+            <p className="mx-1 mt-2 rounded-lg border border-dashed border-gray-200 px-3 py-2 text-[11px] leading-snug text-gray-500">
+              <UserRound className="mb-1 h-3.5 w-3.5" />
+              {t('settings.workspaceOnlyHint')}{' '}
+              <Link
+                to={`/workspaces/${encodeURIComponent(activeWorkspace)}?tab=settings&section=personalMemory`}
+                className="text-indigo-600 hover:text-indigo-800"
+              >
+                {t('settings.workspaceOnlyLink', { workspace: activeWorkspace })}
+              </Link>
+            </p>
           </div>
         </nav>
 
@@ -474,7 +500,9 @@ export default function Settings() {
             {active.id === 'demo' && <DemoWorkspaceTab />}
             {active.id === 'firstRun' && <FirstRunSettings />}
             {active.id === 'logging' && <LoggingSection s={ws} />}
-            {active.id === 'execution' && <ExecutionSection s={ws} showGlobal />}
+            {active.id === 'execution' && <ExecutionSection s={ws} />}
+            {active.id === 'toolPolicy' && <ToolPolicySection s={ws} />}
+            {active.id === 'tasks' && <TaskAssignmentSection s={ws} />}
             {active.id === 'webAccess' && <WebAccessSection s={ws} />}
           </div>
         </div>

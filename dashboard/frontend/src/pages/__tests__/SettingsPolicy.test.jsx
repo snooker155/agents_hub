@@ -55,9 +55,9 @@ vi.mock('../../api', () => ({
   API_ORIGIN: 'http://localhost:8000',
 }));
 
-const renderExecution = () => render(
+const renderExecution = (path = '/settings/toolPolicy') => render(
   <I18nProvider>
-    <MemoryRouter initialEntries={['/settings/execution']}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes><Route path="/settings/:section" element={<Settings />} /></Routes>
     </MemoryRouter>
   </I18nProvider>,
@@ -120,5 +120,19 @@ describe('Settings tool policy', () => {
     await waitFor(() => expect(updateWorkspacePolicy).toHaveBeenCalledWith(
       'default', { hooks: { PostToolUse: [] } },
     ));
+  });
+});
+
+describe('Settings agents group', () => {
+  it('names the sections the way the workspace page did, and points to what stayed there', async () => {
+    renderExecution('/settings/tasks');
+    expect(await screen.findByText('Assignment Mode')).toBeTruthy();
+    const menu = document.querySelector('nav.md\\:block');
+    for (const label of ['Execution', 'Tool policy', 'Web access', 'Task assignment']) {
+      expect(menu.textContent).toContain(label);
+    }
+    expect(screen.queryByText('Tool Policy')).toBeNull();
+    const link = screen.getByRole('link', { name: /Settings of workspace default/ });
+    expect(link.getAttribute('href')).toBe('/workspaces/default?tab=settings&section=personalMemory');
   });
 });
