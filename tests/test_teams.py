@@ -53,6 +53,17 @@ def test_the_lead_is_told_it_delegates_rather_than_works():
     assert DONE_TOKEN not in prompt   # the done token is a member's signal, not the lead's
 
 
+def test_a_member_is_told_whether_the_run_has_a_task():
+    # Without it the Verifier, whose own workflow starts at get_task, made up
+    # a task id and its turn failed on the tool's argument check.
+    team = _team()
+    without = team_system_prompt(team, team.members[0])
+    assert "This team run has no task" in without and "skip those steps" in without
+    with_task = team_system_prompt(team, team.members[0], task_id="6b7b4a1f-2c2a-4c4e-9c2c-2f6c2c0f2f3a")
+    assert "Task ID: 6b7b4a1f-2c2a-4c4e-9c2c-2f6c2c0f2f3a" in with_task
+    assert "has no task" not in with_task
+
+
 def test_a_team_without_direct_messages_says_so():
     team = _team(allow_direct_messages=False)
     prompt = team_system_prompt(team, team.members[0])
@@ -449,21 +460,41 @@ def test_a_chat_turn_does_not_mint_a_task():
     assert len(_ts.list_tasks()) == before
 
 
-def test_a_run_started_from_the_teams_page_does_get_a_task():
+def test_a_run_started_from_the_teams_page_makes_no_task(monkeypatch):
+    """A run is not a task: only a task the caller names is used."""
     import teams.runner as runner
     from tasks import service as _ts
+    monkeypatch.setattr(_ts, "create_task", lambda **kw: pytest.fail("a team run must not create a task"))
 
     ws, path, task_id, session_id = runner._prepare_context(
         _team(), None, None, None, None, "ship the page",
     )
-    assert task_id
-    task = _ts.get_task(task_id)
-    assert task is not None and task.title.startswith("Team: ")
-    # Never todo, not even briefly: a task in todo is one a polling orchestrator
-    # can pick up and route somewhere else while the team is starting.
-    assert task.status == _ts.TaskStatus.in_progress
-    # Who holds it is recorded when the run claims it, not here — see
-    # test_a_team_run_claims_its_task_and_starts_it_without_an_approval_step.
+    assert task_id is None and session_id
+
+
+def test_what_was_attached_reaches_the_turns_but_not_the_board(stub_members, monkeypatch):
+    """Files and records ride with the request: every turn reads them, the
+    board shows the request as typed, and the run still makes no task."""
+    import teams.runner as runner
+    from teams.launcher import start_team_run
+
+    monkeypatch.setattr("teams.launcher.launch_prepared", lambda spec: None)
+    monkeypatch.setattr(runner, "_resolve_run_workspace", lambda run: ("ws", "/tmp/ws"))
+    monkeypatch.setattr(runner, "_prepare_context",
+                        lambda *a, **k: ("ws", "/tmp/ws", None, "sess-1"))
+    team = store.save_team(_team(mode="parallel", max_rounds=1, synthesize=False))
+    calls = stub_members({"*": ["done"]})
+
+    run = start_team_run(team.team_id, "ship the page",
+                         context="Attached file: brief.md", attached=[{"kind": "file", "label": "brief.md"}])
+    stored = store.get_run(run.team_run_id)
+    assert stored.task_id is None
+    assert stored.attached == [{"kind": "file", "label": "brief.md"}]
+
+    run_team(team.team_id, stored.goal, run=stored)
+    assert calls and all("Attached file: brief.md" in c["prompt"] for c in calls)
+    goal_post = next(m for m in store.list_messages(run.team_run_id) if m.kind == "goal")
+    assert goal_post.content == "ship the page"
 
 
 # ── Autonomous: work moves by request, not by roll call ──────────────────────

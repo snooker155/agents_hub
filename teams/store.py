@@ -36,6 +36,8 @@ def _notify(resource: str, **meta) -> None:
 # ── Teams ────────────────────────────────────────────────────────────────────
 
 def save_team(team: Team) -> Team:
+    # Every team belongs to a workspace; one saved without is the default one's.
+    team.workspace = team.workspace or "default"
     team.updated_at = utc_iso()
     config = {f: getattr(team, f) for f in _CONFIG_FIELDS}
     with db.transaction() as conn:
@@ -83,11 +85,17 @@ def get_team(team_id: str) -> Optional[Team]:
 
 def list_teams(workspace: Optional[str] = None) -> List[Team]:
     conn = db.get_conn()
-    if workspace:
+    if workspace and workspace != "default":
         rows = conn.execute(
-            "SELECT * FROM teams WHERE workspace = ? OR workspace IS NULL "
-            "ORDER BY updated_at DESC",
+            "SELECT * FROM teams WHERE workspace = ? ORDER BY updated_at DESC",
             (workspace,),
+        ).fetchall()
+    elif workspace:
+        # A team that names no workspace (an old row) is the default one's
+        # (common.workspace_scope.same_workspace), never every workspace's.
+        rows = conn.execute(
+            "SELECT * FROM teams WHERE workspace = 'default' OR workspace IS NULL "
+            "OR workspace = '' ORDER BY updated_at DESC",
         ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM teams ORDER BY updated_at DESC").fetchall()
@@ -124,6 +132,8 @@ def _to_run(rec: Dict[str, Any]) -> TeamRun:
         mode=rec.get("mode") or "centralized",
         status=rec.get("status") or RunStatus.pending.value,
         goal=rec.get("goal") or "",
+        context=rec.get("context") or "",
+        attached=list(rec.get("attached") or []),
         task_id=rec.get("task_id"),
         session_id=rec.get("session_id"),
         conversation_id=rec.get("conversation_id"),
@@ -191,6 +201,19 @@ def update_progress(team_run_id: str, **fields: Any) -> None:
     updates = {k: v for k, v in fields.items() if k in _PROGRESS_FIELDS}
     if updates:
         _RUNS.update(team_run_id, updates)
+
+
+def delete_run(team_run_id: str) -> bool:
+    """Drop one run from the team's history: its record and its board. The
+    member turns stay in the run ledger, as when a flow chat is deleted."""
+    if _RUNS.read(team_run_id) is None:
+        return False
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM team_messages WHERE team_run_id = ?", (team_run_id,))
+    removed = _RUNS.delete(team_run_id)
+    if removed:
+        _RUNS.notify(team_run_id=team_run_id)
+    return removed
 
 
 def get_run(team_run_id: str) -> Optional[TeamRun]:

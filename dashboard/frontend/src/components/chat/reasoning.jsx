@@ -3,9 +3,11 @@
  * imported agent's graph, and the live ticker while it is still thinking.
  */
 import { useI18n } from '../../i18n';
-import { parseReasoningContent, tidyThought } from './reasoningText';
+import { parseReasoningContent, tickerText } from './reasoningText';
 import { BrainCircuit, ChevronDown, ChevronUp, ListChecks, Workflow } from 'lucide-react';
 import { useState } from 'react';
+import ProcessStepModal from '../ProcessStepModal';
+import StepText from '../StepText';
 
 // Full static class strings per accent — Tailwind cannot resolve interpolated
 // class names, so each variant must appear literally.
@@ -105,19 +107,36 @@ function ReasoningStep({ step, defaultOpen = false }) {
 //
 // The tail is shown without JS scrolling: a fixed-height clipped box whose flex
 // content is bottom-aligned overflows past its own top edge, so the newest lines
-// stay in view.
+// stay in view. Blank lines are folded out (tickerText), so the top line of the
+// three is never an empty one. A click opens the whole thought over the page,
+// still growing while the model writes it.
 function LiveThoughts({ text: raw }) {
-  const text = tidyThought(raw);
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const text = tickerText(raw);
   if (!text) return null;
   return (
-    <div className="mt-2 flex items-start gap-1.5">
-      <BrainCircuit className="w-3.5 h-3.5 text-violet-500 flex-shrink-0 mt-0.5 animate-pulse" />
-      <div className="flex-1 min-w-0 h-[3.75rem] overflow-hidden flex flex-col justify-end">
-        <div className="text-[11px] leading-5 text-gray-400 whitespace-pre-wrap break-words">
-          {text}
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={t('processGraph.openFull')}
+        className="mt-2 flex w-full items-start gap-1.5 text-left cursor-pointer"
+        data-testid="live-thoughts"
+      >
+        <BrainCircuit className="w-3.5 h-3.5 text-violet-500 flex-shrink-0 mt-0.5 animate-pulse" />
+        <div className="flex-1 min-w-0 h-[3.75rem] overflow-hidden flex flex-col justify-end">
+          <div className="text-[11px] leading-5 text-gray-400 whitespace-pre-wrap break-words">
+            {text}
+          </div>
         </div>
-      </div>
-    </div>
+      </button>
+      {open && (
+        <ProcessStepModal title="Thought" labelColor="text-violet-700" onClose={() => setOpen(false)}>
+          <StepText text={parseReasoningContent(raw)} className="text-sm leading-relaxed text-gray-700" />
+        </ProcessStepModal>
+      )}
+    </>
   );
 }
 

@@ -68,7 +68,7 @@ export default function NodeSteps({ log }) {
   if (!running && steps[steps.length - 1]?.type === 'text') steps = steps.slice(0, -1);
 
   return (
-    <div className="mt-1.5 ml-[72px]" data-testid="node-steps">
+    <div className="mt-1.5 ml-5" data-testid="node-steps">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

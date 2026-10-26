@@ -19,6 +19,7 @@ from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda
 from langchain_core.tools import tool
+from pydantic import BaseModel, field_validator
 
 from agents.agent_loop import build_agent_runnable, format_steps, parse_actions
 from agents.loop_executor import PARSING_ERROR_OBSERVATION, STOPPED_OUTPUT, LoopExecutor
@@ -120,6 +121,32 @@ def test_the_result_and_the_event_order():
         "chain_start:LoopExecutor", "model_start", "model_end", "agent_action:echo", "tool_start:echo",
         "tool_end", "model_start", "model_end", "agent_finish"]
     assert events.events[-1] == "chain_end"
+
+
+class _StrictInput(BaseModel):
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def _digits(cls, v):
+        if not v.isdigit():
+            raise ValueError(f"Invalid id '{v}'")
+        return v
+
+
+@tool("strict", args_schema=_StrictInput)
+def strict(text: str) -> str:
+    """Takes digits only."""
+    return f"strict:{text}"
+
+
+def test_arguments_the_schema_refuses_go_back_to_the_model():
+    out = _executor([_call("strict", "Task ID: 12", "c1"), _call("strict", "12", "c2"),
+                     AIMessage(content="done")], [strict]).invoke({"input": "go"})
+    assert out["output"] == "done"
+    (_, first), (_, second) = out["intermediate_steps"]
+    assert first.startswith("Error: strict refused its arguments") and "Invalid id 'Task ID: 12'" in first
+    assert second == "strict:12"
 
 
 def test_a_tool_error_raises_through_the_executor():

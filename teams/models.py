@@ -291,6 +291,11 @@ class TeamRun:
     # is ``running`` once a process (or the in-process runner) has it.
     status: str = "pending"
     goal: str = ""
+    #: What was attached to the request (files and hub records), rendered as
+    #: prompt blocks: every turn works from ``goal`` plus this. ``attached``
+    #: is the list of what it was, for the page to show.
+    context: str = ""
+    attached: List[Dict[str, str]] = field(default_factory=list)
     task_id: Optional[str] = None
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
@@ -316,7 +321,8 @@ class TeamRun:
         return {
             "team_run_id": self.team_run_id, "team_id": self.team_id,
             "workspace": self.workspace, "mode": self.mode, "status": self.status,
-            "goal": self.goal, "task_id": self.task_id,
+            "goal": self.goal, "context": self.context, "attached": list(self.attached),
+            "task_id": self.task_id,
             "session_id": self.session_id, "conversation_id": self.conversation_id,
             "parent_run_id": self.parent_run_id,
             "rounds_done": self.rounds_done, "total_cost": self.total_cost,

@@ -11,11 +11,12 @@ import { Check, ChevronDown, Search } from 'lucide-react';
  * matches the name, the id and the subtitle. `dot` is a colour class for a
  * small mark before the name; a `disabled` row is shown but cannot be picked,
  * with `hint` as its tooltip. `invalid` draws the field's border in amber, for
- * a pick the form still needs.
+ * a pick the form still needs. `singleLine` keeps the field one line high,
+ * the picked item's subtitle left to the list, for a field in a row of inputs.
  */
 export default function SearchSelect({
   items, value, onChange, placeholder, searchPlaceholder, noMatchText, emptyText = '',
-  disabled = false, invalid = false, testId,
+  disabled = false, invalid = false, singleLine = false, testId,
 }) {
   const [panelOpen, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -94,7 +95,7 @@ export default function SearchSelect({
           {current ? (
             <>
               <span className="block truncate text-gray-800">{current.name}</span>
-              {current.subtitle && <span className="block truncate text-xs text-gray-400">{current.subtitle}</span>}
+              {current.subtitle && !singleLine && <span className="block truncate text-xs text-gray-400">{current.subtitle}</span>}
             </>
           ) : (
             <span className="block truncate text-gray-400">{inactive && emptyText ? emptyText : placeholder}</span>

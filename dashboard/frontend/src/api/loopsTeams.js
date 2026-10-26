@@ -23,8 +23,13 @@ export const getLoopRuns = (loopId) =>
 export const getLoopRun = (runId) => api.get(`/loops/runs/${runId}`);
 export const getLoopIterations = (runId, since = 0) =>
   api.get(`/loops/runs/${runId}/iterations`, { params: { since } });
+export const deleteLoopRun = (runId) => api.delete(`/loops/runs/${runId}`);
 export const stopLoopRun = (runId) => api.post(`/loops/runs/${runId}/stop`);
 export const resumeLoopRun = (runId) => api.post(`/loops/runs/${runId}/resume`);
+// What each pass did: the flow-log lines of every iteration's flow run, or of
+// one iteration with `iteration`.
+export const getLoopRunLog = (runId, iteration) =>
+  api.get(`/loops/runs/${runId}/log`, { params: iteration ? { iteration } : {} });
 
 // Teams API — a bounded roster of agents that know each other and talk
 // (see teams/ and routes/teams.py).
@@ -49,5 +54,7 @@ export const getTeamRuns = (teamId) =>
 export const getTeamRun = (runId) => api.get(`/teams/runs/${runId}`);
 export const getTeamMessages = (runId, since = 0) =>
   api.get(`/teams/runs/${runId}/messages`, { params: { since } });
+export const getTeamTurns = (runId) => api.get(`/teams/runs/${runId}/turns`);
+export const deleteTeamRun = (runId) => api.delete(`/teams/runs/${runId}`);
 export const stopTeamRun = (runId) => api.post(`/teams/runs/${runId}/stop`);
 export const resumeTeamRun = (runId) => api.post(`/teams/runs/${runId}/resume`);

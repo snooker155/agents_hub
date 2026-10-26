@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  UsersRound, Plus, Trash2, AlertTriangle, X, Crown, ArrowRight, Radio,
+  UsersRound, Plus, Trash2, AlertTriangle, X, Crown, ArrowRight, Loader2,
 } from 'lucide-react';
 import { getTeams, createTeam, deleteTeam, getTeamRuns, getAgents } from '../api';
 import { useWorkspace } from '../components/workspace';
 import {
-  MODE_BADGE, modeHelp, modeLabel, modeOptions, modeSummary, STATUS_STYLES,
+  MODE_BADGE, modeHelp, modeLabel, modeOptions, modeSummary,
   isLive,
 } from '../components/teamModes';
 
@@ -29,80 +29,95 @@ const emptyTeam = (workspace) => ({
   synthesize: true,
 });
 
+const RUN_DOT = {
+  completed: 'bg-green-500', failed: 'bg-red-500', stopped: 'bg-amber-500',
+  running: 'bg-blue-500', pending: 'bg-blue-300', stopping: 'bg-amber-400',
+};
+
 function TeamCard({ team, lastRun, onDelete }) {
   const { t } = useI18n();
   // A run is now born "pending" — queued for a process, not yet spawned —
   // and is as much "in progress" as "running" is; isLive predates that
   // status (see the same widening in TeamDetails.jsx).
   const live = isLive(lastRun?.status) || lastRun?.status === 'pending';
+  const lead = team.members.find((m) => m.agent_id === team.leader_agent_id);
+  // Without a description, how the team works and who is on it.
+  const meta = [
+    modeSummary(team.mode, t),
+    team.members.length ? team.members.map((m) => m.display_name).join(', ') : t('teams.noMembersYet'),
+  ].join(' · ');
+  // The card of a loop on the Loops page (pages/Loops.jsx): the name, three
+  // lines under it, two tiles and the row of actions, so the three lists
+  // share one size. The name's link covers the whole card (its ::after),
+  // the actions sit above it; a hover anywhere on it lights the name.
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow flex flex-col">
-      <Link to={`/teams/${team.team_id}`} className="p-4 flex-1 min-w-0">
-        <div className="flex items-start gap-2">
-          <h3 className="text-base font-bold text-gray-900 truncate flex-1">{team.name}</h3>
-          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${MODE_BADGE[team.mode] || MODE_BADGE.parallel}`}>
-            {modeLabel(team.mode, t)}
-          </span>
+    <div className="group relative rounded-lg border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <Link
+            to={`/teams/${team.team_id}`}
+            className="block truncate text-sm font-semibold text-gray-900 group-hover:text-cyan-600 after:absolute after:inset-0 after:rounded-lg"
+          >
+            {team.name}
+          </Link>
+          {live && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-cyan-500" />}
         </div>
-        <p className="text-xs text-gray-500 mt-0.5">{modeSummary(team.mode, t)}</p>
-        {team.description && (
-          <p className="text-sm text-gray-600 mt-2 line-clamp-2">{team.description}</p>
-        )}
-
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {team.members.map((m) => (
-            <span
-              key={m.agent_id}
-              className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-700 bg-gray-100 rounded-full px-2 py-0.5"
-            >
-              {team.leader_agent_id === m.agent_id && <Crown className="w-3 h-3 text-amber-600" />}
-              {m.display_name}
-            </span>
-          ))}
-          {team.members.length === 0 && (
-            <span className="text-xs text-gray-400 italic">{t('teams.noMembersYet')}</span>
-          )}
+        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${MODE_BADGE[team.mode] || MODE_BADGE.parallel}`}>
+          {modeLabel(team.mode, t)}
+        </span>
+      </div>
+      <div className="mb-3 mt-1">
+        <div className="line-clamp-3 text-[11px] text-gray-500" title={meta}>
+          {team.description || meta}
         </div>
-
         {team.missing_agents?.length > 0 && (
-          <p className="mt-2 text-xs text-red-600">
+          <div className="mt-0.5 text-[11px] text-red-600">
             {t('teams.missingAgents', { count: team.missing_agents.length })}
-          </p>
+          </div>
         )}
         {team.members_without_manifest?.length > 0 && (
-          <p className="mt-2 text-xs text-amber-700">
+          <div className="mt-0.5 line-clamp-2 text-[11px] text-amber-700">
             {t('teams.noManifestFor', { names: team.members_without_manifest.join(', ') })}
-          </p>
+          </div>
         )}
-      </Link>
+      </div>
 
-      <div className="border-t border-gray-100 px-4 py-2.5 flex items-center gap-2">
-        {lastRun ? (
-          <>
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLES[lastRun.status] || 'bg-gray-100 text-gray-600'}`}>
-              {lastRun.status}
+      <div className="mb-3 grid grid-cols-2 gap-2">
+        <div className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1.5 text-center">
+          <div className="text-[9px] font-semibold uppercase tracking-wide text-blue-500">{t('teams.members')}</div>
+          <div className="inline-flex max-w-full items-center justify-center gap-1 text-xs font-semibold text-blue-900">
+            {lead && <Crown className="h-3 w-3 shrink-0 text-amber-600" title={lead.display_name} />}
+            {team.members.length}
+          </div>
+        </div>
+        <div className="rounded-md border border-amber-100 bg-amber-50 px-2 py-1.5 text-center">
+          <div className="text-[9px] font-semibold uppercase tracking-wide text-amber-500">{t('teams.lastRun')}</div>
+          {/* How it ended as a dot by the date: one badge on top keeps the
+              card the loop card's height. */}
+          <div className="flex items-center justify-center gap-1 text-xs font-semibold text-amber-900" title={lastRun?.status}>
+            {lastRun && <span className={`h-2 w-2 shrink-0 rounded-full ${RUN_DOT[lastRun.status] || 'bg-gray-400'}`} />}
+            <span className="truncate">
+              {lastRun?.started_at ? new Date(lastRun.started_at).toLocaleString() : t('teams.none')}
             </span>
-            {live && <Radio className="w-3.5 h-3.5 text-blue-500 animate-pulse" />}
-            <span className="text-xs text-gray-500 truncate">
-              {new Date(lastRun.started_at).toLocaleString()}
-            </span>
-          </>
-        ) : (
-          <span className="text-xs text-gray-400 italic">{t('teams.neverRun')}</span>
-        )}
-        <button
-          onClick={onDelete}
-          className="ml-auto p-1 text-gray-400 hover:text-red-600"
-          title={t('teams.deleteThisTeam')}
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="relative z-10 flex justify-end gap-1">
         <Link
           to={`/teams/${team.team_id}`}
-          className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+          className="rounded-lg border border-transparent p-1.5 text-gray-400 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600"
+          title={t('teams.openTeam')} aria-label={t('teams.openTeam')}
         >
-          Open <ArrowRight className="w-3.5 h-3.5" />
+          <ArrowRight className="h-3.5 w-3.5" />
         </Link>
+        <button
+          onClick={onDelete}
+          title={t('teams.deleteThisTeam')} aria-label={t('teams.deleteThisTeam')}
+          className="rounded-lg border border-transparent p-1.5 text-gray-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       </div>
     </div>
   );
@@ -203,7 +218,7 @@ export default function Teams() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 min-[1800px]:grid-cols-5">
           {teams.map((team) => (
             <TeamCard
               key={team.team_id} team={team} lastRun={lastRuns[team.team_id]}
