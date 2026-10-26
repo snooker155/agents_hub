@@ -5,6 +5,7 @@ import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal, ShieldCheck, GitBranch } from 'lucide-react';
 import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
+import { toolCategoryLabel, toolLabel } from '../lib/toolText';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
 import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getInstancesSummary, getAgentDefinition, updateAgentDefinition, restoreShippedDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
 import EntityChat from '../components/EntityChat';
@@ -59,7 +60,7 @@ const AgentDetails = () => {
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   // The definition chat sits beside the Config tab, folded away by default:
   // most visits to this page are to read, not to rewrite.
-  const defChat = useChatColumn(false);
+  const defChat = useChatColumn(false, { wide: true });
   // Only the Config tab has a chat beside it, so only that tab turns the page
   // into a bounded flex column — the other twelve keep scrolling normally.
   const [agent, setAgent] = useState(null);
@@ -507,9 +508,10 @@ const AgentDetails = () => {
     }
   };
 
-  // Load shared memory pools when the memory tab opens
+  // Load shared memory pools when the memory tab opens, and on the overview,
+  // whose memory card names the agent's pools.
   useEffect(() => {
-    if (activeTab !== 'memory') return;
+    if (activeTab !== 'memory' && activeTab !== 'overview') return;
     getSharedMemories(workspaceFilter).then(r => setSharedMemories(r.data || [])).catch(() => {});
   }, [activeTab, workspaceFilter]);
 
@@ -713,7 +715,8 @@ const AgentDetails = () => {
   // a global guard mode other than block (Settings, agent execution).
   const capabilitySoftened = capabilityOverride || (capabilityGuardInfo.guard_mode || 'block') !== 'block';
 
-  // Group regular (non-reasoning, non-memory) tools by category for the Tools tab.
+  // Group regular (non-reasoning, non-memory) tools by category for the Tools
+  // tab, groups and tools in the order of their names in the interface language.
   const regularToolIds = visibleToolIds.filter(t => !REASONING_TOOLS.includes(t) && !PLANNING_TOOLS.includes(t) && !MEMORY_TOOLS.includes(t));
   const toolCategories = (() => {
     const groups = {};
@@ -722,10 +725,12 @@ const AgentDetails = () => {
       (groups[cat] = groups[cat] || []).push(tid);
     });
     return Object.entries(groups)
-      .map(([category, ids]) => ({ category, ids: ids.sort() }))
-      .sort((a, b) => a.category.localeCompare(b.category));
+      .map(([category, ids]) => ({
+        category,
+        ids: ids.sort((a, b) => toolLabel(t, a, toolsMeta[a]?.label).localeCompare(toolLabel(t, b, toolsMeta[b]?.label))),
+      }))
+      .sort((a, b) => toolCategoryLabel(t, a.category).localeCompare(toolCategoryLabel(t, b.category)));
   })();
-  const formatCategory = (c) => c.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
   const agentTasks = (tasks || []).filter((t) => t.assigned_agent_type === id);
   const runningTasks = agentTasks.filter((t) => t.agent_state === 'running');
   const agentSingleCapacity = agent?.capacity || 1;
@@ -748,7 +753,7 @@ const AgentDetails = () => {
     customBackends, defChat, defDraft, defError, defSaving, defaultChatMessage,
     defaultChatSaving, definitionChat, delegates, delegatesDirty, markDelegatesDirty,
     markMemoryDraftDirty, delegatesMessage, delegatesSaving, descDraft, descSaving,
-    episodicEffective, episodicMode, episodicSaving, fetchData, formatCategory,
+    episodicEffective, episodicMode, episodicSaving, fetchData,
     handleDefinitionDraftChange, handleEraseMemory, handleResetDefinitionField,
     handleRestoreShippedDefinition, restoringShipped,
     handleSaveDefinitionField, handleSaveDelegates, handleSaveDescription, handleSaveTools,
@@ -778,6 +783,17 @@ const AgentDetails = () => {
         backLabel={t('agentDetails.agents')}
         actions={(
           <div className="flex items-center gap-2">
+            {/* The definition chat opens beside the Config tab: from another
+                tab its toggle opens Config with the chat. */}
+            <ChatToggle
+              open={activeTab === 'config' && defChat.open}
+              onToggle={() => {
+                if (activeTab === 'config') { defChat.toggle(); return; }
+                setActiveTab('config');
+                defChat.setOpen(true);
+              }}
+              label={t('agentDetails.definitionChat')}
+            />
             {/* Run: one copy of your own to talk to. */}
             <button
               type="button"
@@ -870,20 +886,6 @@ const AgentDetails = () => {
               </button>
             );
           })}
-        /* The definition chat opens beside the Config tab. Its toggle stays
-           in the tab row on every tab, so switching tabs never reflows the
-           row: from another tab it opens Config with the chat. */
-        actions={
-          <ChatToggle
-            open={activeTab === 'config' && defChat.open}
-            onToggle={() => {
-              if (activeTab === 'config') { defChat.toggle(); return; }
-              setActiveTab('config');
-              defChat.setOpen(true);
-            }}
-            label={t('agentDetails.definitionChat')}
-          />
-        }
       />
 
       {activeTab === 'overview' && <OverviewTab />}

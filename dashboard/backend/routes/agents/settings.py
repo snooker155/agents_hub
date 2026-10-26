@@ -8,7 +8,7 @@ from pathlib import Path
 from agents import registry
 from managers import run_manager
 from agents import prompt_assembly
-from models import AgentMemoryUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentPersonalMemoryUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentSkillCreate
+from models import AgentMemoryUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentPersonalMemoryUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentStreamingUpdate, AgentSkillCreate
 
 
 
@@ -123,6 +123,14 @@ async def delete_agent(agent_id: str):
     return {"message": f"Agent {agent_id} deleted"}
 
 
+def _personal_pool_ids(pool_ids) -> set:
+    """The ids among ``pool_ids`` that name a personal pool."""
+    from memory import personal
+    from memory.store import MemoryStore
+    store = MemoryStore()
+    return {pid for pid in pool_ids if personal.is_personal(store.get(pid))}
+
+
 @router.post("/{agent_id}/memory")
 async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
     """Set the agent's memory assignment for a workspace.
@@ -161,6 +169,16 @@ async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
                     continue
                 seen_ids.add(pid)
                 pools.append(pid)
+        # A personal pool is never part of the assignment: the personal memory
+        # switch attaches the pool of whoever runs the agent (memory/personal.py),
+        # so one stored here would hand one user's pool to everybody and be
+        # attached a second way, past that switch. Dropped rather than refused,
+        # so a record that already holds one is cleaned on its next save.
+        personal_ids = _personal_pool_ids(p if isinstance(p, str) else p["id"] for p in pools)
+        if personal_ids:
+            pools = [p for p in pools if (p if isinstance(p, str) else p["id"]) not in personal_ids]
+            if not pools:
+                raise HTTPException(status_code=400, detail="Personal memory is attached by its own switch, not as a pool: pick a shared pool")
         if not pools:
             raise HTTPException(status_code=400, detail="At least one memory pool id is required for shared memory")
         memory_data = pools[0] if len(pools) == 1 and not isinstance(pools[0], dict) else pools
@@ -383,6 +401,30 @@ async def update_agent_self_delegation(agent_id: str, data: AgentSelfDelegationU
     new_spec = dataclasses.replace(spec, allow_self_delegation=bool(data.allow_self_delegation))
     registry.add_agent(new_spec)
     return {"allow_self_delegation": bool(new_spec.allow_self_delegation)}
+
+
+@router.get("/{agent_id}/streaming")
+async def get_agent_streaming(agent_id: str):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {"streaming": bool(spec.streaming)}
+
+
+@router.post("/{agent_id}/streaming")
+async def update_agent_streaming(agent_id: str, data: AgentStreamingUpdate):
+    """Make the agent always stream tokens in background runs, or follow the flag.
+
+    The field can only force streaming on (agents.agent_factory.resolve_streaming):
+    off means the global AGENT_STREAMING setting decides. Chat and the other
+    callers that pass ``streaming=True`` stream either way.
+    """
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    new_spec = dataclasses.replace(spec, streaming=bool(data.streaming))
+    registry.add_agent(new_spec)
+    return {"streaming": bool(new_spec.streaming)}
 
 
 @router.get("/{agent_id}/skills")

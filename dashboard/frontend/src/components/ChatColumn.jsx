@@ -33,7 +33,7 @@ import { DOCK_RESIZE_EVENT, currentDockHeight } from './composerDockState';
 // would ripple into every one of those pages' imports, so it is left as a
 // deliberate, commented exception rather than done piecemeal here.
 // eslint-disable-next-line react-refresh/only-export-components
-export function useChatColumn(defaultOpen = true) {
+export function useChatColumn(defaultOpen = true, { wide = false } = {}) {
   const [open, setOpen] = useState(defaultOpen);
   const toggle = useCallback(() => setOpen((o) => !o), []);
 
@@ -47,10 +47,13 @@ export function useChatColumn(defaultOpen = true) {
     // readable turn and narrow enough that the page stays the main thing.
     //
     // `items-start` keeps the chat at its own height instead of stretching it
-    // to match a long page.
-    gridClass: open
-      ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,25rem)] gap-6 items-start'
-      : '',
+    // to match a long page. `wide` is for a chat that does the page's main
+    // editing (Agent Creator, the memory agent), where turns run long.
+    gridClass: !open
+      ? ''
+      : wide
+        ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(24rem,36rem)] gap-6 items-start'
+        : 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,25rem)] gap-6 items-start',
     // The page's column. `min-w-0` only, so nothing about how the page scrolls
     // changes when the chat appears beside it.
     mainClass: 'min-w-0',

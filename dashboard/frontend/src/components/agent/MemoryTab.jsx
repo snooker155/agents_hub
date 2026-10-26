@@ -2,7 +2,7 @@ import { updateAgentEpisodicConfig, updateAgentTools } from '../../api';
 import { errorDetail } from '../toast';
 import { MemoryPoolDetails } from './memoryPool';
 import PersonalMemoryCard from './PersonalMemoryCard';
-import { poolName } from '../memoryManager/helpers';
+import { isPersonalPool, poolName } from '../memoryManager/helpers';
 import { AlertCircle, Database, Loader, Save, Trash2, Wrench, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAgentPage } from './context';
@@ -50,20 +50,24 @@ export default function MemoryTab() {
                 const poolNameById = Object.fromEntries(sharedMemories.map(m => [m.id, poolName(m, t, onDefault)]));
                 const primary = memoryPools[0] || '';
                 const extras = memoryPools.slice(1);
-                const unattached = sharedMemories.filter(m => !memoryPools.includes(m.id));
+                // A personal pool is attached by the personal memory switch
+                // above, for whoever runs the agent, so it is not offered as a
+                // pool. One a record already holds still shows, to detach it.
+                const pickable = sharedMemories.filter(m => !isPersonalPool(m) || m.id === primary);
+                const unattached = sharedMemories.filter(m => !isPersonalPool(m) && !memoryPools.includes(m.id));
                 return (
                   <>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.primaryPool')}</label>
                       <p className="text-xs text-gray-400 mb-1.5">{t('agentDetails.primaryPoolHint')}</p>
-                      {sharedMemories.length > 0 ? (
+                      {pickable.length > 0 ? (
                         <select
                           value={primary}
                           onChange={(e) => setPrimaryPool(e.target.value)}
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                         >
                           <option value="">{t('agentDetails.selectAMemoryPool')}</option>
-                          {sharedMemories.map(m => (
+                          {pickable.map(m => (
                             <option key={m.id} value={m.id}>
                               {poolName(m, t, onDefault)}  ({t('agentDetails.fileCount', { count: (m.files || []).length })})
                             </option>

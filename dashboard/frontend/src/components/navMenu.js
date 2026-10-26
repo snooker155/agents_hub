@@ -23,7 +23,7 @@
  * one place to ask.
  */
 import {
-  CheckSquare, Folder, Database, Factory, Wrench, Users,
+  CheckSquare, Folder, Database, Workflow, Wrench, Bot,
   Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, FolderGit2, Box, Store,
   CalendarClock, BookOpen, Brain, Images, Repeat, UsersRound,
   GraduationCap, Globe, Link2, Layers, Rocket, ShieldCheck,
@@ -79,7 +79,7 @@ export function buildMenu({ t }) {
         // The forms of joined work, side by side: a flow is a graph, a loop a
         // repeated agent, a team agents talking, the orchestrator one agent
         // handing out work.
-        { name: t('nav.flows'), path: '/flows', icon: Factory, simple: true },
+        { name: t('nav.flows'), path: '/flows', icon: Workflow, simple: true },
         { name: t('nav.loops'), path: '/loops', icon: Repeat, home: '/flows' },
         { name: t('nav.teams'), path: '/teams', icon: UsersRound, home: '/flows' },
         { name: t('nav.orchestrator'), path: '/orchestrator', icon: Network, home: '/flows' },
@@ -93,14 +93,14 @@ export function buildMenu({ t }) {
     {
       key: 'agents',
       items: [
-        { name: t('nav.agents'), path: '/agents', icon: Users, simple: true },
+        { name: t('nav.agents'), path: '/agents', icon: Bot, simple: true },
         { name: t('nav.models'), path: '/models', icon: Brain, simple: true },
-        { name: t('nav.skills'), path: '/skills', icon: GraduationCap, simple: true },
         { name: t('nav.memory'), path: '/memory', icon: Database, simple: true },
-        { name: t('nav.marketplace'), path: '/marketplace', icon: Store, simple: true },
+        { name: t('nav.skills'), path: '/skills', icon: GraduationCap, simple: true },
         { name: t('nav.toolbox'), path: '/tools', icon: Wrench, home: '/agents' },
         // Live copies of agents, across every carrier (docs/instances.md).
         { name: t('nav.instances'), path: '/instances', icon: Activity, home: '/agents' },
+        { name: t('nav.marketplace'), path: '/marketplace', icon: Store, simple: true },
       ],
     },
     {

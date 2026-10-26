@@ -8,7 +8,7 @@ import {
 import { getAgents, getWorkspacePersonalMemory, updateAgentMemory } from '../../api';
 import { useI18n } from '../../i18n';
 import { useToast, errorDetail } from '../toast';
-import { agentPools, poolName } from './helpers';
+import { agentPools, isPersonalPool, poolName } from './helpers';
 import PageLoader from '../PageLoader';
 
 function AgentsTab({ memories, workspaceFilter }) {
@@ -45,6 +45,9 @@ function AgentsTab({ memories, workspaceFilter }) {
   }, [ws]);
 
   const poolById = Object.fromEntries(memories.map(m => [m.id, m]));
+  // What the assign form offers: never a personal pool, which reaches an
+  // agent through the personal memory switch rather than an assignment.
+  const assignable = memories.filter(m => !isPersonalPool(m));
 
   const handleAssign = async () => {
     setSaving(true);
@@ -195,9 +198,12 @@ function AgentsTab({ memories, workspaceFilter }) {
                     <td className="px-5 py-3 text-right">
                       <button
                         onClick={() => {
+                          // A personal pool an older record holds is left out,
+                          // so the next save drops it (the route does too).
+                          const own = pools.filter(pid => !isPersonalPool(poolById[pid]));
                           setAssigning({ agentId: a.id, agentName: a.name || a.id });
-                          setSelectedPoolId(pools[0] || '');
-                          setSelectedExtraIds(pools.slice(1));
+                          setSelectedPoolId(own[0] || '');
+                          setSelectedExtraIds(own.slice(1));
                         }}
                         className="text-xs border border-indigo-200 text-indigo-600 px-2 py-1 rounded-lg hover:bg-indigo-50"
                       >
@@ -235,15 +241,15 @@ function AgentsTab({ memories, workspaceFilter }) {
                   }}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none">
                   <option value="">{t('memoryManager.noneNoSharedMemory')}</option>
-                  {memories.map(m => <option key={m.id} value={m.id}>{poolName(m, t, !workspaceFilter)}</option>)}
+                  {assignable.map(m => <option key={m.id} value={m.id}>{poolName(m, t, !workspaceFilter)}</option>)}
                 </select>
               </div>
-              {selectedPoolId && memories.filter(m => m.id !== selectedPoolId).length > 0 && (
+              {selectedPoolId && assignable.filter(m => m.id !== selectedPoolId).length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.additionalPools')}</label>
                   <p className="text-xs text-gray-400 mb-2">{t('memoryManager.additionalPoolsHint')}</p>
                   <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
-                    {memories.filter(m => m.id !== selectedPoolId).map(m => (
+                    {assignable.filter(m => m.id !== selectedPoolId).map(m => (
                       <label key={m.id} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                         <input
                           type="checkbox"
