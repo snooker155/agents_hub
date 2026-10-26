@@ -11,6 +11,7 @@ import { ExtractionToolCard, RecallToolCard } from './memoryCards';
 import { EXTRACTION_TOOLS } from './memoryTools';
 import { GraphNodeStep, ReasoningStep } from './reasoning';
 import { foldDelegationTools } from './trail';
+import { toolActivity } from './toolActivity';
 import { ChevronDown, ChevronUp, Repeat, Terminal, Zap } from 'lucide-react';
 import { useState } from 'react';
 
@@ -31,14 +32,18 @@ function TimelineToolCard({ entry }) {
       >
         <ToolStatusMark entry={entry} />
         {isSkill ? <Zap className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" /> : <Terminal className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />}
-        <span className={`text-xs font-semibold ${isSkill ? 'text-violet-700' : 'text-amber-700'}`}>{entry.tool || 'tool'}</span>
-        {!open && entry.input && (
-          <span className="text-[11px] text-gray-400 truncate flex-1">{shortText(entry.input, 80)}</span>
-        )}
+        {/* What the call does, in words (toolActivity.js); the tool's own
+            name and raw arguments are under it when opened. */}
+        <span className={`text-xs font-semibold truncate flex-1 ${isSkill ? 'text-violet-700' : 'text-amber-700'}`} title={entry.tool || ''}>
+          {toolActivity(t, entry.tool, entry.input)}
+        </span>
         {open ? <ChevronUp className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" /> : <ChevronDown className="w-3 h-3 text-gray-400 ml-auto flex-shrink-0" />}
       </button>
       {open && (
         <div className="px-3 pb-2.5 space-y-1.5">
+          <div className="text-[11px] text-gray-500">
+            <span className="text-gray-400">{t('chat.toolName')}</span> <code className="font-mono">{entry.tool || 'tool'}</code>
+          </div>
           {entry.input && (
             <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
               <span className="text-gray-400">{t('chat.in2')}</span> {shortText(entry.input, 1000)}

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CornerDownRight, Send, StopCircle, Workflow, X } from 'lucide-react';
-import { stopMessage, startChatOverSSE } from '../../api';
+import { stopMessage, startChatOverSSE, summarizeFlowChatTurn } from '../../api';
 import { useStream } from '../stream';
 import { useI18n } from '../../i18n';
 import { useInlineChatOpen } from '../pageChat/pageChat';
@@ -15,19 +15,23 @@ import { stripUiBlock } from '../chat/markdown';
 import AgentTranscript from '../chat/AgentTranscript';
 import ViewModeToggle from '../chat/ViewModeToggle';
 import { useChatViewMode } from '../chat/viewMode';
+import { summaryViewMessages, turnsWithoutSummary, useFlowSummaryMode } from './summaryView';
 import { agentMessage, applyTurnEvent, settleTurn } from '../chat/turnEvents';
 import { useMessagesWithTrails } from '../chat/runTrail';
+import { useChatScroll } from '../chat/useChatScroll';
 import ComposerBox from '../chat/ComposerBox';
 import { COMPOSER_SEND_CLS, COMPOSER_STOP_CLS, COMPOSER_TEXTAREA_CLS } from '../chat/composerStyles';
 import { conversationArtifacts } from '../chat/artifactOps';
 import { conversationViews } from '../chat/turnViews';
-import { rerunBubbleText } from '../flowEditor/runFormat';
+import { entityNodeText, rerunBubbleText, routeText } from '../flowEditor/runFormat';
 
 // ---------------------------------------------------------------------------
 // Slim flow chat — embedded version of the Chat page scoped to a single flow.
 // Each user turn runs through every node of the flow (one bubble per node),
 // drawn the way the Chat page draws a turn (chat/AgentTranscript.jsx): each
-// node's thoughts, tool calls and files, in the Chat or Build view. The
+// node's thoughts, tool calls and files, in the Chat or Build view. In the
+// Summary view a turn is one reply instead: the step in progress while it
+// works, then a summary of what was done (flow/summaryView.js). The
 // run's events are delivered over the app's single multiplexed SSE connection
 // (POST /api/chat/stream-sse returns immediately; events arrive on the
 // `chat:{conversation_id}` channel), so a flow chat doesn't hold a second
@@ -80,12 +84,34 @@ export default function FlowChat({
   // The node bubble being written right now.
   const [streamingId, setStreamingId] = useState(null);
   const [viewMode, setViewMode] = useChatViewMode();
+  // The Summary view is this chat's own third choice, kept apart from the
+  // Chat / Build choice every chat shares; leaving it goes back to that one.
+  const [summaryMode, setSummaryMode] = useFlowSummaryMode();
+  const shownMode = summaryMode ? 'summary' : viewMode;
+  // Turns being summed up after the fact, the conversation already asked
+  // about (asked again on the next switch to Summary), and a failure.
+  const [writingTurns, setWritingTurns] = useState(() => new Set());
+  const [askedFor, setAskedFor] = useState(null);
+  const [summaryError, setSummaryError] = useState('');
+  const changeMode = useCallback((mode) => {
+    setSummaryMode(mode === 'summary');
+    if (mode !== 'summary') {
+      setViewMode(mode);
+      setAskedFor(null);
+      setSummaryError('');
+    }
+  }, [setSummaryMode, setViewMode]);
   // A History record reopened here carries only each node's answer; its
   // steps and files come from the node's run. A run again from a node has
   // no message of its own, so its bubble says what it was.
   const withTrails = useMessagesWithTrails(messages, true);
   const shownMessages = useMemo(
-    () => withTrails.map((m) => (m.rerun && !m.content ? { ...m, content: rerunBubbleText(t, m.rerun) } : m)),
+    () => withTrails.map((m) => {
+      if (m.rerun && !m.content) return { ...m, content: rerunBubbleText(t, m.rerun) };
+      // A switch has no answer: its bubble says which step it chose.
+      if (m.route && !m.content) return { ...m, content: routeText(t, m.route) };
+      return m;
+    }),
     [withTrails, t],
   );
   // The files and views the flow's nodes produced in this conversation, for
@@ -103,7 +129,6 @@ export default function FlowChat({
   const activeRunIdRef = useRef(null);
   // Tears down the current turn's SSE channel subscription (listener + interest).
   const subCleanupRef = useRef(null);
-  const endRef = useRef(null);
   const textareaRef = useRef(null);
 
   const flowName = flow?.name || 'flow';
@@ -125,10 +150,6 @@ export default function FlowChat({
 
   // Drop the channel subscription if the component unmounts mid-run.
   useEffect(() => () => subCleanupRef.current?.(), []);
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
 
   // Reset the thread when the flow changes or a new chat is started (chatNonce
   // bump). A fresh nonce also yields a new conversationId below, so the new
@@ -163,6 +184,15 @@ export default function FlowChat({
         : `flow-chat-${flowId}`,
     [resumeConversationId, flowId, chatNonce]
   );
+
+  // Opens at the end and stays there while a reply is written, as the Chat
+  // page does: also once steps and files load into reopened bubbles, once a
+  // hidden tab shows, and when the box over the foot grows.
+  const lastUserId = [...shownMessages].reverse().find((m) => m.role === 'user')?.id ?? null;
+  const { scrollerRef, contentRef, onScroll, followEnd } = useChatScroll({
+    convId: conversationId, lastUserId, messages: shownMessages,
+  });
+  useLayoutEffect(() => { followEnd(); }, [composerHeight, loading, followEnd]);
 
   // What rides with the next message, as on the Chat page: files from the
   // computer or the workspace, and hub records (chat/ComposerAttachments.jsx).
@@ -200,8 +230,9 @@ export default function FlowChat({
       return;
     }
 
+    // A turn's summary restates its nodes' answers, which are in already.
     const said = messages
-      .filter((m) => !m.rerun && (m.role === 'user' || m.role === 'agent') && String(m.content || '').trim());
+      .filter((m) => !m.rerun && !m.summary && (m.role === 'user' || m.role === 'agent') && String(m.content || '').trim());
     const history = said
       .slice(historyWindowStart(said.length))
       .map((m) => ({ role: m.role, content: String(m.content || '') }));
@@ -241,6 +272,10 @@ export default function FlowChat({
     // Per-turn state, captured by the channel handler below (which outlives the
     // POST and runs until the terminal sentinel arrives over the SSE).
     const nodeMsgIds = {};
+    let summaryMsgId = null;
+    // The turn's id (flow_meta), on each of its messages, so a summary
+    // written for it later finds it.
+    let turnId = null;
     let currentNodeId = null;
     let sawDone = false;
     let finished = false;
@@ -264,7 +299,7 @@ export default function FlowChat({
       setLoading(false);
       setStreamingId(null);
       // Nothing is left running once the turn is over (a stop, an error).
-      const ids = new Set(Object.values(nodeMsgIds));
+      const ids = new Set([...Object.values(nodeMsgIds), summaryMsgId].filter(Boolean));
       setMessages((prev) => prev.map((m) => (ids.has(m.id) && m.running ? { ...settleTurn(m), running: false } : m)));
       activeRunIdRef.current = null;
       // Close the live run if it ended without a terminal `done` (Stop / error)
@@ -291,7 +326,27 @@ export default function FlowChat({
         }
       }
       if (event.type === 'flow_meta') {
-        // handled by onStreamEvent
+        // The canvas side is handled by onStreamEvent.
+        if (event.turn_id) {
+          turnId = event.turn_id;
+          setMessages((prev) => prev.map((m) => (m.id === userMsg.id ? { ...m, turn_id: turnId } : m)));
+        }
+      } else if (event.type === 'flow_summary_delta' || event.type === 'flow_summary') {
+        // The turn's one closing message (Summary view), written after
+        // its last node; `flow_summary` carries the whole text.
+        if (!summaryMsgId) {
+          summaryMsgId = genId();
+          const id = summaryMsgId;
+          setMessages((prev) => [...prev, agentMessage({
+            id, summary: true, running: true, error: false, ...(turnId ? { turn_id: turnId } : {}),
+          })]);
+        }
+        const id = summaryMsgId;
+        setStreamingId(event.type === 'flow_summary' ? null : id);
+        setMessages((prev) => prev.map((m) => (m.id !== id ? m
+          : event.type === 'flow_summary'
+            ? { ...m, content: event.content || m.content, running: false }
+            : { ...m, content: (m.content || '') + (event.content || '') })));
       } else if (event.type === 'node_start') {
         currentNodeId = event.node_id;
         const msgId = genId();
@@ -308,6 +363,7 @@ export default function FlowChat({
             run_id: event.run_id || null,
             running: true,
             error: false,
+            ...(turnId ? { turn_id: turnId } : {}),
           }),
         ]);
       } else if (event.type === 'node_done') {
@@ -321,8 +377,11 @@ export default function FlowChat({
                   ...settleTurn(m, {
                     content: (event.response || '').trim()
                       || (event.response_obj ? '' : stripUiBlock(m.content || '').trim())
-                      || (event.ok ? '' : event.error || ''),
+                      || (event.ok ? '' : event.error || '')
+                      // A node with no agent says what it did instead.
+                      || (event.is_agent === false && !event.route ? entityNodeText(t, event) : ''),
                   }),
+                  ...(event.route && event.ok ? { route: event.route } : {}),
                   entities: event.entities || m.entities || null,
                   citations: event.citations || m.citations || null,
                   run_id: event.run_id || m.run_id,
@@ -354,6 +413,7 @@ export default function FlowChat({
         // A run again from a node sends what its bubble says; the server
         // takes the last turn's own message for the flow (chat/pipelines.py).
         message: rerunInfo ? rerunBubbleText(t, rerunInfo) : text,
+        ...(summaryMode ? { flow_summary: true } : {}),
         ...(rerunInfo ? { flow_rerun: { node_id: rerunInfo.node_id, mode: rerunInfo.mode } } : {}),
         ...(toNode ? { flow_start_node: toNode.id } : {}),
         workspace: workspace || null,
@@ -371,9 +431,38 @@ export default function FlowChat({
       ]);
       finalize();
     }
-  }, [input, loading, flowId, workspace, messages, clientId, conversationId, on, acquireChannel, t, onStreamEvent, onActivity, flowName, pendingAttachments, pendingReferences, startNode, onClearStartNode]);
+  }, [input, loading, flowId, workspace, messages, clientId, conversationId, on, acquireChannel, t, onStreamEvent, onActivity, flowName, pendingAttachments, pendingReferences, startNode, onClearStartNode, summaryMode]);
 
   const sendMessage = useCallback(() => sendTurn(), [sendTurn]);
+
+  // Summaries of turns sent in the Chat view, written on request in the
+  // Summary view (routes/flows.py summarize_flow_chat_turn). Each lands at
+  // the end of its turn.
+  const writeSummaries = useCallback(async (turns) => {
+    const conv = conversationId;
+    setAskedFor(conv);
+    setSummaryError('');
+    let failed = 0;
+    for (const turn of turns) {
+      setWritingTurns((prev) => new Set(prev).add(turn.turn_id));
+      try {
+        const { data } = await summarizeFlowChatTurn(flowId, conv, turn);
+        setMessages((prev) => {
+          let at = -1;
+          prev.forEach((m, i) => { if (m.turn_id === turn.turn_id) at = i; });
+          if (at === -1) return prev;
+          const summary = agentMessage({ id: genId(), summary: true, turn_id: turn.turn_id, content: data?.summary || '' });
+          return [...prev.slice(0, at + 1), summary, ...prev.slice(at + 1)];
+        });
+      } catch {
+        failed += 1;
+      } finally {
+        setWritingTurns((prev) => { const next = new Set(prev); next.delete(turn.turn_id); return next; });
+      }
+    }
+    if (failed) setSummaryError(t('flowFlowChat.summaryFailed', { count: failed }));
+    onActivity?.();
+  }, [conversationId, flowId, onActivity, t]);
 
   // A run again from a node asked for by the page: sent once per request,
   // when no turn is open (a busy chat reports it back unsent).
@@ -399,8 +488,24 @@ export default function FlowChat({
     }
   };
 
+  // A turn's summary is the flow's own reply.
   const labelFor = (msg) =>
-    msg.agent_label || agentLabels[msg.agent_id] || msg.agent_id || 'Agent';
+    (msg.summary ? flowName : '') || msg.agent_label || agentLabels[msg.agent_id] || msg.agent_id || 'Agent';
+  const transcript = summaryMode
+    ? summaryViewMessages(shownMessages, {
+      streamingId, loading, writing: writingTurns, writingLabel: t('flowFlowChat.summaryWriting'),
+    })
+    // The Chat and Build views show what the nodes said, not a summary.
+    : shownMessages.filter((m) => !m.summary);
+  // Turns sent in the Chat view have no summary: in the Summary view the
+  // chat asks once whether to write them (until asked again in another
+  // conversation), and writes them one by one on a yes.
+  const missing = summaryMode && !writingTurns.size && askedFor !== conversationId
+    ? turnsWithoutSummary(shownMessages, { loading })
+    : [];
+  // A turn is open and nothing of its reply is on show: before the first
+  // node, or in the Summary view between two nodes.
+  const waiting = loading && !streamingId && transcript[transcript.length - 1]?.role === 'user';
 
   return (
     <div className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-slate-50">
@@ -413,14 +518,14 @@ export default function FlowChat({
           <div className="truncate text-[11px] text-slate-400">{flowName}</div>
         </div>
         {/* Chat or Build, the same choice as on the Chat page. */}
-        <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
+        <ViewModeToggle viewMode={shownMode} onChange={changeMode} summary />
       </div>
 
       {/* The conversation, with the box laid over its foot as on the Chat
           page: the messages scroll behind the box, and the list keeps the
           box's height free under its last message. */}
       <div className="relative min-h-0 flex-1">
-      <div className="h-full overflow-y-auto px-3 pt-3" style={{ paddingBottom: composerHeight + 12 }}>
+      <div ref={scrollerRef} onScroll={onScroll} className="h-full overflow-y-auto px-3 pt-3" style={{ paddingBottom: composerHeight + 12 }}>
         {messages.length === 0 && !loading ? (
           <div className="flex min-h-full flex-col items-center justify-center py-4 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 shadow-sm">
@@ -439,18 +544,30 @@ export default function FlowChat({
             />
           </div>
         ) : (
-          <>
+          <div ref={contentRef}>
             <AgentTranscript
-              messages={shownMessages}
-              viewMode={viewMode}
+              messages={transcript}
+              viewMode={summaryMode ? 'chat' : viewMode}
               streamingId={streamingId}
-              // A turn is open and its first node has not started yet.
-              waiting={loading && !streamingId && messages[messages.length - 1]?.role === 'user'}
+              waiting={waiting}
               agentName={flowName}
               agentNameFor={labelFor}
             />
-            <div ref={endRef} />
-          </>
+            {missing.length ? (
+              <div className="mx-2 mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900" data-testid="flow-summary-offer">
+                <span className="min-w-0 flex-1">{t('flowFlowChat.summaryOffer', { count: missing.length })}</span>
+                <button type="button" onClick={() => writeSummaries(missing)} className="rounded-lg bg-indigo-600 px-2.5 py-1 font-medium text-white transition hover:bg-indigo-700">
+                  {t('flowFlowChat.summaryOfferYes')}
+                </button>
+                <button type="button" onClick={() => setAskedFor(conversationId)} className="rounded-lg px-2.5 py-1 font-medium text-indigo-700 transition hover:bg-indigo-100">
+                  {t('flowFlowChat.summaryOfferNo')}
+                </button>
+              </div>
+            ) : null}
+            {summaryError ? (
+              <div className="mx-2 mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700" data-testid="flow-summary-error">{summaryError}</div>
+            ) : null}
+          </div>
         )}
       </div>
 

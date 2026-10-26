@@ -27,7 +27,9 @@ export default function AgentTranscript({
   return (
     <>
       {messages.map((msg) => {
-        const isStreaming = msg.id === streamingId;
+        // `streaming`: a reply being written outside the turn's own stream
+        // (a summary asked for after the fact, flow/summaryView.js).
+        const isStreaming = msg.id === streamingId || msg.streaming === true;
         const name = msg.role === 'user' ? undefined : (agentNameFor ? agentNameFor(msg) : agentName);
         return viewMode === 'build' ? (
           <BuildMessage key={msg.id} msg={msg} isStreaming={isStreaming} agentName={name} compact={compact} />

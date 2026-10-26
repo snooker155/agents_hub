@@ -111,7 +111,7 @@ describe('MessageBubble (Chat view)', () => {
     const live = { ...TURN, content: 'I will ask the visualizer.', timeline: [{ type: 'text', text: 'I will ask the visualizer.' }, { type: 'tool', tool: 'read_file', running: true }] };
     wrap(<MessageBubble msg={live} isStreaming />);
     expect(screen.queryByText('I will ask the visualizer.')).toBeNull();
-    expect(screen.getByText('Running read_file')).toBeInTheDocument();
+    expect(screen.getByText('Reading a file')).toBeInTheDocument();
   });
 
   it('while a worker runs, shows only its latest step', () => {
@@ -127,7 +127,7 @@ describe('MessageBubble (Chat view)', () => {
     expect(screen.getByTestId('live-delegation')).toBeInTheDocument();
     expect(screen.getByText('Delegated to Visualizer')).toBeInTheDocument();
     expect(screen.getAllByTestId('live-delegation-tool')).toHaveLength(1);
-    expect(screen.getByText('mesh_new')).toBeInTheDocument();
+    expect(screen.getByText('Creating mesh: cube')).toBeInTheDocument();
     expect(screen.queryByText('create_view')).toBeNull();
   });
 
@@ -141,7 +141,7 @@ describe('MessageBubble (Chat view)', () => {
     const next = { ...live, timeline: [...live.timeline, { type: 'tool', tool: 'read_file', running: true }] };
     wrap(<MessageBubble msg={next} isStreaming />);
     expect(screen.queryByTestId('live-delegation-done')).toBeNull();
-    expect(screen.getByText('Running read_file')).toBeInTheDocument();
+    expect(screen.getByText('Reading a file')).toBeInTheDocument();
   });
 });
 

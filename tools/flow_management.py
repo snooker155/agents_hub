@@ -732,9 +732,9 @@ def run_new_flow(
     if not approved("run_new_flow_tool", user_approved,
                     {"name": flow["name"], "goal": goal, "steps": len(flow["nodes"])},
                     reason="Builds a flow for this request and runs it."):
+        extra: Dict[str, Any] = {"plan": plan}
         if estimate:
             extra["estimate"] = estimate
-        extra: Dict[str, Any] = {"plan": plan}
         if warnings:
             extra["warnings"] = warnings
         return _json_err(

@@ -80,7 +80,8 @@ describe('PlannerChat', () => {
       onEvent({ type: 'done', created: 0 });
     });
     show({ generateRequested: true, onGenerateStarted: vi.fn() });
-    await screen.findByText(/add_subtask/);
+    // create_task and add_subtask both read "Creating a task".
+    await waitFor(() => expect(screen.getAllByText(/Creating a task/)).toHaveLength(2));
     const marks = () => screen.getAllByTestId('tool-status').map((m) => m.dataset.status);
     expect(marks()).toEqual(['ok', 'error', 'running']);
     // Once the run is over nothing is left spinning, even a step whose end

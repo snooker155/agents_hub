@@ -35,7 +35,7 @@ describe('NodeSteps: a flow node\'s steps folded inside its log line', () => {
     expect(screen.getByTitle('1 thought')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { expanded: false }));
     expect(screen.getByTestId('node-steps-body')).toBeInTheDocument();
-    expect(screen.getByText('web_search')).toBeInTheDocument();
+    expect(screen.getByText('Searching the web: q')).toBeInTheDocument();
     expect(api.getRunTrail).not.toHaveBeenCalled();
   });
 
@@ -50,7 +50,7 @@ describe('NodeSteps: a flow node\'s steps folded inside its log line', () => {
     show({ type: 'agent_finish', run_id: 'r2', stats: { tools: 1, errors: 0, thoughts: 0 }, output: 'the answer' });
     expect(api.getRunTrail).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { expanded: false }));
-    await waitFor(() => expect(screen.getByText('read_file')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Reading a file: a')).toBeInTheDocument());
     expect(api.getRunTrail).toHaveBeenCalledWith('r2');
     // The answer is the node's Output, not one of its steps.
     expect(screen.queryByText('the answer')).toBeNull();
