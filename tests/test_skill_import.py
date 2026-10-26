@@ -128,6 +128,49 @@ def test_sync_adds_updates_and_leaves_unchanged(workspace):
     assert sv.list_versions(str(entry.id))[0]["op"] == "sync"
 
 
+def test_a_changed_script_alone_is_a_new_version(workspace, monkeypatch):
+    """Only the script changed, SKILL.md did not: the sync saw the folder
+    change and re-reviewed it, but wrote no version, so the history did not
+    show the change (found live). The hash of every file is now part of a
+    version; agents and an attached copy that nobody edited follow it."""
+    ws, folder = workspace
+    specs = {"follower": registry.AgentSpec(
+        id="follower", name="follower", type="langchain", entrypoint="", description="",
+        domain="testing", tools=[], skills_enabled=True, owner_workspace=ws)}
+    monkeypatch.setattr(registry, "get_agent", lambda agent_id: specs.get(agent_id))
+    monkeypatch.setattr(registry, "add_agent", lambda s: specs.__setitem__(s.id, s))
+
+    skill_dir = _write_skill(folder, files={"scripts/check.sh": "echo 12"})
+    sync_workspace(ws)
+    entry = _repo_entries(ws)[0]
+    copy = run(skills_routes.install_skill(str(entry.id), SkillInstall(workspace=ws, agent_id="follower")))
+    first = sv.get_version(str(entry.id), 1)["snapshot"]["files"]
+
+    (skill_dir / "scripts" / "check.sh").write_text("echo 8", encoding="utf-8")
+    report = sync_workspace(ws)
+    assert len(report["updated"]) == 1
+    entry = find_procedure(str(entry.id))
+    assert entry.version == 2
+    latest = sv.list_versions(str(entry.id))[0]
+    assert latest["op"] == "sync"
+    second = sv.get_version(str(entry.id), 2)["snapshot"]["files"]
+    assert set(first) == set(second) == {"scripts/check.sh"}
+    assert first["scripts/check.sh"] != second["scripts/check.sh"]
+    assert [f["agent_id"] for f in report["followed"]] == ["follower"]
+    assert find_procedure(copy["id"]).origin_version == 2
+    # What an agent reads carries no hashes.
+    assert "files" not in sv.effective_content(entry)
+
+    again = sync_workspace(ws)
+    assert len(again["unchanged"]) == 1 and find_procedure(str(entry.id)).version == 2
+
+
+def test_a_skill_without_files_keeps_its_content_hash():
+    from memory.procedural import Procedure
+    plain = Procedure(name="n", description="d", steps=["a"], workspace="w")
+    assert "files" not in sv.content_of(plain)
+
+
 def test_sync_reads_project_repositories(workspace):
     from projects.models import Project, RepoConfig
     from projects.storage import ProjectStore

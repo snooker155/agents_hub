@@ -44,6 +44,7 @@ import SkillHistoryModal from '../components/skills/SkillHistoryModal';
 import SkillImportModal from '../components/skills/SkillImportModal';
 import SkillSourcesModal from '../components/skills/SkillSourcesModal';
 import SkillDetailModal from '../components/skills/SkillDetailModal';
+import AgentSelect from '../components/flowEditor/AgentSelect';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -165,8 +166,8 @@ const SkillsCatalog = () => {
         });
         notify(
           resp.data.skills_enabled_updated
-            ? `Skill "${draft.name}" created and skills turned on for ${draft.agent_id}.`
-            : `Skill "${draft.name}" created.`
+            ? t('skillsCatalog.createdSkillsOn', { name: draft.name, agent: draft.agent_id })
+            : t('skillsCatalog.createdNotice', { name: draft.name })
         );
       }
       setEditor(null);
@@ -211,6 +212,18 @@ const SkillsCatalog = () => {
       setBusyId(null);
     }
   };
+
+  // The searchable agent picker's rows: under each name, how many skills the
+  // agent has here, whether its skills are off, and what it does.
+  const pickerAgents = targets.map((a) => ({
+    id: a.id,
+    name: a.name,
+    description: [
+      t('skillsCatalog.targetSkills', { count: a.skills_count || 0 }),
+      a.skills_enabled ? null : t('skillsCatalog.targetSkillsOff'),
+      a.description,
+    ].filter(Boolean).join(' · '),
+  }));
 
   const openInstall = (skill) => {
     setInstallFor(skill);
@@ -334,7 +347,7 @@ const SkillsCatalog = () => {
                 tab === 'workspace' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
               }`}
             >
-              <Folder className="w-3.5 h-3.5 mr-1.5" /> My workspace ({mine.length})
+              <Folder className="w-3.5 h-3.5 mr-1.5" /> {t('skillsCatalog.tabMine', { n: mine.length })}
             </button>
             <button
               onClick={() => setTab('global')}
@@ -342,7 +355,7 @@ const SkillsCatalog = () => {
                 tab === 'global' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
               }`}
             >
-              <Globe2 className="w-3.5 h-3.5 mr-1.5" /> Global catalog ({global.length})
+              <Globe2 className="w-3.5 h-3.5 mr-1.5" /> {t('skillsCatalog.tabGlobal', { n: global.length })}
             </button>
           </div>
           <div className="relative">
@@ -405,8 +418,7 @@ const SkillsCatalog = () => {
             </p>
             {!query && (
               <p className="text-gray-400 text-sm mt-1 max-w-md text-center">
-                Write one here, or install a published skill from the global catalog.
-                A skill only reaches an agent once it is attached to it.
+                {t('skillsCatalog.emptyHint')}
               </p>
             )}
           </div>
@@ -537,7 +549,7 @@ const SkillsCatalog = () => {
                         : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                     }`}
                   >
-                    <Share2 className="w-3.5 h-3.5 mr-1" /> {skill.shared ? 'Published' : 'Publish'}
+                    <Share2 className="w-3.5 h-3.5 mr-1" /> {skill.shared ? t('skillsCatalog.publishedButton') : t('skillsCatalog.publishButton')}
                   </button>
                   <button
                     onClick={() => openEdit(skill)}
@@ -552,7 +564,7 @@ const SkillsCatalog = () => {
                     disabled={busyId === skill.id}
                     className="inline-flex items-center justify-center px-2 py-1.5 text-xs font-semibold border border-red-200 text-red-600 rounded hover:bg-red-50 disabled:opacity-50 transition-colors"
                   >
-                    <Trash2 className="w-3.5 h-3.5 mr-1" /> {skill.agent_id ? 'Detach' : 'Delete'}
+                    <Trash2 className="w-3.5 h-3.5 mr-1" /> {skill.agent_id ? t('skillsCatalog.detachButton') : t('skillsCatalog.deleteButton')}
                   </button>
                   <button
                     onClick={() => setHistoryFor(skill)}
@@ -622,7 +634,7 @@ const SkillsCatalog = () => {
                 </span>
                 {skill.authored_for && (
                   <span className="inline-flex items-center gap-1" title={t('skillsCatalog.writtenForThisAgent')}>
-                    <Bot className="w-3 h-3" /> for {skill.authored_for.name}
+                    <Bot className="w-3 h-3" /> {t('skillsCatalog.authoredFor', { agent: skill.authored_for.name })}
                   </span>
                 )}
               </div>
@@ -641,7 +653,7 @@ const SkillsCatalog = () => {
                     {busyId === skill.id
                       ? <RefreshCw className="w-3.5 h-3.5 mr-1 animate-spin" />
                       : <Download className="w-3.5 h-3.5 mr-1" />}
-                    Install
+                    {t('skillsCatalog.install')}
                   </button>
                 )}
               </div>
@@ -719,18 +731,14 @@ const SkillsCatalog = () => {
                 {!editor.id && (
                   <div>
                     <label className="block text-xs font-semibold text-gray-600 mb-1">{t('skillsCatalog.attachToAgent')}</label>
-                    <select
+                    <AgentSelect
+                      agents={pickerAgents}
                       value={editor.draft.agent_id}
-                      onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, agent_id: e.target.value } })}
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
-                    >
-                      <option value="">{t('skillsCatalog.catalogEntryNoAgent')}</option>
-                      {targets.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name} ({t.skills_count} skill{t.skills_count === 1 ? '' : 's'})
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(id) => setEditor({ ...editor, draft: { ...editor.draft, agent_id: id } })}
+                      head={{ id: '', name: t('skillsCatalog.catalogEntryNoAgent') }}
+                      invalid={false}
+                      testId="skill-editor-agent"
+                    />
                   </div>
                 )}
               </div>
@@ -760,32 +768,24 @@ const SkillsCatalog = () => {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                <Download className="w-5 h-5 text-indigo-600" /> Install "{installFor.name}"
+                <Download className="w-5 h-5 text-indigo-600" /> {t('skillsCatalog.installTitle', { name: installFor.name })}
               </h3>
               <button onClick={() => setInstallFor(null)} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-6 space-y-4">
-              <p className="text-xs text-gray-500">
-                A copy is created in workspace <strong>{workspace}</strong>. Attaching it to an agent is
-                what puts it in that agent's prompt — leave the agent unset to keep it as a catalog
-                entry for now. Installing turns on that agent's skills setting if it is off.
-              </p>
+              <p className="text-xs text-gray-500">{t('skillsCatalog.installIntro', { workspace })}</p>
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">{t('skillsCatalog.agent')}</label>
-                <select
+                <AgentSelect
+                  agents={pickerAgents}
                   value={installAgent}
-                  onChange={(e) => setInstallAgent(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none"
-                >
-                  <option value="">{t('skillsCatalog.workspaceCatalogOnlyNoAgent')}</option>
-                  {targets.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}{t.skills_enabled ? '' : ' — skills off'}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setInstallAgent}
+                  head={{ id: '', name: t('skillsCatalog.workspaceCatalogOnlyNoAgent') }}
+                  invalid={false}
+                  testId="skill-install-agent"
+                />
               </div>
             </div>
             <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
