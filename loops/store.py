@@ -63,6 +63,8 @@ def _to_run(rec: Dict[str, Any]) -> LoopRun:
         workspace=rec.get("workspace"),
         status=rec.get("status") or RunStatus.pending.value,
         goal=rec.get("goal") or "",
+        context=rec.get("context") or "",
+        attached=list(rec.get("attached") or []),
         task_id=rec.get("task_id"),
         session_id=rec.get("session_id"),
         parent_run_id=rec.get("parent_run_id"),
@@ -145,6 +147,8 @@ def _notify(resource: str, **meta) -> None:
 # ── Loop definitions ─────────────────────────────────────────────────────────
 
 def save_loop(loop: Loop) -> Loop:
+    # Every loop belongs to a workspace; one saved without is the default one's.
+    loop.workspace = loop.workspace or "default"
     loop.updated_at = utc_iso()
     config = {f: getattr(loop, f) for f in _CONFIG_FIELDS}
     with db.transaction() as conn:
@@ -186,11 +190,17 @@ def get_loop(loop_id: str) -> Optional[Loop]:
 
 def list_loops(workspace: Optional[str] = None) -> List[Loop]:
     conn = db.get_conn()
-    if workspace:
+    if workspace and workspace != "default":
         rows = conn.execute(
-            "SELECT * FROM loops WHERE workspace = ? OR workspace IS NULL "
-            "ORDER BY updated_at DESC",
+            "SELECT * FROM loops WHERE workspace = ? ORDER BY updated_at DESC",
             (workspace,),
+        ).fetchall()
+    elif workspace:
+        # A loop that names no workspace (an old row) is the default one's
+        # (common.workspace_scope.same_workspace), never every workspace's.
+        rows = conn.execute(
+            "SELECT * FROM loops WHERE workspace = 'default' OR workspace IS NULL "
+            "OR workspace = '' ORDER BY updated_at DESC",
         ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM loops ORDER BY updated_at DESC").fetchall()
@@ -272,6 +282,20 @@ def get_run(loop_run_id: str) -> Optional[LoopRun]:
 
 def list_runs(loop_id: Optional[str] = None, limit: int = 50) -> List[LoopRun]:
     return _RUNS.list({"loop_id": loop_id} if loop_id else None, limit=limit)
+
+
+def delete_run(loop_run_id: str) -> bool:
+    """Drop one run from the loop's history: its record and its iterations.
+    The flow runs of its passes stay in the flow's own history and the agent
+    runs in the run ledger, as when a flow chat is deleted."""
+    if _RUNS.read(loop_run_id) is None:
+        return False
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM loop_iterations WHERE loop_run_id = ?", (loop_run_id,))
+    removed = _RUNS.delete(loop_run_id)
+    if removed:
+        _RUNS.notify(loop_run_id=loop_run_id)
+    return removed
 
 
 def request_stop(loop_run_id: str) -> bool:

@@ -23,10 +23,12 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from common.workspace_scope import same_workspace
 from loops import store
 from loops.models import EVALUATOR_MODES, Loop
 from loops.runner import LoopResumeError, estimate_cost
 from chat.entity_chat import EntityChatSpec
+from chat.models import ChatAttachment, ChatReference, ChatRequest
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 import logging
 
@@ -64,6 +66,34 @@ class RunIn(BaseModel):
     workspace: Optional[str] = None
     task_id: Optional[str] = None
     seed: Dict[str, Any] = {}
+    # What the run chat's box carried besides the text, as the flow chat sends
+    # it: files and hub records (chat/models.py).
+    attachments: List[ChatAttachment] = []
+    references: List[ChatReference] = []
+
+
+def _attached_context(data: RunIn, loop: Loop, workspace: Optional[str]) -> tuple[str, List[Dict[str, str]], Optional[str]]:
+    """The files and records attached to a run, the way a chat turn reads
+    them: ``(prompt blocks, [{kind, label}], task id)``. An attached task is
+    the one the loop works on, unless the request names one itself; nothing
+    attached makes no task."""
+    if not data.attachments and not data.references:
+        return "", [], data.task_id
+    from chat.attachments import materialize_attachments
+    from chat.context import build_attachment_lines
+    from chat.references import build_reference_lines, resolve_references
+    req = ChatRequest(message=data.goal or "", flow_id=loop.flow_id, workspace=workspace,
+                      attachments=data.attachments, references=data.references)
+    materialize_attachments(req)
+    resolve_references(req, workspace=workspace)
+    lines: List[str] = []
+    for group in (build_reference_lines(req.references), build_attachment_lines(req.attachments)):
+        if group:
+            lines += ["", *group]
+    attached = ([{"kind": "file", "label": a.filename} for a in req.attachments]
+                + [{"kind": r.kind, "label": r.label or r.id} for r in req.references])
+    task_id = data.task_id or next((r.id for r in req.references if r.kind == "task"), None)
+    return "\n".join(lines).strip(), attached, task_id
 
 
 def _loop_from_in(data: LoopIn, existing: Optional[Loop] = None) -> Loop:
@@ -152,9 +182,23 @@ def _enrich(loop: Loop) -> Dict[str, Any]:
 
 # ── Definitions ──────────────────────────────────────────────────────────────
 
+def _last_run(loop_id: str) -> Optional[Dict[str, Any]]:
+    """The loop's latest run in the few fields its row in the list shows."""
+    runs = store.list_runs(loop_id, 1)
+    if not runs:
+        return None
+    r = runs[0]
+    return {
+        "loop_run_id": r.loop_run_id, "status": r.status,
+        "iterations_done": r.iterations_done, "best_score": r.best_score,
+        "final_score": r.final_score, "started_at": r.started_at,
+    }
+
+
 @router.get("")
 async def list_loops(workspace: Optional[str] = None):
-    return {"loops": [_enrich(l) for l in store.list_loops(workspace)]}
+    return {"loops": [{**_enrich(l), "last_run": _last_run(l.loop_id)}
+                      for l in store.list_loops(workspace)]}
 
 
 @router.post("")
@@ -203,6 +247,34 @@ async def get_iterations(loop_run_id: str, since: int = 0):
     }
 
 
+@router.get("/runs/{loop_run_id}/log")
+async def get_run_log(loop_run_id: str, iteration: Optional[int] = None):
+    """What each pass did: the flow-log lines of every iteration's own flow
+    run (one file per run, see flow/run_store.py), so the loop page shows the
+    work of a pass above the judgement of it. ``iteration`` narrows it to one
+    pass, which is what a live page refetches while that pass runs."""
+    from flow import run_store
+    run = store.get_run(loop_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Loop run not found")
+    loop = store.get_loop(run.loop_id)
+    passes = []
+    for it in store.list_iterations(loop_run_id):
+        if iteration is not None and it.get("iteration") != iteration:
+            continue
+        flow_run_id = it.get("flow_run_id") or ""
+        # The flow the pass ran, from its own record: the loop may point at
+        # another flow since.
+        record = run_store.get_flow_run(flow_run_id) if flow_run_id else None
+        flow_id = (record or {}).get("flow_id") or (loop.flow_id if loop else "")
+        events = run_store.read_run_group_events(flow_id, flow_run_id) if flow_id and flow_run_id else []
+        passes.append({
+            "iteration": it.get("iteration"), "flow_id": flow_id,
+            "flow_run_id": flow_run_id, "events": events,
+        })
+    return {"loop_run_id": loop_run_id, "iterations": passes}
+
+
 @router.post("/runs/{loop_run_id}/resume")
 async def resume_run(loop_run_id: str):
     """Continue a loop run from the iteration after its last completed one.
@@ -219,6 +291,19 @@ async def resume_run(loop_run_id: str):
         return _resume(loop_run_id).to_dict()
     except LoopResumeError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/runs/{loop_run_id}")
+async def delete_run(loop_run_id: str):
+    """Drop one run from the loop's history, with its iterations. Anything
+    still going is refused: its next pass would write the record back."""
+    run = store.get_run(loop_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if str(run.status) in ("pending", "running", "stopping"):
+        raise HTTPException(status_code=409, detail="The run is still going; stop it first")
+    store.delete_run(loop_run_id)
+    return {"deleted": True}
 
 
 @router.post("/runs/{loop_run_id}/stop")
@@ -286,10 +371,13 @@ async def start_run(loop_id: str, data: RunIn):
             status_code=400,
             detail=f"Loop references a flow that is missing or unreadable: {loop.flow_id}",
         )
+    workspace = data.workspace or loop.workspace
+    context, attached, task_id = _attached_context(data, loop, workspace)
     try:
         run = start_loop_run(
-            loop_id, data.goal or "", workspace=data.workspace or loop.workspace,
-            task_id=data.task_id, seed=dict(data.seed or {}),
+            loop_id, data.goal or "", workspace=workspace,
+            task_id=task_id, seed=dict(data.seed or {}),
+            context=context, attached=attached,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -329,9 +417,8 @@ def _flow_catalog(workspace: Optional[str]) -> List[Dict[str, Any]]:
         if not isinstance(f, dict):
             continue
         # ``list_flows`` is workspace-blind; a loop can only wrap a flow from
-        # its own workspace, and a global flow (no workspace) fits anywhere.
-        flow_ws = f.get("workspace")
-        if workspace and flow_ws and flow_ws != workspace:
+        # its own workspace (one that names none is the default one's).
+        if workspace and not same_workspace(f.get("workspace"), workspace):
             continue
         nodes = []
         for n in f.get("nodes") or []:

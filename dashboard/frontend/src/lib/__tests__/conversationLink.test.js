@@ -10,7 +10,7 @@ describe('conversationLink', () => {
   it('opens an entity build chat on its entity page', () => {
     expect(conversationLink('viewchat:vw_2e6959f3c8ec4629')).toBe('/views/vw_2e6959f3c8ec4629');
     expect(conversationLink('viewchat:vw_1:3')).toBe('/views/vw_1');
-    expect(conversationLink('loopchat:lp1')).toBe('/loops?loop=lp1');
+    expect(conversationLink('loopchat:lp1')).toBe('/loops/lp1');
     expect(conversationLink('teamchat:t1')).toBe('/teams/t1');
     expect(conversationLink('agentdefchat:main-agent')).toBe('/agents/main-agent');
     expect(conversationLink('projectschat:default')).toBe('/projects');

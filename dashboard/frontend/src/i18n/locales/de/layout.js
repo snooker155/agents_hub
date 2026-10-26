@@ -68,6 +68,7 @@ export default {
     flowEditor: 'Flow-Editor',
     flowRun: 'Flow-Ausführung',
     loops: 'Loops',
+    loop: 'Loop',
     teams: 'Teams',
     team: 'Team',
     sessions: 'Sitzungen',

@@ -297,6 +297,67 @@ def test_a_loop_pointing_at_a_missing_flow_refuses_to_start(monkeypatch):
         run_loop(loop.loop_id, goal="x")
 
 
+def test_a_run_without_a_task_makes_none(monkeypatch, tmp_path):
+    """A loop started from its page or its chat is a run, not a task: only a
+    task the caller names is used."""
+    import loops.runner as runner
+    from tasks import service as ts
+
+    def _no_create(**kw):
+        raise AssertionError("a loop run must not create a task")
+
+    monkeypatch.setattr(ts, "create_task", _no_create)
+    monkeypatch.setattr("workspace.create_workspace_folder",
+                        lambda name=None: tmp_path / (name or "ws"))
+    sessions = []
+    monkeypatch.setattr("common.session_service.get_or_create_task_session",
+                        lambda **kw: sessions.append(kw) or "sess-1")
+    loop = store.save_loop(Loop(name="L", flow_id="f"))
+
+    ws, _path, task_id, session_id = runner._prepare_context(loop, "ws", None, "goal")
+    assert (ws, task_id, session_id) == ("ws", None, "sess-1")
+    assert sessions[0]["task_id"] is None
+
+
+def test_a_later_attempt_tells_every_agent_what_to_fix_and_which_files_to_revise(monkeypatch, stub_run):
+    """The first node reads the whole brief; a node further down sees only the
+    node before it, so it is told the attempt, the feedback and the files the
+    last pass wrote, to revise them rather than save new ones."""
+    import loops.runner as runner
+    loop, flow = _seed_loop(max_iterations=2, min_iterations=2, target_score=None)
+    monkeypatch.setattr("flow.store.get_flow", lambda fid: flow)
+    contexts = stub_run([50, 60])
+    notes: list = []
+    fake = runner._run_flow_once
+
+    def _record(**kwargs):
+        notes.append(kwargs.get("step_note", ""))
+        return fake(**kwargs)
+
+    monkeypatch.setattr(runner, "_run_flow_once", _record)
+    monkeypatch.setattr(runner, "_pass_files", lambda flow_id, flow_run_id: ["out/post.md"])
+
+    run_loop(loop.loop_id, goal="write it")
+    assert notes[0] == ""
+    assert "LOOP ATTEMPT 2" in notes[1] and "fix 50" in notes[1] and "- out/post.md" in notes[1]
+    assert "- out/post.md" in contexts[1] and "Revise these in place" in contexts[1]
+
+
+def test_the_files_of_a_pass_come_from_its_node_runs(monkeypatch):
+    import loops.runner as runner
+    events = [{"type": "agent_finish", "run_id": "r1"}, {"type": "agent_finish", "run_id": "r2"},
+              {"type": "agent_start", "run_id": None}]
+    processes = {
+        "r1": {"artifacts": [{"op": "add", "path": "a.md"}, {"op": "delete", "path": "gone.md"}]},
+        # A run from before changes were recorded: its write calls name the file.
+        "r2": {"tool_calls": [{"tool": "read_file", "input": "{'path': 'x.md'}"},
+                              {"tool": "write_file", "input": "{'path': 'b.md', 'content': 'y'}"}]},
+    }
+    monkeypatch.setattr("flow.run_store.read_run_group_events", lambda f, g: events)
+    monkeypatch.setattr("managers.run_manager.get_run_process", lambda rid: processes.get(rid))
+    assert runner._pass_files("f", "fr") == ["a.md", "b.md"]
+
+
 # ── Storage ───────────────────────────────────────────────────────────────────
 
 def test_deleting_a_loop_takes_its_runs_and_iterations_with_it():

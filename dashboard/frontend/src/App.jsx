@@ -46,6 +46,7 @@ const Deployments = lazy(() => import('./pages/Deployments'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Models = lazy(() => import('./pages/Models'));
 const Loops = lazy(() => import('./pages/Loops'));
+const LoopDetail = lazy(() => import('./pages/LoopDetail'));
 const Teams = lazy(() => import('./pages/Teams'));
 const TeamDetails = lazy(() => import('./pages/TeamDetails'));
 const ProjectManager = lazy(() => import('./pages/ProjectManager'));
@@ -120,6 +121,9 @@ function AppRoutes() {
         <Route path="/flows/:flowId/runs/:runGroup" element={guard(<FlowRun />)} />
         <Route path="/flows/:flowId/edit" element={guard(<FlowEditor />)} />
         <Route path="/loops" element={guard(<Loops />)} />
+        <Route path="/loops/:loopId" element={guard(<LoopDetail />)} />
+        {/* One run of the loop: the same page, that run open. */}
+        <Route path="/loops/:loopId/runs/:runId" element={guard(<LoopDetail />)} />
         <Route path="/teams" element={guard(<Teams />)} />
         <Route path="/teams/:teamId" element={guard(<TeamDetails />)} />
         <Route path="/sessions" element={guard(<Sessions />)} />

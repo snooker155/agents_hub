@@ -12,7 +12,7 @@ export const OWNER_ROUTE = {
   run: (o) => `/messages/${o.id}`,
   team: (o) => (o.entity_id ? `/teams/${o.entity_id}?run=${o.id}` : null),
   flow: (o) => (o.entity_id ? `/flows/${o.entity_id}/runs/${encodeURIComponent(o.id)}` : null),
-  loop: (o) => (o.entity_id ? `/loops?loop=${o.entity_id}&run=${o.id}` : '/loops'),
+  loop: (o) => (o.entity_id ? `/loops/${encodeURIComponent(o.entity_id)}/runs/${encodeURIComponent(o.id)}` : '/loops'),
 };
 
 // A view's owner as the backend returns it, falling back to the older
