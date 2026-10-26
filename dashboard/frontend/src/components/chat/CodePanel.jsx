@@ -1,18 +1,19 @@
 /**
- * The Code side panel: every `kind: "code"` view produced in this
- * conversation, grouped by filename (an agent revising a snippet may answer
- * with a new view of the same filename rather than a new version of the same
- * one, so grouping happens on the frontend, across view ids), with the
- * selected snippet at work in a CodeWorkbench (components/code): editor,
+ * The code of a conversation, in its Artifacts panel (panels.jsx): every
+ * `kind: "code"` view produced in it, grouped by filename (an agent revising
+ * a snippet may answer with a new view of the same filename rather than a new
+ * version of the same one, so grouping happens on the frontend, across view
+ * ids), and the code blocks of its replies not yet saved as views; the
+ * selected one at work in a CodeWorkbench (components/code): editor,
  * versions, run and save actions.
  *
- * The list itself is the page's (useConversationCode.js): the top bar counts
- * the snippets on the Code button, this panel shows them.
+ * Three parts: useChatCode.js (the list, from the page: useConversationCode.js),
+ * CodeSection (its rows in the panel's list) and CodeDetail (the workbench).
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Code2, Loader2 } from 'lucide-react';
+import { useI18n } from '../../i18n';
 import { useChatPage } from './context';
-import { getView } from '../../api';
 import { createCodeFromReply, getSnippetVersions } from '../../api/code';
 import { replyBlockLabel } from './replyCode';
 import CodeWorkbench from '../code/CodeWorkbench';
@@ -63,100 +64,55 @@ function ReplyListItem({ block, selected, onSelect, t }) {
 
 const isReplyId = (id) => typeof id === 'string' && id.startsWith('reply:');
 
-export default function CodePanel() {
+/** The code's rows in the Artifacts panel's list; `selectedId` is a view or reply id. */
+export function CodeSection({ code, selectedId, onSelect, className = '' }) {
+  const { t } = useI18n();
+  if (!code || (!code.count && !code.listLoading && !code.listError)) return null;
+  return (
+    <section className={className} data-testid="artifacts-code">
+      <div className="flex items-center gap-1.5 px-3 pb-1 text-xs font-semibold text-gray-600">
+        <Code2 className="w-3.5 h-3.5 text-indigo-500" />
+        {t('chat.code.sectionCount', { count: code.count })}
+      </div>
+      {code.listLoading && !code.count ? (
+        <div className="flex items-center gap-2 text-xs text-gray-500 px-3 py-1.5">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('chat.code.loadingList')}
+        </div>
+      ) : code.listError ? (
+        <div className="px-3 py-1.5 text-xs text-red-600">{code.listError}</div>
+      ) : null}
+      {code.groups.map((group) => (
+        <SnippetListItem
+          key={group.filename}
+          group={group}
+          selected={group.items.some((it) => it.view_id === selectedId)}
+          onSelect={onSelect}
+        />
+      ))}
+      {code.replies.length > 0 && (
+        <>
+          <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400" title={t('chat.code.fromRepliesHint')}>
+            {t('chat.code.fromReplies')}
+          </div>
+          {code.replies.map((block) => (
+            <ReplyListItem key={block.id} block={block} selected={block.id === selectedId} onSelect={onSelect} t={t} />
+          ))}
+        </>
+      )}
+    </section>
+  );
+}
+
+/** The selected snippet at work: a saved view, or a reply's block. */
+export function CodeDetail({ code, viewId }) {
   const {
-    codeFocus, codeListError: listError, codeListLoading: listLoading, codeRows: rows, currentConv, currentConvId,
-    markReplySaved = () => {}, projects, replyBlocks = [], savedReplyIds = null, selectedWorkspace,
+    currentConv, currentConvId, markReplySaved = () => {}, projects, selectedWorkspace,
     setCodeFocus = () => {}, setInput, t, textareaRef,
   } = useChatPage();
+  const { envelopes, setEnvelopes, replies } = code;
 
-  const [envelopes, setEnvelopes] = useState({});
-  const [pickedViewId, setSelectedViewId] = useState(null);
-
-  // Another conversation: its snippets are not this one's. Drop the selection
-  // at once rather than keep showing the old snippet (still in the envelope
-  // cache) until the new list arrives.
-  const [seenConvId, setSeenConvId] = useState(currentConvId);
-  if (seenConvId !== currentConvId) {
-    setSeenConvId(currentConvId);
-    setSelectedViewId(null);
-  }
-
-  // "Open in Code panel" on a reply's code block selects that block under
-  // "From replies"; a view just saved comes with its envelope and is selected.
-  const [seenFocus, setSeenFocus] = useState(null);
-  if (seenFocus !== codeFocus) {
-    setSeenFocus(codeFocus);
-    const view = codeFocus?.view;
-    if (codeFocus?.replyId) {
-      setSelectedViewId(codeFocus.replyId);
-    } else if (view?.view_id) {
-      setEnvelopes((prev) => ({ ...prev, [view.view_id]: view }));
-      setSelectedViewId(view.view_id);
-    }
-  }
-
-  // The replies' blocks not yet saved as views: newest first, minus the ones
-  // saved this visit and the ones a loaded view already holds word for word
-  // (a block saved on an earlier visit).
-  const replies = useMemo(() => {
-    const bodies = new Set(Object.values(envelopes).map((env) => env?.spec?.body).filter(Boolean));
-    return [...replyBlocks]
-      .filter((b) => !(savedReplyIds && savedReplyIds.has(b.id)) && !bodies.has(b.body))
-      .reverse();
-  }, [replyBlocks, savedReplyIds, envelopes]);
-
-  // Full envelopes (filename/language/version/body) for whatever the list rows
-  // don't have cached yet — the index rows above carry only kind/title.
-  useEffect(() => {
-    const missing = rows.map((r) => r.view_id).filter((id) => !envelopes[id]);
-    if (!missing.length) return undefined;
-    let cancelled = false;
-    Promise.all(missing.map((id) => getView(id).then((r) => [id, r.data]).catch(() => [id, null])))
-      .then((pairs) => {
-        if (cancelled) return;
-        setEnvelopes((prev) => {
-          const next = { ...prev };
-          for (const [id, env] of pairs) if (env) next[id] = env;
-          return next;
-        });
-      });
-    return () => { cancelled = true; };
-  }, [rows, envelopes]);
-
-  const groups = useMemo(() => {
-    const byFilename = new Map();
-    for (const row of rows) {
-      const env = envelopes[row.view_id];
-      const filename = env?.spec?.filename || row.title || row.view_id;
-      const list = byFilename.get(filename) || [];
-      list.push({
-        view_id: row.view_id,
-        version: env?.spec?.version,
-        language: env?.spec?.language || '',
-        updated_at: row.updated_at || row.created_at || '',
-      });
-      byFilename.set(filename, list);
-    }
-    const arr = Array.from(byFilename.entries()).map(([filename, items]) => {
-      const sorted = [...items].sort((a, b) => (b.version ?? 0) - (a.version ?? 0));
-      return { filename, items: sorted, latest: sorted[0] };
-    });
-    arr.sort((a, b) => (b.latest?.updated_at || '').localeCompare(a.latest?.updated_at || ''));
-    return arr;
-  }, [rows, envelopes]);
-
-  // Select the newest snippet when nothing is selected, or when the selected one
-  // has left the list (a conversation switch, a list refetch without it).
-  // Derived, not mirrored into state by an effect.
-  const pickedStillListed = pickedViewId && (rows.some((r) => r.view_id === pickedViewId)
-    || replies.some((b) => b.id === pickedViewId));
-  const selectedViewId = pickedStillListed
-    ? pickedViewId
-    : (groups[0]?.latest?.view_id || replies[0]?.id || null);
-
-  const isReply = isReplyId(selectedViewId);
-  const selectedReply = isReply ? replies.find((b) => b.id === selectedViewId) || null : null;
+  const isReply = isReplyId(viewId);
+  const selectedReply = isReply ? replies.find((b) => b.id === viewId) || null : null;
   const replyWorkspace = currentConv?.workspace || selectedWorkspace;
   // A block's own version history, kept by the backend under a key of this
   // conversation and block, without a view (api/code.js getSnippetVersions).
@@ -188,7 +144,7 @@ export default function CodePanel() {
       base: selectedReply.body,
     },
   } : null), [selectedReply, replyLatest]);
-  const selectedEnvelope = isReply ? replyEnvelope : (selectedViewId ? envelopes[selectedViewId] : null);
+  const selectedEnvelope = isReply ? replyEnvelope : (viewId ? envelopes[viewId] : null);
 
   // "Save as view", and only on request: the block (as edited in the
   // workbench) becomes a code view owned by the reply's run, joins the list
@@ -228,67 +184,27 @@ export default function CodePanel() {
     setInput: (text) => { setInput(text); textareaRef?.current?.focus(); },
   }), [setInput, textareaRef]);
 
-  const selectSnippet = (viewId) => {
-    setSelectedViewId(viewId);
-  };
-
+  if (!selectedEnvelope) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-xs text-gray-500 dark:text-gray-400 p-6 text-center leading-relaxed">
+        <Loader2 className="w-4 h-4 animate-spin" />
+      </div>
+    );
+  }
   return (
-    <div className="flex-1 min-h-0 flex overflow-hidden">
-      {/* Snippet list */}
-      <div className="w-48 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 overflow-y-auto">
-        {listLoading && groups.length === 0 ? (
-          <div className="flex items-center gap-2 text-xs text-gray-500 p-3">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('chat.code.loadingList')}
-          </div>
-        ) : listError ? (
-          <div className="p-3 text-xs text-red-600">{listError}</div>
-        ) : groups.length === 0 && replies.length === 0 ? (
-          <div className="p-3 text-xs text-gray-500 italic">{t('chat.code.empty')}</div>
-        ) : (
-          <>
-            {groups.map((group) => (
-              <SnippetListItem
-                key={group.filename}
-                group={group}
-                selected={group.items.some((it) => it.view_id === selectedViewId)}
-                onSelect={selectSnippet}
-              />
-            ))}
-            {replies.length > 0 && (
-              <>
-                <div className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400" title={t('chat.code.fromRepliesHint')}>
-                  {t('chat.code.fromReplies')}
-                </div>
-                {replies.map((block) => (
-                  <ReplyListItem key={block.id} block={block} selected={block.id === selectedViewId} onSelect={selectSnippet} t={t} />
-                ))}
-              </>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* The selected snippet at work */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        {!selectedViewId || !selectedEnvelope ? (
-          <div className="flex-1 flex items-center justify-center text-xs text-gray-500 dark:text-gray-400 p-6 text-center leading-relaxed">
-            {groups.length === 0 && replies.length === 0 && !listLoading ? t('chat.code.emptyHint') : t('chat.code.selectASnippet')}
-          </div>
-        ) : (
-          <CodeWorkbench
-            envelope={selectedEnvelope}
-            isReply={isReply}
-            replyKey={replyKey}
-            workspace={isReply ? replyWorkspace : selectedEnvelope.workspace}
-            projects={projects}
-            onVersionSaved={onVersionSaved}
-            onDraftChange={isReply ? setDraftForView : undefined}
-            saveAsView={saveAsView}
-            chat={chat}
-            className="flex-1 min-h-0"
-          />
-        )}
-      </div>
+    <div className="flex-1 min-w-0 flex flex-col" data-testid="artifact-code-detail">
+      <CodeWorkbench
+        envelope={selectedEnvelope}
+        isReply={isReply}
+        replyKey={replyKey}
+        workspace={isReply ? replyWorkspace : selectedEnvelope.workspace}
+        projects={projects}
+        onVersionSaved={onVersionSaved}
+        onDraftChange={isReply ? setDraftForView : undefined}
+        saveAsView={saveAsView}
+        chat={chat}
+        className="flex-1 min-h-0"
+      />
     </div>
   );
 }

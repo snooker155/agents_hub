@@ -1,5 +1,5 @@
-import { AgentDropdown, FlowDropdown, ProjectDropdown, TeamDropdown } from './targetPickers';
-import { Activity, AlertCircle, AlertTriangle, Bot, Code2, FileText, MessageSquare, PanelLeftOpen, Terminal, UsersRound, Workflow } from 'lucide-react';
+import { AgentDropdown, FlowDropdown, ModeDropdown, ProjectDropdown, TeamDropdown } from './targetPickers';
+import { Activity, AlertCircle, AlertTriangle, Bot, FileText, MessageSquare, PanelLeftOpen, Terminal, UsersRound, Workflow } from 'lucide-react';
 import { useChatPage } from './context';
 import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
@@ -13,7 +13,7 @@ import { useLiveRefetch } from '../stream';
  * project, and the agent's model when it has one of its own. On the right,
  * drawn the same way as the mode: in the chat view the Process panel, then
  * the view (Chat, the messages only; Build, the whole transcript), then the
- * panel beside the conversation (Artifacts or Code, one at a time, each with
+ * panel beside the conversation (Artifacts: its views, code and files, with
  * how many the conversation has produced; pressed is open).
  *
  * Every control is one height, so the bar reads as one row. On a phone it
@@ -70,16 +70,14 @@ function Segment({ active, onClick, icon: Icon, label, title, tone = 'indigo', f
 
 export default function ChatTopBar() {
   const {
-    agentModel, agentProvider, agentTopology, artifactCount, artifactsOpen, codeCount, codeOpen, currentConv,
+    agentModel, agentProvider, agentTopology, artifactCount, artifactsOpen, currentConv,
     currentConvId, flows, graphRun, processOpen, projects, selectableAgents, selectedAgent,
-    selectedFlow, selectedProject, selectedTeam, selectedWorkspace, setArtifactsOpen, setCodeOpen,
+    selectedFlow, selectedProject, selectedTeam, selectedWorkspace, setArtifactsOpen,
     setConversations, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
     setSelectedTeam, setTargetMode, setViewMode, t, targetMode, teams, viewMode, setListOpen,
   } = useChatPage();
   const isBuild = viewMode === 'build';
-  // Artifacts and Code share the one slot: opening one closes the other.
-  const toggleArtifacts = () => { setArtifactsOpen((v) => !v); setCodeOpen(false); };
-  const toggleCode = () => { setCodeOpen((v) => !v); setArtifactsOpen(false); };
+  const toggleArtifacts = () => setArtifactsOpen((v) => !v);
 
   // The service a turn would go to, when chat runs on replicas: a paused one
   // is a chat that will not answer, said here before the message is typed.
@@ -112,15 +110,24 @@ export default function ChatTopBar() {
       >
         <PanelLeftOpen className="w-4 h-4" />
       </button>
-      {/* Mode: who answers */}
-      <Segmented>
-        <Segment first active={targetMode === 'agent'} onClick={() => setTargetMode('agent')}
-                 icon={Bot} label={t('chat.agent')} title={t('chat.chatWithASingleAgent')} />
-        <Segment active={targetMode === 'flow'} onClick={() => setTargetMode('flow')} tone="emerald"
-                 icon={Workflow} label={t('chat.flow')} title={t('chat.chatWithAFlowEach')} />
-        <Segment active={targetMode === 'team'} onClick={() => setTargetMode('team')} tone="amber"
-                 icon={UsersRound} label={t('chat.team')} title={t('chat.handTheMessageToA')} />
-      </Segmented>
+      {/* Mode: who answers. Three buttons; a dropdown instead while the
+          Artifacts column takes the room on a screen under 1800 CSS px (a
+          laptop's, see ChatSidePanel). */}
+      <div className={artifactsOpen ? 'hidden min-[1800px]:block' : ''} data-testid="mode-toggle">
+        <Segmented>
+          <Segment first active={targetMode === 'agent'} onClick={() => setTargetMode('agent')}
+                   icon={Bot} label={t('chat.agent')} title={t('chat.chatWithASingleAgent')} />
+          <Segment active={targetMode === 'flow'} onClick={() => setTargetMode('flow')} tone="emerald"
+                   icon={Workflow} label={t('chat.flow')} title={t('chat.chatWithAFlowEach')} />
+          <Segment active={targetMode === 'team'} onClick={() => setTargetMode('team')} tone="amber"
+                   icon={UsersRound} label={t('chat.team')} title={t('chat.handTheMessageToA')} />
+        </Segmented>
+      </div>
+      {artifactsOpen && (
+        <div className="min-[1800px]:hidden" data-testid="mode-dropdown">
+          <ModeDropdown value={targetMode} onChange={setTargetMode} />
+        </div>
+      )}
 
       {targetMode === 'agent' ? (
         <AgentDropdown agents={selectableAgents} value={selectedAgent} onChange={(id) => {
@@ -213,16 +220,12 @@ export default function ChatTopBar() {
                    icon={Terminal} label={t('chat.build')} title={t('chat.buildFullTranscriptToolsThinking')} />
         </Segmented>
 
-        {/* The panel beside the conversation, one of two, with how many each holds; pressed is open. */}
+        {/* The panel beside the conversation (views, code, files), with how many it holds; pressed is open. */}
         <Segmented>
           <Segment first active={artifactsOpen} onClick={toggleArtifacts} icon={FileText}
                    label={t('chat.panels.artifacts')}
                    title={artifactsOpen ? t('chat.hideArtifacts') : t('chat.showArtifacts')}>
             <Count n={artifactCount || 0} active={artifactsOpen} />
-          </Segment>
-          <Segment active={codeOpen} onClick={toggleCode} icon={Code2}
-                   label={t('chat.panels.code')} title={t('chat.code.toggle')}>
-            <Count n={codeCount || 0} active={codeOpen} />
           </Segment>
         </Segmented>
 

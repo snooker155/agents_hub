@@ -14,6 +14,7 @@ import CodeBlock from '../CodeBlock';
 import { codeLanguageFor } from '../../lib/codeLanguage';
 import { renderContent } from './markdown';
 import { ARTIFACT_OP_META } from './artifactOps';
+import { CodeDetail, CodeSection } from './CodePanel';
 
 function ProcessPanelContent({ processInsights, topology = null, graphRun = null, workspace = null }) {
   const { t } = useI18n();
@@ -235,9 +236,12 @@ function ArtifactDetail({ artifact, workspace, mode, onModeChange = null }) {
  * `picked` (`file:<path>` / `view:<id>`) with `onPick` lets the page choose
  * what is open.
  */
+// `code`: the Chat page's code (useChatCode.js), listed with the
+// views and files and opened in its workbench; other pages have none.
+// `pick`: `{ key, nonce }` the page asks to show (a file clicked in the chat).
 function ArtifactsPanel({
   artifacts, views = [], workspace = null, mode = 'content', onModeChange = null,
-  picked: pickedProp, onPick = null,
+  picked: pickedProp, onPick = null, code = null, pick = null,
 }) {
   const { t } = useI18n();
   const items = useMemo(
@@ -257,13 +261,28 @@ function ArtifactsPanel({
   const [pickedHere, setPickedHere] = useState(null);
   const picked = onPick ? pickedProp : pickedHere;
   const setPicked = onPick || setPickedHere;
-  const fallback = views.length ? `view:${views[views.length - 1].view_id}` : items.length ? `file:${items[0].path}` : null;
+  // "Open in Code panel" on a reply's block selects it here.
+  const [seenCodeFocus, setSeenCodeFocus] = useState(null);
+  if (code && code.focus !== seenCodeFocus) {
+    setSeenCodeFocus(code.focus);
+    if (code.focus?.id && !onPick) setPickedHere(`code:${code.focus.id}`);
+  }
+  const [seenPick, setSeenPick] = useState(null);
+  if (pick && pick !== seenPick) {
+    setSeenPick(pick);
+    if (pick.key && !onPick) setPickedHere(pick.key);
+  }
+  const hasCode = Boolean(code?.count || code?.listLoading || code?.listError);
+  const fallback = views.length ? `view:${views[views.length - 1].view_id}`
+    : code?.first ? `code:${code.first}`
+      : items.length ? `file:${items[0].path}` : null;
   const stillThere = picked && (
     (picked.startsWith('file:') && items.some((a) => `file:${a.path}` === picked))
-    || (picked.startsWith('view:') && views.some((v) => `view:${v.view_id}` === picked)));
+    || (picked.startsWith('view:') && views.some((v) => `view:${v.view_id}` === picked))
+    || (picked.startsWith('code:') && Boolean(code?.has(picked.slice(5)))));
   const selected = stillThere ? picked : fallback;
 
-  if (!items.length && !views.length) {
+  if (!items.length && !views.length && !hasCode) {
     return (
       <div className="flex-1 overflow-y-auto p-4">
         <p className="text-xs text-gray-500 italic">{t('chat.noArtifactsYet')}</p>
@@ -272,9 +291,10 @@ function ArtifactsPanel({
   }
   const selectedFile = selected?.startsWith('file:') ? items.find((a) => `file:${a.path}` === selected) : null;
   const selectedView = selected?.startsWith('view:') ? views.find((v) => `view:${v.view_id}` === selected) : null;
+  const selectedCode = selected?.startsWith('code:') ? selected.slice(5) : null;
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden">
-      <div className="w-52 flex-shrink-0 border-r border-gray-200 overflow-y-auto py-2">
+      <div className="w-44 min-[1800px]:w-52 flex-shrink-0 border-r border-gray-200 overflow-y-auto py-2">
         {views.length > 0 && (
           <section>
             <div className="flex items-center gap-1.5 px-3 pb-1 text-xs font-semibold text-gray-600">
@@ -293,8 +313,12 @@ function ArtifactsPanel({
             })}
           </section>
         )}
+        <CodeSection
+          code={code} selectedId={selectedCode} onSelect={(id) => setPicked(`code:${id}`)}
+          className={views.length ? 'mt-2' : ''}
+        />
         {items.length > 0 && (
-          <section className={views.length ? 'mt-2' : ''}>
+          <section className={views.length || hasCode ? 'mt-2' : ''}>
             <div className="flex items-center gap-2 px-3 pb-1 text-xs text-gray-500">
               <FileText className="w-3.5 h-3.5 text-indigo-500" />
               <span className="font-semibold text-gray-600">{t('chat.fileCount', { count: items.length })}</span>
@@ -320,11 +344,24 @@ function ArtifactsPanel({
           </section>
         )}
       </div>
-      {selectedFile ? (
+      {selectedCode ? (
+        <CodeDetail code={code} viewId={selectedCode} />
+      ) : selectedFile ? (
         <ArtifactDetail key={selectedFile.path} artifact={selectedFile} workspace={workspace} mode={mode} onModeChange={onModeChange} />
       ) : selectedView ? (
         <div className="flex-1 min-w-0 overflow-auto p-3" data-testid="artifact-detail">
-          <ViewCard key={selectedView.view_id} viewRef={selectedView} />
+          <ViewCard key={selectedView.view_id} viewRef={selectedView} actions={(
+            // The view's panel under Artifacts, in the Views folder.
+            <Link
+              to={`/artifacts?folder=__views__&view=${encodeURIComponent(selectedView.view_id)}`}
+              title={t('chat.openViewArtifactTitle')}
+              data-testid="artifact-open"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-xs text-gray-600 no-underline transition-colors hover:border-indigo-300 hover:bg-indigo-50"
+            >
+              <ExternalLink className="h-3 w-3" />
+              {t('chat.openArtifact')}
+            </Link>
+          )} />
         </div>
       ) : null}
     </div>

@@ -106,7 +106,7 @@ function FileLinks({ files, entities, className = 'mt-2' }) {
         );
         if (inPanel) {
           return (
-            <button key={f.path} type="button" onClick={() => openFile(f.path)} className={`${cls} text-left`} title={`${t('chat.showInArtifacts')}: ${f.path}`}>
+            <button key={f.path} type="button" onClick={() => openFile(f.path, f)} className={`${cls} text-left`} title={`${t('chat.showInArtifacts')}: ${f.path}`}>
               {body}
             </button>
           );
@@ -121,8 +121,16 @@ function FileLinks({ files, entities, className = 'mt-2' }) {
   );
 }
 
-function MessageFiles({ files, entities }) {
-  return <FileLinks files={files} entities={entities} />;
+// The files field at the foot of a bubble: under a dividing line, so the
+// files read apart from the answer above them. Nothing when the turn touched
+// no file.
+function MessageFiles({ files, entities, className = '' }) {
+  if (!(files || []).some((f) => f?.path)) return null;
+  return (
+    <div className={`${className} border-t border-gray-200`} data-testid="message-files-field">
+      <FileLinks files={files} entities={entities} className="" />
+    </div>
+  );
 }
 
 // Service entities the agent touched during this turn — a task it created, a

@@ -66,6 +66,7 @@ import ChatTopBar from '../components/chat/ChatTopBar';
 import ChatMessageList from '../components/chat/ChatMessageList';
 import { useChatViewMode } from '../components/chat/viewMode';
 import ChatComposer from '../components/chat/ChatComposer';
+import { useBackgroundRuns } from '../components/chat/backgroundRunInfo';
 import ChatSidePanel from '../components/chat/ChatSidePanel';
 import useChatTelegram from '../components/chat/useChatTelegram';
 import useChatSessionStream from '../components/chat/useChatSessionStream';
@@ -79,6 +80,8 @@ import useChatSend from '../components/chat/useChatSend';
 import useChatTurns from '../components/chat/useChatTurns';
 import useChatSteering from '../components/chat/useChatSteering';
 import useRunningChats from '../components/chat/useRunningChats';
+import { useNoticeArtifacts, withNoticeFiles } from '../components/chat/noticeFiles';
+import { FileOpenContext } from '../components/chat/fileOpenContext';
 
 const EMPTY_MESSAGES = [];
 
@@ -94,9 +97,12 @@ const EMPTY_MESSAGES = [];
 // Chat page and back (which unmounts/remounts this component) keeps it open.
 const PROCESS_OPEN_KEY = 'agent_hub_chat_process_open';
 // Whether the code panel is open, persisted for the same reason.
+// The Code panel's old key: a chat that had it open opens Artifacts, where code is now.
 const CODE_OPEN_KEY = 'agent_hub_chat_code_open';
 // Whether the artifacts panel (files and views the turns produced) is open.
 const ARTIFACTS_OPEN_KEY = 'agent_hub_chat_build_panel_open';
+// Whether the open Artifacts column takes the chat's place, the whole width.
+const ARTIFACTS_FULL_KEY = 'agent_hub_chat_artifacts_full';
 
 // ---------------------------------------------------------------------------
 // Slash commands
@@ -195,12 +201,9 @@ export default function Chat() {
   const [processOpen, setProcessOpen] = useState(() => {
     try { return localStorage.getItem(PROCESS_OPEN_KEY) === '1'; } catch { return false; }
   });
-  // Artifacts or Code is the column beside the transcript (one at a time, see
-  // ChatSidePanel); Process, in chat view only, is a column of its own.
-  const [codeOpen, setCodeOpen] = useState(() => {
-    try { return localStorage.getItem(CODE_OPEN_KEY) === '1'; } catch { return false; }
-  });
-  // The snippet the Code panel should show next: set by "Open in Code panel"
+  // Artifacts (views, code and files) is the column beside the transcript
+  // (ChatSidePanel); Process, in chat view only, is a column of its own.
+  // The snippet the Artifacts panel should show next: set by "Open in Code panel"
   // on a code block in a reply, `{ view, nonce }` so opening the same one
   // twice still selects it.
   const [codeFocus, setCodeFocus] = useState(null);
@@ -209,8 +212,16 @@ export default function Chat() {
   // Shared with every chat embedded in other pages (components/chat/viewMode.js).
   const [viewMode, setViewMode] = useChatViewMode();
   const [artifactsOpen, setArtifactsOpen] = useState(() => {
-    try { return localStorage.getItem(ARTIFACTS_OPEN_KEY) === '1'; } catch { return false; }
+    try {
+      return localStorage.getItem(ARTIFACTS_OPEN_KEY) === '1' || localStorage.getItem(CODE_OPEN_KEY) === '1';
+    } catch { return false; }
   });
+  const [artifactsFull, setArtifactsFull] = useState(() => {
+    try { return localStorage.getItem(ARTIFACTS_FULL_KEY) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(ARTIFACTS_FULL_KEY, artifactsFull ? '1' : '0'); } catch { /* storage unavailable */ }
+  }, [artifactsFull]);
   // Latest cumulative diff per file path for the current conversation.
   // Shape: { [path]: { op, path, diff, additions, deletions, binary, truncated, run_id } }
   const [artifacts, setArtifacts] = useState({});
@@ -238,11 +249,10 @@ export default function Chat() {
   }, [processOpen]);
 
   useEffect(() => {
-    try { localStorage.setItem(CODE_OPEN_KEY, codeOpen ? '1' : '0'); } catch { /* storage unavailable */ }
-  }, [codeOpen]);
-
-  useEffect(() => {
-    try { localStorage.setItem(ARTIFACTS_OPEN_KEY, artifactsOpen ? '1' : '0'); } catch { /* storage unavailable */ }
+    try {
+      localStorage.setItem(ARTIFACTS_OPEN_KEY, artifactsOpen ? '1' : '0');
+      localStorage.removeItem(CODE_OPEN_KEY);
+    } catch { /* storage unavailable */ }
   }, [artifactsOpen]);
 
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
@@ -338,6 +348,9 @@ export default function Chat() {
     if (!liveTurn) return [];
     const bubbles = [];
     // Taking over a stored bubble: the person's message is stored above it.
+    if (!mirrorTakesOver && liveTurn.notice) {
+      bubbles.push({ id: 'live-notice', role: 'system', notice: liveTurn.notice, content: '' });
+    }
     if (!mirrorTakesOver && (liveTurn.user || '').trim()) {
       bubbles.push({ id: 'live-user', role: 'user', content: liveTurn.user });
     }
@@ -353,7 +366,10 @@ export default function Chat() {
       content: liveTurn.text,
       reasoning: liveTurn.thinking,
       thinking_live: liveTurn.thinkingLive,
-      running_tool: liveTurn.tools.find((x) => x.output === null && x.error === null)?.tool || null,
+      ...(() => {
+        const call = liveTurn.tools.find((x) => x.output === null && x.error === null);
+        return { running_tool: call?.tool || null, running_tool_input: call?.input ?? null };
+      })(),
       error: liveTurn.status === 'failed',
       run_id: liveTurn.runId,
     });
@@ -362,10 +378,12 @@ export default function Chat() {
   // What the feed renders: the stored transcript, plus the mirrored turn while
   // one is in flight. The mirror is appended here and nowhere else, so nothing
   // downstream of `messages` (persistence, context fill, run ids) ever sees it.
+  // The files a background run wrote are listed under the reply to its
+  // notice (components/chat/noticeFiles.js).
   const renderedMessages = useMemo(() => {
-    if (!liveMessages.length) return messages;
+    if (!liveMessages.length) return withNoticeFiles(messages);
     const stored = mirrorTakesOver ? messages.slice(0, -1) : messages;
-    return [...stored, ...liveMessages];
+    return withNoticeFiles([...stored, ...liveMessages]);
   }, [messages, liveMessages, mirrorTakesOver]);
   // Build-view timelines for messages stored before the trail was kept with
   // the chat (components/chatStore.js stores it now, clipped). Reconstructed
@@ -681,7 +699,13 @@ export default function Chat() {
     const codeIds = new Set(codeRows.map((r) => r.view_id));
     return conversationViews(messages).filter((v) => v.view_kind !== 'code' && !codeIds.has(v.view_id));
   }, [messages, codeRows]);
-  const artifactCount = Object.keys(artifacts).length + artifactViews.length;
+  // The files the turns' own runs changed, after those of the background
+  // runs they were woken by (a later change by the agent wins).
+  const noticeArtifacts = useNoticeArtifacts(renderedMessages, artifactsOpen);
+  const shownArtifacts = useMemo(
+    () => (Object.keys(noticeArtifacts).length ? { ...noticeArtifacts, ...artifacts } : artifacts),
+    [noticeArtifacts, artifacts],
+  );
   // The fenced blocks of the replies count as code too, until one is saved as
   // a view (then it is a row). Saved ids are kept for this page visit only.
   const replyBlocks = useMemo(() => replyCodeBlocks(messages), [messages]);
@@ -690,6 +714,8 @@ export default function Chat() {
     setSavedReplyIds((prev) => { const next = new Set(prev); next.add(id); return next; });
   }, []);
   const codeCount = codeRows.length + replyBlocks.filter((b) => !savedReplyIds.has(b.id)).length;
+  // The Artifacts button counts all three: files, views and code.
+  const artifactCount = Object.keys(shownArtifacts).length + artifactViews.length + codeCount;
 
   const {
     resizeTextarea, onPickFiles, removeAttachment, toggleAttachmentStore,
@@ -806,6 +832,23 @@ export default function Chat() {
     setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, stream, t,
     targetMode, textareaRef,
   });
+  // A file a turn changed, clicked in the chat: shown in the Artifacts
+  // column, which opens for it; the file's own page is a click further.
+  // `{ key, nonce }`, so the same file clicked twice is picked again.
+  const [artifactPick, setArtifactPick] = useState(null);
+  // A file the panel has not loaded yet (its run's data comes when the panel
+  // opens, an older turn's maybe never) is listed from the reply's own entry
+  // meanwhile, so the click always lands on it.
+  const showFileInArtifacts = useCallback((path, file = null) => {
+    if (file?.path) {
+      // A timeline step's entry has its `type` too; the panel's do not.
+      const { type: _step, ...change } = file;
+      setArtifacts((prev) => (prev[file.path] ? prev : { ...prev, [file.path]: change }));
+    }
+    setArtifactPick({ key: `file:${path}`, nonce: Date.now() });
+    setArtifactsOpen(true);
+  }, []);
+
   const jumpToArtifact = useCallback((path) => {
     setTimeout(() => {
       const el = document.querySelector(`[data-artifact-path="${CSS.escape(path)}"]`);
@@ -904,15 +947,14 @@ export default function Chat() {
     }
   };
 
-  // A code block in a reply, shown in the Code panel under "From replies".
+  // A code block in a reply, shown in the Artifacts panel's code under "From replies".
   // Nothing is stored by opening it: it becomes a code view (versions, runs,
   // a place in a project) only when the person saves it as one there.
   const openInCodePanel = useCallback(async ({ code, runId }) => {
     const block = replyBlocks.find((b) => b.body === code && (!runId || !b.run_id || b.run_id === runId))
       || replyBlocks.find((b) => b.body === code);
     setCodeFocus({ replyId: block?.id || null, nonce: Date.now() });
-    setArtifactsOpen(false);
-    setCodeOpen(true);
+    setArtifactsOpen(true);
   }, [replyBlocks]);
 
   // Personal memory is read from the workspace the formula is saved to: the
@@ -946,10 +988,13 @@ export default function Chat() {
   // Render
   // ---------------------------------------------------------------------------
   // Published once for the five panes below; see `chat/context.js`.
+  // The flows, loops and teams this chat's agent started that are still going.
+  const backgroundRuns = useBackgroundRuns(currentConvId);
+
   const page = {
-    activeRunId, addReferences, addWorkspaceFiles, agentModel, autoMode, agentName, agentProvider, agentTopology, agents,
-    artifactCount, artifactViews, artifacts, artifactsOpen, setArtifactsOpen, attachMenuOpen, attachmentError,
-    codeCount, codeFocus, codeListError, listOpen, setListOpen, codeListLoading, codeOpen, codeRows, commandMenuIndex, commandMenuOpen,
+    activeRunId, addReferences, backgroundRuns, addWorkspaceFiles, agentModel, autoMode, agentName, agentProvider, agentTopology, agents,
+    artifactCount, artifactPick, artifactViews, artifacts: shownArtifacts, artifactsFull, artifactsOpen, setArtifactsFull, setArtifactsOpen, attachMenuOpen, attachmentError,
+    codeCount, codeFocus, codeListError, listOpen, setListOpen, codeListLoading, codeRows, commandMenuIndex, commandMenuOpen,
     markReplySaved, replyBlocks, savedReplyIds, setCodeFocus,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage, conversationRunIds,
     conversations, currentConv, currentConvId, currentTelegramBinding, deleteConversation,
@@ -959,7 +1004,7 @@ export default function Chat() {
     processLoading, processOpen, projects, removeAttachment, removeReference, renderedMessages,
     resizeTextarea, runTimelineByRunId, selectCommand, selectableAgents, selectedAgent,
     selectedFlow, selectedProject, selectedTeam, selectedWorkspace, sendAsBot, sendMessage,
-    setAttachMenuOpen, setCodeOpen, setCommandMenuIndex, setCommandMenuOpen, setConversations,
+    setAttachMenuOpen, setCommandMenuIndex, setCommandMenuOpen, setConversations,
     setInput, setPickerKind, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
     setSelectedTeam, setTargetMode, setViewMode, steering, stopGeneration, syncError, t, targetMode,
     teams, telegramError, turns, runningChats, telegramReplyAllowed, telegramSending, textareaRef,
@@ -969,9 +1014,12 @@ export default function Chat() {
   return (
     <ChatPageContext.Provider value={page}>
     <ChatMathActionsContext.Provider value={mathActions}>
+    <FileOpenContext.Provider value={showFileInArtifacts}>
     <div className="h-full flex overflow-hidden">
       <ChatSidebar />
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* The conversation gives way to the Artifacts column when that is set
+          to the whole width (ChatSidePanel). */}
+      <div className={`${artifactsOpen && artifactsFull ? 'hidden' : 'flex'} flex-1 flex-col min-w-0`}>
         <ChatTopBar />
         {/* The composer floats over the foot of the conversation, which
             scrolls behind it (see ChatComposer). */}
@@ -983,6 +1031,7 @@ export default function Chat() {
       </div>
       <ChatSidePanel />
     </div>
+    </FileOpenContext.Provider>
     </ChatMathActionsContext.Provider>
     </ChatPageContext.Provider>
   );

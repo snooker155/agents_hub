@@ -53,8 +53,35 @@ describe('MessageFiles: the files a turn changed, as links to the files', () => 
     );
     expect(screen.getByText('r.md').closest('a')).toBeNull();
     fireEvent.click(screen.getByText('r.md'));
-    expect(openFile).toHaveBeenCalledWith('out/r.md');
+    expect(openFile).toHaveBeenCalledWith('out/r.md', expect.objectContaining({ path: 'out/r.md' }));
     // A deleted file has nothing to show.
     expect(screen.getByText('old.md').closest('button')).toBeNull();
+  });
+});
+
+describe('MessageBubble: the files field', () => {
+  it('puts the files last, in a captioned field of their own, apart from the answer', async () => {
+    const { MessageBubble } = await import('../MessageBubble');
+    render(
+      <MemoryRouter><I18nProvider>
+        <MessageBubble msg={{
+          id: 'm1', role: 'agent', content: 'Here is the report.',
+          files: [{ op: 'add', path: 'report.md', url: '/artifacts?file=file_1' }],
+          entities: [{ kind: 'task', id: 't1', title: 'Write it', action: 'created', url: '/tasks/t1' }],
+        }} />
+      </I18nProvider></MemoryRouter>,
+    );
+    const field = screen.getByTestId('message-files-field');
+    expect(field).not.toHaveTextContent('Files');
+    expect(field).toHaveTextContent('report.md');
+    expect(field).not.toHaveTextContent('Here is the report.');
+    // Last in the bubble: after the answer and the links.
+    expect(field.parentElement.lastElementChild).toBe(field);
+  });
+
+  it('has no field when the turn touched no file', async () => {
+    const { MessageBubble } = await import('../MessageBubble');
+    render(<MemoryRouter><I18nProvider><MessageBubble msg={{ id: 'm2', role: 'agent', content: 'ok' }} /></I18nProvider></MemoryRouter>);
+    expect(screen.queryByTestId('message-files-field')).toBeNull();
   });
 });
