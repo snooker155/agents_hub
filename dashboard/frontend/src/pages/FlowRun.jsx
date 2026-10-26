@@ -12,6 +12,7 @@ import FlowCanvas from '../components/flow/FlowCanvas';
 import FlowChat from '../components/flow/FlowChat';
 import FlowArtifacts from '../components/flow/FlowArtifacts';
 import { AppBar } from '../components/PageLayout';
+import FlowTitle from '../components/flowEditor/FlowTitle';
 import NodeRunPanel from '../components/flowEditor/NodeRunPanel';
 import { useI18n } from '../i18n';
 import { errorDetail, useToast } from '../components/toast';
@@ -23,6 +24,7 @@ import { useMessagesWithTrails } from '../components/chat/runTrail';
 import { FileOpenContext } from '../components/chat/fileOpenContext';
 import { FlowLog } from '../components/flowEditor/FlowLog';
 import { initialFlowState } from '../components/flowEditor/stateKeys';
+import { nodeStatusText } from '../components/flowEditor/nodeStatus';
 import { EXCLUDED_AGENT_IDS, toCanvasEdges } from '../components/flowEditor/useFlowDocument';
 import { newChatNonce, useFlowRuns } from '../components/flowEditor/useFlowRuns';
 import { isUnchosenAgent, normalizeNode } from '../components/flowEditor/graphHelpers';
@@ -36,6 +38,7 @@ const STATUS_STYLES = {
   error: 'bg-rose-50 text-rose-700',
   pending: 'bg-amber-50 text-amber-700',
   stopped: 'bg-orange-50 text-orange-700',
+  skipped: 'bg-slate-100 text-slate-500',
   ready: 'bg-slate-100 text-slate-500',
 };
 
@@ -44,6 +47,9 @@ const STATUS_STYLES = {
 // canvas is read only and the task picked here goes with the run, not into
 // the flow. Editing is the editor's (/flows/:flowId/edit, pages/FlowEditor.jsx).
 const NO_MESSAGES = [];
+// The task picker of the left column, hidden: a task goes with a run as an
+// attachment in the chat box now. Kept, for when it comes back.
+const SHOW_TASK_PICKER = false;
 
 function FlowRun() {
   const { t } = useI18n();
@@ -88,7 +94,7 @@ function FlowRun() {
   const runFromUrl = routeGroup || params.get('run') || null;
   const [selectedRunGroup, setSelectedRunGroup] = useState(runFromUrl);
   const [rightTab, setRightTab] = useState(runFromUrl ? 'logs' : 'node'); // node | logs
-  const [leftTab, setLeftTab] = useState(runFromUrl ? 'history' : 'tasks'); // tasks | history
+  const [leftTab, setLeftTab] = useState(runFromUrl || !SHOW_TASK_PICKER ? 'history' : 'tasks'); // tasks | history
   const [centerTab, setCenterTab] = useState('canvas'); // canvas | chat | artifacts
   // The files and views the live chat's nodes produced (FlowChat onArtifacts).
   const [chatArtifacts, setChatArtifacts] = useState({ artifacts: {}, views: [] });
@@ -331,10 +337,31 @@ function FlowRun() {
     <div className="h-full flex flex-col overflow-hidden">
       <AppBar
         icon={Factory}
-        title={flow.name}
+        title={<FlowTitle flow={flow} onRenamed={(name) => setFlow((prev) => (prev ? { ...prev, name } : prev))} />}
         subtitle={flow.description}
         backTo="/flows"
         backLabel={t('flowEditor.flows')}
+        // The center column's switch sits on the title line here, so the
+        // canvas and the chat get the row it took. From lg up the title takes
+        // the left column's width, less the bar's padding and gap, so the
+        // switch starts over the center column where it stood before.
+        titleClassName="flex-1 lg:w-[200px] lg:flex-none xl:w-[240px] 2xl:w-[280px] min-[1800px]:w-[320px]"
+        center={(
+          <div className="inline-flex items-center gap-1 rounded-lg bg-gray-100 p-0.5">
+            <PaneTab
+              active={centerTab === 'canvas'} onClick={() => setCenterTab('canvas')}
+              icon={Workflow} label={t('flowEditor.canvas')}
+            />
+            <PaneTab
+              active={centerTab === 'chat'} onClick={() => setCenterTab('chat')}
+              icon={MessageSquare} label={t('flowEditor.chat')}
+            />
+            <PaneTab
+              active={centerTab === 'artifacts'} onClick={() => setCenterTab('artifacts')}
+              icon={FileText} label={t('chat.artifacts')} badge={artifactCount}
+            />
+          </div>
+        )}
         actions={<>
           {isRunning && (
             <button
@@ -393,134 +420,143 @@ function FlowRun() {
         {/* Left column — tasks and history */}
         <div className="hidden w-[220px] shrink-0 flex-col overflow-hidden border-r border-slate-200 lg:flex xl:w-[260px] 2xl:w-[300px] min-[1800px]:w-[340px]">
           {/* The tabs are the column's title (components/PageTabs.jsx). */}
-          <div className="grid shrink-0 grid-cols-2 border-b border-gray-200">
-            <ColumnTab
-              active={leftTab === 'tasks'} onClick={() => setLeftTab('tasks')}
-              icon={ClipboardList} label={t('flowEditor.tasks')}
-            />
-            <ColumnTab
-              active={leftTab === 'history'} onClick={() => setLeftTab('history')}
-              icon={History} label={t('flowEditor.history')}
-            />
-          </div>
-          <div className={`min-h-0 flex-1 overflow-y-auto p-3 ${leftTab === 'tasks' ? '' : 'hidden'}`}>
-            <div className="space-y-5">
+          {SHOW_TASK_PICKER ? (
+            <div className="grid shrink-0 grid-cols-2 border-b border-gray-200">
+              <ColumnTab
+                active={leftTab === 'tasks'} onClick={() => setLeftTab('tasks')}
+                icon={ClipboardList} label={t('flowEditor.tasks')}
+              />
+              <ColumnTab
+                active={leftTab === 'history'} onClick={() => setLeftTab('history')}
+                icon={History} label={t('flowEditor.history')}
+              />
+            </div>
+          ) : (
+            // Only the history, with New chat over it.
+            <div className="shrink-0 border-b border-slate-200 p-3">
               <button
                 type="button"
                 onClick={startNewChat}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
+                data-testid="flow-new-chat"
               >
                 <MessageSquare className="h-4 w-4" />
                 {t('flowEditor.newChat')}
               </button>
-
-              {assignedTask ? (
-                <div className="rounded-[20px] border border-cyan-100 bg-cyan-50/70 p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">{t('flowEditor.currentTask')}</div>
-                    <button
-                      type="button"
-                      onClick={() => setTaskId(null)}
-                      className="text-xs font-medium text-slate-400 transition hover:text-rose-500"
-                    >
-                      {t('flowEditor.detach')}
-                    </button>
-                  </div>
-                  <div className="mt-2 text-sm font-bold text-slate-900">{assignedTask.title}</div>
-                  <div className="mt-1 text-sm leading-6 text-slate-600">{assignedTask.description || t('flowEditor.noTaskDescription')}</div>
-                </div>
-              ) : (
-                // A run works on a task; the run button says how to pick one.
-                <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500" data-testid="flow-run-no-task">
-                  {t('flowEditor.noTaskChosen')}
-                </div>
-              )}
-
-              {/* Without a task the button is off and looks it, and says why:
-                  the hint sits on a wrapper, since a disabled button gets no
-                  pointer events and so shows no tooltip of its own. */}
-              <span className={`block ${assignedTask ? '' : 'cursor-not-allowed'}`} title={!assignedTask ? t('flowEditor.runNeedsTask') : undefined}>
-              <button
-                onClick={runApi.handleRunFlow}
-                disabled={isRunning || unchosenCount > 0 || !assignedTask}
-                className={`inline-flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-2.5 text-sm font-bold transition disabled:cursor-not-allowed ${
-                  assignedTask
-                    ? 'bg-cyan-600 text-white shadow-sm hover:bg-cyan-700 disabled:bg-cyan-400'
-                    : 'pointer-events-none border border-gray-200 bg-gray-100 text-gray-400 dark:border-white/10 dark:bg-white/5 dark:text-gray-500'
-                }`}
-                data-testid="flow-run-button"
-              >
-                {isRunning
-                  ? <Loader2 className="h-4 w-4 animate-spin" />
-                  : <Play className="h-4 w-4" />}
-                {isRunning ? t('common.running') : t('flowEditor.runFlowWithTask')}
-              </button>
-              </span>
-
-              <div className="space-y-2">
+            </div>
+          )}
+          {SHOW_TASK_PICKER && (
+            <div className={`min-h-0 flex-1 overflow-y-auto p-3 ${leftTab === 'tasks' ? '' : 'hidden'}`}>
+              <div className="space-y-5">
                 <button
                   type="button"
-                  onClick={runApi.handleEstimate}
-                  disabled={estimating}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={startNewChat}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
                 >
-                  <DollarSign className="h-4 w-4" />
-                  {estimating ? t('flowEditor.estimating') : t('flowEditor.estimateCost')}
+                  <MessageSquare className="h-4 w-4" />
+                  {t('flowEditor.newChat')}
                 </button>
-                {estimate ? (
-                  <div className="rounded-[20px] border border-slate-200 bg-white p-4">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <div className="text-sm font-bold text-slate-900">
-                        ${Number(estimate.total_usd || 0).toFixed(4)}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setEstimate(null)}
-                        className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
-                      >
-                        {t('flowEditor.hideEstimate')}
-                      </button>
-                    </div>
-                    <div className="mt-2 space-y-1">
-                      {(estimate.per_node || []).map((row) => (
-                        <div key={row.node_id} className="flex items-baseline justify-between gap-2 text-[11px]">
-                          <span className="truncate text-slate-600">{row.label || row.node_id}</span>
-                          <span className="shrink-0 font-mono text-slate-500">
-                            {row.model || t('flowEditor.noModelCall')} · ${Number(row.usd || 0).toFixed(4)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="mt-2 text-[11px] leading-5 text-slate-400">
-                      {t('flowEditor.flowEstimateNote')}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-bold text-slate-900">{t('flowEditor.tasks')}</div>
+                {/* The chosen task and the button that runs the flow on it,
+                    only while a task is chosen: picking one in the list below
+                    brings them back. */}
+                {assignedTask ? (
+                  <>
+                    <div className="rounded-[20px] border border-cyan-100 bg-cyan-50/70 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-700">{t('flowEditor.currentTask')}</div>
+                        <button
+                          type="button"
+                          onClick={() => setTaskId(null)}
+                          className="text-xs font-medium text-slate-400 transition hover:text-rose-500"
+                        >
+                          {t('flowEditor.detach')}
+                        </button>
+                      </div>
+                      <div className="mt-2 text-sm font-bold text-slate-900">{assignedTask.title}</div>
+                      <div className="mt-1 text-sm leading-6 text-slate-600">{assignedTask.description || t('flowEditor.noTaskDescription')}</div>
+                    </div>
+
+                    <button
+                      onClick={runApi.handleRunFlow}
+                      disabled={isRunning || unchosenCount > 0}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-cyan-400"
+                      data-testid="flow-run-button"
+                    >
+                      {isRunning
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : <Play className="h-4 w-4" />}
+                      {isRunning ? t('common.running') : t('flowEditor.runFlowWithTask')}
+                    </button>
+                  </>
+                ) : null}
+
+                <div className="space-y-2">
                   <button
                     type="button"
-                    onClick={() => setShowCreateModal(true)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"
+                    onClick={runApi.handleEstimate}
+                    disabled={estimating}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <Plus className="h-3.5 w-3.5" />
-                    {t('flowEditor.newTask')}
+                    <DollarSign className="h-4 w-4" />
+                    {estimating ? t('flowEditor.estimating') : t('flowEditor.estimateCost')}
                   </button>
+                  {estimate ? (
+                    <div className="rounded-[20px] border border-slate-200 bg-white p-4">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <div className="text-sm font-bold text-slate-900">
+                          ${Number(estimate.total_usd || 0).toFixed(4)}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setEstimate(null)}
+                          className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
+                        >
+                          {t('flowEditor.hideEstimate')}
+                        </button>
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        {(estimate.per_node || []).map((row) => (
+                          <div key={row.node_id} className="flex items-baseline justify-between gap-2 text-[11px]">
+                            <span className="truncate text-slate-600">{row.label || row.node_id}</span>
+                            <span className="shrink-0 font-mono text-slate-500">
+                              {row.model || t('flowEditor.noModelCall')} · ${Number(row.usd || 0).toFixed(4)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-slate-400">
+                        {t('flowEditor.flowEstimateNote')}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
-                <FlowTaskList
-                  tasks={tasks}
-                  taskId={taskId}
-                  onPick={(task) => setTaskId(String(task.id))}
-                  workspace={chatWorkspace}
-                />
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-bold text-slate-900">{t('flowEditor.tasks')}</div>
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateModal(true)}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      {t('flowEditor.newTask')}
+                    </button>
+                  </div>
+                  <FlowTaskList
+                    tasks={tasks}
+                    taskId={taskId}
+                    onPick={(task) => setTaskId(String(task.id))}
+                    workspace={chatWorkspace}
+                  />
+                </div>
               </div>
             </div>
-          </div>
 
-          <div className={`min-h-0 flex-1 overflow-y-auto p-3 ${leftTab === 'history' ? '' : 'hidden'}`}>
+          )}
+          {/* Edge to edge: the History entries are rows across the column. */}
+          <div className={`min-h-0 flex-1 overflow-y-auto ${leftTab === 'history' ? '' : 'hidden'}`}>
             <FlowHistory
               runs={runApi.displayRuns}
               instances={instances}
@@ -551,23 +587,6 @@ function FlowRun() {
 
         {/* Center column — live canvas and chat */}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex shrink-0 items-center border-b border-gray-200 px-4 py-2">
-            <div className="inline-flex items-center gap-1 rounded-lg bg-gray-100 p-0.5">
-              <PaneTab
-                active={centerTab === 'canvas'} onClick={() => setCenterTab('canvas')}
-                icon={Workflow} label={t('flowEditor.canvas')}
-              />
-              <PaneTab
-                active={centerTab === 'chat'} onClick={() => setCenterTab('chat')}
-                icon={MessageSquare} label={t('flowEditor.chat')}
-              />
-              <PaneTab
-                active={centerTab === 'artifacts'} onClick={() => setCenterTab('artifacts')}
-                icon={FileText} label={t('chat.artifacts')} badge={artifactCount}
-              />
-            </div>
-          </div>
-
           {/* Canvas — read only, kept mounted so the viewport survives tab
               switches. It shows which node is running; clicking a node opens
               it on the right. */}
@@ -596,9 +615,12 @@ function FlowRun() {
             {runApi.selectedRun && runApi.selectedRun.kind !== 'chat' ? (
               <FlowRunMessages
                 run={runApi.selectedRun}
-                messages={runApi.runMessages}
+                messages={taskRunMessages}
+                live={runApi.liveRunMessages}
                 onClose={() => { setSelectedRunGroup(null); goTo(liveGroup); }}
                 workspace={chatWorkspace}
+                status={instances[runApi.selectedRun.run_group]?.status || null}
+                onAnswer={(answer) => runApi.handleResumeRun(runApi.selectedRun.run_group, answer)}
               />
             ) : (
               <FlowChat
@@ -674,8 +696,11 @@ function FlowRun() {
                       className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left transition hover:border-cyan-300 hover:bg-cyan-50"
                     >
                       <span className="truncate text-sm font-semibold text-slate-800">{row.label}</span>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_STYLES[row.status] || STATUS_STYLES.ready}`}>
-                        {t(`flowEditor.status.${row.status}`)}
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_STYLES[row.status] || STATUS_STYLES.ready}`}
+                        title={nodeStatusText(t, row).title}
+                      >
+                        {nodeStatusText(t, row).badge}
                       </span>
                     </button>
                   ))}

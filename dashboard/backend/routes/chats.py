@@ -16,6 +16,7 @@ browser is still holding from before this existed.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -148,6 +149,13 @@ def _refuse_assistant_write(chat_id: str) -> None:
                        "on the Assistant page or the Chat page, and cleared on the Assistant page."})
 
 
+@router.get("/search")
+async def search_chats(q: str = "", workspace: Optional[str] = None, limit: int = 50):
+    """The conversations whose title or messages hold ``q``, newest first,
+    without transcripts; a message hit carries the text around it (``match``)."""
+    return await asyncio.to_thread(chat_store.search_chats, q, workspace=workspace, limit=limit)
+
+
 @router.get("/running")
 async def list_running_chats(request: Request):
     """The stored conversations the caller can see that are being answered now.
@@ -164,6 +172,19 @@ async def list_running_chats(request: Request):
         if chat is not None and _chat_visible(principal, chat):
             running.append(chat_id)
     return {"conversations": running}
+
+
+@router.get("/{chat_id}/background")
+async def get_background_runs(chat_id: str):
+    """The flows, loops and teams the agent started from this chat that are
+    still going: what each is, how far it has got (a flow's nodes passed of
+    its longest way to the end, a loop's iteration and score, a team's members
+    at work) and the channels it streams on. The composer lists them; the
+    chat reloads this on ``flow_runs`` / ``loop_runs`` / ``team_runs``
+    changes (chat/background_runs.py)."""
+    import asyncio
+    from chat.background_runs import for_conversation
+    return {"runs": await asyncio.to_thread(for_conversation, chat_id)}
 
 
 @router.get("/{chat_id}/live")

@@ -111,4 +111,11 @@ export default {
   deleteRun: 'Delete this run',
   confirmDeleteRun: 'Delete this run from the history? Its board is removed; the members\' runs stay in the run list.',
   deleteRunFailed: 'Failed to delete the run',
+  // The run estimate (routes/teams estimate): how many model calls at most.
+  upToLlmCalls: 'Up to {{count}} LLM calls',
+  membersRounds: '{{members}} members x {{rounds}} rounds.',
+  estimate: 'Estimate',
+  estimateNoteCentralized: 'Upper bound: every member acting every round, plus the lead\'s decision and the closing synthesis. In practice a centralized team costs less, because the lead assigns only who is needed.',
+  estimateNoteAutonomous: 'Upper bound: it assumes every member is handed work every round. A handoff team usually costs far less — only the members a colleague addressed act at all, and often that is one per round.',
+  estimateNoteParallel: 'This one is close to the real figure: in parallel mode every member acts every round, whether or not it has anything to add.',
 };

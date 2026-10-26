@@ -47,9 +47,15 @@ export const getFlowLogs = (flowId, workspace) =>
 export const getFlowRuns = (flowId, workspace) =>
   api.get(`/flows/${encodeURIComponent(flowId)}/runs`, { params: { workspace } });
 export const estimateFlowCost = (flowId) => api.get(`/flows/${encodeURIComponent(flowId)}/estimate`);
+export const getFlowRunRecord = (flowId, runGroup) =>
+  api.get(`/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(runGroup)}`);
 // Drops one chat from the History tab, and the conversation with it.
 export const deleteFlowChat = (flowId, runGroup) =>
   api.delete(`/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(runGroup)}`);
+// Writes the summary of one earlier turn of a flow chat (the Summary view):
+// `{turn_id, user_message, responses}` → `{turn_id, summary}`.
+export const summarizeFlowChatTurn = (flowId, runGroup, body) =>
+  api.post(`/flows/${encodeURIComponent(flowId)}/runs/${encodeURIComponent(runGroup)}/summary`, body);
 // One record per execution (status, checkpoint, timing), unlike /runs which
 // groups the log. A failed or parked run with a checkpoint can be resumed.
 export const getFlowInstances = (flowId, activeOnly = false) =>

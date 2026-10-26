@@ -63,6 +63,9 @@ class ChatRequest(BaseModel):
     # that turn's inputs). See flow/rerun.py.
     flow_start_node: Optional[str] = None
     flow_rerun: Optional[Dict[str, str]] = None
+    # The flow chat's Summary view: once the last node is done, the turn ends
+    # with one message summing up what was done (chat/flow_summary.py).
+    flow_summary: bool = False
     message: str
     workspace: Optional[str] = None
     project_id: Optional[str] = None
@@ -82,6 +85,11 @@ class ChatRequest(BaseModel):
     # the Messages list can distinguish e.g. Telegram runs from web chat. None
     # defaults to "chat" (the web Chat page) at run-record time.
     source: Optional[str] = None
+    # A turn the hub starts by itself (chat/background_runs.py: a flow, loop or
+    # team the agent started has ended): what started it, shown in the chat as
+    # a notice in place of a message from the person. ``message`` is then what
+    # the agent is told, not something the person said.
+    notice: Optional[Dict[str, Any]] = None
     # For the multiplexed transport (POST /api/chat/stream-sse): the caller's SSE
     # client id, so the server can deliver this run's events over the browser's
     # single existing /api/stream connection instead of a dedicated stream.

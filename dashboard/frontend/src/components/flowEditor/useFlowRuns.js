@@ -10,13 +10,21 @@ import { NODE_LIFECYCLE_TYPES } from './graphHelpers';
 import { agentMessage, applyTurnEvent, isDelegationEvent, settleTurn } from '../chat/turnEvents';
 import { trailStats } from './stepStats';
 import { nodeStatusesFor } from './nodeStatus';
+import { STEP_EVENTS, liveReplies, useLiveTurns, withLiveTurns } from '../runs/liveTurns';
 
-// The stream events that are a node's own steps (its thoughts, tool calls,
-// text, files), folded into its log line with the reducer every chat shares.
-const STEP_EVENTS = new Set([
-  'think_delta', 'think', 'plan', 'artifact', 'graph_node_start', 'graph_node_end',
-  'tool_start', 'tool_end', 'tool_error', 'token',
-]);
+const LIVE_STATUSES = new Set(['pending', 'running', 'stopping']);
+
+// Whether a run's own lines say it is still going: its last flow-level line
+// is its start.
+function logsGoing(logs) {
+  for (let i = (logs?.length || 0) - 1; i >= 0; i -= 1) {
+    const ty = logs[i].type;
+    if (ty === 'flow_finish' || ty === 'flow_stopped') return false;
+    if (ty === 'flow_start') return true;
+  }
+  return false;
+}
+
 
 // The node's open log line (its agent_start that still holds a live turn),
 // patched with `fn`; the same array when there is none.
@@ -197,7 +205,8 @@ export function useFlowRuns(deps) {
           type: event.ok ? 'agent_finish' : 'agent_error', node_id: event.node_id,
           agent_id: event.agent_id, agent_name: label, tag: 'agent',
           content: event.ok ? `Completed ${label}` : `${label} failed`,
-          output: event.response || event.error || '', timestamp: ts,
+          output: event.response || event.error || event.summary || '', timestamp: ts,
+          ...(event.route ? { route: event.route } : {}),
           run_id: event.run_id || turn?.run_id || null,
           ...(settled ? { turn: settled, stats: trailStats(settled.timeline) } : {}),
           // The files the node changed, as the saved log line carries them.
@@ -214,13 +223,19 @@ export function useFlowRuns(deps) {
       }));
     } else if (evType === 'node_skip') {
       setStreamLogs((prev) => [...prev, {
-        type: 'node_skip', node_id: event.node_id,
+        type: 'node_skip', node_id: event.node_id, reason: event.reason || '',
         agent_name: nodeLabelsRef.current[event.node_id] || 'Node',
         // Why, when the stream says: a branch not chosen reads differently from a failure.
         content: event.reason
           ? t(`flowEditor.skipReasons.${event.reason}`, { defaultValue: t('flowEditor.skipped') })
           : t('flowEditor.skipped'),
         timestamp: ts,
+      }]);
+    } else if (evType === 'flow_summary') {
+      // The turn's closing summary (the flow chat's Summary view), as the
+      // saved log line carries it.
+      setStreamLogs((prev) => [...prev, {
+        type: 'flow_summary', content: t('flowEditor.summaryWritten'), output: event.content || '', timestamp: ts,
       }]);
     } else if (evType === 'done') {
       chatStreamingRef.current = false;
@@ -291,16 +306,10 @@ export function useFlowRuns(deps) {
   // True while a run is in progress, covers runFlow() (flow.running) and
   // chat-driven runs (latest flow-level log event is flow_start, not yet
   // finished/stopped). Used to drive the Logs auto-scroll.
-  const isExecuting = useMemo(() => {
-    if (running || flow?.running) return true;
-    if (!scopedLogs.length) return false;
-    for (let i = scopedLogs.length - 1; i >= 0; i -= 1) {
-      const ty = scopedLogs[i].type;
-      if (ty === 'flow_finish' || ty === 'flow_stopped') return false;
-      if (ty === 'flow_start') return true;
-    }
-    return false;
-  }, [running, flow?.running, scopedLogs]);
+  const isExecuting = useMemo(
+    () => Boolean(running || flow?.running || logsGoing(scopedLogs)),
+    [running, flow?.running, scopedLogs],
+  );
 
   // When a run starts (rising edge of isExecuting), open the Logs tab so the
   // user sees execution progress. Only fires on the transition, so it won't
@@ -308,8 +317,15 @@ export function useFlowRuns(deps) {
   const wasExecutingRef = useRef(false);
   useEffect(() => {
     if (isExecuting && !wasExecutingRef.current) {
-      // A fresh run started, drop any historical selection so the live stream shows.
-      setSelectedRunGroup(null);
+      // A fresh run started, drop any historical selection so the live stream
+      // shows. A picked record whose own lines say it is still going is no
+      // fresh run: it stays picked.
+      // (A run started in the background and opened by its address, from the
+      // chat that started it, is such a record.)
+      // Lines not loaded yet say nothing: the record stays picked.
+      if (!selectedRunGroup || ((running || flow?.running) && scopedLogs.length && !logsGoing(scopedLogs))) {
+        setSelectedRunGroup(null);
+      }
       setRightTab('logs');
     }
     wasExecutingRef.current = isExecuting;
@@ -364,10 +380,24 @@ export function useFlowRuns(deps) {
   //    stream buffer, which PERSISTS after the run ends so the finished run's
   //    logs + node statuses stay on screen until "New chat" clears them. A fresh
   //    chat has an empty buffer, so agents still read as pending when idle.
+  // A run going on in the background (one an agent, a schedule or the Run
+  // button started) streams on its own channel (common/run_stream.py): the
+  // selected History record while it runs, or the flow's live run when
+  // nothing is selected. Its nodes at work are laid over the stored log and
+  // drawn as replies being written.
+  const liveRunGroup = useMemo(() => {
+    if (selectedRun) {
+      return selectedRun.kind !== 'chat' && LIVE_STATUSES.has(selectedRun.status) ? selectedRun.run_group : null;
+    }
+    if (running || flow?.running) return scopedLogs[scopedLogs.length - 1]?.run_group || null;
+    return null;
+  }, [selectedRun, running, flow?.running, scopedLogs]);
+  const liveTurns = useLiveTurns(liveRunGroup ? [`run:${liveRunGroup}`] : [], 'flow');
+
   const baseLogs = useMemo(() => {
-    if (selectedRun) return selectedRun.events || [];
-    return scopedLogs;
-  }, [selectedRun, scopedLogs]);
+    const stored = selectedRun ? (selectedRun.events || []) : scopedLogs;
+    return liveRunGroup ? withLiveTurns(stored, liveTurns) : stored;
+  }, [selectedRun, scopedLogs, liveRunGroup, liveTurns]);
 
   // Reconstruct the conversation bubbles for a selected History record from its
   // flow-log events (see reconstructRunMessages).
@@ -375,6 +405,13 @@ export function useFlowRuns(deps) {
     if (!selectedRun) return [];
     return reconstructRunMessages(selectedRun);
   }, [selectedRun]);
+
+  // The nodes of the selected run at work, as replies being written, and a
+  // node just finished until its stored message is in (no blink between).
+  const liveRunMessages = useMemo(
+    () => (selectedRun && liveRunGroup ? liveReplies(liveTurns, runMessages) : []),
+    [selectedRun, liveRunGroup, liveTurns, runMessages],
+  );
 
   const visibleLogs = useMemo(() => {
     if (!selectedNode) return baseLogs;
@@ -434,10 +471,11 @@ export function useFlowRuns(deps) {
     }
   };
 
-  const handleResumeRun = async (flowRunId) => {
+  // An answer, when given, is the reply to the question the run parked on.
+  const handleResumeRun = async (flowRunId, answer) => {
     setResumingRun(flowRunId);
     try {
-      await resumeFlowRun(flowRunId);
+      await resumeFlowRun(flowRunId, answer);
       toast.success(t('flowEditor.runResumed'));
       await loadRuns(flow?.workspace || selectedWorkspace);
     } catch (error) {
@@ -484,7 +522,7 @@ export function useFlowRuns(deps) {
     activeConversationId, activeNodeId, baseLogs, displayRuns, handleChatActivity,
     handleEstimate, handleNewChat, handleRerunTaskRun, handleResumeRun, handleRunFlow,
     handleStopFlow, handleStreamEvent, isExecuting, loadLogs, loadRuns,
-    nodeStatuses, runMessages, scopedLogs, selectedRun, visibleLogs,
+    liveRunMessages, nodeStatuses, runMessages, scopedLogs, selectedRun, visibleLogs,
   };
 }
 

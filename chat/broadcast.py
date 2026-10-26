@@ -122,7 +122,8 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> bool:
     response = str(event.get("response") or "")
     if not run_id or not response.strip() or not event.get("ok"):
         return False
-    user_message = str(getattr(request, "message", "") or "")
+    notice = getattr(request, "notice", None)
+    user_message = "" if notice else str(getattr(request, "message", "") or "")
     # A turn that changed hands (chat/handoff.py) is one bubble per agent: each
     # handing agent's reply, then the answer, which carries the handoff that
     # brought it (the chat draws the divider from it). The user's message goes
@@ -155,6 +156,7 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> bool:
             usage=event.get("usage"),
             duration_ms=event.get("duration_ms"),
             extra=extra or None,
+            notice=notice,
         )
         # The conversation continues with the agent that answered.
         if handoffs and event.get("agent_id"):
@@ -162,6 +164,16 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> bool:
     except Exception:  # noqa: BLE001 - the safety net must never fail the turn it records
         log.debug("turn safety-net record failed", exc_info=True)
     return written
+
+
+def _poke_background(conversation_id: Optional[str]) -> None:
+    if not conversation_id:
+        return
+    try:
+        from chat.background_runs import poke
+        poke(conversation_id=str(conversation_id))
+    except Exception:  # noqa: BLE001 - the watchdog tries again
+        log.debug("background run poke failed", exc_info=True)
 
 
 async def broadcast_turn(request, pipeline: AsyncIterator[Dict[str, Any]]):
@@ -174,10 +186,14 @@ async def broadcast_turn(request, pipeline: AsyncIterator[Dict[str, Any]]):
     channel = channel_for(conversation_id)
     origin_client = getattr(request, "client_id", None)
     source = getattr(request, "source", None) or "chat"
-    user_message = str(getattr(request, "message", "") or "")
+    # A turn the hub started (chat/background_runs.py) shows its notice, not
+    # its message, which is what the agent was told rather than what the
+    # person said.
+    notice = getattr(request, "notice", None)
+    user_message = "" if notice else str(getattr(request, "message", "") or "")
 
     turn_id = live_runs.start_turn(conversation_id=conversation_id,
-                                   user_message=user_message, source=source)
+                                   user_message=user_message, source=source, notice=notice)
     announce_running_change(conversation_id)
     stamp = {"conversation_id": conversation_id, "origin_client": origin_client}
     client_turn_id = getattr(request, "client_turn_id", None)
@@ -188,6 +204,7 @@ async def broadcast_turn(request, pipeline: AsyncIterator[Dict[str, Any]]):
         **stamp,
         "type": "turn_start",
         "message": user_message,
+        **({"notice": notice} if notice else {}),
         "source": source,
         "agent_id": getattr(request, "agent_id", None),
         "flow_id": getattr(request, "flow_id", None),
@@ -229,6 +246,9 @@ async def broadcast_turn(request, pipeline: AsyncIterator[Dict[str, Any]]):
         # stop showing it as live without waiting on a terminal event it might
         # never get.
         await _publish(channel, end_event)
+    finally:
+        # A background run that ended during this turn reports now.
+        _poke_background(conversation_id)
 
 
 __all__ = ["announce_running_change", "broadcast_turn", "channel_for"]

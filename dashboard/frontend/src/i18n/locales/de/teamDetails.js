@@ -111,4 +111,11 @@ export default {
   deleteRun: 'Lauf löschen',
   confirmDeleteRun: 'Diesen Lauf aus dem Verlauf löschen? Sein Board wird entfernt, die Läufe der Mitglieder bleiben in der Laufliste.',
   deleteRunFailed: 'Der Lauf konnte nicht gelöscht werden',
+  // The run estimate (routes/teams estimate): how many model calls at most.
+  upToLlmCalls: 'Bis zu {{count}} LLM-Aufrufe',
+  membersRounds: '{{members}} Mitglieder × {{rounds}} Runden.',
+  estimate: 'Schätzung',
+  estimateNoteCentralized: 'Obergrenze: Jedes Mitglied handelt in jeder Runde, dazu die Entscheidung der Leitung und die abschließende Synthese. In der Praxis kostet ein zentralisiertes Team weniger, weil die Leitung nur die wirklich nötigen Mitglieder beauftragt.',
+  estimateNoteAutonomous: 'Obergrenze: Sie nimmt an, dass jedes Mitglied in jeder Runde Arbeit erhält. Ein Team mit Übergaben kostet meist deutlich weniger — es handeln nur die Mitglieder, die eine Kollegin oder ein Kollege angesprochen hat, oft eines pro Runde.',
+  estimateNoteParallel: 'Dieser Wert liegt nah an der Realität: Im Parallelmodus handelt jedes Mitglied in jeder Runde, ob es etwas beizutragen hat oder nicht.',
 };

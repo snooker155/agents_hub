@@ -23,7 +23,7 @@ orchestrator of the agent runs, not their sandbox, the same as a flow.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from common.paths import AGENTS_HUB_ROOT
 from loops.models import LoopRun
@@ -50,11 +50,17 @@ def start_loop_run(
     task_id: Optional[str] = None,
     seed: Optional[Dict[str, Any]] = None,
     parent_run_id: Optional[str] = None,
+    context: str = "",
+    attached: Optional[List[Dict[str, str]]] = None,
+    origin: Optional[Dict[str, Any]] = None,
 ) -> LoopRun:
     """The database half of launching a loop run.
 
+    ``origin`` is the chat that started it (chat/background_runs.py), told
+    when the run ends.
+
     Validates the loop and its flow the way ``loops.runner.run_loop`` does,
-    resolves the workspace, task and session the way
+    resolves the workspace, the task it was given (none is made) and the session the way
     ``loops.runner._prepare_context`` does (which also records the loop as the
     task's executor), creates the ``LoopRun`` record as ``pending`` with its
     log path and the seed state, then builds the launch spec and hands it to
@@ -79,6 +85,7 @@ def start_loop_run(
 
     run = LoopRun(
         loop_id=loop_id, workspace=ws_name, goal=goal, task_id=task_id,
+        context=context or "", attached=list(attached or []),
         session_id=session_id, parent_run_id=parent_run_id, status="pending",
         started_at="",
     )
@@ -89,19 +96,22 @@ def start_loop_run(
     # The seed rides on the record's document: the subprocess reads
     # everything it needs back from the record, so the spec stays small.
     from common import entity_runs
-    entity_runs.update(run.loop_run_id, {"log_file": log_file, "seed": dict(seed or {})},
+    from chat.background_runs import ORIGIN_KEY
+    entity_runs.update(run.loop_run_id, {"log_file": log_file, "seed": dict(seed or {}),
+                                         **({ORIGIN_KEY: origin} if origin else {})},
                        notify=False)
-    # Point the task at this run (the executor itself was recorded by
-    # _prepare_context before the run id existed).
-    try:
-        from tasks import service as _ts
-        _ts.assign_executor(
-            task_id, {"kind": "loop", "id": loop_id},
-            {"loop_id": loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
-            run_id=run.loop_run_id,
-        )
-    except Exception:  # noqa: BLE001 - the run still launches; the task page just shows no run id yet
-        log.debug("assigning loop run to task failed", exc_info=True)
+    # Point the task, when the loop works on one, at this run (the executor
+    # itself was recorded by _prepare_context before the run id existed).
+    if task_id:
+        try:
+            from tasks import service as _ts
+            _ts.assign_executor(
+                task_id, {"kind": "loop", "id": loop_id},
+                {"loop_id": loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
+                run_id=run.loop_run_id,
+            )
+        except Exception:  # noqa: BLE001 - the run still launches; the task page just shows no run id yet
+            log.debug("assigning loop run to task failed", exc_info=True)
 
     spec = {
         "kind": QUEUE_KIND, "run_id": run.loop_run_id, "entity_id": loop_id,

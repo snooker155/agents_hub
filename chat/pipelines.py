@@ -29,6 +29,7 @@ from agents.callbacks import (
 )
 from agents.agent_factory import create_agent
 from managers.run_manager import update_run
+from chat import flow_summary
 from chat.errors import error_code
 from chat.models import ChatRequest
 from common.session_service import get_or_create_chat_session
@@ -193,10 +194,13 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
         # Who is running, in which conversation and run: tools read these
         # (the delegation allowlist, the web log). Set inside the task, so the
         # threads the run starts copy them and the request's context is untouched.
-        from common.agent_context import current_agent_id, current_run_id, current_session_id
+        from common.agent_context import (
+            current_agent_id, current_conversation_id, current_run_id, current_session_id,
+        )
         current_agent_id.set(request.agent_id)
         current_session_id.set(session_id)
         current_run_id.set(run_id)
+        current_conversation_id.set(request.conversation_id)
         # The record's model cascade, then this turn's version pin (its own or
         # its service's) and per-run overrides (chat/runs.py request_overrides).
         overrides = {**agent_overrides(request.agent_id), **request_overrides(request)}
@@ -781,9 +785,12 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
             "node_id": request.flow_start_node,
             "label": flow_rerun.node_label(flow, request.flow_start_node),
         }}
-    if turn_start:
-        _flow_started = driver.on_flow_start
-        driver.on_flow_start = lambda ev: _flow_started({**ev, "turn": turn_start})
+    # The turn's id rides on its flow_start log line and its flow_meta event,
+    # so a summary written for it later (routes/flows.py) finds its place.
+    turn_id = uuid4().hex
+    _flow_started = driver.on_flow_start
+    driver.on_flow_start = lambda ev: _flow_started(
+        {**ev, "turn_id": turn_id, **({"turn": turn_start} if turn_start else {})})
 
     if start_error:
         yield {
@@ -795,8 +802,10 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
 
     # ── Drive the shared engine, translating neutral events → SSE shapes ──────
     try:
+        # Agents of another workspace do not run here (flow.validate.workspace_agent_errors).
         engine = run_flow_engine(flow, flow_id=request.flow_id, shared_context=user_message,
-                                 driver=driver, resume=resume_cp)
+                                 driver=driver, resume=resume_cp,
+                                 workspace=request.workspace or "default")
         async for ev in engine:
             kind = ev.get("type")
             if kind == "flow_start":
@@ -808,6 +817,7 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
                     "flow_id": request.flow_id,
                     "flow_name": flow_name,
                     "session_id": session_id,
+                    "turn_id": turn_id,
                     "nodes": [
                         {"node_id": n["node_id"], "agent_id": n["entity_id"], "agent_label": n["label"]}
                         for n in ev.get("nodes", [])
@@ -848,12 +858,13 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
                     responses.append({
                         "node_id": ev["node_id"], "agent_id": ev.get("entity_id"),
                         "agent_label": ev.get("label"), "response": ev.get("output", ""),
+                        "is_agent": bool(ev.get("is_agent")),
                     })
                 elif not ev.get("stopped"):
                     responses.append({
                         "node_id": ev["node_id"], "agent_id": ev.get("entity_id"),
                         "agent_label": ev.get("label"), "response": resp,
-                        "error": ev.get("error"),
+                        "error": ev.get("error"), "is_agent": bool(ev.get("is_agent")),
                     })
                 yield {
                     "type": "node_done", "node_id": ev["node_id"],
@@ -869,8 +880,34 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
                     # Shared-state snapshot after this node's writes, for the
                     # editor's live Runtime State block.
                     "state": ev.get("state"),
+                    # A node with no agent has no answer of its own: its bubble
+                    # says what it did, the branch it chose or its summary.
+                    **({} if ev.get("is_agent") else {
+                        "is_agent": False, "summary": ev.get("text") or "",
+                        **({"route": state.node_route[ev["node_id"]]}
+                           if ev["node_id"] in state.node_route else {}),
+                    }),
                 }
             elif kind == "flow_finish":
+                # The Summary view's one message: written once the last node
+                # is done, before the turn ends, and kept in the run log so a
+                # reopened conversation shows it too.
+                if request.flow_summary:
+                    summary = ""
+                    async for delta in flow_summary.stream_summary(
+                        user_message, responses, **state.last_model,
+                    ):
+                        summary += delta
+                        yield {"type": "flow_summary_delta", "content": delta,
+                               "session_id": session_id}
+                    if summary.strip():
+                        _log_flow({
+                            "timestamp": utc_iso(), "type": "flow_summary",
+                            "content": "Summary of the turn", "output": summary,
+                            "turn_id": turn_id,
+                        })
+                        yield {"type": "flow_summary", "content": summary,
+                               "session_id": session_id}
                 total_duration_ms = int((time.perf_counter() - overall_started) * 1000)
                 _log_flow({
                     "timestamp": utc_iso(),

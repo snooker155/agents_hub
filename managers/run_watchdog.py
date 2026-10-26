@@ -897,6 +897,15 @@ class RunWatchdog:
                     log.info("delivered %d queued instance message(s)", delivered)
             except Exception:
                 log.exception("instance mailbox drain failed")
+            # A flow, loop or team started from a chat reports back when it
+            # ends; this catches a run whose process died before it could say so.
+            try:
+                from chat.background_runs import deliver_finished
+                woken = await deliver_finished()
+                if woken:
+                    log.info("woke %d chat(s) for finished background run(s)", woken)
+            except Exception:
+                log.exception("background run delivery failed")
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=TICK_SECONDS)
             except asyncio.TimeoutError:
