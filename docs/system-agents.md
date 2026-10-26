@@ -47,7 +47,9 @@ That is the escape hatch, and it is one-way.
   **World Builder**, **Project Manager** — each owns one entity kind, and each
   has its own chat on that entity's page.
 - **Architect Agent** — builds a project's structure graph from real source.
-- **Planner** — turns that graph into a task tree.
+- **Planner** — turns that graph into a task tree, and owns the workspace's
+  schedules and deployments: the main agent hands it every request to do
+  something later or on a schedule (see [scheduling](scheduling.md)).
 - **Visualizer** — builds and edits views, and is the entry point for every
   "show me" request; 3D and web requests go on to the two below.
 - **3D Modeler** — models objects and scenes with the geometry engine, in

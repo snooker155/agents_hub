@@ -88,8 +88,10 @@ def _tool_objects_by_id() -> dict:
     from tools.docs_tool import DOCS_TOOLS
     from tools.eval_ops import EVAL_TOOLS
     from tools.schedule_management import (
-        schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled, wake_agent,
+        schedule_notification, schedule_task, schedule_flow, schedule_loop,
+        schedule_memory_consolidation,
+        notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
+        pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,
     )
     from tools.web import WEB_TOOLS
     from tools.browser import BROWSER_TOOLS
@@ -129,8 +131,10 @@ def _tool_objects_by_id() -> dict:
         *TEAM_MANAGEMENT_TOOLS, *LOOP_MANAGEMENT_TOOLS,
         *PROJECT_MANAGEMENT_TOOLS,
         *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
-        schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled, wake_agent,
+        schedule_notification, schedule_task, schedule_flow, schedule_loop,
+        schedule_memory_consolidation,
+        notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
+        pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,
         *WEB_TOOLS, *BROWSER_TOOLS, run_code, map_on_nodes,
         read_memory_tool, write_memory_tool, search_memory_tool,
         read_structured_memory_tool, write_structured_memory_tool,

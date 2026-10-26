@@ -46,7 +46,7 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "create_task", "add_subtask", "update_task", "set_task_dependencies",
     "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow", "run_new_flow_tool",
     "send_telegram", "send_message", "notify", "create_notification", "post_webhook",
-    "schedule_job", "create_view", "view_serve", "delegate",
+    "schedule_job", "create_view", "view_serve", "delegate", "run_scheduled_now",
     "stop_run", "stop_instance", "restart_instance", "stop_container", "prune_run_logs",
     "hub_action",
     # schedule_pulse (proactive/from_phrase.py) switches a pulse on once: a
@@ -351,6 +351,12 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
     # title and description carry, so list_scheduled is read under the same
     # grant as list_tasks.
     "list_scheduled": frozenset({READS_PRIVATE}),
+    # One job with its firing journal: the same authored content, plus the
+    # errors its firings hit.
+    "get_scheduled": frozenset({READS_PRIVATE}),
+    # Fires a job now: a notification job delivers its message at once, the
+    # same channel schedule_notification opens.
+    "run_scheduled_now": frozenset({CAN_EXFILTRATE}),
 
     # ── geometry engine ──────────────────────────────────────────────────────
     # The mesh_* tools drive a local Blender through a fixed command whitelist.
@@ -490,6 +496,11 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # and update_scheduled report/change a job the caller named by id. Reading
     # the roster (list_scheduled) is classified above.
     "schedule_task", "cancel_scheduled", "update_scheduled",
+    # schedule_flow, schedule_loop and schedule_memory_consolidation create a
+    # job for a flow, a loop or a pool of the workspace; pause/resume change a job's status. None
+    # can set a deployment's secrets, the one resource that is a grant.
+    "schedule_flow", "schedule_loop", "schedule_memory_consolidation", "pause_scheduled",
+    "resume_scheduled",
 
     # ── flow / world / scenario / team / loop management ─────────────────────
     # All of these are configuration the operator authored *for* the agents —

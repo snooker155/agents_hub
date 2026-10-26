@@ -179,7 +179,6 @@ export default {
       writer: 'Macht aus Notizen und Daten ein fertiges Dokument.',
       verifier: 'Prüft Berichte, Zahlen und Texte unabhängig.',
       visualizer: 'Baut Ansichten: Diagramme, 3D-Szenen, Folien, Webseiten.',
-      web_search: 'Durchsucht das offene Web und liest die gefundenen Seiten.',
     },
   },
   specialModels: {

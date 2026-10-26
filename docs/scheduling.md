@@ -49,9 +49,29 @@ drifting.
 
 ## Scheduling from a conversation
 
-Any agent with the schedule tools can do it: "remind me tomorrow to review the
-report", "every morning generate a summary". The agent confirms the resolved
-time back to you, because relative times are where this goes wrong.
+Ask in the chat: "remind me tomorrow to review the report", "every morning
+generate a summary". The main agent does not schedule anything itself: it hands
+the request to the Planner (`@planner`), the system agent that owns the Plan and
+Deployments pages, and reports back what was scheduled. You can also talk to the
+Planner directly. It confirms the resolved time back to you, because relative
+times are where this goes wrong.
+
+The Planner's tools:
+
+| Tool | Does |
+| --- | --- |
+| `schedule_notification` | A reminder in your notification inbox. |
+| `schedule_task` | Agent work: a task created and started when the job fires, with the deployment fields below. |
+| `schedule_flow` | A flow run, with a seed for its state and a cap on runs going at once. |
+| `schedule_loop` | A loop run; a firing while the previous run is still going is skipped. |
+| `schedule_memory_consolidation` | Folds a memory pool and its recent sessions into a new pool. |
+| `list_scheduled`, `get_scheduled` | The jobs of the workspace; one job with its next runs and its firing journal. |
+| `update_scheduled`, `cancel_scheduled` | Change a pending job, or end it. |
+| `pause_scheduled`, `resume_scheduled` | Stop a job and start it again; resuming clears its error count. |
+| `run_scheduled_now` | Fires a job once through the hub, like the Run now button. |
+
+Any other agent can be given these tools on its page; only the Planner has them
+out of the box.
 
 ## The scheduler itself
 

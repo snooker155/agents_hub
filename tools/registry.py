@@ -95,6 +95,10 @@ _CATALOG_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "list_scheduled": {"name": "List Scheduled Jobs"},
     "cancel_scheduled": {"name": "Cancel Scheduled Job"},
     "update_scheduled": {"name": "Update Scheduled Job"},
+    "get_scheduled": {"name": "Get Scheduled Job"},
+    "pause_scheduled": {"name": "Pause Scheduled Job"},
+    "resume_scheduled": {"name": "Resume Scheduled Job"},
+    "run_scheduled_now": {"name": "Run Scheduled Job Now"},
     "view_apply_ops": {"name": "Apply View Ops"},
     "view_get": {"name": "Read View"},
     "view_add_control": {"name": "Add View Control"},
@@ -386,12 +390,14 @@ def _agent_management_specs() -> List[ToolSpec]:
 
 def _schedule_management_specs() -> List[ToolSpec]:
     from tools.schedule_management import (
-        schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled, wake_agent,
+        schedule_notification, schedule_task, schedule_flow, schedule_loop,
+        schedule_memory_consolidation, notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
+        pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,
     )
     tools = [
-        schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled, wake_agent,
+        schedule_notification, schedule_task, schedule_flow, schedule_loop,
+        schedule_memory_consolidation, notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
+        pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,
     ]
     return [spec_from_tool(t, category="schedule_management") for t in tools]
 

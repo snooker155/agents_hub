@@ -46,6 +46,8 @@ class JobCreate(BaseModel):
     flow_id: Optional[str] = None
     seed: Optional[Dict[str, Any]] = None
     max_concurrent: int = 1
+    # loop jobs: which loop to start (plans.service._validate_loop).
+    loop_id: Optional[str] = None
     channels: Optional[List[str]] = None
     # Environment (environments/) and per-task money cap copied onto every
     # task this job creates; auto_pause_after (0 = off) is the run of
@@ -157,6 +159,7 @@ async def create_job(payload: JobCreate):
             memory_access=payload.memory_access,
             consolidate_pool_id=payload.consolidate_pool_id,
             consolidate_session_limit=payload.consolidate_session_limit,
+            loop_id=payload.loop_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
