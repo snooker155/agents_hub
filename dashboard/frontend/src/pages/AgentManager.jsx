@@ -48,6 +48,7 @@ import DeployServiceModal from '../components/services/DeployServiceModal';
 import AgentParentPicker from '../components/agent/inheritance/AgentParentPicker';
 import AgentTemplatePicker, { ConnectorChip } from '../components/agent/AgentTemplatePicker';
 import ToolPicker from '../components/agent/ToolPicker';
+import { toolLabel } from '../lib/toolText';
 import AgentVersionBadge from '../components/agent/AgentVersionBadge';
 import { templateText } from '../components/agent/agentTemplates';
 import { instancePath } from '../components/instanceUtils';
@@ -726,8 +727,8 @@ const AgentManager = () => {
 
                 <div className="flex flex-wrap gap-1 mb-3 min-h-[22px]">
                   {(agent.tools || []).slice(0, 3).map((tool) => (
-                    <span key={tool} className="text-[10px] bg-white border border-gray-200 px-1.5 py-0.5 rounded text-gray-600">
-                      {tool}
+                    <span key={tool} className="text-[10px] bg-white border border-gray-200 px-1.5 py-0.5 rounded text-gray-600" title={tool}>
+                      {toolLabel(t, tool)}
                     </span>
                   ))}
                   {(agent.tools || []).length > 3 && (
@@ -801,7 +802,7 @@ const AgentManager = () => {
         const isLastStep = wizardStep === STEP_KEYS.length;
 
         const toolList = availableTools.filter((t, i, arr) => arr.findIndex(x => x.name === t.name) === i);
-        const toolLabel = (id) => toolList.find((tool) => tool.name === id)?.label || id;
+        const toolName = (id) => toolLabel(t, id, toolList.find((tool) => tool.name === id)?.label);
         const typeLabel = {
           template: t('agentTemplates.template'),
           inherit: t('agentManager.inheritAgent'),
@@ -922,7 +923,7 @@ const AgentManager = () => {
                             <div className="text-[11px] font-bold uppercase text-gray-400 mb-1">{t('agentManager.parentTools', { count: wizardParent.tools.length })}</div>
                             <div className="flex flex-wrap gap-1">
                               {wizardParent.tools.map((id) => (
-                                <span key={id} className="text-[11px] bg-white border border-gray-200 text-gray-600 px-1.5 py-0.5 rounded">{toolLabel(id)}</span>
+                                <span key={id} className="text-[11px] bg-white border border-gray-200 text-gray-600 px-1.5 py-0.5 rounded">{toolName(id)}</span>
                               ))}
                             </div>
                           </div>
@@ -1135,7 +1136,7 @@ const AgentManager = () => {
                         <div className="flex gap-2">
                           <span className="text-gray-400 w-24 flex-shrink-0">{t('agentManager.tools')}</span>
                           <div className="flex flex-wrap gap-1">
-                            {wizardData.tools.map(id => <span key={id} className="text-[11px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded" title={id}>{toolLabel(id)}</span>)}
+                            {wizardData.tools.map(id => <span key={id} className="text-[11px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded" title={id}>{toolName(id)}</span>)}
                           </div>
                         </div>
                       )}
