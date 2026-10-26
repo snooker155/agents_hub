@@ -38,6 +38,24 @@ def _chat(chat_id: str, **over):
 
 # ── store ────────────────────────────────────────────────────────────────────
 
+def test_search_finds_a_title_or_a_message_in_any_case_with_the_text_around_it():
+    from common import chat_store
+
+    chat_store.save_chat(_chat("t1", title="Тренды кофе 2026"))
+    chat_store.save_chat(_chat("m1", title="Другое", messages=[
+        {"id": "a", "role": "user", "content": "Собери отчёт про КОФЕЙНЫЕ тренды в Германии"},
+    ]))
+    chat_store.save_chat(_chat("n1", title="Nothing here"))
+
+    hits = chat_store.search_chats("кофе")["items"]
+    assert {h["id"] for h in hits} == {"t1", "m1"}
+    by_id = {h["id"]: h for h in hits}
+    assert "match" not in by_id["t1"]
+    assert "КОФЕЙНЫЕ" in by_id["m1"]["match"] and by_id["m1"]["messages"] == []
+    assert chat_store.search_chats("  ")["items"] == []
+    assert [h["id"] for h in chat_store.search_chats("кофе", workspace="other")["items"]] == []
+
+
 def test_saved_chat_round_trips_with_its_transcript():
     from common import chat_store
 
