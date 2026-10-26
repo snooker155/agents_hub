@@ -1,6 +1,6 @@
 /**
  * A code snippet at work: the editor with everything done to a snippet, in
- * one place for the chat's Code panel (components/chat/CodePanel.jsx) and a
+ * one place for the code in the chat's Artifacts panel (components/chat/CodePanel.jsx) and a
  * code view's own page (pages/ViewDetail.jsx).
  *
  * The snippet comes in as an envelope, a code view's or the same shape made

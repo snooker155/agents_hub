@@ -16,7 +16,7 @@ import { DelegationCard, TimelineToolCard } from './timeline';
 import { foldDelegationTools, withFinalText } from './trail';
 import { ChangeStep } from './entityChanges';
 import { DiffView } from './panels';
-import { BUBBLE_SIZES } from './bubbleSizes';
+import { AVATAR_NAME_CLS, BUBBLE_SIZES } from './bubbleSizes';
 import { ChatPageContext } from './context';
 import { ChatCodeActionsContext } from './chatMarkdownContext';
 import { Bot, ChevronDown, ChevronUp, FileText, User } from 'lucide-react';
@@ -42,7 +42,7 @@ function TimelineArtifactChip({ entry, onJump, url = null }) {
   const nameCls = 'inline-flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 no-underline transition-colors hover:bg-indigo-50';
   let nameEl;
   if (openFile && entry.op !== 'delete') {
-    nameEl = <button type="button" onClick={() => openFile(entry.path)} className={`${nameCls} text-left`} title={`${t('chat.showInArtifacts')}: ${entry.path}`}>{label}</button>;
+    nameEl = <button type="button" onClick={() => openFile(entry.path, entry)} className={`${nameCls} text-left`} title={`${t('chat.showInArtifacts')}: ${entry.path}`}>{label}</button>;
   } else if (url) {
     nameEl = <Link to={url} className={nameCls} title={`${t('chat.openFile')}: ${entry.path}`}>{label}</Link>;
   } else if (onJump) {
@@ -85,11 +85,23 @@ function TimelineArtifactChip({ entry, onJump, url = null }) {
  * looks the same whichever one is open.
  */
 function SystemNotice({ msg }) {
+  const { t } = useI18n();
   return (
     <div className="flex justify-center mb-6 mx-2">
-      <span className="text-xs text-gray-400 italic text-center px-3">{msg.content}</span>
+      <span className="text-xs text-gray-400 italic text-center px-3">{noticeText(t, msg)}</span>
     </div>
   );
+}
+
+// A notice the hub wrote as data (a background run that ended,
+// chat/background_runs.py) is worded here, in the reader's language.
+function noticeText(t, msg) {
+  const n = msg.notice;
+  if (n?.type === 'background_run_finished') {
+    const status = ['completed', 'failed', 'stopped'].includes(n.status) ? n.status : 'completed';
+    return t(`chat.backgroundNotice.${n.kind || 'flow'}.${status}`, { name: n.name || '' });
+  }
+  return msg.content;
 }
 
 function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false, compact = false }) {
@@ -138,7 +150,7 @@ function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false, com
             <Bot className="w-4 h-4" />
           </div>
           {agentName && (
-            <span title={agentName} className="w-full truncate text-[9px] text-gray-400 font-medium text-center leading-tight">{agentName}</span>
+            <span title={agentName} className={AVATAR_NAME_CLS}>{agentName}</span>
           )}
         </div>
       )}

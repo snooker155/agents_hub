@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const getWorkspaceFileContent = vi.fn(() => Promise.resolve({ data: { content: 'print("now")' } }));
 vi.mock('../../../api', () => ({ getWorkspaceFileContent: (...a) => getWorkspaceFileContent(...a) }));
-vi.mock('../../../views/ViewCard', () => ({ default: ({ viewRef }) => <div data-testid="view-card">{viewRef.title}</div> }));
+vi.mock('../../../views/ViewCard', () => ({ default: ({ viewRef, actions }) => <div data-testid="view-card">{viewRef.title}{actions}</div> }));
 vi.mock('../../GraphMirror', () => ({ default: () => null }));
 vi.mock('../../ProcessGraph', () => ({ default: () => null, TokenPill: () => null }));
 
@@ -28,6 +28,17 @@ describe('ArtifactsPanel', () => {
     expect(screen.getByText('app.py')).toBeInTheDocument();
     expect(screen.getByText('new.py')).toBeInTheDocument();
     expect(screen.getByTestId('view-card')).toHaveTextContent('Sales chart');
+  });
+
+  it('shows the file the page asks for (a file clicked in the chat)', () => {
+    draw({ artifacts: ARTIFACTS, views: VIEWS, workspace: 'ws', pick: { key: 'file:src/new.py', nonce: 1 } });
+    expect(screen.queryByTestId('view-card')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-artifact-path="src/new.py"]').className).toContain('bg-indigo-50');
+  });
+
+  it('links a view to its panel under Artifacts', () => {
+    draw({ artifacts: {}, views: VIEWS, workspace: 'ws' });
+    expect(screen.getByTestId('artifact-open')).toHaveAttribute('href', '/artifacts?folder=__views__&view=v1');
   });
 
   it('shows each file as it is now by default, deleted files left out', async () => {

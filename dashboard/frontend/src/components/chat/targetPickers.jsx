@@ -1,6 +1,6 @@
 /**
- * The pickers in the top bar: an agent, a team, a flow, and the project the
- * conversation works in. One dropdown drawn four ways, so they line up and
+ * The pickers in the top bar: an agent, a team, a flow, the project the
+ * conversation works in, and who answers when the bar is narrow. One dropdown drawn four ways, so they line up and
  * behave alike: the same height as the mode toggle beside them, an icon in
  * the accent of what they pick, the name, and a list that closes on a click
  * outside or a pick.
@@ -124,6 +124,26 @@ function FlowDropdown({ flows, value, onChange }) {
   );
 }
 
+// Who answers, as the mode toggle offers it: its icon and accent.
+const MODES = [
+  { id: 'agent', icon: Bot, accent: 'indigo', label: 'chat.agent', hint: 'chat.chatWithASingleAgent' },
+  { id: 'flow', icon: Workflow, accent: 'emerald', label: 'chat.flow', hint: 'chat.chatWithAFlowEach' },
+  { id: 'team', icon: UsersRound, accent: 'amber', label: 'chat.team', hint: 'chat.handTheMessageToA' },
+];
+
+/** The mode toggle as a dropdown, where the bar has no room for three buttons. */
+function ModeDropdown({ value, onChange }) {
+  const { t } = useI18n();
+  const mode = MODES.find((m) => m.id === value) || MODES[0];
+  return (
+    <PickerDropdown
+      icon={mode.icon} accent={mode.accent} value={mode.id} onChange={onChange}
+      placeholder={t(mode.label)} title={t(mode.hint)} width="min-w-[240px]"
+      items={MODES.map((m) => ({ id: m.id, name: t(m.label), subtitle: t(m.hint) }))}
+    />
+  );
+}
+
 /** The project the conversation works in, or none. */
 function ProjectDropdown({ projects, value, onChange }) {
   const { t } = useI18n();
@@ -136,4 +156,4 @@ function ProjectDropdown({ projects, value, onChange }) {
   );
 }
 
-export { AgentDropdown, TeamDropdown, FlowDropdown, ProjectDropdown };
+export { AgentDropdown, TeamDropdown, FlowDropdown, ModeDropdown, ProjectDropdown };

@@ -6,7 +6,7 @@ import { useI18n } from '../../i18n';
 // bubble (so it must read well at bubble width) and, full-size, on /views/:id.
 // The spec is {language, filename, body, dependencies: [], version, description}
 // (dashboard contract, routes/views_code.py); nothing here mutates it — editing
-// lives in the Code panel (components/chat/CodePanel.jsx), which posts a new
+// lives in the chat's Artifacts panel (components/chat/CodePanel.jsx), which posts a new
 // version and lets the message bubble pick it up as a fresh view.
 //
 // The card's own header already names the view, so the block's header is the
