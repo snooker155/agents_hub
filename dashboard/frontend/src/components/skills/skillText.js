@@ -16,7 +16,13 @@ export function snapshotText(snapshot, t) {
     lines.push(`${t('skillsCatalog.history.fieldInstructions')}:`);
     lines.push(...String(snapshot.body).split('\n'));
   }
-  if ((snapshot.resources || []).length) {
+  const hashes = snapshot.files && typeof snapshot.files === 'object' ? snapshot.files : null;
+  if (hashes && Object.keys(hashes).length) {
+    // A repository skill: one line per file with the start of its hash, so a
+    // changed script shows as a changed line.
+    lines.push(`${t('skillsCatalog.history.fieldFiles')}:`);
+    Object.keys(hashes).sort().forEach((name) => lines.push(`${name} ${String(hashes[name]).slice(0, 12)}`));
+  } else if ((snapshot.resources || []).length) {
     lines.push(`${t('skillsCatalog.history.fieldFiles')}: ${snapshot.resources.join(', ')}`);
   }
   return lines.join('\n');

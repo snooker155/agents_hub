@@ -66,6 +66,15 @@ def content_of(procedure: Any) -> Dict[str, Any]:
         else:
             value = str(value or "")
         out[key] = value
+    # A skill read from a repository folder: the hash of each file next to
+    # its SKILL.md (memory/skill_import.py), so a changed script is a new
+    # version. Only present when known, so the content, and the hash, of a
+    # skill without one stays what it was.
+    files = source.get("files")  # a stored snapshot carries them at the top
+    if files is None and isinstance(source.get("repo"), dict):
+        files = source["repo"].get("files")
+    if isinstance(files, dict) and files:
+        out["files"] = {str(k): str(v) for k, v in sorted(files.items())}
     return out
 
 
@@ -183,11 +192,16 @@ def effective_content(procedure: Any) -> Dict[str, Any]:
     if pinned:
         row = get_version(str(procedure.id), int(pinned))
         if row is not None:
-            return {**content_of(row["snapshot"]), "version": row["version"], "pinned": True}
+            return {**_served(content_of(row["snapshot"])), "version": row["version"], "pinned": True}
         log.warning("skill %s is pinned to missing version %s; serving current",
                     procedure.id, pinned)
-    return {**content_of(procedure), "version": getattr(procedure, "version", None) or None,
+    return {**_served(content_of(procedure)), "version": getattr(procedure, "version", None) or None,
             "pinned": False}
+
+
+def _served(content: Dict[str, Any]) -> Dict[str, Any]:
+    """The content without the file hashes, which say nothing to an agent."""
+    return {k: v for k, v in content.items() if k != "files"}
 
 
 __all__ = [
