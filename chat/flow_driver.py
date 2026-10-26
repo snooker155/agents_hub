@@ -38,7 +38,12 @@ from chat.models import ChatRequest
 from chat.runs import utc_iso
 from chat.streaming import StreamDriveResult, drive_streaming_run
 
+from flow.branching import node_route
 from flow.engine import SKIP_REASON_TEXT, FlowEngineDriver, build_agent_input
+from flow.node_log import (
+    node_files as _node_files, node_log_ending, node_log_header, node_step_stats as _node_step_stats,
+    node_summary_line,
+)
 from flow.state import RunContext
 
 log = logging.getLogger(__name__)
@@ -55,31 +60,11 @@ class ChatFlowState:
     #: node_id → the conversation messages that node runs with. Only a root node
     #: has one: downstream nodes answer their predecessor, not the user.
     node_history: Dict[str, list] = field(default_factory=dict)
-
-
-def _node_step_stats(callback: Any, log_lines: list) -> dict:
-    """Step counts of a node run from what is in memory: tool calls (without
-    the think/plan pseudo-tools), failed ones, reasoning lines and files."""
-    history = [e for e in (getattr(callback, "tool_history", None) or []) if isinstance(e, dict)]
-    real = [e for e in history if e.get("tool") not in ("think", "plan")]
-    return {
-        "tools": len(real),
-        "errors": sum(1 for e in real if e.get("status") == "error"),
-        "thoughts": sum(1 for ln in (log_lines or [])
-                        if isinstance(ln, str) and ln.lstrip().startswith("[reasoning]")),
-        "files": len(_node_files(callback)),
-    }
-
-
-def _node_files(callback: Any) -> list:
-    """The files a node run changed, one per path (the last change wins), as
-    the run log shows them: the name and the link to the file's page, without
-    the diff, which stays on the run's process payload."""
-    files: dict = {}
-    for art in (getattr(callback, "artifact_history", None) or []):
-        if isinstance(art, dict) and art.get("path"):
-            files[art["path"]] = {k: art[k] for k in ("op", "path", "url") if art.get(k)}
-    return list(files.values())
+    #: node_id → the branch a switch or condition chose (see node_route).
+    node_route: Dict[str, dict] = field(default_factory=dict)
+    #: The provider, model, key and base URL of the last agent node that ran,
+    #: for the turn's summary (chat/flow_summary.py).
+    last_model: Dict[str, Any] = field(default_factory=dict)
 
 
 def build_chat_driver(
@@ -150,7 +135,7 @@ def build_chat_driver(
         # Log format mirrors the standard agent chat log so the chat-log parser in
         # routes/messages.py (_extract_chat_message_runs) picks up tool calls,
         # thinking entries, and token usage for the message-insights UI.
-        log_lines = [
+        log_lines = node_log_header(meta=[
             f"=== Chat message  run_id={run_id} ===",
             f"Started   : {started}",
             f"Agent     : {yaml_agent_id}",
@@ -160,15 +145,7 @@ def build_chat_driver(
             f"Flow      : {flow_name} ({request.flow_id})",
             f"Node      : {node_id} / {label}",
             f"Title     : {run_title}",
-            "",
-            f"=== Message at {started} id={node_msg_id} ===",
-            f"Agent: {yaml_agent_id}",
-            "",
-            "--- User message ---",
-            user_message,
-            "",
-            "--- Agent response (stream) ---",
-        ]
+        ], started=started, msg_id=node_msg_id, agent_id=yaml_agent_id, user_message=user_message)
         _write_log(log_file, log_lines)
         register_run(
             run_id, yaml_agent_id, task_id=conv_id, session_id=session_id,
@@ -239,6 +216,13 @@ def build_chat_driver(
                 flow_step=True,
             )
             callback.bind_model(agent.provider or "", agent.model or "")
+            # The turn's summary (chat/flow_summary.py) is written by the
+            # model of the last agent node that ran.
+            state.last_model = {
+                "provider": agent.provider, "model": agent.model,
+                "api_key": getattr(agent, "api_key", None),
+                "base_url": getattr(agent, "base_url", None),
+            }
             # The node's run id reaches its loop so a message sent to this
             # node while it works is read before its next step.
             from chat.pipelines import _run_id_kwargs
@@ -303,18 +287,11 @@ def build_chat_driver(
         # The sources the node's reply cites as [n] (common/citation_sink.py);
         # already on the node's run record as ``process.citations``.
         meta["citations"] = drive.citations
-        summary_line = (
-            f"[message_summary] id={node_msg_id} "
-            f"inbound_tokens={callback.prompt_tokens} "
-            f"outbound_tokens={callback.completion_tokens} "
-            f"total_tokens={callback.total_tokens} "
-            f"tool_calls={callback.tool_calls} "
-            f"duration_ms={drive.duration_ms}"
-        )
+        summary_line = node_summary_line(callback, node_msg_id, drive.duration_ms)
 
         if drive.stopped:
             _append_log(log_lines, summary_line, log_file)
-            _write_log(log_file, log_lines + ["(stopped by user)", "", f"Finished: {finished}", "Status  : stopped"])
+            _write_log(log_file, log_lines + ["(stopped by user)", *node_log_ending("stopped", finished)])
             _update_run(run_id, {"status": "stopped", "finished_at": finished, "exit_code": 1,
                                  "error": "stopped by user", "process": drive.process_payload})
             log_flow({
@@ -336,7 +313,7 @@ def build_chat_driver(
         if drive.ok:
             _append_log(log_lines, drive.response, log_file)
             _append_log(log_lines, summary_line, log_file)
-            _write_log(log_file, log_lines + ["", f"Finished: {finished}", "Status  : completed"])
+            _write_log(log_file, log_lines + node_log_ending("completed", finished))
             _update_run(run_id, {"status": "completed", "finished_at": finished,
                                  "exit_code": 0, "process": drive.process_payload})
             log_flow({
@@ -356,7 +333,7 @@ def build_chat_driver(
             err = drive.error or "unknown error"
             _append_log(log_lines, f"(error: {err})", log_file)
             _append_log(log_lines, summary_line, log_file)
-            _write_log(log_file, log_lines + ["", f"Finished: {finished}", "Status  : failed"])
+            _write_log(log_file, log_lines + node_log_ending("failed", finished))
             _update_run(run_id, {"status": "failed", "finished_at": finished, "exit_code": 1,
                                  "error": err, "process": drive.process_payload})
             log_flow({
@@ -397,6 +374,8 @@ def build_chat_driver(
             "state": ev.get("state"),
             # A turn that started at a node or ran again from one (chat/pipelines.py).
             **({"turn": ev["turn"]} if ev.get("turn") else {}),
+            # The turn's own id, which a summary written for it later names.
+            **({"turn_id": ev["turn_id"]} if ev.get("turn_id") else {}),
         })
 
     def _on_node_skip(ev: dict) -> None:
@@ -412,6 +391,23 @@ def build_chat_driver(
         })
 
     def _on_node_done(ev: dict) -> None:
+        # A node with no agent (a switch, a transform) logs its end here, as
+        # the task surface does (flow/task_driver.py), so a saved chat record
+        # shows what it did: its bubble, its log row, its status on the graph.
+        if not ev.get("is_agent") and not ev.get("stopped"):
+            route = node_route(ev, flow)
+            if route:
+                state.node_route[ev["node_id"]] = route
+            label = ev.get("label") or ev["node_id"]
+            log_flow({
+                "timestamp": utc_iso(), "type": "agent_finish" if ev.get("ok") else "agent_error",
+                "node_id": ev["node_id"], "agent_id": ev.get("entity_id"),
+                "agent_name": label, "tag": ev.get("category"), "entity": True,
+                "content": f"Completed {label}" if ev.get("ok") else f"{label} failed: {ev.get('error')}",
+                "status": "completed" if ev.get("ok") else "failed",
+                "output": (ev.get("output") or ev.get("text") or "") if ev.get("ok") else (ev.get("error") or ""),
+                **({"route": route} if route else {}),
+            })
         # The chat path logs agent_finish/error inside _run_agent_node, before the
         # engine applies output keys, so the state snapshot isn't available there.
         # Emit it now as a lightweight event the dashboard folds into runtime state.

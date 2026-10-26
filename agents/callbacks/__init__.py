@@ -6,7 +6,7 @@ shared token-usage / JSON-safe helpers they previously duplicated.
 
 - run_statistics: StatsCollectorCallback (base), RunStatsCallback, and the
                   to_json_safe / extract_token_usage / normalize_usage helpers.
-- control:   SharedProgressCallback, RunStopCallback, NodeFileCallback.
+- control:   SharedProgressCallback, RunStopCallback.
 - guards:    ToolRepetitionGuard (+ error), AskUserGuard (+ signal),
              ContextWindowGuard (+ error), RunBudgetGuard (+ RunBudgetExceeded).
 - streaming: SessionPublishCallback, ChannelPublishCallback.
@@ -22,7 +22,6 @@ from agents.callbacks.run_statistics import (
 from agents.callbacks.control import (
     SharedProgressCallback,
     RunStopCallback,
-    NodeFileCallback,
 )
 from agents.callbacks.guards import (
     ToolRepetitionGuard,
@@ -74,7 +73,6 @@ __all__ = [
     "turn_spend_usd",
     "RunBudgetExceeded",
     "RunStopCallback",
-    "NodeFileCallback",
     "ChannelPublishCallback",
     "SessionPublishCallback",
     "ChatStreamCallback",

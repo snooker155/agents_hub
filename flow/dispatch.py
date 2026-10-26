@@ -54,6 +54,11 @@ class DispatchResult:
     # A node that parks the run until a human answers (see InterruptEntity):
     # {"question", "choices", "output_key"}. None for every other node.
     interrupt: Optional[Dict[str, Any]] = None
+    #: NodeResult.detail, passed along to the node_done event.
+    detail: Optional[Dict[str, Any]] = None
+    #: An agent node's steps and files ({"stats", "files"}), for its line in
+    #: the flow log (flow/task_driver.py).
+    extras: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if self.written is None:
@@ -262,11 +267,13 @@ class EntityNode(FlowEntity):
 
         goto: Optional[List[str]] = None
         text = ""
+        detail: Optional[Dict[str, Any]] = None
         payload: Any = result
         if isinstance(result, NodeResult):
             payload = result.outputs
             goto = result.goto
             text = result.text
+            detail = result.detail
 
         try:
             if not outputs and isinstance(payload, dict):
@@ -287,7 +294,7 @@ class EntityNode(FlowEntity):
                 text = "; ".join(f"{k}={_preview(v)}" for k, v in written.items())
             else:
                 text = _preview(payload)
-        return DispatchResult(ok=True, text=text, written=written, goto=goto)
+        return DispatchResult(ok=True, text=text, written=written, goto=goto, detail=detail)
 
 
 

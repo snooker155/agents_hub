@@ -8,9 +8,9 @@ order, and the whole thing streams as it goes.
 A flow has two pages. The **editor** (`/flows/<id>/edit`) changes the graph
 and nothing else: palette on the left, canvas in the middle, the selected
 node or the graph settings on the right, Save and Export at the top. The
-**run page** (`/flows/<id>`) runs it: pick a task, Run, chat with the flow,
-follow the nodes live on a read only canvas, run one node on its own, and go
-through the history. A new, imported or generated flow opens in the editor;
+**run page** (`/flows/<id>`) runs it: chat with the flow (a task, files or
+other records go in as attachments), follow the nodes live on a read only
+canvas, run one node on its own, and go through the history under New chat. A new, imported or generated flow opens in the editor;
 links to a run (`?run=<id>`) open the run page. The editor's Run button saves
 first, the run page's Edit button leads back.
 
@@ -83,11 +83,32 @@ the flow run as its session. An n8n AI Agent's `output` is unwrapped.
 A flow is a graph fixed before the run, but three kinds of node decide while it
 runs which way it goes.
 
-**A switch** (`state_switch`) checks a state value against its cases in order
-and follows the first that holds: `equals`, `not_equals`, `contains`,
-`not_contains`, `matches` (a regular expression), `gt`, `gte`, `lt`, `lte`,
-`empty`, `not_empty`, `count_gt`, `count_lt`. `default` is taken when no case
-holds, and with `all_matches` every matching case runs. `state_branch` is the
+**A switch** (`state_switch`) has a list of routes: a next step and the
+conditions that lead there. Every condition names its own state key, an
+operator and a value: `equals`, `not_equals`, `contains`, `not_contains`,
+`matches` (a regular expression), `gt`, `gte`, `lt`, `lte`, `empty`,
+`not_empty`, `count_gt`, `count_lt`. A route's `match` is `all` (every
+condition holds) or `any` (one does). Routes are checked in order and the
+first that holds is followed; with `all_matches` every route that holds runs.
+`default` is taken when none holds, and a switch with no conditions goes
+there straight away.
+
+```yaml
+config:
+  routes:
+  - target: visualizer
+    match: all
+    conditions:
+    - {key: post, op: contains, value: cold}
+    - {key: tone, op: not_empty}
+  default: writer#2
+```
+
+A condition with `enabled: false` is switched off: it is not checked, and a
+route whose conditions are all off never holds. A condition that is on with no
+key, or with no value for an operator that compares, is refused before the run. A switch saved with the earlier shape (one `key` and
+`cases` of `op`, `value`, `target`) still runs, and the editor saves it in the
+new shape on the first change. `state_branch` is the
 two-way version for a truthy key.
 
 **An agent that picks the next step.** Set **Next step** on an agent node with
@@ -142,6 +163,22 @@ streams per-node progress; it does not block the conversation. In the default
 (all-in-one) role the flow starts at once in-process; in the `api` role the
 launch is queued and a worker spawns it on its own host.
 
+**A run is not a task.** A flow started by an agent, a schedule, a trigger,
+another flow or the API makes no task: it is a run, listed in the flow's
+History as a background run. A run works on a task only when it is given one
+(a person assigned the flow to a task, or `run_flow_tool` with `create_task`
+because the user asked to track it); then it records its result on that task
+and closes it.
+
+**Two surfaces, one record.** The flow chat runs a turn inside the server and
+streams it to the page; every other run (on a task, a loop's pass, a nested
+flow, a scheduled or agent-started run) is a background process
+(flow/task_driver.py). Both watch each agent node with the same chat callback
+(agents.callbacks.ChatStreamCallback) and write its log with flow/node_log.py,
+so a node's input, thoughts, tool calls, changed files, touched records and
+cited sources are recorded, and read back in the History and the Logs, the
+same way wherever it ran.
+
 Nodes that do not depend on each other run at the same time. A node starts as
 soon as every node feeding it has finished, up to `max_parallel` (4 unless the
 flow says otherwise), so two branches of a fan-out are two branches in fact and
@@ -176,9 +213,11 @@ and the flow moves on according to `on_error`.
 
 ## Asking a person mid-flow
 
-A **human interrupt** node stops the flow and asks. The task goes to
-`awaiting_input` with the question on it, exactly as an agent's `ask_user` does,
-and the run writes a checkpoint and ends. Answering resumes the flow from that
+A **human interrupt** node stops the flow and asks. A run on a task puts the
+task in `awaiting_input` with the question on it, exactly as an agent's
+`ask_user` does; a run without one sends the question to the bell, and it is
+answered in the run's History record on the flow page. Either way the run
+writes a checkpoint and ends. Answering resumes the flow from that
 checkpoint with the answer in flow state under the node's output key, so the
 node after it reads what the person actually said. In flow chat, where there is
 no task to park, the node simply answers with its question.
@@ -211,10 +250,9 @@ child's initial state; `params` are fixed values laid under them.
 
 **Launching.** The node starts the child through that kind's own launcher
 (teams/launcher.py, loops/launcher.py, flow/launcher.py) with the flow run as
-`parent_run_id`, in the flow's workspace. The child gets a task of its own
-rather than the parent's: a team or loop claims the task it is handed and closes
-it when it ends, and a flow closes its task on its last node, either of which
-would close the parent's task while the parent is still running.
+`parent_run_id`, in the flow's workspace. The child gets no task, neither its
+own nor the parent's: a team, loop or flow handed a task closes it when it
+ends, which would close the parent's task while the parent is still running.
 
 **Waiting.** The node polls the child's entity run every 2 seconds until it is
 completed, stopped or failed. It writes the child's result into its output key

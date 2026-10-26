@@ -266,8 +266,32 @@ def combined_output(results: Sequence[Dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+
+def node_route(ev: dict, flow: Dict[str, Any]) -> Optional[dict]:
+    """What a node that picks the next step chose, for the chat bubble:
+    ``{"targets": [{node_id, label}], "on": "key=value"}``. The ``on`` part
+    is the condition half of the node's summary (state_switch/state_branch
+    write ``key=value → target``). None for a node that chose nothing."""
+    goto = ev.get("goto")
+    if goto is None:
+        return None
+    labels = {}
+    for n in flow.get("nodes") or []:
+        data = n.get("data") if isinstance(n.get("data"), dict) else {}
+        labels[n.get("id")] = n.get("label") or data.get("label") or n.get("id")
+    text = str(ev.get("text") or "")
+    detail = ev.get("detail") if isinstance(ev.get("detail"), dict) else None
+    return {
+        "targets": [{"node_id": t, "label": labels.get(t) or t} for t in goto],
+        "on": text.rsplit(" → ", 1)[0] if " → " in text else "",
+        # The condition itself (state_switch/state_branch), for the bubble
+        # to say what was tested and whether it held; `on` is the fallback.
+        **({"detail": detail} if detail else {}),
+    }
+
+
 __all__ = [
     "DEFAULT_ITEM_PARALLEL", "DEFAULT_MAX_ITEMS", "MAP_CATEGORY", "MAP_ENTITY_ID", "MAX_ITEMS_LIMIT",
     "combined_output", "fence_item", "is_map_node", "item_node_id", "item_task", "items_from", "map_config",
-    "parse_route", "route_instructions", "route_mode", "route_targets",
+    "node_route", "parse_route", "route_instructions", "route_mode", "route_targets",
 ]
