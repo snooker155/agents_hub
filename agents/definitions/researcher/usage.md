@@ -11,7 +11,7 @@ Good fits:
 Poor fits:
 - Reading whole web pages: it sees search results only; the Web Search Agent opens pages
 - Reading a single known file — any agent with filesystem access does that
-- Editing or generating code — use the SWE or Developer Agent
+- Editing or generating code — use the Coder (`@coder`)
 
 How to invoke:
 - State the question and what would count as an answer

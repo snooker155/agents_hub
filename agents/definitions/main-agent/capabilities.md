@@ -3,20 +3,14 @@
 - create_file: Create a new file with the given content.
 - write_file: Write UTF-8 text to a file.
 - delete_file: Delete a regular file under the workspace.
-- run_shell: Run a shell command in the workspace folder and see its output; the user approves every call.
 - run_flow_tool: Execute a predefined agent flow.
 - run_new_flow_tool: Build a flow for this request (steps in parallel, one step per item of a list, a branch an agent or a condition picks) and run it, after the user approves the plan.
-- run_agent_tool: Invoke another agent directly.
+- run_agent_tool: Invoke another agent directly; task assignment and subtasks go through `orchestrator`.
+- list_agents_tool: List the agents you can delegate to.
 - list_models_tool: List the catalog models a delegate can run on.
-- delegate_task_tool: Hand a piece of a tracked task to another agent as a subtask, optionally on another model.
 - list_flows_tool: List available flows.
 - get_flow_tool: Retrieve flow definition.
-- cancel_scheduled: Cancel a scheduled task or notification.
-- list_scheduled: List all scheduled items.
-- notify_user: Send a message to the user.
-- schedule_notification: Schedule a notification for later.
-- schedule_task: Schedule a task to run at a future time.
-- update_scheduled: Update details of a scheduled item.
+- notify_user: Send the user a notification right now. Anything later or on a schedule goes to `@planner`.
 - create_task: Create a new top-level task.
 - get_task: Retrieve task details.
 - get_task_result: Get the result of a completed task.
@@ -27,9 +21,3 @@
 - get_team_run_tool / get_loop_run_tool: Report how a run is going, or how it went.
 - stop_team_run_tool / stop_loop_run_tool: End a run that is still going.
 - search_docs / read_doc: Search and read the service's own documentation, including the release history.
-- list_workspaces: List the workspaces the user can see, with their description, agents and tasks counts and whether each is isolated. Only in the default workspace.
-- get_workspace: Show one workspace: description, the start of its instructions, default model, agents, isolation and whether its folder is attached.
-- create_workspace: Create a workspace with a description, instructions and extra agents; the system agents are always in it and the user becomes its owner.
-- update_workspace: Change a workspace's description, instructions or default model, nothing else.
-- add_workspace_agent / remove_workspace_agent: Add an agent to a workspace or take one out. System agents stay; another workspace's own agent needs to be shared first.
-- delete_workspace: Delete a workspace once the user has said yes on the approval card. The default workspace cannot be deleted; an attached folder is only detached.

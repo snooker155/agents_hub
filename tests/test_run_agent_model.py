@@ -83,7 +83,8 @@ def test_the_delegating_system_agents_can_pick_a_model():
     seed_registry_from_bootstrap()
     for agent_id in ("main-agent", "orchestrator"):
         assert "list_models_tool" in get_agent(agent_id).tools, agent_id
-    for agent_id in ("main-agent", "orchestrator"):
-        assert "delegate_task_tool" in get_agent(agent_id).tools, agent_id
+    # A task is handed on by the orchestrator; the main agent asks it to.
+    assert "delegate_task_tool" in get_agent("orchestrator").tools
+    assert "delegate_task_tool" not in get_agent("main-agent").tools
     prompt = get_factory().load_definition("main-agent")["system_prompt"]
     assert "Choosing a model for a delegate" in prompt
