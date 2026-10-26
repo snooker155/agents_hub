@@ -280,3 +280,11 @@ def test_the_roles_api(two_workspaces, client):
     assert client.put(f"/api/workspaces/{WS}/roles/janitor", json={"agent_id": "codex"}).status_code == 404
     assert client.put(f"/api/workspaces/{WS}/roles/coder", json={"agent_id": None}).status_code == 200
     assert roles.bindings(WS) == {}
+
+
+def test_the_prompt_names_only_the_role_tools_the_agent_has(two_workspaces):
+    spec = _spec("lead", delegates=["@coder"])
+    text = roles.prompt_section(spec, WS, ["run_agent_tool", "read_file"])
+    assert "(run_agent_tool)" in text
+    assert "delegate_task_tool" not in text and "assign_agent_tool" not in text
+    assert "delegate_task_tool" in roles.prompt_section(spec, WS)

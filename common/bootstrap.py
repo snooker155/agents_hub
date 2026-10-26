@@ -188,10 +188,21 @@ _SEED_OWNED_FIELDS = ("description", "system", "delegates", "handoffs",
                       # A shipped child: its parent and its own list
                       # deltas are part of its design too.
                       "extends", "list_deltas",
-                      # A shipped exception to the capability guard (the main
+                      # A shipped exception to the capability guard (the SWE
                       # agent's run_shell) comes with the tool that needs it,
                       # and so does the approval that keeps it bounded.
                       "capability_override", "tool_policy")
+
+# Tools a shipped seed once granted and has since taken back on purpose. The
+# merge below never drops a tool on its own, so without this an install that
+# predates the change keeps the grant, and loses the approval policy that came
+# with it once the seed's ``tool_policy`` no longer names it. Only unedited
+# records are touched, like every other seed field.
+_SEED_WITHDRAWN_TOOLS: dict[str, frozenset[str]] = {
+    # Shell is a developer's tool: it moved to swe_agent. Handing a task to
+    # another agent goes through the orchestrator.
+    "main-agent": frozenset({"run_shell", "delegate_task_tool"}),
+}
 
 
 def _is_system_seed(ad: dict) -> bool:
@@ -294,6 +305,13 @@ def _sync_system_agents() -> list[str]:
         live_tools = list(ad.get("tools") or [])
         seed_tools = list(seed.get("tools") or [])
         extra = [t for t in live_tools if t not in seed_tools]
+        withdrawn = [t for t in extra if t in _SEED_WITHDRAWN_TOOLS.get(ad.get("id"), ())]
+        if withdrawn:
+            log.warning(
+                "system agent sync: %r drops %s — the shipped agent no longer has them.",
+                ad.get("id"), withdrawn,
+            )
+            extra = [t for t in extra if t not in withdrawn]
         retired = [t for t in extra if not _recognised(t)]
         if retired:
             log.warning(

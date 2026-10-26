@@ -254,7 +254,7 @@
       "name": "Planner Agent",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Turns a project's plans and structure into an actionable task tree. Reads the project's architecture and process views and any documentation, then creates, sequences, and maintains tasks and subtasks in the shared tracker — without doing the implementation work itself.",
+      "description": "Plans the work and when it runs. Turns a project's plans and structure into an actionable task tree in the shared tracker, and owns the workspace's schedules and deployments: reminders, agent work, flows and memory consolidation at a set time or on a recurrence, with their resources, auto pause and firing journal. It plans and schedules; it does not do the work itself.",
       "domain": "System",
       "system": true,
       "tools": [
@@ -269,7 +269,22 @@
         "get_task_result",
         "calculator",
         "search_docs",
-        "read_doc"
+        "read_doc",
+        "schedule_notification",
+        "schedule_task",
+        "schedule_flow",
+        "schedule_loop",
+        "schedule_memory_consolidation",
+        "list_scheduled",
+        "get_scheduled",
+        "update_scheduled",
+        "cancel_scheduled",
+        "pause_scheduled",
+        "resume_scheduled",
+        "run_scheduled_now",
+        "list_agents_tool",
+        "list_flows_tool",
+        "list_loops_tool"
       ],
       "commands": [
         {
@@ -281,6 +296,11 @@
           "name": "/plan-from-view",
           "description": "Create tasks from a specific project view",
           "template": "/plan-from-view view="
+        },
+        {
+          "name": "/schedule",
+          "description": "Schedule a reminder, agent work, a flow or a memory consolidation",
+          "template": "/schedule "
         }
       ],
       "capacity": 1,
@@ -459,6 +479,7 @@
         "search_text",
         "apply_unified_diff",
         "create_file",
+        "run_shell",
         "read_memory",
         "search_docs",
         "read_doc"
@@ -506,7 +527,11 @@
       "default_workspace_only": false,
       "shared": true,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "capability_override": true,
+      "tool_policy": {
+        "run_shell": "always_ask"
+      }
     },
     {
       "id": "code_reviewer",
@@ -660,21 +685,14 @@
         "create_file",
         "write_file",
         "delete_file",
-        "run_shell",
         "run_flow_tool",
         "run_new_flow_tool",
         "run_agent_tool",
-        "delegate_task_tool",
         "list_models_tool",
         "list_flows_tool",
         "list_agents_tool",
         "get_flow_tool",
-        "cancel_scheduled",
-        "list_scheduled",
         "notify_user",
-        "schedule_notification",
-        "schedule_task",
-        "update_scheduled",
         "get_task",
         "list_tasks",
         "create_task",
@@ -711,9 +729,7 @@
         "ask_special_model"
       ],
       "capability_override": true,
-      "tool_policy": {
-        "run_shell": "always_ask"
-      },
+      "tool_policy": {},
       "commands": [],
       "capacity": 1,
       "memory_type": "none",
