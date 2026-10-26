@@ -51,17 +51,12 @@ def test_start_loop_run_creates_a_pending_record_and_dispatches_a_loop_spec(no_r
     assert run.status == "pending"
     assert run.loop_id == loop.loop_id
     assert run.goal == "write it"
-    assert run.task_id and run.session_id
+    # A run is not a task: none is made for it.
+    assert run.task_id is None and run.session_id
 
     rec = store.RUNS.read(run.loop_run_id)
     assert rec["log_file"] and "loop_run_" in rec["log_file"]
     assert rec["seed"] == {"topic": "x"}
-
-    # The task names the loop as its executor, with this run's id.
-    from tasks import service as ts
-    task = ts.get_task(run.task_id)
-    assert task.executor.kind == "loop" and task.executor.id == loop.loop_id
-    assert task.assigned_agent_run_id == run.loop_run_id
 
     assert len(no_real_spawn) == 1
     spec = no_real_spawn[0]
@@ -71,6 +66,18 @@ def test_start_loop_run_creates_a_pending_record_and_dispatches_a_loop_spec(no_r
     assert spec["cli_args"] == ["--run-id", run.loop_run_id]
     assert spec["execution_mode"] == "local"
     assert spec["resume"] is False
+
+
+def test_a_loop_hung_on_a_task_names_itself_its_executor(no_real_spawn):
+    from tasks import service as ts
+    loop = _loop()
+    task = ts.create_task(title="Polish the copy", description="", workspace="default")
+    run = start_loop_run(loop.loop_id, "write it", task_id=str(task.id))
+
+    assert run.task_id == str(task.id)
+    task = ts.get_task(run.task_id)
+    assert task.executor.kind == "loop" and task.executor.id == loop.loop_id
+    assert task.assigned_agent_run_id == run.loop_run_id
 
 
 def test_start_loop_run_refuses_an_unknown_loop_or_a_missing_flow(no_real_spawn):
@@ -238,6 +245,24 @@ def test_the_run_route_returns_the_record(no_real_spawn):
     body = resp.json()
     assert body["loop_id"] == loop.loop_id and body["status"] == "pending"
     assert len(no_real_spawn) == 1
+
+
+def test_the_run_route_reads_attached_files_and_tasks(no_real_spawn):
+    from tasks import service as ts
+    loop = _loop()
+    task = ts.create_task(title="Polish the copy", description="the brief", workspace="default")
+    resp = _client().post(f"/api/loops/{loop.loop_id}/run", json={
+        "goal": "write it", "workspace": "default",
+        "attachments": [{"filename": "notes.txt", "content": "use short words"}],
+        "references": [{"kind": "task", "id": str(task.id)}],
+    })
+    assert resp.status_code == 200, resp.text
+    run = store.get_run(resp.json()["loop_run_id"])
+    assert run.goal == "write it"
+    assert "use short words" in run.context and "Polish the copy" in run.context
+    assert {"kind": "file", "label": "notes.txt"} in run.attached
+    # An attached task is the one the loop works on.
+    assert run.task_id == str(task.id)
 
 
 def test_the_resume_route_relaunches_and_400s_without_a_position(no_real_spawn):

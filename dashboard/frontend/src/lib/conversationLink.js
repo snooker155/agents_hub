@@ -12,7 +12,7 @@ const enc = encodeURIComponent;
 
 const ENTITY_CHATS = {
   view: (id) => `/views/${enc(id)}`,
-  loop: (id) => `/loops?loop=${enc(id)}`,
+  loop: (id) => `/loops/${enc(id)}`,
   team: (id) => `/teams/${enc(id)}`,
   agentdef: (id) => `/agents/${enc(id)}`,
   projects: () => '/projects',

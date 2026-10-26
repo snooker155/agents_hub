@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { I18nProvider } from '../../../i18n';
 import { FlowLog } from '../FlowLog';
@@ -24,6 +24,17 @@ describe('FlowLog: a node\'s row, its input and the files in its output', () => 
         content: 'Running Writer', input: 'Write the report', turn: { timeline: [] } },
     ]);
     expect(screen.getByText('Write the report')).toBeInTheDocument();
+  });
+
+  it('takes a finished node\'s input from its run when the line has none (a task run, a loop pass)', async () => {
+    api.getRunTrail.mockResolvedValue({ data: { run_id: 'r9', timeline: [], files: [], input: 'Research coffee trends' } });
+    show([
+      { type: 'agent_start', node_id: 'n1', agent_name: 'Researcher', timestamp: '2026-10-22T10:00:01Z' },
+      { type: 'agent_finish', node_id: 'n1', agent_name: 'Researcher', timestamp: '2026-10-22T10:00:09Z',
+        run_id: 'r9', output: 'notes' },
+    ]);
+    expect(await screen.findByText('Research coffee trends')).toBeInTheDocument();
+    expect(api.getRunTrail).toHaveBeenCalledWith('r9');
   });
 
   it('links the files a finished node saved on its line, without the diff', () => {
@@ -75,7 +86,7 @@ describe('FlowLog: a node\'s row, its input and the files in its output', () => 
         <FlowLog logs={[]} initialState={{ user_request: 'Weekly digest' }} nodeStatuses={[]} />
       </I18nProvider></MemoryRouter>,
     );
-    expect(screen.getByText('Weekly digest')).toBeInTheDocument();
+    expect(screen.getByText('"Weekly digest"')).toBeInTheDocument();
   });
 
   it('lets a run\'s snapshot replace the starting state', () => {
@@ -88,7 +99,34 @@ describe('FlowLog: a node\'s row, its input and the files in its output', () => 
         />
       </I18nProvider></MemoryRouter>,
     );
-    expect(screen.getByText('Today only')).toBeInTheDocument();
-    expect(screen.queryByText('Weekly digest')).toBeNull();
+    expect(screen.getByText('"Today only"')).toBeInTheDocument();
+    expect(screen.queryByText('"Weekly digest"')).toBeNull();
+  });
+
+  it('shows the state as one JSON object, a long value cut to two lines until clicked', () => {
+    const long = 'word '.repeat(200).trim();
+    render(
+      <MemoryRouter><I18nProvider>
+        <FlowLog
+          logs={[{ type: 'flow_start', timestamp: '2026-10-22T10:00:00Z', state: { user_request: long, items: [1, 2] } }]}
+          nodeStatuses={[]}
+        />
+      </I18nProvider></MemoryRouter>,
+    );
+    expect(screen.getByText('"user_request"')).toBeInTheDocument();
+    expect(screen.getByText('[1,2]')).toBeInTheDocument();
+    const lines = screen.getAllByTestId('state-line');
+    const line = lines.find((el) => el.textContent.includes('"user_request"'));
+    expect(line).toHaveClass('line-clamp-2');
+    // On the line the value is cut; a click shows the whole of it in a modal.
+    expect(screen.queryByText(JSON.stringify(long))).toBeNull();
+    fireEvent.click(line);
+    // The modal holds the whole state, not just the line clicked.
+    const modal = screen.getByTestId('process-step-modal');
+    expect(within(modal).getByText(long)).toBeInTheDocument();
+    expect(within(modal).getByText('items')).toBeInTheDocument();
+    // A list of fields, nothing to fold.
+    expect(within(modal).queryByRole('button', { expanded: true })).toBeNull();
+    expect(line).toHaveClass('line-clamp-2');
   });
 });

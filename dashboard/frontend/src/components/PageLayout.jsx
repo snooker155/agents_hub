@@ -221,13 +221,20 @@ export const AppBar = ({
   backTo,
   backLabel,
   badges,
+  // Controls that belong on the title line, between it and the actions (the
+  // flow run page's Canvas / Chat / Artifacts switch). `titleClassName` sizes
+  // the title part, so a page can line them up over a column of its own.
+  center,
+  titleClassName = 'flex-1',
+  // A long title wraps onto a second line instead of being cut off.
+  titleWrap = false,
   actions,
 }) => {
   const { t } = useI18n();
   const back = backLabel ?? t('common.back');
   return (
   <div className="flex h-14 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-3 sm:px-6">
-    <div className="flex min-w-0 flex-1 items-center gap-2">
+    <div className={`flex min-w-0 items-center gap-2 ${titleClassName}`}>
       {backTo && (
         <>
           <Link
@@ -240,11 +247,15 @@ export const AppBar = ({
         </>
       )}
       {Icon && <Icon className="h-4 w-4 shrink-0 text-indigo-600" />}
-      <h1 className="truncate text-base font-bold text-gray-900">{title}</h1>
+      <h1
+        className={`text-base font-bold text-gray-900 ${titleWrap ? 'line-clamp-2 break-words leading-tight' : 'truncate'}`}
+        title={titleWrap && typeof title === 'string' ? title : undefined}
+      >{title}</h1>
       <InfoHint text={subtitle} label={t('common.aboutPage')} />
       {badges}
     </div>
-    {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+    {center && <div className="flex shrink-0 items-center">{center}</div>}
+    {actions && <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
   </div>
   );
 };

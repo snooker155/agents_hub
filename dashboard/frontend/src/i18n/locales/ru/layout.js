@@ -79,6 +79,7 @@ export default {
     flowEditor: 'Редактор потока',
     flowRun: 'Запуск потока',
     loops: 'Циклы',
+    loop: 'Цикл',
     teams: 'Команды',
     team: 'Команда',
     registry: 'Реестр',

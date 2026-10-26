@@ -24,7 +24,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # Hard ceilings a loop definition can never exceed. An unbounded loop of LLM
 # calls is the single most expensive mistake this feature makes possible, so
@@ -238,6 +238,11 @@ class LoopRun:
     # of the process that started it, so it is born ``running``.
     status: str = "running"
     goal: str = ""
+    #: What was attached to the request (files and hub records), rendered as
+    #: prompt blocks: every pass works from ``goal`` plus this. ``attached``
+    #: names them for the page ({kind, label}).
+    context: str = ""
+    attached: List[Dict[str, str]] = field(default_factory=list)
     task_id: Optional[str] = None
     session_id: Optional[str] = None
     # The run this one executes inside (a flow node that is a loop), if any.
@@ -270,6 +275,7 @@ class LoopRun:
         return {
             "loop_run_id": self.loop_run_id, "loop_id": self.loop_id,
             "workspace": self.workspace, "status": self.status, "goal": self.goal,
+            "context": self.context, "attached": list(self.attached),
             "task_id": self.task_id, "session_id": self.session_id,
             "parent_run_id": self.parent_run_id,
             "iterations_done": self.iterations_done,

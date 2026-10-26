@@ -77,7 +77,7 @@ function entityLink(group) {
     case 'team':
       return group.parent_id ? `/teams/${group.parent_id}?run=${group.id}` : null;
     case 'loop':
-      return group.parent_id ? `/loops?loop=${group.parent_id}&run=${group.id}` : '/loops';
+      return group.parent_id ? `/loops/${encodeURIComponent(group.parent_id)}/runs/${encodeURIComponent(group.id)}` : '/loops';
     case 'container':
       return `/tasks/${group.id}`;
     case 'scenario':

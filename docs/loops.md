@@ -30,6 +30,37 @@ The run goes to the background and returns its id; iterations appear on the page
 as they complete. `get_loop_run_tool` reports progress, `stop_loop_run_tool`
 ends it.
 
+## The pages
+
+`/loops` lists the loops with each one's last run (status, score, passes). A
+loop has a page of its own at `/loops/{id}`, and each of its runs an address
+at `/loops/{id}/runs/{run_id}`:
+
+- the graph of the flow the loop repeats, the node that is working lit. The
+  Graph button in the header folds it away and back.
+- under it, **Run**, **Setup** and **Artifacts**. Run is drawn as the flow
+  page's chat: what the run was asked for is the person's message (with what
+  was attached to it), each pass is a reply with its score and verdict, its
+  output (a few lines, the whole of it in a modal), the reviewer's comments,
+  the rubric criteria and what was fed into the next pass, and the outcome
+  closes the run, whole. The box at the foot asks for the next run (Enter or
+  the round button starts it, the button stops a live one) and takes files and
+  hub records as the flow chat's box does. Artifacts holds the files and views
+  the passes' node runs produced, as on the flow page.
+- on the left, **New run** over the run history, newest first, with Resume on
+  a run that can be picked up again
+- on the right, the scores across the run pinned on top and under them the
+  work log of each pass (`GET /api/loops/runs/{id}/log`, one entry per
+  iteration)
+- the Loop Creator, opened from the header into a column at the right edge
+  from 2xl, over the page on a narrower screen.
+
+A run is not a task: starting one from the page or from the Loop Creator makes
+no task. A loop works on a task only when it is given one: `task_id` on
+`POST /api/loops/{id}/run`, or a task attached in the run box. What is attached
+is rendered as it is for a chat turn and every pass works from the request
+plus it (`context` on the run record, `attached` names it for the page).
+
 ## Checkpoint and resume
 
 A loop runs as a process of its own, launched through the same envelope as a flow, a team and a scenario: `POST /api/loops/{id}/run` writes a `pending` record and spawns `runtime/loop_run.py` right there, or queues it for a worker in the `api` role, so a loop keeps running whatever happens to the backend that started it. The iterations run the flow engine inside that process. The run beats a heartbeat every 15 seconds and again as each flow node finishes.
@@ -43,7 +74,7 @@ whose heartbeat has gone quiet by itself, up to 2 times. Iterations already done
 keep their rows and their scores: a resume continues the trajectory rather than
 starting a new one.
 
-A loop run claims its task as executor kind `loop`. Retry and review now apply:
+A loop run on a task claims it as executor kind `loop`. Retry and review now apply:
 the workspace's orchestrator retries a failed loop up to `orchestrator.max_retries`
 times, and review starts on every resolve when the code_reviewer agent is available.
 
