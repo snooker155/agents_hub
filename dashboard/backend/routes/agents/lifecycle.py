@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 from agents import registry
 from agents import prompt_assembly
+from common.marketplace_names import agent_name_taken
 from agents.capability_guard import (
     CapabilityViolation,
 )
@@ -245,6 +246,10 @@ async def update_agent_sharing(agent_id: str, data: AgentSharingUpdate):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if data.shared:
+        taken = agent_name_taken(spec.name, exclude=[spec.id])
+        if taken:
+            raise HTTPException(status_code=409, detail=taken)
 
     # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
     # every field added to AgentSpec after it was written (delegates, handoffs,

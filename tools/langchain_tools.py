@@ -34,7 +34,7 @@ from agents.agent_launcher import (
 from common.entity_sink import record_entity
 from common.untrusted import agent_output_fence
 from common.workspace_context import filter_agents_for_workspace
-from common.workspace_scope import check_record, current_agent, is_service_wide
+from common.workspace_scope import check_record, current_agent, is_service_wide, same_workspace
 from common.session_service import get_or_create_task_session, add_run_to_session
 from tasks.context import augment_params_with_block_reason
 from tasks.service import (
@@ -770,6 +770,27 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
 
 # -------------------- Flow tools --------------------
 
+def _workspace_flows(ws: Optional[str]) -> List[Dict[str, Any]]:
+    """The flows of workspace ``ws`` and of no other: the ids in its
+    ``allowed_flows`` when it keeps that list (what its Flows page lists),
+    else the flows it owns, a flow that names no workspace being the default
+    one's (``same_workspace``). A call with no workspace (the CLI, a
+    service-wide agent) sees every flow.
+
+    The default workspace goes by ownership: its page shows every
+    workspace's flows, and its list only names some of its own.
+    """
+    from flow import store as flow_store
+    from workspace.storage import get_workspace_metadata
+    if not ws:
+        return flow_store.list_flows()
+    allowed = None if same_workspace(None, ws) else get_workspace_metadata(ws).get("allowed_flows")
+    if allowed is not None:
+        wanted = {str(fid) for fid in allowed}
+        return [f for f in flow_store.list_flows() if str(f.get("id")) in wanted]
+    return [f for f in flow_store.list_flows() if same_workspace(f.get("workspace"), ws)]
+
+
 @tool("list_flows_tool")
 def list_flows_tool() -> str:
     """List the agent flows available in the active workspace.
@@ -779,19 +800,15 @@ def list_flows_tool() -> str:
     ask them which one to run. Returns JSON with an array of flows, each with
     `id`, `name`, `description`, and `running` (whether an instance is active).
 
-    Only flows belonging to the active workspace (or with no workspace set) are
-    returned. After listing, ASK the user to pick a target flow and confirm —
+    Only the flows of the active workspace are returned, the ones its Flows
+    page lists. After listing, ASK the user to pick a target flow and confirm —
     then call run_flow_tool with the chosen flow_id.
     """
     try:
-        from flow import store as flow_store
         ws = _active_workspace()
         flows = []
-        for f in flow_store.list_flows():
+        for f in _workspace_flows(ws):
             f_ws = f.get("workspace")
-            # A flow with no workspace is shared by every workspace.
-            if ws and f_ws and check_record(f_ws, what="flow", workspace=ws):
-                continue
             flows.append({
                 "id": f.get("id"),
                 "name": f.get("name") or f.get("id"),
@@ -828,15 +845,18 @@ def launch_flow_run(flow_id: str, flow: Dict[str, Any], ws_name: Optional[str], 
         )
 
     params = {"workspace": ws_name, "description": desc, "title": f"Flow: {flow_name}"}
-    run_id, session_id = flow_launcher.start_flow_run(str(task.id) if task else None, flow_id, params)
+    # Started from a chat: the chat is told when it ends (chat/background_runs.py).
+    from chat.background_runs import ORIGIN_KEY, chat_origin, started_note
+    origin = chat_origin()
+    run_id, session_id = flow_launcher.start_flow_run(
+        str(task.id) if task else None, flow_id, params,
+        record={ORIGIN_KEY: origin} if origin else None,
+    )
     if task is not None:
         svc_assign_agent(task.id, "flow-custom-graph", params, run_id=run_id)
 
     payload: Dict[str, object] = {
-        "message": (
-            f"Flow '{flow_name}' started. It runs in the background — report this "
-            "to the user; do not poll for completion."
-        ),
+        "message": started_note("flow", flow_name, from_chat=bool(origin)),
         "flow_id": flow_id,
         "flow_name": flow_name,
         "run_id": run_id,
@@ -891,9 +911,8 @@ def run_flow_tool(
     set user_approved yourself without a clear "yes, run it" from the user.
 
     Launches the flow as a background process. Returns JSON with the run_id,
-    session_id, and task_id (an internal task that drives execution; omitted from
-    the user unless create_task was requested). The flow runs asynchronously —
-    report that it has started; do not poll for completion here.
+    session_id, and the task_id only when create_task made one. The flow runs
+    asynchronously: report that it has started; do not poll for completion here.
     """
     try:
         from common.auto_mode import approved as _approved
@@ -914,7 +933,7 @@ def run_flow_tool(
 
         ws = _active_workspace()
         flow_ws = flow.get("workspace")
-        if flow_ws and check_record(flow_ws, what="flow", workspace=ws):
+        if check_record(flow_ws, what="flow", workspace=ws):
             return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
 
         ws_name = flow_ws or ws

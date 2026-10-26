@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from agents import registry, prompt_assembly
 from agents.agent_factory import get_factory
+from common.marketplace_names import is_marketplace_agent, is_marketplace_flow
 from flow import store as flow_store
 from tools.registry import get_all_tools
 from workspace import is_system_agent, get_workspace_metadata
@@ -27,24 +28,10 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketplace", tags=["marketplace"])
 
 
-def _is_marketplace_agent(spec: registry.AgentSpec) -> bool:
-    """An agent is listed on the marketplace when explicitly published.
-
-    When the hub requires review (``AGENTS_HUB_REGISTRY_REQUIRE_REVIEW``,
-    agents/registry.py), a shared agent still needs ``review_status ==
-    "approved"`` to appear here; with the toggle off, sharing alone is enough,
-    exactly as before this feature existed — an install that never turns the
-    toggle on sees no change to what the marketplace lists.
-    """
-    if is_system_agent(spec.id):
-        return False
-    if spec.default_workspace_only:
-        return False
-    if not spec.shared:
-        return False
-    if registry.registry_review_required() and spec.review_status != "approved":
-        return False
-    return True
+# What "published" means lives with the one-name-per-kind rule
+# (common/marketplace_names.py), the review requirement included.
+_is_marketplace_agent = is_marketplace_agent
+_is_marketplace_flow = is_marketplace_flow
 
 
 def _agent_in_workspace(spec: registry.AgentSpec, workspace: Optional[str]) -> bool:
@@ -99,18 +86,6 @@ async def list_marketplace_agents(workspace: Optional[str] = None):
         })
     items.sort(key=lambda a: a["name"].lower())
     return items
-
-
-def _is_marketplace_flow(flow: Dict[str, Any]) -> bool:
-    """A flow is listed on the marketplace when shared and, if the hub
-    requires review (``AGENTS_HUB_REGISTRY_REQUIRE_REVIEW``, common/review.py,
-    shared with agents and skills), also approved. Off, sharing alone is
-    enough, exactly as before this feature existed."""
-    if not flow.get("shared"):
-        return False
-    if registry.registry_review_required() and flow.get("review_status") != "approved":
-        return False
-    return True
 
 
 def _flow_in_workspace(

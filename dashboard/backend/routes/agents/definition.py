@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from agents import registry
 from agents import prompt_assembly
+from common.marketplace_names import agent_name_taken, is_marketplace_agent
 from agents import versions as agent_versions
 from agents.capability_guard import (
     CapabilityViolation,
@@ -448,6 +449,10 @@ async def update_agent_identity(agent_id: str, data: AgentIdentityUpdate):
     if data.name is not None:
         if not data.name.strip():
             raise HTTPException(status_code=400, detail="name cannot be empty")
+        if is_marketplace_agent(spec):
+            taken = agent_name_taken(data.name, exclude=[spec.id])
+            if taken:
+                raise HTTPException(status_code=409, detail=taken)
         changes["name"] = data.name.strip()
     if data.domain is not None:
         changes["domain"] = data.domain.strip() or "general"

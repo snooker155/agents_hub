@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
 from common.untrusted import agent_output_fence
+from common.workspace_scope import same_workspace
 
 log = logging.getLogger(__name__)
 
@@ -385,7 +386,8 @@ def _list_flows(workspace: Optional[str], project_id: Optional[str], query: str)
     from flow.store import list_flows
 
     # Visibility matches the /api/flows listing: an explicit ``allowed_flows``
-    # allowlist on the workspace is authoritative, otherwise global + own flows.
+    # allowlist on the workspace is authoritative, otherwise its own flows (one
+    # that names no workspace is the default one's).
     allowed = None
     if workspace:
         try:
@@ -401,7 +403,7 @@ def _list_flows(workspace: Optional[str], project_id: Optional[str], query: str)
         if allowed is not None:
             if flow_id not in allowed:
                 continue
-        elif workspace and flow.get("workspace") not in (None, "", workspace):
+        elif workspace and not same_workspace(flow.get("workspace"), workspace):
             continue
         if not _matches(query, flow.get("name"), flow.get("description"), flow_id):
             continue
@@ -742,7 +744,6 @@ def resolve_references(request, *, workspace: Optional[str] = None) -> None:
         if rendered is None:
             continue
         if workspace and rendered.get("workspace"):
-            from common.workspace_scope import same_workspace
             if not same_workspace(rendered["workspace"], workspace):
                 continue
         body = rendered["body"]

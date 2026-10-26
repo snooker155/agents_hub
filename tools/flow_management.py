@@ -55,33 +55,8 @@ _PASSTHROUGH_FIELDS = ("input", "inputs", "output", "outputs", "config", "retry"
 
 
 def _layout(nodes: List[Dict[str, Any]], edges: Optional[List[Dict[str, Any]]]) -> Dict[str, Dict[str, int]]:
-    """Positions by depth: a column per step of the longest path into a node,
-    the nodes of one column stacked, so parallel branches sit side by side."""
-    ids = [str(n.get("id") or f"node-{i + 1}") for i, n in enumerate(nodes)]
-    preds: Dict[str, List[str]] = {i: [] for i in ids}
-    for e in edges or []:
-        s, t = str(e.get("source") or ""), str(e.get("target") or "")
-        if s in preds and t in preds:
-            preds[t].append(s)
-    depth: Dict[str, int] = {}
-
-    def _depth(nid: str, seen: frozenset = frozenset()) -> int:
-        if nid in depth:
-            return depth[nid]
-        if nid in seen:
-            return 0
-        value = 1 + max((_depth(p, seen | {nid}) for p in preds[nid]), default=-1)
-        depth[nid] = value
-        return value
-
-    rows: Dict[int, int] = {}
-    out: Dict[str, Dict[str, int]] = {}
-    for nid in ids:
-        col = _depth(nid)
-        row = rows.get(col, 0)
-        rows[col] = row + 1
-        out[nid] = {"x": 120 + col * 240, "y": 120 + row * 150}
-    return out
+    from flow.store import layout_positions
+    return layout_positions(nodes, edges)
 
 
 def _to_combined_nodes(nodes: List[Dict[str, Any]], existing: Optional[List[Dict[str, Any]]] = None,
@@ -174,17 +149,14 @@ def _simplify(flow: Dict[str, Any]) -> Dict[str, Any]:
 
 # ── workspace scope ───────────────────────────────────────────────────────────
 
-def _hidden(flow: Optional[Dict[str, Any]], *, write: bool = False) -> bool:
+def _hidden(flow: Optional[Dict[str, Any]]) -> bool:
     """Whether ``flow`` is out of this run's reach: a flow of another
     workspace is answered like a missing one (``check_record``). A flow with
-    no workspace is shared by every workspace for reading (``list_flows_tool``
-    lists it everywhere) and is the default workspace's to change."""
+    no workspace is the default workspace's, for reading and for changing,
+    as ``list_flows_tool`` lists it."""
     if flow is None:
         return False
-    flow_ws = flow.get("workspace")
-    if not flow_ws and not write:
-        return False
-    return check_record(flow_ws, what="flow") is not None
+    return check_record(flow.get("workspace"), what="flow") is not None
 
 
 # ── validation ────────────────────────────────────────────────────────────────
@@ -426,14 +398,19 @@ def _modify_flow(
     try:
         flow = flow_store.get_flow(flow_id)
     except flow_store.FlowParseError as e:
-        if _hidden(_raw_flow(flow_id), write=True):
+        if _hidden(_raw_flow(flow_id)):
             return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
         return _json_err(f"Flow is broken: {e}", code="invalid_flow", extra={"flow_id": flow_id})
-    if flow is None or _hidden(flow, write=True):
+    if flow is None or _hidden(flow):
         return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
 
     changed: List[str] = []
     if name is not None and name.strip():
+        if flow.get("shared"):
+            from common.marketplace_names import flow_name_taken
+            taken = flow_name_taken(name, exclude=[flow_id])
+            if taken:
+                return _json_err(taken, code="name_taken", extra={"flow_id": flow_id})
         flow["name"] = name.strip()
         changed.append("name")
     if description is not None:
@@ -486,7 +463,7 @@ def _delete_flow(flow_id: str) -> str:
         flow = None  # broken flows can still be deleted
     # A broken flow still names its workspace in the stored record.
     raw = flow if flow is not None else _raw_flow(flow_id)
-    if _hidden(raw, write=True):
+    if _hidden(raw):
         return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
     if flow is not None and flow.get("running"):
         return _json_err(
@@ -556,9 +533,10 @@ _NODE_SHAPES = (
     "that runs config.agent_id once per item of a list (the previous step's output read as a "
     "JSON list or one item per line, or state key 'over'), all items in parallel, and writes "
     "the results as a list to its output key; a switch {'id', 'entity_id': 'state_switch', "
-    "'config': {'key', 'cases': [{'op', 'value', 'target'}], 'default'}} that follows the "
-    "first case whose condition on state key 'key' holds (op: equals, contains, matches, gt, "
-    "lt, count_gt, empty, ...). An agent step with two or more next steps may add "
+    "'config': {'routes': [{'target', 'match': 'all'|'any', 'conditions': [{'key', 'op', "
+    "'value'}]}], 'default'}} that follows the first route whose conditions hold, each "
+    "condition on its own state key (op: equals, contains, matches, gt, lt, count_gt, empty, "
+    "...), 'default' when none does. An agent step with two or more next steps may add "
     "'route': 'one' (or 'many') to choose the next step itself; 'route_default' names the "
     "step taken when it does not choose. An agent step may write its answer to state with "
     "'output': ['key'] and read keys with 'input': ['key']."
