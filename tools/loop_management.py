@@ -138,7 +138,7 @@ def _validate(payload: Dict[str, Any], workspace: Optional[str]) -> Tuple[List[s
         flow_ws = normalize_workspace_name(flow.get("workspace"))
         # A flow of another workspace does not exist from here: a loop that
         # repeated it would run that workspace's flow in this one.
-        if flow_ws and check_record(flow_ws, what="flow", workspace=ws):
+        if check_record(flow_ws, what="flow", workspace=ws):
             errors.append(
                 f"flow '{flow_id}' does not exist — create it with "
                 "create_flow_tool, or pick one from list_flows_tool"
