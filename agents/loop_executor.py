@@ -32,7 +32,8 @@ from langchain_core.runnables.config import (
     ensure_config, get_async_callback_manager_for_config, get_callback_manager_for_config,
 )
 from langchain_core.tools import BaseTool
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, ValidationError
+from pydantic.v1 import ValidationError as ValidationErrorV1
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,13 @@ Plan = Union[AgentFinish, List[AgentAction]]
 
 def _invalid_tool_observation(name: str, available: Sequence[str]) -> str:
     return f"{name} is not a valid tool, try one of [{', '.join(available)}]."
+
+
+def _invalid_args_observation(name: str, exc: Exception) -> str:
+    """Arguments the tool's schema refused are the model's mistake, not the
+    run's: it reads why on the next pass and can call again (a made-up task
+    id, a missing field) instead of the whole turn failing on it."""
+    return f"Error: {name} refused its arguments: {exc}"
 
 
 class LoopExecutor(RunnableSerializable[Dict[str, Any], Dict[str, Any]]):
@@ -163,8 +171,11 @@ class LoopExecutor(RunnableSerializable[Dict[str, Any], Dict[str, Any]]):
         if tool is None:
             observation: Any = _invalid_tool_observation(action.tool, list(by_name))
         else:
-            observation = tool.run(action.tool_input, verbose=self.verbose, color=None,
-                                   callbacks=run_manager.get_child() if run_manager else None)
+            try:
+                observation = tool.run(action.tool_input, verbose=self.verbose, color=None,
+                                       callbacks=run_manager.get_child() if run_manager else None)
+            except (ValidationError, ValidationErrorV1) as exc:
+                observation = _invalid_args_observation(action.tool, exc)
         return AgentStep(action=action, observation=observation)
 
     async def _aperform(self, by_name: Dict[str, BaseTool], action: AgentAction,
@@ -175,8 +186,11 @@ class LoopExecutor(RunnableSerializable[Dict[str, Any], Dict[str, Any]]):
         if tool is None:
             observation: Any = _invalid_tool_observation(action.tool, list(by_name))
         else:
-            observation = await tool.arun(action.tool_input, verbose=self.verbose, color=None,
-                                          callbacks=run_manager.get_child() if run_manager else None)
+            try:
+                observation = await tool.arun(action.tool_input, verbose=self.verbose, color=None,
+                                              callbacks=run_manager.get_child() if run_manager else None)
+            except (ValidationError, ValidationErrorV1) as exc:
+                observation = _invalid_args_observation(action.tool, exc)
         return AgentStep(action=action, observation=observation)
 
     # -- the loop --------------------------------------------------------------

@@ -44,14 +44,20 @@ export default function MessageProcessFlow({ runs = [] }) {
   return (
     <div>
       {/* Pinned input: stays at the top while the process nodes scroll under
-          it. The blue tint is translucent in the dark theme, so it sits on an
-          opaque card background; otherwise the steps show through it. */}
+          it. A step card like the tools below, a few lines of it with no
+          scroll of its own, the whole text in a modal on a click. The page
+          strip is opaque so the steps do not show through it in dark. */}
       <div className="sticky top-0 z-10 bg-white shadow-sm">
-        <div className="bg-blue-50 border-b border-blue-200 px-4 py-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700 mb-1">{t('messageProcessFlow.input')}</div>
-          <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-words max-h-40 overflow-auto">
-            {input || '(empty)'}
-          </div>
+        <div className="border-b border-blue-200 px-4 py-3">
+          <ProcessNode
+            label={t('messageProcessFlow.input')}
+            labelColor="text-blue-700"
+            borderColor="border-blue-200"
+            bgColor="bg-blue-50"
+            lines={3}
+          >
+            <StepText text={input} />
+          </ProcessNode>
         </div>
       </div>
 
@@ -71,7 +77,7 @@ export default function MessageProcessFlow({ runs = [] }) {
                   bgColor="bg-violet-50"
                   hint={preview(r.content)}
                 >
-                  <div className="text-[11px] text-violet-900 whitespace-pre-wrap break-words">
+                  <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-words">
                     {r.content || '(empty)'}
                   </div>
                 </ProcessNode>

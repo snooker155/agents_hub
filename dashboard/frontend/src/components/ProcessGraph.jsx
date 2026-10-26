@@ -432,7 +432,7 @@ export default function ProcessGraph({
                           bgColor="bg-violet-50"
                           hint={preview(r.content)}
                         >
-                          <div className="text-[11px] text-violet-900 whitespace-pre-wrap break-words">
+                          <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-words">
                             {r.content || '(empty)'}
                           </div>
                         </ProcessNode>

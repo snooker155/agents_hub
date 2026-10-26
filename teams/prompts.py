@@ -122,8 +122,21 @@ def _protocol_block(team: Team, *, is_leader: bool) -> str:
     )
 
 
+def _task_block(task_id: Optional[str]) -> str:
+    """Whether this run works on a task. A member whose own instructions start
+    from one (the Verifier's ``get_task``) otherwise invents an id when the run
+    has none."""
+    if task_id:
+        return (f"## The task\nThis team run works on Task ID: {task_id}. "
+                "Task tools take exactly that id.")
+    return ("## The task\nThis team run has no task. Where your own instructions "
+            "start from a task (get_task, update_task, block_task and the like), "
+            "skip those steps: the work in front of you is the goal and the board, "
+            "and your verdict or result goes in your reply.")
+
+
 def team_system_prompt(team: Team, member: Optional[TeamMember], *,
-                       is_leader: bool = False) -> str:
+                       is_leader: bool = False, task_id: Optional[str] = None) -> str:
     """The team block appended to a member's own system prompt.
 
     Appended, never substituted: the agent keeps its own instructions, expertise
@@ -145,6 +158,7 @@ def team_system_prompt(team: Team, member: Optional[TeamMember], *,
         if member.goal.strip():
             seat.append(f"\n\nYour own objective on this team:\n{member.goal.strip()}")
         parts.append("".join(seat))
+    parts.append(_task_block(task_id))
     parts.append(_protocol_block(team, is_leader=is_leader))
     return "\n\n".join(p for p in parts if p and p.strip())
 
