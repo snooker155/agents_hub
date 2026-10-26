@@ -19,16 +19,25 @@ Core tools, always visible:
 - the reasoning tools (``think``, ``plan`` and the plan store,
   tools.approval.REASONING_TOOL_NAMES): the reasoning guidance in the prompt
   tells the model to use them unprompted;
-- the delegation tools the prompt's delegation sections name
-  (``delegate_task_tool``, ``run_agent_tool``, ``list_agents_tool``,
-  ``list_models_tool``) and the two task tools a delegating agent needs
-  without thinking about it (``create_task``, ``get_task_result``);
-- ``handoff_to_agent`` (tools/handoff.py), for the same reason as the
-  delegation tools: hidden behind a search while ``run_agent_tool`` is in
-  view, the model delegates when the user asked to be handed over;
-- any tool the agent's own system prompt names (up to
-  ``PROMPT_CORE_LIMIT``): instructions that say "use read_file" should not
-  send the model searching for read_file;
+- ``run_agent_tool``, with ``list_agents_tool`` and ``list_models_tool``
+  that say whom to hand to and on which model: handing work on is something
+  the model decides on its own at any step, like asking. The task tools and
+  ``delegate_task_tool`` are not here: an agent may well not hold them, and
+  one whose instructions rely on them names them, which keeps them in view
+  through the names rule below;
+- every tool a setting added at build time rather than the agent's tool
+  list (``runtime_tool_names`` on the agent, set by agents/agent_factory.py:
+  memory pool, skills, clarification gate, project, reasoning, handoff,
+  advisor). The sections that explain them are appended after the agent's
+  own instructions, so ranking them by where the prompt names them always
+  lost them, each time found live: a model told to recall with no recall
+  tool asked the person to clarify instead; one told to fetch a matching
+  skill with get_skill called get_task with the skill's name, then
+  delegated the request; with handoff_to_agent hidden and run_agent_tool in
+  view, a model delegated when the user asked to be handed over;
+- any other tool the agent's own system prompt names (up to
+  ``PROMPT_CORE_LIMIT``, first named first): instructions that say "use
+  read_file" should not send the model searching for read_file;
 - ``search_tools`` itself.
 
 On Anthropic models that support it, the tools array of every request holds
@@ -59,13 +68,9 @@ SEARCH_TOOL_NAME = "search_tools"
 CORE_TOOLS = frozenset({
     "ask_user",
     SEARCH_TOOL_NAME,
-    "delegate_task_tool",
     "run_agent_tool",
     "list_agents_tool",
     "list_models_tool",
-    "create_task",
-    "get_task_result",
-    "handoff_to_agent",
 })
 
 DEFAULT_THRESHOLD = 30
@@ -362,7 +367,8 @@ def core_names(agent: Any, names: Sequence[str]) -> Set[str]:
         from tools.approval import REASONING_TOOL_NAMES as reasoning
     except ImportError:
         reasoning = frozenset()
-    core = {n for n in names if n in CORE_TOOLS or n in reasoning}
+    runtime = set(getattr(agent, "runtime_tool_names", None) or ())
+    core = {n for n in names if n in CORE_TOOLS or n in reasoning or n in runtime}
     prompt = str(getattr(agent, "system_prompt", "") or "")
     if prompt:
         mentioned = []
@@ -374,6 +380,44 @@ def core_names(agent: Any, names: Sequence[str]) -> Set[str]:
                 mentioned.append((match.start(), n))
         core.update(n for _pos, n in sorted(mentioned)[:PROMPT_CORE_LIMIT])
     return core
+
+
+def visibility(agent: Any) -> Dict[str, Any]:
+    """What the model of a built *agent* is shown, for the Tools tab: every
+    tool when search stays off, else the core ones with the rest behind
+    ``search_tools``. Decides exactly as :func:`extension_for` does."""
+    tools = [t for t in (getattr(agent, "_tools", None) or [])
+             if not (getattr(t, "metadata", None) or {}).get("hub_tool_search")]
+    names = [_tool_name(t) for t in tools]
+    flag = getattr(getattr(agent, "spec", None), "tool_search", None)
+    threshold = _threshold(agent)
+    runtime = sorted(n for n in names if n in set(getattr(agent, "runtime_tool_names", None) or ()))
+    search = flag is not False and (flag is True or len(names) > threshold)
+    core = core_names(agent, names) if search else set(names)
+    if search and len(core) >= len(names):
+        search = False
+    try:
+        from tools.approval import REASONING_TOOL_NAMES as reasoning
+    except ImportError:
+        reasoning = frozenset()
+    # Why each shown tool is shown, by the rules of the module docstring:
+    # always (CORE_TOOLS and reasoning), added by a setting, or named in the
+    # prompt within PROMPT_CORE_LIMIT.
+    always = [n for n in names if n in core and n not in runtime
+              and (n in CORE_TOOLS or n in reasoning)] if search else []
+    named = [n for n in names if n in core and n not in runtime and n not in always] if search else []
+    return {
+        "mode": "on" if flag is True else "off" if flag is False else "auto",
+        "threshold": threshold,
+        "total": len(names),
+        "search": search,
+        "visible": [n for n in names if n in core],
+        "hidden": [n for n in names if n not in core],
+        "runtime": runtime,
+        "always": always,
+        "named": named,
+        "named_limit": PROMPT_CORE_LIMIT,
+    }
 
 
 def _native_llm(agent: Any) -> Any:
@@ -481,5 +525,6 @@ __all__ = [
     "ToolSearchExtension",
     "core_names",
     "extension_for",
+    "visibility",
     "loaded_names",
 ]

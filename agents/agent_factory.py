@@ -74,11 +74,18 @@ from tools.eval_ops import EVAL_TOOLS
 from tools.schedule_management import (
     schedule_notification,
     schedule_task,
+    schedule_flow,
+    schedule_loop,
+    schedule_memory_consolidation,
     notify_user,
     list_scheduled,
+    get_scheduled,
     cancel_scheduled,
     update_scheduled,
     wake_agent,
+    pause_scheduled,
+    resume_scheduled,
+    run_scheduled_now,
 )
 
 
@@ -144,6 +151,36 @@ HELP_PROMPT = (
     "them to catch."
 )
 
+# Injected whenever the agent holds run_shell, for the same reason as
+# HELP_PROMPT: the guidance is about the tool, so it goes where the tool is.
+SHELL_PROMPT = (
+    "## Shell\n"
+    "When a command has to run (tests, a build, a linter, git, a script), run it "
+    "yourself with `run_shell`: it runs in the workspace folder, and the user approves "
+    "each call on a card in the chat. Show the output you got, or say plainly that the "
+    "user declined the call. Never fold a command you were not asked for into the one "
+    "you need.\n"
+    "A declined call is a no to that one call, not to the tool. When another command "
+    "is needed, call `run_shell` again, even when an earlier call was declined or "
+    "failed: the user answers a new card every time. Never answer from an earlier "
+    "refusal, and never say you have no shell access."
+)
+
+# Injected whenever the agent holds the workspace management tools
+# (tools/workspace_management.py; only the main agent in the default workspace).
+WORKSPACES_PROMPT = (
+    "## Managing workspaces\n"
+    "From the default workspace you can add and manage workspaces for the user: "
+    "`list_workspaces` and `get_workspace` to see what exists, `create_workspace` for a "
+    "new one (a name, what it is for, its instructions and the agents it needs), "
+    "`update_workspace` for its description, instructions or default model, and "
+    "`add_workspace_agent` or `remove_workspace_agent` for its agents. Before "
+    "`delete_workspace`, say which workspace will go and what is in it, and ask the "
+    "user; the call then waits for their yes on a card. Isolation, secrets, hooks, the "
+    "tool policy, members, environment variables and connectors are changed by a person "
+    "on the workspace's settings page: tell the user where."
+)
+
 # Injected whenever the agent can delegate (run_agent_tool present). instructions.md
 # cannot carry this because run_agent_tool is granted per-registry, not per-prompt —
 # without this an agent sees the tool but is never told it may look for and hand off
@@ -155,7 +192,11 @@ DELEGATION_PROMPT = (
     "tools you happen to have and do NOT silently drop it or merely record it as a "
     "note or task. Instead: call `list_agents_tool` to see who is available, choose "
     "the agent whose role best fits the request, delegate to it with `run_agent_tool`, "
-    "and use its result to answer. Handle the request yourself only when no other "
+    "and use its result to answer. Its `model` argument runs that agent on another "
+    "model for this call only: `list_models_tool` shows the ids you may pass "
+    "(`provider/model`); pick a cheaper one for a simple or mechanical piece, a "
+    "stronger one for a hard one, or leave it empty to keep the agent's own. "
+    "Handle the request yourself only when no other "
     "agent is a better fit; ask the user to clarify when you genuinely cannot tell "
     "which agent should help.\n"
     "If none of the available agents is a genuine fit for the request, do NOT pick "
@@ -515,11 +556,18 @@ class AgentFactory:
         schedule_tools = [
             schedule_notification,
             schedule_task,
+            schedule_flow,
+            schedule_loop,
+            schedule_memory_consolidation,
             notify_user,
             list_scheduled,
+            get_scheduled,
             cancel_scheduled,
             update_scheduled,
             wake_agent,
+            pause_scheduled,
+            resume_scheduled,
+            run_scheduled_now,
         ]
 
         alias_groups: Dict[str, List[str]] = {
@@ -947,6 +995,15 @@ class AgentFactory:
             _spec.episodic_write_enabled if _spec else None, resolved_provider
         )
 
+        # The tool ids the record (or this run's override) picked, before any
+        # setting adds its own: what is added from here on, by a memory pool,
+        # skills, the clarification gate, a project, reasoning, handoff
+        # targets or an advisor, is named in ``runtime_tool_names`` on the
+        # agent, and tool search (agents/loop_ext/tool_search.py) always shows
+        # those, since the prompt sections that explain them come last.
+        _picked_tool_ids = {str(t) for t in (definition.get("tools") or [])}
+        _runtime_tool_names: set = set()
+
         # Inject shared memory pool into system prompt and tool list
         # (resolved per workspace — each workspace has its own assignment)
         from memory.injection import inject_memory_into_definition
@@ -1017,6 +1074,7 @@ class AgentFactory:
 
         # Create tools
         tool_list = config.get("tools", [])
+        _runtime_tool_names.update(str(t) for t in tool_list if str(t) not in _picked_tool_ids)
         tools = self._create_tools(tool_list, workspace=workspace, agent_id=agent_id,
                                    episodic_write=_episodic_write,
                                    pool_override=_pool_override,
@@ -1029,6 +1087,7 @@ class AgentFactory:
         if _spec and _spec.clarify_gate:
             if not any(getattr(t, "name", None) == "ask_user" for t in tools):
                 tools.append(ask_user)
+                _runtime_tool_names.add("ask_user")
         # A flow step cannot park on a question, even when its tool list
         # names ask_user.
         if _flow_step:
@@ -1043,11 +1102,19 @@ class AgentFactory:
             from tools.project_graph import get_project_graph
             if not any(getattr(t, "name", None) == "get_project_graph" for t in tools):
                 tools.append(get_project_graph)
+                _runtime_tool_names.add("get_project_graph")
                 config["system_prompt"] = (
                     config.get("system_prompt", "")
                     + "\n\n---\n\n"
                     + PROJECT_GRAPH_PROMPT
                 )
+
+        # Both delegation tools take a `model`, and list_models_tool is how the
+        # agent learns which ids it may pass, so a delegator always gets it.
+        _names = {getattr(t, "name", None) for t in tools}
+        if _names & {"run_agent_tool", "delegate_task_tool"} and "list_models_tool" not in _names:
+            tools.append(list_models_tool)
+            _runtime_tool_names.add("list_models_tool")
 
         # Delegation guidance, tiered by what the agent can actually do. Checked
         # against the resolved tool instances so group aliases (agent_coordination/
@@ -1063,6 +1130,10 @@ class AgentFactory:
                 config.get("system_prompt", "")
                 + "\n\n---\n\n"
                 + HELP_PROMPT
+            )
+        if "run_shell" in _tool_names:
+            config["system_prompt"] = (
+                config.get("system_prompt", "") + "\n\n---\n\n" + SHELL_PROMPT
             )
         if "run_agent_tool" in _tool_names:
             # Base: any delegator learns it may look for and hand off to another agent.
@@ -1226,6 +1297,7 @@ class AgentFactory:
         # gated or guarded themselves (gate_tools skips _REASONING_TOOL_NAMES
         # regardless, but they are not even offered to it here).
         tools = [*tools, *reasoning_tools]
+        _runtime_tool_names.update(getattr(t, "name", "") for t in reasoning_tools)
 
         # Conversation handoff (tools/handoff.py), only for an agent with
         # targets. Appended after the approval guard and the think gate on
@@ -1239,6 +1311,7 @@ class AgentFactory:
             _handoff_tools = create_handoff_tools(_spec, _ws_from_path(workspace))
             if _handoff_tools:
                 tools = [*tools, *_handoff_tools]
+                _runtime_tool_names.update(getattr(t, "name", "") for t in _handoff_tools)
                 config["system_prompt"] = (
                     config.get("system_prompt", "")
                     + "\n\n---\n\n"
@@ -1268,6 +1341,7 @@ class AgentFactory:
             if _advisor_tools:
                 from agents.loop_ext.settings import workspace_loop_setting
                 tools = [*tools, *_advisor_tools]
+                _runtime_tool_names.update(getattr(t, "name", "") for t in _advisor_tools)
                 config["system_prompt"] = (
                     config.get("system_prompt", "")
                     + "\n\n---\n\n"
@@ -1309,7 +1383,10 @@ class AgentFactory:
         # `@coder` and the like is told which agent holds each role here.
         if _spec is not None:
             from agents.roles import prompt_section as _roles_prompt
-            _roles_text = _roles_prompt(_spec, _ws_name_of(workspace) if workspace else None)
+            _roles_text = _roles_prompt(
+                _spec, _ws_name_of(workspace) if workspace else None,
+                [getattr(t, "name", getattr(t, "__name__", "")) for t in tools],
+            )
             if _roles_text:
                 config["system_prompt"] = (
                     config.get("system_prompt", "") + "\n\n---\n\n" + _roles_text
@@ -1363,6 +1440,11 @@ class AgentFactory:
         if _out_of_scope:
             tools = [t for t, n in zip(tools, _names) if n not in _out_of_scope]
             log.info("workspace scope: %s runs without %s", agent_id, ", ".join(sorted(_out_of_scope)))
+        # Told about workspace management only where the scope rule left it.
+        if "list_workspaces" in _names and "list_workspaces" not in _out_of_scope:
+            config["system_prompt"] = (
+                config.get("system_prompt", "") + "\n\n---\n\n" + WORKSPACES_PROMPT
+            )
         if _run_ws and not _scope.is_service_wide(agent_id):
             from agents.isolation_guard import pin_workspace
             tools = pin_workspace(tools, _run_ws)
@@ -1416,6 +1498,10 @@ class AgentFactory:
             # for the loop extensions and guardrails (agents/agent_loop.py).
             spec=_spec,
         )
+        # Only the ones the agent still holds: a flow step drops ask_user, the
+        # workspace scope and read-only memory drop others.
+        _held = {getattr(t, "name", "") for t in tools}
+        agent.runtime_tool_names = frozenset(n for n in _runtime_tool_names if n and n in _held)
 
         return agent
     

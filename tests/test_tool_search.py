@@ -96,8 +96,8 @@ def test_above_the_threshold_it_applies_and_adds_search_tools():
     assert ext is not None
     assert _names(agent._tools)[-1] == SEARCH_TOOL_NAME
     assert SEARCH_TOOL_NAME not in _names(original)  # a new list, not the shared one
-    assert len(ext.entries) == 30  # 34 tools, four of them core
-    assert "30 more" in ext.description()
+    assert len(ext.entries) == 31  # 34 tools, three of them core
+    assert "31 more" in ext.description()
     assert "schedule_management (2)" in ext.description()
 
 
@@ -116,8 +116,10 @@ def test_core_tools_stay_visible_and_the_rest_are_deferred():
     agent = _agent(_tools(extra=25))
     ext = tool_search.extension_for(agent)
     shown = _names(ext.select_tools(LoopState(), list(agent._tools)))
-    # ask_user, reasoning, delegation, a tool the prompt names, the search tool.
-    assert shown == ["ask_user", "think", "delegate_task_tool", "read_file", SEARCH_TOOL_NAME]
+    # ask_user, reasoning, a tool the prompt names, the search tool. The
+    # prompt does not name delegate_task_tool, so it waits behind the search.
+    assert shown == ["ask_user", "think", "read_file", SEARCH_TOOL_NAME]
+    assert "delegate_task_tool" in ext.deferred
     assert "create_schedule" in ext.deferred and "read_file" not in ext.deferred
 
 
@@ -128,10 +130,27 @@ def test_the_handoff_tool_stays_visible_next_to_delegation():
         _make_tool("run_agent_tool", "Delegate a request to another agent.", None),
         _make_tool("handoff_to_agent", "Hand this conversation over to another agent.", None),
     ])
+    agent.runtime_tool_names = frozenset({"handoff_to_agent"})
     ext = tool_search.extension_for(agent)
     shown = _names(ext.select_tools(LoopState(), list(agent._tools)))
     assert "handoff_to_agent" in shown and "run_agent_tool" in shown
     assert "handoff_to_agent" not in ext.deferred
+
+
+def test_recall_and_remember_stay_visible_whatever_the_prompt_names():
+    """The memory section comes last in the prompt, past the names limit: a
+    model told to recall with no recall tool asked the person instead (found live)."""
+    agent = _agent(_tools(extra=25) + [
+        _make_tool("recall", "Look up information from shared memory.", None),
+        _make_tool("remember", "Store a fact in shared memory.", None),
+        _make_tool("forget", "Delete a note from shared memory.", None),
+    ])
+    agent.runtime_tool_names = frozenset({"recall", "remember", "forget"})
+    ext = tool_search.extension_for(agent)
+    shown = _names(ext.select_tools(LoopState(), list(agent._tools)))
+    assert "recall" in shown and "remember" in shown
+    # Every tool the memory pool brings, not only the two the prompt leans on.
+    assert "recall" not in ext.deferred and "forget" not in ext.deferred
 
 
 def test_a_rebuild_does_not_add_a_second_search_tool():
@@ -438,3 +457,54 @@ def test_anthropic_run_end_to_end_sends_a_constant_tool_array(monkeypatch):
     summary = state.summary()
     assert summary["loaded_tools"] == ["create_schedule"]
     assert [c["kind"] for c in summary["compactions"]] == ["server"]
+
+
+def test_get_skill_stays_visible_whatever_the_prompt_names():
+    """The skills catalog comes late in the prompt, past the names limit: a
+    model told to call get_skill with none in view called get_task with the
+    skill's name instead (found live)."""
+    agent = _agent(_tools(extra=25) + [
+        _make_tool("get_skill", "Fetch the steps of one of your skills.", None),
+        _make_tool("create_skill", "Save a new skill.", None),
+    ])
+    agent.runtime_tool_names = frozenset({"get_skill", "create_skill"})
+    ext = tool_search.extension_for(agent)
+    shown = _names(ext.select_tools(LoopState(), list(agent._tools)))
+    assert "get_skill" in shown
+    assert "get_skill" not in ext.deferred and "create_skill" not in ext.deferred
+
+
+def test_tools_a_setting_added_stay_visible_whatever_the_prompt_says():
+    """Sections for build-time tools (memory, skills, handoff) are appended
+    after the agent's own instructions, so ranking by position hid them. A
+    group alias the record picked (``agent_coordination`` and the like) is not
+    one of them: its tools keep the twelve-name limit."""
+    own = [f"own_tool_{i}" for i in range(20)]
+    tools = [_make_tool(n, "An operator-picked tool.", None) for n in own] + [
+        _make_tool("link", "Connect two things in the knowledge graph.", None),
+        _make_tool("create_skill", "Save a new skill.", None),
+    ] + _tools(extra=10)
+    prompt = " ".join(f"use {n}." for n in own) + " Later section: connect facts with link."
+    agent = _agent(tools, system_prompt=prompt,
+                   runtime_tool_names=frozenset({"link", "create_skill"}))
+    ext = tool_search.extension_for(agent)
+    shown = _names(ext.select_tools(LoopState(), list(agent._tools)))
+    assert "link" in shown and "create_skill" in shown
+    assert sum(n in shown for n in own) == tool_search.PROMPT_CORE_LIMIT
+
+
+def test_visibility_reports_what_the_model_is_shown():
+    agent = _agent(_tools(extra=40), runtime_tool_names=frozenset({"misc_tool_3"}))
+    seen = tool_search.visibility(agent)
+    assert seen["search"] is True and seen["mode"] == "auto"
+    assert seen["threshold"] == tool_search.DEFAULT_THRESHOLD
+    assert seen["total"] == len(seen["visible"]) + len(seen["hidden"])
+    assert "misc_tool_3" in seen["visible"] and seen["runtime"] == ["misc_tool_3"]
+    # Every shown tool is shown for one reason: always, added, or named.
+    assert len(seen["always"]) + len(seen["runtime"]) + len(seen["named"]) == len(seen["visible"])
+    assert "ask_user" in seen["always"] and "read_file" in seen["named"]
+    assert seen["named_limit"] == tool_search.PROMPT_CORE_LIMIT
+    few = tool_search.visibility(_agent(_tools(extra=2)))
+    assert few["search"] is False and few["hidden"] == []
+    off = tool_search.visibility(_agent(_tools(extra=40), spec=SimpleNamespace(tool_search=False)))
+    assert off["search"] is False and off["mode"] == "off"

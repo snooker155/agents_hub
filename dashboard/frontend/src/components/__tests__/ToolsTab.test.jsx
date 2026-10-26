@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
+import { translate } from '../../i18n/core';
 
 const api = vi.hoisted(() => ({
   getAgentToolPolicy: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock('../../api', () => ({
 }));
 vi.mock('../agent/AgentSecretsCard', () => ({ default: () => null }));
 vi.mock('../agent/SystemAgentWarning', () => ({ default: () => null }));
+vi.mock('../agent/ToolVisibilityCard', () => ({ default: () => null }));
 
 const page = vi.hoisted(() => ({ current: null }));
 vi.mock('../agent/context', () => ({ useAgentPage: () => page.current }));
@@ -28,7 +30,13 @@ vi.mock('../workspace/useWorkspaceIsolation', () => ({ default: () => isolation.
 
 import ToolsTab from '../agent/ToolsTab';
 
-const t = (k, vars) => (vars ? `${k} ${JSON.stringify(vars)}` : k);
+// Tool names come from the real dictionary (i18n/locales/*/toolNames.js), so
+// the cards show what the page shows; every other key comes back as itself.
+const realKey = (k) => k.startsWith('toolNames.') || k.startsWith('toolPicker.categories.');
+const t = (k, vars) => {
+  if (realKey(k)) return translate('en', k, vars);
+  return vars ? `${k} ${JSON.stringify(vars)}` : k;
+};
 
 const policyBody = (toolPolicy = {}) => ({
   agent_id: 'a1',
@@ -104,30 +112,64 @@ describe('ToolsTab', () => {
     renderTab();
     await screen.findByLabelText('toolPolicy.defaultMode');
     expect(api.getAgentToolPolicy).toHaveBeenCalledWith('a1', 'w1');
-    expect(screen.getByRole('checkbox', { name: 'Read file' })).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: 'Web search' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Read File' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Web Search' })).toBeInTheDocument();
     const group = screen.getByTestId('tool-category-files');
     expect(within(group).getByText('1/2')).toBeInTheDocument();
     fireEvent.click(within(group).getByRole('switch'));
     expect(page.current.setCategoryTools).toHaveBeenCalledWith(['read_file', 'run_shell'], true);
   });
 
+  it('names the tools and their groups in the interface language', async () => {
+    const ru = (k, vars) => (realKey(k) ? translate('ru', k, vars) : t(k, vars));
+    renderTab({
+      t: ru,
+      toolCategories: [{ category: 'filesystem', ids: ['read_file'] }, { category: 'mcp_custom', ids: ['custom_tool'] }],
+      toolsMeta: {
+        read_file: { label: 'Read file', description: 'Reads a file', category: 'filesystem' },
+        custom_tool: { label: 'Custom tool', description: 'From an MCP server', category: 'mcp_custom' },
+      },
+    });
+    await screen.findByLabelText('toolPolicy.defaultMode');
+    const card = screen.getByRole('checkbox', { name: 'Чтение файла' });
+    expect(within(card).getByText('Читает текстовый файл или текст PDF.')).toBeInTheDocument();
+    expect(within(screen.getByTestId('tool-category-filesystem')).getByText('Файлы')).toBeInTheDocument();
+    // A tool the dictionary does not know keeps the backend's name and group.
+    expect(screen.getByRole('checkbox', { name: 'Custom tool' })).toBeInTheDocument();
+    expect(within(screen.getByTestId('tool-category-mcp_custom')).getByText('Mcp Custom')).toBeInTheDocument();
+  });
+
   it('renders tools as cards, and a card click toggles the tool', async () => {
     renderTab();
     await screen.findByLabelText('toolPolicy.defaultMode');
-    const card = await screen.findByRole('checkbox', { name: 'Read file' });
+    const card = await screen.findByRole('checkbox', { name: 'Read File' });
     expect(card).toHaveAttribute('aria-checked', 'true');
     expect(card.className).toMatch(/bg-green-50/);
-    const off = screen.getByRole('checkbox', { name: 'Run shell' });
+    const off = screen.getByRole('checkbox', { name: 'Run Shell' });
     expect(off).toHaveAttribute('aria-checked', 'false');
     fireEvent.click(off);
     expect(page.current.toggleTool).toHaveBeenCalledWith('run_shell');
   });
 
+  it('narrows the cards to the search in the header, and the group switch to what is shown', async () => {
+    renderTab();
+    const search = await screen.findByLabelText('agentDetails.toolsSearchPlaceholder');
+    fireEvent.change(search, { target: { value: 'shell' } });
+    expect(screen.getByRole('checkbox', { name: 'Run Shell' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'Read File' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tool-category-web')).not.toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByTestId('tool-category-files')).getByRole('switch'));
+    expect(page.current.setCategoryTools).toHaveBeenCalledWith(['run_shell'], true);
+
+    fireEvent.change(search, { target: { value: 'nothing like this' } });
+    expect(screen.getByText('agentDetails.toolsSearchEmpty {"q":"nothing like this"}')).toBeInTheDocument();
+  });
+
   it('edits a tool policy inside the card without toggling the tool, and saves it with the default', async () => {
     renderTab();
     await screen.findByLabelText('toolPolicy.defaultMode');
-    const select = await screen.findByLabelText('toolPolicy.modeFor {"tool":"run_shell"}');
+    const select = await screen.findByLabelText('toolPolicy.modeFor {"tool":"Run Shell"}');
     fireEvent.click(select);
     expect(page.current.toggleTool).not.toHaveBeenCalled();
 
@@ -186,7 +228,7 @@ describe('ToolsTab', () => {
     fireEvent.click(within(group).getByText('Handoff To Agent'));
     expect(page.current.toggleTool).not.toHaveBeenCalled();
     // The policy still applies by id.
-    fireEvent.change(within(group).getByLabelText('toolPolicy.modeFor {"tool":"handoff_to_agent"}'), { target: { value: 'always_ask' } });
+    fireEvent.change(within(group).getByLabelText('toolPolicy.modeFor {"tool":"Handoff To Agent"}'), { target: { value: 'always_ask' } });
     fireEvent.click(screen.getByRole('button', { name: /agentDetails.saveTools/ }));
     await waitFor(() => expect(api.updateAgentToolPolicy).toHaveBeenCalledWith('a1', { handoff_to_agent: 'always_ask' }, 'w1'));
   });

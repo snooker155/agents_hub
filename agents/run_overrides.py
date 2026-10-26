@@ -337,21 +337,14 @@ def skills_catalog(agent_id: str, workspace: str, system_prompt: str, names: Lis
     skills to list: the same lines memory.procedural.inject_skills_catalog
     writes, for the named skills only (by name or id)."""
     try:
-        from memory.procedural import ProcedureStore, _visible_procedures
-        from memory.skill_versions import effective_content
+        from memory.procedural import ProcedureStore, _visible_procedures, skills_catalog_block
         wanted = {str(n).strip().lower() for n in names}
         # Own skills and those inherited from the agent's parents (extends).
         procedures = [p for p in _visible_procedures(ProcedureStore(workspace), agent_id)
                       if (str(p.name).lower() in wanted or str(getattr(p, "id", "")).lower() in wanted)]
         if not procedures:
             return system_prompt
-        lines = ["\n\n## Available Skills\n",
-                 "The following skills are available to you. "
-                 "When the task matches a skill, its full steps will be provided automatically. "
-                 "Use `get_skill` with the skill's name to fetch its steps.\n"]
-        for p in procedures:
-            lines.append(f"- **{p.name}**: {effective_content(p)['description']}")
-        return system_prompt + "\n".join(lines) + "\n"
+        return system_prompt + skills_catalog_block(procedures)
     except Exception:  # noqa: BLE001 - a store hiccup leaves the catalog out, never the run
         log.debug("run overrides: skills catalog for %s not built", agent_id, exc_info=True)
         return system_prompt

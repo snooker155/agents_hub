@@ -75,7 +75,7 @@ describe('LoopSettingsCard', () => {
     await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith('a1', {
       fallback_models: ['openai/gpt-4o-mini', 'anthropic/claude-haiku'],
       advisor_model: null, output_schema: null, max_concurrent_delegates: 6,
-      tool_search: null, compaction: null, data_class: '',
+      compaction: null, data_class: '',
     }));
     expect(await screen.findByText('agentLoop.saved')).toBeInTheDocument();
     expect(onSaved).toHaveBeenCalled();
@@ -155,17 +155,18 @@ describe('LoopSettingsCard', () => {
     })));
   });
 
-  it('sets tool_search and compaction through the tri-state selects', async () => {
+  it('sets compaction through the tri-state select and leaves tool search to the Tools tab', async () => {
     render(<LoopSettingsCard agentId="a1" agent={{ id: 'a1' }} />);
     await screen.findByText('agentLoop.fallback.empty');
 
-    fireEvent.change(screen.getByLabelText('agentLoop.toolSearch.title'), { target: { value: 'on' } });
+    expect(screen.queryByLabelText('agentLoop.toolSearch.title')).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('agentLoop.compaction.title'), { target: { value: 'off' } });
     fireEvent.click(screen.getByRole('button', { name: 'agentLoop.save' }));
 
     await waitFor(() => expect(api.updateAgentLoopSettings).toHaveBeenCalledWith('a1', expect.objectContaining({
-      tool_search: true, compaction: false,
+      compaction: false,
     })));
+    expect(api.updateAgentLoopSettings.mock.calls[0][1]).not.toHaveProperty('tool_search');
   });
 
   it('loads and saves the delegate concurrency limit', async () => {
@@ -204,7 +205,7 @@ describe('LoopSettingsCard', () => {
     render(<LoopSettingsCard agentId="a1" agent={{ id: 'a1' }} />);
     await screen.findByText('agentLoop.fallback.empty');
 
-    fireEvent.change(screen.getByLabelText('agentLoop.toolSearch.title'), { target: { value: 'on' } });
+    fireEvent.change(screen.getByLabelText('agentLoop.compaction.title'), { target: { value: 'on' } });
     fireEvent.click(screen.getByRole('button', { name: 'agentLoop.save' }));
     expect(await screen.findByText("'x' is not enabled")).toBeInTheDocument();
   });

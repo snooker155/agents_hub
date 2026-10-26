@@ -97,6 +97,34 @@ def _can_edit_agent(request: Request, spec) -> bool:
     return True
 
 
+@router.get("/{agent_id}/tool-visibility")
+async def get_agent_tool_visibility(agent_id: str, workspace: Optional[str] = None):
+    """How many of this agent's tools its model is shown in a chat in
+    ``workspace``, the threshold above which the rest go behind tool search,
+    and which tools are which (agents/loop_ext/tool_search.py). The agent is
+    built as a chat would build it, so the count is the real one."""
+    import asyncio
+
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    ws = workspace or getattr(spec, "owner_workspace", None) or None
+
+    def _build() -> Dict[str, Any]:
+        from agents.agent_factory import create_agent
+        from agents.loop_ext.tool_search import visibility
+        from chat.runs import agent_overrides
+        from workspace import create_workspace_folder
+        path = str(create_workspace_folder(ws)) if ws else None
+        return visibility(create_agent(agent_id, workspace=path, **agent_overrides(agent_id)))
+
+    try:
+        seen = await asyncio.to_thread(_build)
+    except Exception as e:  # noqa: BLE001 - an agent that does not build has no count to show
+        raise HTTPException(status_code=422, detail=f"The agent could not be built: {e}") from e
+    return {"agent_id": agent_id, "workspace": ws, **seen}
+
+
 @router.get("/{agent_id}/capability-override")
 async def get_agent_capability_override(request: Request, agent_id: str):
     spec = registry.get_agent(agent_id)
