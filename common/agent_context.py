@@ -27,6 +27,12 @@ current_agent_id: ContextVar[Optional[str]] = ContextVar("current_agent_id", def
 # carry it, so the page can link to the run that made the call.
 current_run_id: ContextVar[Optional[str]] = ContextVar("current_run_id", default=None)
 
+# The chat conversation the running turn belongs to, set by the chat pipeline
+# beside current_run_id. A flow, loop or team an agent starts from a chat keeps
+# it as its origin, so the chat is told when the run ends and follows it live
+# (chat/background_runs.py). None outside a chat turn.
+current_conversation_id: ContextVar[Optional[str]] = ContextVar("current_conversation_id", default=None)
+
 # Set by the chat pipeline when a request carries a ``view_id`` (the Visualization
 # Studio binds a conversation to one live view). The view mutation tools read it
 # as the default target, so the agent can say "add a node" without repeating the

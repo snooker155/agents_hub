@@ -7,6 +7,7 @@ vi.mock('../context', async () => {
   return { useChatPage: vi.fn(), ChatPageContext: createContext(null) };
 });
 
+import { MemoryRouter } from 'react-router-dom';
 import { I18nProvider } from '../../../i18n';
 import ChatMessageList from '../ChatMessageList';
 import { useChatPage } from '../context';
@@ -70,5 +71,31 @@ describe.each(['chat', 'build'])('the transcript as turns (%s view)', (viewMode)
     // What comes before the first prompt is outside any turn with a slot.
     const notice = [...container.querySelectorAll('*')].find((el) => el.textContent === 'Earlier turns were summarised.' && el.children.length === 0);
     expect(notice.closest('[data-turn]')).toBeNull();
+  });
+});
+
+describe('the line that a background run ended', () => {
+  const withNotice = [
+    { id: 'u1', role: 'user', content: 'run the team' },
+    { id: 'a1', role: 'agent', agent_id: 'front', content: 'running' },
+    { id: 'n1', role: 'system', content: '', notice: {
+      type: 'background_run_finished', kind: 'team', run_id: 'tr1', entity_id: 't1', name: 'Crew', status: 'completed',
+    } },
+    { id: 'a2', role: 'agent', agent_id: 'front', content: 'the crew is done' },
+  ];
+  const lineIn = (container) => [...container.querySelectorAll('*')]
+    .find((el) => el.textContent === 'Team “Crew” finished' && el.children.length === 0);
+
+  it('stands centred in the Build view', () => {
+    useChatPage.mockReturnValue(page(withNotice, { viewMode: 'build' }));
+    const { container } = render(<I18nProvider><MemoryRouter><ChatMessageList /></MemoryRouter></I18nProvider>);
+    expect(lineIn(container)).toBeTruthy();
+  });
+
+  it('is left out of the chat view, the reply after it kept', () => {
+    useChatPage.mockReturnValue(page(withNotice, { viewMode: 'chat' }));
+    const { container } = render(<I18nProvider><ChatMessageList /></I18nProvider>);
+    expect(lineIn(container)).toBeUndefined();
+    expect(container.textContent).toContain('the crew is done');
   });
 });

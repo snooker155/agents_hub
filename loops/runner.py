@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -61,12 +62,16 @@ def _hostname() -> str:
 
 
 def _publish(loop_run_id: str, event: Dict[str, Any]) -> None:
-    """Push an event to the ``loop:<id>`` channel. Never fatal."""
-    try:
-        from common.session_broker import broker
-        broker.publish_threadsafe(f"loop:{loop_run_id}", event)
-    except Exception:  # noqa: BLE001 - live publish is never fatal to the run
-        log.debug("loop event publish failed", exc_info=True)
+    """Push an event to the ``loop:<id>`` channel. Never fatal. From this
+    process's broker when it has one, else through the backend: a run in a
+    process of its own has no broker that reaches a page (common/run_stream.py)."""
+    from common import run_stream
+    run_stream.publish([channel_for(loop_run_id)], event)
+
+
+def channel_for(loop_run_id: str) -> str:
+    """The channel the loop page follows a run on."""
+    return f"loop:{loop_run_id}"
 
 
 # ── Per-iteration context ────────────────────────────────────────────────────
@@ -88,9 +93,43 @@ What must change this time (this is the whole point of this attempt):
 
 The previous attempt's result, to revise rather than restart:
 {previous}
-
+{files}
 Do not begin from scratch unless the feedback says the approach itself is
 wrong. Improve what is there, and address every point above."""
+
+_FILES_NOTE = """
+Files the previous attempt wrote. Revise these in place, at the same paths;
+do not save a new copy under another name:
+{paths}
+"""
+
+#: What an agent further down the flow is told on a later attempt. The first
+#: node reads the whole retry brief above; the others are handed only the
+#: output of the node before them, so without this they would redo the work
+#: as if for the first time (a writer saving yet another new file).
+_STEP_NOTE = """
+
+{sep}
+LOOP ATTEMPT {iteration}: the previous attempt was reviewed and rejected.
+What must change this time:
+{feedback}
+{files}{sep}"""
+
+
+def _files_note(paths: List[str]) -> str:
+    return _FILES_NOTE.format(paths="\n".join(f"- {p}" for p in paths)) if paths else ""
+
+
+def build_step_note(*, iteration: int, verdict: Optional[Verdict], previous_files: List[str]) -> str:
+    """The note added to the prompt of every agent node that works from
+    another node's output, on attempt 2 and later; '' on the first."""
+    if iteration <= 1 or verdict is None:
+        return ""
+    return _STEP_NOTE.format(
+        sep=_SEP, iteration=iteration,
+        feedback=(verdict.feedback or verdict.reason or "(no specific feedback)").strip(),
+        files=_files_note(previous_files),
+    )
 
 _SEP = "=" * 60
 
@@ -102,6 +141,7 @@ def build_iteration_context(
     iteration: int,
     previous_output: str,
     verdict: Optional[Verdict],
+    previous_files: Optional[List[str]] = None,
 ) -> str:
     """The shared context handed to iteration *n*.
 
@@ -118,6 +158,7 @@ def build_iteration_context(
         reason=(verdict.reason or "(no reason given)").strip(),
         feedback=(verdict.feedback or "(no specific feedback — use your own judgement)").strip(),
         previous=(previous_output or "(the previous attempt produced no output)").strip(),
+        files=_files_note(list(previous_files or [])),
     )
 
 
@@ -170,12 +211,13 @@ def _run_flow_once(
     iteration: int,
     workspace_path: str,
     workspace_name: Optional[str],
-    task_id: str,
+    task_id: Optional[str],
     session_id: str,
     title: str,
     shared_context: str,
     seed_state: Dict[str, Any],
     should_stop: Callable[[], bool],
+    step_note: str = "",
 ) -> Tuple[Dict[str, Any], Dict[str, str]]:
     """Drive the flow once through the shared engine. Returns ``(finish_event,
     node_run_ids)``.
@@ -209,6 +251,18 @@ def _run_flow_once(
     # plain dataclass, so replacing the hook is the intended extension point.
     _flow_should_stop = driver.should_stop
     driver.should_stop = lambda: should_stop() or _flow_should_stop()
+    if step_note:
+        # A later attempt: an agent that works from another node's output is
+        # told it too (build_step_note); the first node has the whole brief.
+        _build_prompt = driver.build_agent_prompt
+
+        def _with_step_note(shared, node, node_id, predecessors, node_outputs, flow_state, node_task):
+            prompt = _build_prompt(shared, node, node_id, predecessors, node_outputs, flow_state, node_task)
+            if any(p in node_outputs for p in predecessors.get(node_id, [])):
+                prompt += step_note
+            return prompt
+
+        driver.build_agent_prompt = _with_step_note
 
     async def _drive() -> Dict[str, Any]:
         final: Dict[str, Any] = {}
@@ -218,10 +272,16 @@ def _run_flow_once(
         last_state: Dict[str, Any] = {}
         async for ev in run_flow_engine(
             flow, flow_id=flow_id, shared_context=shared_context,
-            driver=driver, seed_state=seed_state,
+            driver=driver, seed_state=seed_state, workspace=workspace_name,
         ):
             if ev["type"] == "flow_finish":
                 final = {**ev, "state": last_state}
+            elif ev["type"] == "node_start":
+                # Which node is working, for the graph on the loop page.
+                _publish(loop_run_id, {
+                    "type": "node_start", "iteration": iteration,
+                    "node_id": ev.get("node_id"), "label": ev.get("label"),
+                })
             elif ev["type"] == "node_done":
                 last_state = ev.get("state") or last_state
                 # Node-level progress for the live page: the loop's own stream
@@ -236,20 +296,73 @@ def _run_flow_once(
                 store.touch_heartbeat(loop_run_id)
         return final
 
+    from flow.task_driver import log_flow
+
+    def _log_end(kind: str, content: str) -> None:
+        # The pass's last line in the flow's own log, as runtime/flow_run.py
+        # writes one: without it the flow page's History takes the pass for a
+        # run still going.
+        log_flow(flow_id, flow_run_id, {
+            "timestamp": utc_iso(), "type": kind, "content": content,
+            "status": "stopped" if kind == "flow_stopped" else "completed",
+        })
+
     try:
         final = asyncio.run(_drive())
     except Exception as e:  # noqa: BLE001 — a preflight/engine failure ends the pass, not the process
+        _log_end("flow_finish", f"Flow '{flow.get('name', flow_id)}' failed: {e}")
         run_store.close_flow_run(flow_run_id, status="failed", exit_code=1, error=str(e))
         raise
 
     stopped = bool(final.get("stopped"))
     failed = bool(final.get("any_failure"))
-    run_store.close_flow_run(
-        flow_run_id,
-        status="stopped" if stopped else ("failed" if failed else "completed"),
-        exit_code=1 if (stopped or failed) else 0,
-    )
+    if stopped:
+        _log_end("flow_stopped", f"Flow '{flow.get('name', flow_id)}' stopped")
+    else:
+        _log_end("flow_finish", f"Flow '{flow.get('name', flow_id)}' finished"
+                 + (" (some nodes failed)" if failed else ""))
+    status = "stopped" if stopped else ("failed" if failed else "completed")
+    run_store.close_flow_run(flow_run_id, status=status, exit_code=1 if (stopped or failed) else 0)
+    from common import run_stream
+    run_stream.publish([run_stream.run_channel(flow_run_id)], {
+        "type": "done", "ok": not (stopped or failed), "flow_id": flow_id,
+        "flow_run_id": flow_run_id, "status": status,
+    })
     return final, node_run_ids
+
+
+#: The file tools that write a file, and the path in a recorded call's input.
+_WRITE_TOOLS = {"write_file", "create_file", "apply_unified_diff"}
+_PATH_IN_INPUT = re.compile(r"['\"]path['\"]:\s*['\"]([^'\"]+)['\"]")
+
+
+def _pass_files(flow_id: str, flow_run_id: str) -> List[str]:
+    """The files a pass's agents wrote, in order: the changes their runs
+    recorded (flow/task_driver.py), else the paths their write calls named
+    (a run from before changes were recorded). Never raises."""
+    paths: List[str] = []
+    try:
+        from flow import run_store
+        from managers import run_manager
+        for ev in run_store.read_run_group_events(flow_id, flow_run_id) or []:
+            rid = ev.get("run_id")
+            if ev.get("type") != "agent_finish" or not rid:
+                continue
+            proc = run_manager.get_run_process(rid) or {}
+            found = [a.get("path") for a in (proc.get("artifacts") or [])
+                     if isinstance(a, dict) and a.get("op") != "delete"]
+            if not found:
+                for call in proc.get("tool_calls") or []:
+                    if isinstance(call, dict) and call.get("tool") in _WRITE_TOOLS:
+                        m = _PATH_IN_INPUT.search(str(call.get("input") or ""))
+                        if m:
+                            found.append(m.group(1))
+            for path in found:
+                if path and path not in paths:
+                    paths.append(path)
+    except Exception:  # noqa: BLE001 - the note is a help; a pass without it still runs
+        log.debug("reading the files of pass %s failed", flow_run_id, exc_info=True)
+    return paths
 
 
 # ── The loop ─────────────────────────────────────────────────────────────────
@@ -379,6 +492,9 @@ def run_loop(
     else:
         _publish(run.loop_run_id, {"type": "loop_start", **run.to_dict()})
 
+    # What every pass works from: the request and what was attached to it.
+    work_goal = f"{goal}\n{run.context}".strip() if run.context else goal
+
     max_iterations = max(1, min(int(loop.max_iterations or 1), MAX_ITERATIONS_CAP))
     wall_cap = min(float(loop.max_wall_seconds or MAX_WALL_SECONDS_CAP), MAX_WALL_SECONDS_CAP)
     started = time.monotonic()
@@ -394,6 +510,7 @@ def run_loop(
     stale = int(position.get("stale") or 0)   # iterations that failed to improve
     spend = float(position.get("spend") or 0.0)
     done_iterations = int(position.get("iterations_done") or 0)
+    previous_files: List[str] = list(position.get("previous_files") or [])
 
     try:
         from flow.launcher import _set_flow_running
@@ -410,11 +527,12 @@ def run_loop(
 
                 it = _execute_iteration(
                     loop=loop, flow=flow, run=run, iteration=iteration,
-                    max_iterations=max_iterations, goal=goal,
+                    max_iterations=max_iterations, goal=work_goal,
                     previous_output=previous_output, verdict=verdict,
                     history=history, seed=seed, ws_name=ws_name, ws_path=ws_path,
-                    task_id=task_id, session_id=session_id,
+                    task_id=task_id, session_id=session_id, previous_files=previous_files,
                 )
+                previous_files = _pass_files(loop.flow_id, it.flow_run_id) or previous_files
                 spend = round(spend + it.cost, 6)
                 previous_output = it.output or previous_output
                 verdict = Verdict(
@@ -440,6 +558,7 @@ def run_loop(
                     "spend": spend,
                     "history": history,
                     "verdict": verdict.to_dict() if verdict else None,
+                    "previous_files": previous_files,
                     "goal": goal,
                     "resume_attempts": run.resume_attempts,
                     "heartbeat_at": utc_iso(),
@@ -511,7 +630,8 @@ def _execute_iteration(
     max_iterations: int, goal: str, previous_output: str,
     verdict: Optional[Verdict], history: List[Dict[str, Any]],
     seed: Optional[Dict[str, Any]], ws_name: Optional[str], ws_path: str,
-    task_id: str, session_id: str,
+    task_id: Optional[str], session_id: str,
+    previous_files: Optional[List[str]] = None,
 ) -> Iteration:
     """Run one pass and judge it. Returns the persisted iteration record."""
     from uuid import uuid4
@@ -527,8 +647,10 @@ def _execute_iteration(
     criterion = _criterion_of(loop)
     context = build_iteration_context(
         goal=goal, criterion=criterion, iteration=iteration,
-        previous_output=previous_output, verdict=verdict,
+        previous_output=previous_output, verdict=verdict, previous_files=previous_files,
     )
+    step_note = build_step_note(iteration=iteration, verdict=verdict,
+                                previous_files=list(previous_files or []))
     seed_state = _seed_state(
         iteration=iteration, criterion=criterion,
         previous_output=previous_output, verdict=verdict, base_seed=seed,
@@ -542,6 +664,7 @@ def _execute_iteration(
             title=f"{loop.name or 'Loop'} — iteration {iteration}",
             shared_context=context, seed_state=seed_state,
             should_stop=lambda: store.stop_requested(run.loop_run_id),
+            step_note=step_note,
         )
     except Exception as e:  # noqa: BLE001
         it.status = "failed"
@@ -629,10 +752,14 @@ def _check_between_iterations(
 
 def _prepare_context(
     loop: Loop, workspace: Optional[str], task_id: Optional[str], goal: str,
-) -> Tuple[Optional[str], str, str, str]:
-    """Resolve the workspace, ensure a task and open one session for the whole
-    loop. Every iteration runs inside them, so the run history reads as one
-    piece of work rather than N unrelated flow runs."""
+) -> Tuple[Optional[str], str, Optional[str], str]:
+    """Resolve the workspace and open one session for the whole loop. Every
+    iteration runs inside it, so the run history reads as one piece of work
+    rather than N unrelated flow runs.
+
+    A run never makes a task of its own: a loop started from its page or its
+    chat is just a run. Only a task the caller names (a loop hung on a task)
+    is used, and then the loop is recorded as that task's executor."""
     from tasks import service as _ts
     from common.session_service import get_or_create_task_session
     from workspace import create_workspace_folder, resolve_task_workspace, as_param_dict
@@ -641,13 +768,8 @@ def _prepare_context(
     ws_name = (create_workspace_folder(ws_name).name if ws_name
                else create_workspace_folder().name)
 
-    if not task_id:
-        task = _ts.create_task(
-            title=f"Loop: {loop.name or loop.loop_id}",
-            description=goal, workspace=ws_name,
-        )
-        task_id = str(task.id)
-    else:
+    task = None
+    if task_id:
         task = _ts.get_task(task_id)
         if task is None:
             raise ValueError(f"Task not found: {task_id}")
@@ -656,9 +778,11 @@ def _prepare_context(
     _, ws_path = resolve_task_workspace(task, params)
 
     session_id = get_or_create_task_session(
-        title=getattr(task, "title", None) or f"Loop: {loop.name}",
-        workspace=ws_name, is_flow=True, task_id=str(task_id),
+        title=getattr(task, "title", None) or f"Loop: {loop.name or loop.loop_id}",
+        workspace=ws_name, is_flow=True, task_id=str(task_id) if task_id else None,
     )
+    if task is None:
+        return ws_name, str(ws_path), None, session_id
     try:
         _ts.update_task(task_id, session_id=session_id)
     except Exception:  # noqa: BLE001 - linking the session is cosmetic, the run goes on
@@ -784,6 +908,6 @@ def estimate_cost(loop: Loop) -> Dict[str, Any]:
 
 
 __all__ = [
-    "run_loop", "resume_loop_run", "estimate_cost", "build_iteration_context",
+    "run_loop", "resume_loop_run", "estimate_cost", "build_iteration_context", "build_step_note",
     "LoopStopped", "LoopResumeError",
 ]

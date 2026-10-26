@@ -272,7 +272,16 @@ def _trail_marker(verdict: dict) -> str:
 
 
 class ChatStreamCallback(BaseCallbackHandler):
-    """Callback handler that forwards LLM/tool execution events to an asyncio queue."""
+    """Callback handler that forwards LLM/tool execution events to an asyncio queue.
+
+    It is also what records a run: the log lines of its steps, the tool calls,
+    the thoughts and the changed files that the run's record and trail are
+    built from. A run with no chat request behind it (a background flow
+    node, flow/task_driver.py; a team member's turn) passes no ``loop`` and
+    ``queue``: the run is recorded the same way, and its events go to
+    ``publish`` when given (common/run_stream.py, the run's live channels),
+    else nowhere.
+    """
 
     # Tell LangChain to propagate exceptions raised in callbacks instead of swallowing them.
     raise_error: bool = True
@@ -285,9 +294,11 @@ class ChatStreamCallback(BaseCallbackHandler):
         log_file: Path,
         session_id: str | None = None,
         run_id: str | None = None,
+        publish=None,
     ):
         self.loop = loop
         self.queue = queue
+        self.publish = publish
         self.log_lines = log_lines
         self.log_file = log_file
         self.session_id = session_id
@@ -366,6 +377,17 @@ class ChatStreamCallback(BaseCallbackHandler):
             raise InterruptedError("Run stopped by user")
 
     def _emit(self, payload: dict):
+        if self.queue is None:
+            # No chat request: the run's live channels, if it has any (see
+            # the class docstring).
+            if self.publish is not None:
+                if self.run_id:
+                    payload.setdefault("run_id", self.run_id)
+                try:
+                    self.publish(payload)
+                except Exception:  # noqa: BLE001 - a live view must never break the run
+                    log.debug("_emit: publish failed", exc_info=True)
+            return
         if self.run_id:
             payload.setdefault("run_id", self.run_id)
         # Forward to the local SSE queue for the active HTTP response.

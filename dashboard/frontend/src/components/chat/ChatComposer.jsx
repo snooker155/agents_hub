@@ -3,6 +3,7 @@ import { Clock, Send, StopCircle, Terminal, X, Zap } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useChatPage } from './context';
 import ComposerBox from './ComposerBox';
+import { BackgroundRunsButton } from './BackgroundRuns';
 import { COMPOSER_SEND_CLS, COMPOSER_STOP_CLS, COMPOSER_TEXTAREA_CLS } from './composerStyles';
 import { AttachButton, AttachPickers, PendingAttachments, PendingReferences } from './ComposerAttachments';
 
@@ -252,7 +253,11 @@ export default function ChatComposer() {
                       <span className="hidden sm:inline text-[10px] font-normal opacity-70">Shift+Tab</span>
                     </button>
               ) : null}
-              hint={<>{t('chat.composerHint')} / {t('chat.forCommands')}</>}
+              // What the agent set going in the background stands in for the
+              // typing hint while it runs (BackgroundRuns.jsx).
+              hint={page.backgroundRuns?.some((r) => !r.finished)
+                ? <BackgroundRunsButton runs={page.backgroundRuns} />
+                : <>{t('chat.composerHint')} / {t('chat.forCommands')}</>}
               footerRight={(
                   <ContextMeter
                     usage={contextUsage}

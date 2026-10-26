@@ -54,6 +54,8 @@ const clip = (text) => (text.length > MAX_LIVE_TEXT ? text.slice(-MAX_LIVE_TEXT)
 const blank = (fields = {}) => ({
   runId: null,
   user: '',
+  // What started a turn the hub began by itself (a background run ended).
+  notice: null,
   text: '',
   thinking: [],
   thinkingLive: '',
@@ -74,6 +76,7 @@ export function fromSnapshot(snapshot) {
   return blank({
     runId: snapshot.run_id || null,
     user: snapshot.user_message || '',
+    notice: snapshot.notice || null,
     text: snapshot.text || '',
     thinking: snapshot.thinking || [],
     thinkingLive: snapshot.thinking_live || '',
@@ -98,6 +101,7 @@ export function reduceLiveTurn(turn, event) {
   if (type === 'turn_start') {
     return blank({
       user: event.message || '',
+      notice: event.notice || null,
       source: event.source || 'chat',
       agentId: event.agent_id || null,
     });

@@ -16,6 +16,7 @@ browser is still holding from before this existed.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -71,6 +72,13 @@ async def list_chats(
     return chat_store.list_chats(workspace=workspace, limit=limit, offset=offset)
 
 
+@router.get("/search")
+async def search_chats(q: str = "", workspace: Optional[str] = None, limit: int = 50):
+    """The conversations whose title or messages hold ``q``, newest first,
+    without transcripts; a message hit carries the text around it (``match``)."""
+    return await asyncio.to_thread(chat_store.search_chats, q, workspace=workspace, limit=limit)
+
+
 @router.get("/running")
 async def list_running_chats():
     """The stored conversations that are being answered now.
@@ -85,6 +93,19 @@ async def list_running_chats():
         if chat_store.get_chat(chat_id) is not None:
             running.append(chat_id)
     return {"conversations": running}
+
+
+@router.get("/{chat_id}/background")
+async def get_background_runs(chat_id: str):
+    """The flows, loops and teams the agent started from this chat that are
+    still going: what each is, how far it has got (a flow's nodes passed of
+    its longest way to the end, a loop's iteration and score, a team's members
+    at work) and the channels it streams on. The composer lists them; the
+    chat reloads this on ``flow_runs`` / ``loop_runs`` / ``team_runs``
+    changes (chat/background_runs.py)."""
+    import asyncio
+    from chat.background_runs import for_conversation
+    return {"runs": await asyncio.to_thread(for_conversation, chat_id)}
 
 
 @router.get("/{chat_id}/live")

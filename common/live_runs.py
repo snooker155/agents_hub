@@ -74,6 +74,7 @@ def _blank(turn_id: str, **fields) -> Dict[str, Any]:
         "agent_id": None,
         "source": None,
         "user_message": "",
+        "notice": None,
         "text": "",
         "thinking": [],
         "thinking_live": "",
@@ -123,7 +124,8 @@ def _clip(text: str) -> str:
 # ── the chat feed ────────────────────────────────────────────────────────────
 
 def start_turn(*, conversation_id: Optional[str], user_message: str = "",
-               source: Optional[str] = None) -> str:
+               source: Optional[str] = None,
+               notice: Optional[Dict[str, Any]] = None) -> str:
     """Open a turn and return its id. One conversation has one live turn: a new
     one replaces whatever was left of the last, which is what the conversation
     itself does."""
@@ -132,7 +134,8 @@ def start_turn(*, conversation_id: Optional[str], user_message: str = "",
         if conversation_id and conversation_id in _by_conversation:
             _drop(_by_conversation[conversation_id])
         _turns[turn_id] = _blank(turn_id, conversation_id=conversation_id,
-                                 user_message=user_message or "", source=source)
+                                 user_message=user_message or "", source=source,
+                                 notice=notice)
         if conversation_id:
             _by_conversation[conversation_id] = turn_id
         _sweep()

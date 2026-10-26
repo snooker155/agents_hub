@@ -74,6 +74,8 @@ export const startChatOverSSE = (body) => api.post('/chat/stream-sse', body);
 // it is a service record now, so the list comes from the server. Listing omits
 // transcripts — a chat's messages arrive when it is opened.
 export const listChats = (params) => api.get('/chats', { params });
+// Titles and messages holding `q`, newest first, a message hit with the text around it (`match`).
+export const searchChats = (params) => api.get('/chats/search', { params });
 export const getChat = (chatId) => api.get(`/chats/${chatId}`);
 // The client id travels with a save so the server can name the writer when it
 // announces it: every other tab with this chat open reloads, the writer does not.
@@ -88,6 +90,12 @@ export const getChatLive = (chatId) => api.get(`/chats/${chatId}/live`);
 // The conversations being answered right now, whoever started the turn: the
 // Chat page marks them in its list (refetched on `chat_turns.changed`).
 export const getRunningChats = () => api.get('/chats/running');
+// The flows, loops and teams the agent started from this chat that are still
+// going, with their progress and the channels they stream on.
+export const getChatBackground = (chatId) => api.get(`/chats/${chatId}/background`);
+// What a run's live channel has streamed so far (common/run_replay.py), for a
+// page that opens in the middle of it.
+export const getStreamReplay = (channel) => api.get('/stream/replay', { params: { channel } });
 
 // Context references — what the chat composer can attach besides a file. The
 // kind catalog and the per-kind candidate lists both come from the server so the
