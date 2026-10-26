@@ -52,6 +52,8 @@ def embed_openai(texts: List[str], model: str, api_key: str) -> EmbeddingResult:
 # including once per query. One instance per model name per process instead.
 _ST_MODELS: Dict[str, object] = {}
 _ST_LOCK = threading.Lock()
+# Models a background thread is loading right now (Embedder.warm_in_background).
+_ST_WARMING: set = set()
 
 # Repeated texts are common: the same query asked twice, the same chunk
 # re-indexed. A small LRU keeps the last few hundred vectors rather than
@@ -235,6 +237,38 @@ class Embedder:
 
     def is_configured(self) -> bool:
         return self.provider not in ("", "none") and bool(self.model)
+
+    def is_ready(self) -> bool:
+        """Whether a query can be embedded without loading anything first.
+        A local sentence-transformers model must already be in memory; a
+        remote provider is always ready, its call is a request, not a load."""
+        if not self.is_configured():
+            return False
+        if self.provider == "sentence-transformers":
+            return self.model in _ST_MODELS
+        return True
+
+    def warm_in_background(self) -> None:
+        """Load a local model on a daemon thread, at most one load per model
+        at a time, so a search never waits for the weights (or their download)."""
+        if self.provider != "sentence-transformers" or self.is_ready():
+            return
+        with _ST_LOCK:
+            if self.model in _ST_WARMING:
+                return
+            _ST_WARMING.add(self.model)
+
+        def _load(model: str) -> None:
+            try:
+                get_sentence_transformer(model)
+                log.info("embedding model %s loaded", model)
+            except Exception:  # noqa: BLE001 - a model that will not load leaves vector search off
+                log.warning("embedding model %s could not be loaded", model, exc_info=True)
+            finally:
+                with _ST_LOCK:
+                    _ST_WARMING.discard(model)
+
+        threading.Thread(target=_load, args=(self.model,), name="rag-embedder-warm", daemon=True).start()
 
     def embed(self, texts: List[str]) -> EmbeddingResult:
         """Embed a batch of texts (ingestion's path). Raises RuntimeError for

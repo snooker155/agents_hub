@@ -165,17 +165,15 @@ class SearchMemoryInput(BaseModel):
 def _search_memory_impl(query: str, memory_id: str, top_k: int = 5) -> str:
     """Rank a pool's own text and its indexed chunks for `query`.
 
-    The pool's indexed passages are always searched: ``search_rag`` answers
-    from BM25 over the chunk store alone when no vector store is configured,
-    and fuses vector similarity in when one is. Those passages are fused with
-    the BM25 ranking over blocks, slots, notes and episodes rather than
-    replacing it, so a pool with no vector store still gets ranked answers
-    from its documents, and a pool with one does not lose what it holds in
-    plain data.
+    When RAG is on, the pool's indexed passages come from the RAG service
+    (memory/rag_query.py ``search_rag_service``) and are fused with the BM25
+    ranking over blocks, slots, notes and episodes rather than replacing it.
+    With RAG off, or the service not answering, that step is skipped and the
+    pool's own items still answer; ``rag`` in the result says which.
     """
     try:
         from memory.ranking import Candidate, pool_candidates, rank_candidates
-        from memory.rag_query import search_rag, is_rag_configured
+        from memory.rag_query import search_rag_service
 
         store = MemoryStore()
         mem = _own_pool(store, memory_id)
@@ -185,8 +183,8 @@ def _search_memory_impl(query: str, memory_id: str, top_k: int = 5) -> str:
         candidates = pool_candidates(mem, pool_id=str(memory_id))
         # The passage retriever's own order, fused with the BM25 ranking below.
         vector_keys: list[str] = []
-        rag_on = is_rag_configured()
-        for hit in search_rag(query, str(memory_id), top_k=max(top_k, 5)):
+        hits, rag_status = search_rag_service(query, str(memory_id), top_k=max(top_k, 5))
+        for hit in hits:
             key = f"{memory_id}:rag:{hit.get('file_id', '')}:{hit.get('chunk_idx', 0)}"
             candidates.append(Candidate(
                 key=key,
@@ -206,13 +204,13 @@ def _search_memory_impl(query: str, memory_id: str, top_k: int = 5) -> str:
                 "ok": True,
                 "results": [],
                 "note": "Nothing in this pool matched the query.",
-                "vector_search": rag_on,
+                "rag": rag_status,
             })
         body = {
             "ok": True,
             "results": results,
             "count": len(results),
-            "vector_search": rag_on,
+            "rag": rag_status,
         }
         if _cite_results(str(memory_id), mem, results):
             body["citations"] = CITE_INSTRUCTION
@@ -230,9 +228,8 @@ search_memory_tool = StructuredTool.from_function(
     name="search_memory",
     description=(
         "Ranked search over a shared memory pool. "
-        "Scores the pool's own blocks, slots, notes and episodes with BM25 and fuses that with "
-        "the passages of its indexed documents (keyword search, plus vector similarity when a "
-        "vector store is configured). "
+        "Scores the pool's own blocks, slots, notes and episodes with BM25 and, when RAG is on, "
+        "fuses that with the passages of its indexed documents. "
         "Each result carries the `layer` it came from and its `score`; a document passage or a "
         "note may carry a `cite` number to quote as [n] in the answer. "
         "Use when you need contextually related content without knowing the exact file or key. "

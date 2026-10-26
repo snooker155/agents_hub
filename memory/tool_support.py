@@ -27,7 +27,8 @@ def _tokenize(query: str) -> list[str]:
     stored text is matched by substring, so the singular form covers both.
     """
     import re
-    raw = re.split(r"[^a-z0-9_\-]+", query.lower())
+    from memory.ranking import fold
+    raw = re.split(r"[^\w\-]+", fold(query))
     tokens = [t for t in raw if t and len(t) > 1 and t not in _STOPWORDS]
     expanded: list[str] = []
     for t in tokens:
@@ -79,7 +80,7 @@ def _search_graph(pool_id: str, query: str, *, exclude: set, limit: int = 8) -> 
             for v in (n.properties or {}).values():
                 if isinstance(v, str):
                     haystack_parts.append(v.lower())
-            haystack = " ".join(haystack_parts)
+            haystack = " ".join(haystack_parts).replace("ё", "е")
             return sum(1 for t in tokens if t in haystack)
 
         scored = [

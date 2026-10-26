@@ -109,6 +109,15 @@ def pool_chunks(pool_id: str) -> List[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+def pool_has_chunks(pool_id: str) -> bool:
+    """Whether the pool has indexed anything at all."""
+    conn = db.get_conn()
+    row = conn.execute(
+        "SELECT 1 FROM rag_chunks WHERE pool_id = ? LIMIT 1", (pool_id,)
+    ).fetchone()
+    return row is not None
+
+
 def file_chunk_count(file_id: str) -> int:
     conn = db.get_conn()
     row = conn.execute(

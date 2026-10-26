@@ -41,7 +41,9 @@ LEXICAL_BONUS = 0.01
 RECENCY_WEIGHT = 0.01
 RECENCY_HALF_LIFE_DAYS = 30.0
 
-_WORD_RE = re.compile(r"[a-z0-9_]+")
+# Any script, not ASCII only: with [a-z0-9_] a note in Russian or German had
+# no terms at all and never matched (found live).
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 _STOPWORDS = {
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
@@ -50,7 +52,17 @@ _STOPWORDS = {
     "this", "that", "these", "those", "any", "some", "all", "i", "you", "we",
     "they", "it", "me", "us", "them", "my", "your", "our", "their", "its",
     "about", "tell", "show", "list", "give", "find", "have", "has", "had",
+    # Russian and German, the other two languages of the interface.
+    "что", "как", "это", "кто", "где", "когда", "какой", "какая", "какие", "для",
+    "или", "так", "все", "его", "она", "они", "мне", "меня", "нас", "вас", "есть",
+    "der", "die", "das", "und", "ist", "ein", "eine", "was", "wer", "wie", "wo",
+    "mit", "für", "von", "zu", "den", "dem", "nicht",
 }
+
+
+def fold(text: str) -> str:
+    """Lowercase, with ё read as е (Russian text writes either)."""
+    return (text or "").lower().replace("ё", "е")
 
 
 def terms(text: str) -> List[str]:
@@ -60,7 +72,7 @@ def terms(text: str) -> List[str]:
     and "spell" match a document holding either.
     """
     out: List[str] = []
-    for raw in _WORD_RE.findall((text or "").lower()):
+    for raw in _WORD_RE.findall(fold(text)):
         if len(raw) < 2 or raw in _STOPWORDS:
             continue
         out.append(raw)
@@ -183,7 +195,7 @@ def rank_candidates(
     if not candidates:
         return []
 
-    q_lower = (query or "").strip().lower()
+    q_lower = fold(query).strip()
     q_terms = terms(query)
 
     scores = bm25_scores(query, [c.text for c in candidates])
@@ -205,10 +217,10 @@ def rank_candidates(
     ranked: List[tuple] = []
     for cand in candidates:
         score = by_key.get(cand.key, 0.0)
-        name = (cand.name or "").strip().lower()
+        name = fold(cand.name).strip()
         if name and q_lower and name == q_lower:
             score += EXACT_NAME_BONUS
-        haystack = f"{cand.name} {cand.text}".lower()
+        haystack = fold(f"{cand.name} {cand.text}")
         if any(t in haystack for t in q_terms) or (q_lower and q_lower in haystack):
             score += LEXICAL_BONUS
         score += _recency_boost(cand.occurred_at)
