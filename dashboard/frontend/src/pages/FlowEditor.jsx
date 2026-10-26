@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, Download, Factory, Loader2, Play, Save, SquareTerminal } from 'lucide-react';
+import { AlertTriangle, Download, Factory, Globe, Loader2, Play, Save, SquareTerminal } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import FlowCanvas, { EntityPalette } from '../components/flow/FlowCanvas';
 import { AppBar } from '../components/PageLayout';
+import FlowTitle from '../components/flowEditor/FlowTitle';
 import { useI18n } from '../i18n';
 import { useToast } from '../components/toast';
 import { NodeInspector } from '../components/flowEditor/NodeInspector';
@@ -67,7 +68,7 @@ function FlowEditor() {
     <div className="h-full flex flex-col overflow-hidden">
       <AppBar
         icon={Factory}
-        title={flow.name}
+        title={<FlowTitle flow={flow} onRenamed={(name) => setFlow((prev) => (prev ? { ...prev, name } : prev))} />}
         subtitle={flow.description}
         backTo="/flows"
         backLabel={t('flowEditor.flows')}
@@ -89,6 +90,19 @@ function FlowEditor() {
           >
             <Download className="mr-2 h-4 w-4 text-cyan-500" />
             {t('flowEditor.export')}
+          </button>
+          <button
+            onClick={docApi.handleToggleSharing}
+            className={`flex items-center rounded-lg border px-3 py-1.5 text-sm font-semibold shadow-sm transition-colors ${
+              flow.shared
+                ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                : 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100'
+            }`}
+            title={flow.shared ? t('agentFlows.removeFromMarketplace') : t('agentFlows.publishToMarketplace')}
+            data-testid="flow-toggle-sharing"
+          >
+            <Globe className={`mr-2 h-4 w-4 ${flow.shared ? 'text-indigo-500' : 'text-cyan-500'}`} />
+            {flow.shared ? t('flowEditor.published') : t('flowEditor.publish')}
           </button>
           {/* A way to the run page, not a run: drawn like Edit flow on that
               page, the button that comes back here. */}

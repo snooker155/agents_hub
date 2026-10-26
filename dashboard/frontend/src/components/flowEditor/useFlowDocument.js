@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import { applyEdgeChanges, applyNodeChanges } from 'reactflow';
 import {
-  exportFlow, getAgents, getFlow, listFlowEntities, updateFlow,
+  exportFlow, getAgents, getFlow, listFlowEntities, updateFlow, updateFlowSharing,
 } from '../../api';
 import { errorDetail } from '../toast';
 import { isUnchosenAgent, normalizeNode, serializeEdge, serializeNode } from './graphHelpers';
@@ -163,7 +163,7 @@ export function useFlowDocument(deps) {
       const response = await exportFlow(flowId);
       const blob = new Blob([response.data], { type: 'application/x-yaml' });
       const url = URL.createObjectURL(blob);
-      const slug = (flow.name || flowId).replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '') || 'flow';
+      const slug = (flow.name || flowId).replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '') || 'flow';
       const link = document.createElement('a');
       link.href = url;
       link.download = `${slug}.yaml`;
@@ -188,6 +188,26 @@ export function useFlowDocument(deps) {
     }
   };
 
+  // Publish or unpublish on the marketplace, the same switch as the Globe
+  // button on the flow's card. Publishing reads the stored flow, so unsaved
+  // edits are saved first; publishing also publishes the flow's agents.
+  const handleToggleSharing = async () => {
+    if (!flow) return;
+    const next = !flow.shared;
+    if (!confirm(next ? t('agentFlows.confirmPublish') : t('agentFlows.confirmUnpublish'))) return;
+    if (dirty) {
+      const saved = await persistFlow();
+      if (!saved) return;
+    }
+    try {
+      const response = await updateFlowSharing(flowId, next);
+      setFlow((prev) => (prev ? { ...prev, shared: response.data.shared } : prev));
+      toast.success(next ? t('flowEditor.publishedToast') : t('flowEditor.unpublishedToast'));
+    } catch (error) {
+      toast.error(t('flowEditor.sharingFailed'), errorDetail(error));
+    }
+  };
+
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedNodeId) || null,
     [nodes, selectedNodeId]
@@ -207,7 +227,7 @@ export function useFlowDocument(deps) {
 
   return {
     agentOptions, handleCanvasEdgesChange, handleCanvasNodesChange, handleExportFlow,
-    handleSetWebhookSecret, loadFlow, persistFlow, selectedNode, setCanvasEdges,
+    handleSetWebhookSecret, handleToggleSharing, loadFlow, persistFlow, selectedNode, setCanvasEdges,
     setCanvasNodes, unchosenCount, updateSelectedNode,
   };
 }
