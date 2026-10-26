@@ -264,3 +264,18 @@ def test_the_cache_hands_out_independent_copies(pool):
     second = store.get(pool.id)
     assert second.structured_data == {}
     assert second.notes == []
+
+
+def test_ranking_matches_text_in_any_script():
+    """With an ASCII-only tokenizer a Russian or German note had no terms and
+    never matched (found live: recall of "Анна" returned only episodes)."""
+    from memory.ranking import Candidate, rank_candidates
+
+    note = Candidate(key="n", layer="note", name="Анна",
+                     text="Постоянный гость Анна пьёт латте на овсяном молоке", payload={})
+    other = Candidate(key="o", layer="note", name="Oliver", text="Oliver mag Kaffee", payload={})
+    ranked = rank_candidates("Что обычно берёт Анна?", [other, note])
+    assert ranked[0][0].key == "n"
+    # ё and е are the same letter to a search, and German words count too.
+    assert rank_candidates("пьет", [other, note])[0][0].key == "n"
+    assert rank_candidates("Kaffee", [note, other])[0][0].key == "o"

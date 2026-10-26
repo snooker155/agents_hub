@@ -1,21 +1,22 @@
 """
-RAG query module — used by agents (subprocesses) to search a pool's indexed
-knowledge.
+RAG query module: searching a pool's indexed knowledge.
 
-``search_rag`` is hybrid: BM25 over the pool's chunks (``rag_chunks``, read
-through the backend's ``rag.bm25`` module) always runs, and vector similarity
-runs alongside it whenever a vector store and an embedding provider are both
-configured. The two rankings are fused with reciprocal rank fusion. When no
-vector store is configured, or the embedding call fails for any reason (the
-library is missing, the provider is unreachable), BM25 answers alone — a pool
-with RAG_VECTOR_DB=none still gets ranked keyword search with no torch and no
-running vector DB.
+Two sides. ``search_rag`` is the search itself and runs in the hub backend,
+the RAG service (``POST /api/shared-memory/{id}/rag/search``): BM25 over the
+pool's chunks (``rag_chunks``, the backend's ``rag.bm25`` module) and, when a
+vector store and an embedding provider are both configured, vector
+similarity, fused with reciprocal rank fusion. The backend keeps the
+embedding model loaded; a local model that is not loaded yet is loaded on a
+background thread and that search answers from BM25 alone.
+
+``search_rag_service`` is what an agent's tools call (``recall``,
+``search_memory``). An agent run never indexes, embeds or loads a model
+itself: with RAG off the step is skipped without a request, and when the
+service does not answer in time it is skipped too. ``forget_rag_file``
+likewise asks the service to drop a file's chunks and vectors.
 
 Reads configuration from the .env file directly so it works correctly in
-subprocesses where os.environ is frozen at launch time. The backend's own
-``rag`` package (chunk store, BM25, the shared Embedder, the vector store
-adapters) is imported by path when this runs outside the dashboard backend
-process, the same way ``delete_rag_vectors`` always has.
+subprocesses where os.environ is frozen at launch time.
 """
 from __future__ import annotations
 
@@ -100,6 +101,11 @@ def embed_query(text: str) -> Optional[list]:
         base_url = _read_env("RAG_EMBEDDING_BASE_URL", "http://localhost:11434")
         Embedder = _backend_module("embeddings").Embedder
         embedder = Embedder.for_config(provider, model, api_key=api_key, base_url=base_url)
+        if not embedder.is_ready():
+            # Loading a local model takes seconds (and a download on first
+            # use): never on a search's path. This search answers from BM25.
+            embedder.warm_in_background()
+            return None
         return embedder.embed_one(text)
     except Exception:  # noqa: BLE001 - retrieval is best effort: no embedding means keyword search only
         log.debug("query embedding failed", exc_info=True)
@@ -342,10 +348,100 @@ def search_rag(query: str, memory_id: str, top_k: int = 5) -> list[dict]:
     Works with no vector store or embedding model configured at all — BM25
     alone then answers directly from the chunk store.
     """
+    # A pool with no indexed files has nothing either retriever could find,
+    # and embedding the query would load the embedding model (torch, and a
+    # download on first use) inside the agent's tool call for nothing.
+    try:
+        if not _backend_module("chunk_store").pool_has_chunks(str(memory_id)):
+            return []
+    except Exception:  # noqa: BLE001 - an unreadable chunk store falls through to the full search
+        log.debug("chunk presence probe failed", exc_info=True)
     fetch = max(int(top_k) * 4, 20)
     bm25_hits = _search_bm25(query, memory_id, fetch)
     vector_hits = _search_vector(query, memory_id, fetch)
     return _fuse(bm25_hits, vector_hits, top_k)
+
+
+# ---------------------------------------------------------------------------
+# The RAG service, as an agent's tools reach it
+# ---------------------------------------------------------------------------
+
+#: Seconds to connect to the service and to wait for its answer.
+SERVICE_CONNECT_TIMEOUT = 2.0
+SERVICE_READ_TIMEOUT = 10.0
+
+
+def _in_service_process() -> bool:
+    """Whether this process is the hub backend itself (its ``rag`` package is
+    loaded), where a request to its own API would be a call to itself."""
+    return sys.modules.get("rag.service") is not None
+
+
+def _service_url(path: str) -> str:
+    from common.hostnet import hub_base_url
+    return f"{hub_base_url()}/api/shared-memory{path}"
+
+
+def search_rag_service(query: str, memory_id: str, top_k: int = 5) -> tuple[list[dict], str]:
+    """The pool's indexed passages for *query*, from the RAG service.
+
+    Returns ``(hits, status)``: status ``ok``; ``off`` when RAG is not
+    configured (no request is made); ``unavailable`` when the service did not
+    answer, answered with an error, or reported itself unavailable. Anything
+    but ``ok`` comes with no hits, and the caller skips the step.
+    """
+    if not is_rag_configured():
+        return [], "off"
+    if _in_service_process():
+        try:
+            return search_rag(query, memory_id, top_k=top_k), "ok"
+        except Exception:  # noqa: BLE001 - a failed search is a skipped step, not a failed tool
+            log.debug("in-process rag search failed", exc_info=True)
+            return [], "unavailable"
+    try:
+        import requests
+        from common.auth import auth_headers
+        resp = requests.post(
+            _service_url(f"/{memory_id}/rag/search"),
+            json={"query": query, "top_k": int(top_k)},
+            headers=auth_headers(),
+            timeout=(SERVICE_CONNECT_TIMEOUT, SERVICE_READ_TIMEOUT),
+        )
+        data = resp.json() if resp.ok else None
+    except Exception:  # noqa: BLE001 - an unreachable service is a skipped step
+        log.debug("rag service request failed", exc_info=True)
+        return [], "unavailable"
+    if not isinstance(data, dict) or not data.get("available"):
+        return [], "unavailable"
+    hits = data.get("results")
+    return (hits if isinstance(hits, list) else []), "ok"
+
+
+def forget_rag_file(memory_id: str, filename: str) -> dict:
+    """Ask the RAG service to drop one indexed file's chunks and vectors.
+
+    The pool's own ``rag_files`` entry is the caller's to edit; this only
+    reaches the index, which lives with the service. Returns what the service
+    answered, or ``{"deleted": 0, "skipped": ...}`` when it could not be asked.
+    """
+    if _in_service_process():
+        return delete_rag_vectors(memory_id, filename)
+    try:
+        import requests
+        from urllib.parse import quote
+        from common.auth import auth_headers
+        resp = requests.delete(
+            _service_url(f"/{memory_id}/files/{quote(filename, safe='')}/index"),
+            headers=auth_headers(),
+            timeout=(SERVICE_CONNECT_TIMEOUT, SERVICE_READ_TIMEOUT),
+        )
+        data = resp.json() if resp.ok else None
+    except Exception:  # noqa: BLE001 - reported in the result, the forget itself still happens
+        log.debug("rag service delete failed", exc_info=True)
+        data = None
+    if not isinstance(data, dict):
+        return {"deleted": 0, "skipped": "the RAG service did not answer; the file's chunks stay indexed"}
+    return data.get("vectors_deleted") or {"deleted": 0, "skipped": data.get("vector_error") or "nothing to delete"}
 
 
 # ---------------------------------------------------------------------------

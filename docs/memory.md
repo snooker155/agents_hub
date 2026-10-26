@@ -120,9 +120,27 @@ from workspace files" on the files tab (`POST
 /api/shared-memory/{pool}/files/from-workspace`): it is copied into the
 knowledge folder and indexed in one step, and the pool remembers the file id
 so a citation of one of its passages links back to it. `search_memory` and
-`recall` number the passages and notes they return for `[n]` citations, and
-search the indexed passages even with no vector store configured (BM25 over
-the chunk store). See [workspace files](files.md).
+`recall` number the passages and notes they return for `[n]` citations. See
+[workspace files](files.md).
+
+### RAG is a service of the hub
+
+An agent run never indexes a file, embeds a query or loads an embedding model.
+Indexing happens only in the hub backend, when a file is added or reindexed on
+the Memory page. `recall` and `search_memory` get a pool's passages from the
+backend (`POST /api/shared-memory/{id}/rag/search`) and rank them together
+with the pool's blocks, slots, notes and episodes:
+
+- with RAG off (`RAG_VECTOR_DB` or `RAG_EMBEDDING_PROVIDER` is `none`) the step
+  is skipped and no request is made;
+- when the service does not answer within a few seconds, or answers with an
+  error, the step is skipped as well;
+- either way the pool's own items still answer. The `rag` entry of the
+  `recall` trace says `ok`, `off` or `unavailable`, and `search_memory`
+  carries the same value as `rag`.
+
+`forget` with a file asks the backend to drop that file's chunks and vectors
+(`DELETE /api/shared-memory/{id}/files/{name}/index`).
 
 A workspace knowledge file is indexed per pool under `{pool_id}::{filename}`.
 Indexing writes to two places that stay in step: the chunk store
@@ -152,14 +170,16 @@ rankings with reciprocal rank fusion:
 - **Vector similarity**, when `RAG_VECTOR_DB` and `RAG_EMBEDDING_PROVIDER` are
   both configured and the embedding call succeeds.
 
-With no vector store configured, BM25 answers alone, so RAG works out of the
-box with no torch and no running vector database. Each result carries `text`,
+This search runs in the backend. A pool with no indexed file returns nothing
+without touching either retriever. Each result carries `text`,
 `filename`, `heading_path`, `chunk_idx`, `score` and `matched`: which
 retriever or retrievers found it.
 
 One `Embedder` (`dashboard/backend/rag/embeddings.py`) loads its model once
-per process and is shared by ingestion and query, so a query no longer pays
-for its own copy of the weights. A small LRU keeps recent query vectors, so
+per process and is shared by ingestion and query. A local
+sentence-transformers model is loaded on a background thread when the backend
+starts, and a search never waits for it: until the model is in memory, a
+search answers from BM25 alone. A small LRU keeps recent query vectors, so
 the same question asked twice is not re-embedded.
 
 ### Deletion and reindexing

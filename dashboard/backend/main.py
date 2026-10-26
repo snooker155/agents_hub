@@ -231,6 +231,20 @@ async def lifespan(app: FastAPI):
             log.info("✓ Egress proxy started")
     except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
         log.warning(f"⚠ Could not start the egress proxy: {e}")
+    # Load a local embedding model in the background, so the first recall
+    # after startup already gets vector search (memory/rag_query.py: a search
+    # never waits for a model to load).
+    try:
+        from rag.config import rag_config
+        from rag.embeddings import Embedder
+        if rag_config.is_configured:
+            Embedder.for_config(
+                rag_config.embedding_provider, rag_config.embedding_model,
+                api_key=rag_config.embedding_api_key, base_url=rag_config.embedding_base_url,
+            ).warm_in_background()
+    except Exception as e:  # noqa: BLE001 - startup of this part is optional, the hub must still boot
+        log.warning(f"⚠ Could not warm the embedding model: {e}")
+
 
     # The hub link (hublink/runtime.py): the mirror's outbox drainer and the
     # node loop, when this hub is linked to another. Nothing starts when it
