@@ -26,6 +26,8 @@ loaded into the store keyed by id, and the source renamed to ``.migrated``
 """
 from __future__ import annotations
 
+import copy
+
 import logging
 import json
 from pathlib import Path
@@ -81,6 +83,74 @@ _VISUAL_DATA_FIELDS = {"label", "description", "domain"}
 # React Flow's per-node render type (visual), distinct from the logical node
 # ``type`` (the entity category) we write to YAML.
 _RENDER_NODE_TYPE = "flowNode"
+# Flow-level keys a downloaded YAML leaves out: where the flow is listed, who
+# shares it, when it was saved and whether it runs belong to this hub, not to
+# the definition another hub imports.
+_NON_EXPORT_FLOW_FIELDS = {"workspace", "shared", "running", "created_at", "updated_at"}
+# A list of state keys derived from the nodes, which exports wrote for a while.
+# The state a flow starts from is its own ``state``; an import drops this one.
+_STATE_SCHEMA_FIELD = "state_schema"
+
+
+def _remap_node_refs(fields: Dict[str, Any], entity: str, mapping: Dict[Any, Any]) -> None:
+    """Rewrite in place the fields that name another node, through ``mapping``.
+
+    A stored flow names nodes by canvas id, YAML by node key, so a switch's
+    case targets and default, a branch's two targets and a routing agent's
+    ``route_default`` are translated both ways. A value the mapping lacks is
+    left as it is.
+    """
+    def remap(value: Any) -> Any:
+        return mapping.get(value, value) if isinstance(value, str) else value
+
+    if fields.get("route_default"):
+        fields["route_default"] = remap(fields["route_default"])
+    config = fields.get("config")
+    if not isinstance(config, dict):
+        return
+    config = copy.deepcopy(config)
+    if entity == "state_switch":
+        # ``routes``, or the first shape's ``cases``: both carry a ``target``.
+        for route in (config.get("routes") or []) + (config.get("cases") or []):
+            if isinstance(route, dict) and route.get("target"):
+                route["target"] = remap(route["target"])
+        if config.get("default"):
+            config["default"] = remap(config["default"])
+    elif entity == "state_branch":
+        for f in ("if_true", "if_false"):
+            if config.get(f):
+                config[f] = remap(config[f])
+    fields["config"] = config
+
+
+def layout_positions(nodes: List[Dict[str, Any]], edges: Optional[List[Dict[str, Any]]]) -> Dict[str, Dict[str, int]]:
+    """Positions by depth: a column per step of the longest path into a node,
+    the nodes of one column stacked, so parallel branches sit side by side."""
+    ids = [str(n.get("id") or f"node-{i + 1}") for i, n in enumerate(nodes)]
+    preds: Dict[str, List[str]] = {i: [] for i in ids}
+    for e in edges or []:
+        src, dst = str(e.get("source") or ""), str(e.get("target") or "")
+        if src in preds and dst in preds:
+            preds[dst].append(src)
+    depth: Dict[str, int] = {}
+
+    def _depth(nid: str, seen: frozenset = frozenset()) -> int:
+        if nid in depth:
+            return depth[nid]
+        if nid in seen:
+            return 0
+        value = 1 + max((_depth(p, seen | {nid}) for p in preds[nid]), default=-1)
+        depth[nid] = value
+        return value
+
+    rows: Dict[int, int] = {}
+    out: Dict[str, Dict[str, int]] = {}
+    for nid in ids:
+        col = _depth(nid)
+        row = rows.get(col, 0)
+        rows[col] = row + 1
+        out[nid] = {"x": 120 + col * 240, "y": 120 + row * 150}
+    return out
 
 
 # ── node identity ────────────────────────────────────────────────────────────
@@ -156,11 +226,17 @@ def _split(flow: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
         data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
 
         ln: Dict[str, Any] = {"type": _node_type(node), "entity": _entity_ref(node)}
+        # The node's name travels with it: an imported flow has no visual
+        # ledger to bring it back from. Its description is the agent's own,
+        # so it stays out.
+        if data.get("label"):
+            ln["name"] = data["label"]
         for f in _LOGIC_NODE_FIELDS:
             if f in node:
                 ln[f] = node[f]
             elif f in data:
                 ln[f] = data[f]
+        _remap_node_refs(ln, ln["entity"], id_to_key)
         logic_nodes.append(ln)
 
         vn: Dict[str, Any] = {"key": key, "id": node.get("id")}
@@ -290,9 +366,14 @@ def _merge(logic: Dict[str, Any], visual: Dict[str, Any]) -> Dict[str, Any]:
         else:
             data["entity_id"] = entity
         data["category"] = ntype
+        # A file exported before descriptions were left out still brings them.
+        for f, dest in (("name", "label"), ("description", "description")):
+            if ln.get(f):
+                data[dest] = ln[f]
         for f in _LOGIC_NODE_FIELDS:
             if f in ln:
                 data[f] = ln[f]
+        _remap_node_refs(data, entity, key_to_id)
 
         node: Dict[str, Any] = {"id": nid, "data": data}
         for f in ("position", "style", "type", "width", "height"):
@@ -317,6 +398,11 @@ def _merge(logic: Dict[str, Any], visual: Dict[str, Any]) -> Dict[str, Any]:
         edge.setdefault("type", "smoothstep")
         edges.append(edge)
     merged["edges"] = edges
+    # A YAML carries no layout: lay out the nodes the ledger gives no place.
+    if any("position" not in n for n in nodes):
+        laid_out = layout_positions(nodes, edges)
+        for n in nodes:
+            n.setdefault("position", laid_out[n["id"]])
     return merged
 
 
@@ -661,7 +747,21 @@ def export_flow_yaml(flow_id: str) -> Optional[str]:
     if flow is None:
         return None
     logic, _ = _split(flow)
-    return yaml.safe_dump(logic, sort_keys=False, allow_unicode=True)
+    nodes = logic.pop("nodes")
+    edges = logic.pop("edges")
+    out = {k: v for k, v in logic.items() if k not in _NON_EXPORT_FLOW_FIELDS}
+    # Every run starts with ``user_request`` (flow/engine.py), so an empty one
+    # in ``state`` is the editor showing it, not something the flow declares.
+    state = out.get("state")
+    if isinstance(state, dict):
+        state = {k: v for k, v in state.items() if not (k == "user_request" and v in ("", None))}
+        if state:
+            out["state"] = state
+        else:
+            out.pop("state")
+    out["nodes"] = nodes
+    out["edges"] = edges
+    return yaml.safe_dump(out, sort_keys=False, allow_unicode=True)
 
 
 def import_flow_yaml(yaml_text: str, flow_id: str) -> Dict[str, Any]:
@@ -682,6 +782,9 @@ def import_flow_yaml(yaml_text: str, flow_id: str) -> Dict[str, Any]:
     if not isinstance(logic.get("edges", []), list):
         raise ValueError("Flow 'edges' must be a list")
 
+    logic.pop(_STATE_SCHEMA_FIELD, None)
+    for f in _NON_EXPORT_FLOW_FIELDS:
+        logic.pop(f, None)
     # Merge with an empty visual ledger → node ids/positions are regenerated.
     merged = _merge(logic, {"id": flow_id})
     merged["id"] = flow_id

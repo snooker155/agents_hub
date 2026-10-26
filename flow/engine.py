@@ -343,12 +343,15 @@ async def run_flow_engine(
     seed_state: Optional[Dict[str, Any]] = None,
     resume: Optional[Dict[str, Any]] = None,
     request: Optional[str] = None,
+    workspace: Optional[str] = None,
 ) -> AsyncGenerator[dict, None]:
     """Drive a flow DAG once, yielding neutral lifecycle events.
 
     Preflight (``validate_flow`` + ``resolve_entities``) runs first and raises
     ``flow.validate.FlowValidationError`` on failure — the caller catches it and
-    translates to its own error surface.
+    translates to its own error surface. With ``workspace`` it also refuses an
+    agent that workspace may not run (``workspace_agent_errors``); a caller
+    that does not know the workspace passes none.
 
     **Scheduling.** Nodes are not walked one at a time: a node becomes *ready*
     once every predecessor has finished (done, failed or skipped), and every
@@ -384,7 +387,9 @@ async def run_flow_engine(
     read identity from the (possibly partial) ``flow`` dict.
     """
     # Local imports: keep engine import-light and avoid load-time circulars.
-    from flow.validate import validate_flow, resolve_entities, execution_order
+    from flow.validate import (
+        FlowValidationError, execution_order, resolve_entities, validate_flow, workspace_agent_errors,
+    )
     from flow.state import FlowState, StateMutationError
     from flow import branching
     from flow import dispatch as flow_dispatch
@@ -396,6 +401,10 @@ async def run_flow_engine(
     # Preflight (raises FlowValidationError; caller translates).
     validate_flow(flow)
     resolve_entities(nodes)
+    if workspace is not None:
+        refused = workspace_agent_errors(nodes, workspace)
+        if refused:
+            raise FlowValidationError("workspace", refused)
 
     predecessors = _build_predecessors(edges)
     successors = _build_successors(edges)
@@ -455,6 +464,7 @@ async def run_flow_engine(
     yield flow_start_ev
 
     node_outputs: Dict[str, str] = {}
+    carried_nodes: set = set()       # output is their predecessors', handed on
     done_nodes: set = set()          # finished ok
     failed_nodes: set = set()        # finished not-ok
     skipped_nodes: set = set()       # never executed
@@ -677,6 +687,8 @@ async def run_flow_engine(
             "duration_ms": dr.duration_ms,
             "stopped": node_stopped,
             "attempts": attempt + 1,
+            # What a switch decided (flow/entities/conditions), for the chat.
+            "detail": getattr(dr, "detail", None),
             # Full shared-state snapshot after this node's writes were applied,
             # so the dashboard can show runtime state values as the run unfolds.
             "state": flow_state.snapshot(),
@@ -911,7 +923,22 @@ async def run_flow_engine(
                 aborting = True
             elif dr.ok:
                 done_nodes.add(node_id)
-                node_outputs[node_id] = dr.output or dr.text
+                carried = ([node_outputs[p] for p in predecessors.get(node_id, []) if node_outputs.get(p)]
+                           if not dr.output and not done_ev.get("is_agent") else [])
+                if carried:
+                    # A node with no answer of its own (a switch, a transform)
+                    # hands on what it was given: the step after a switch works
+                    # on the writer's text, not on the switch's one line summary.
+                    node_outputs[node_id] = "\n\n".join(carried)
+                    carried_nodes.add(node_id)
+                elif not dr.output and not done_ev.get("is_agent") and not any(
+                        p in node_outputs for p in predecessors.get(node_id, [])):
+                    # Nothing reached it either: a turn that starts at a switch.
+                    # Its summary line is no input, so the next step is a root
+                    # and gets the turn's message.
+                    node_outputs.pop(node_id, None)
+                else:
+                    node_outputs[node_id] = dr.output or dr.text
                 if dr.goto is not None:
                     # Pruning decides which nodes are dead, but a node is only
                     # *announced* as skipped when the scheduler reaches it, so
@@ -971,7 +998,8 @@ async def run_flow_engine(
             task.cancel()
 
     combined_output = "\n\n".join(
-        f"### [{nid}]\n{out}" for nid, out in node_outputs.items() if out
+        f"### [{nid}]\n{out}" for nid, out in node_outputs.items()
+        if out and nid not in carried_nodes
     )
     finish_ev = {
         "type": "flow_finish",

@@ -42,9 +42,10 @@ function StepDots({ step }) {
  * name and description from it in the interface language; going back and
  * picking another refills them only if the person has not edited them. A
  * template's flow opens on its run page, ready to run; a blank one in the
- * editor.
+ * editor. The flow belongs to `workspace`, the one it is created in, until it
+ * is published.
  */
-export default function CreateFlowDialog({ onClose }) {
+export default function CreateFlowDialog({ workspace, onClose }) {
   const { t, language } = useI18n();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
@@ -75,10 +76,10 @@ export default function CreateFlowDialog({ onClose }) {
     try {
       const description = form.description.trim();
       if (template) {
-        const { data } = await createFlowFromTemplate(template.id, { name, description, lang: language });
+        const { data } = await createFlowFromTemplate(template.id, { name, description, lang: language, workspace: workspace || undefined });
         navigate(`/flows/${data.id}`);
       } else {
-        const { data } = await createFlow({ name, description });
+        const { data } = await createFlow({ name, description, workspace: workspace || undefined });
         navigate(`/flows/${data.id}/edit`);
       }
     } catch (err) {

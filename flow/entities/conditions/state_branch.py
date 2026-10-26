@@ -36,4 +36,9 @@ def run(state: Any, config: Dict[str, Any], ctx: Any) -> NodeResult:
     value = state.get(key) if hasattr(state, "get") else None
     target = cfg.get("if_true") if value else cfg.get("if_false")
     goto = [target] if target else None
-    return NodeResult(goto=goto, text=f"{key}={value!r} → {target or '(no target)'}")
+    cond = {"op": "not_empty" if value else "empty", "value": None, "target": target or ""}
+    return NodeResult(
+        goto=goto, text=f"{key}={value!r} → {target or '(no target)'}",
+        detail={"key": key, "missing": value is None, "checked": [cond],
+                "matched": [cond] if target else [], "default": False},
+    )

@@ -111,16 +111,26 @@ describe('an agent joined to a switch', () => {
   const agent = (output = []) => ({ id: 'a', data: { category: 'agent', agent_id: 'checker', label: 'Checker', output } });
   const sw = (config = {}) => ({ id: 's', data: { entity_id: 'state_switch', category: 'condition', config } });
 
-  it('gets an output key the switch then tests', () => {
-    const out = wireAgentToSwitch([agent(), sw()], 'a', 's');
+  it('gets an output key the conditions with no key then test', () => {
+    const blank = { routes: [{ target: 'x', match: 'all', conditions: [{ key: '', op: 'not_empty', value: '' }] }] };
+    const out = wireAgentToSwitch([agent(), sw(blank)], 'a', 's');
     expect(out[0].data.output).toEqual(['checker_result']);
-    expect(out[1].data.config.key).toBe('checker_result');
+    expect(out[1].data.config.routes[0].conditions[0].key).toBe('checker_result');
   });
 
-  it('writes the key the switch already tests', () => {
-    const out = wireAgentToSwitch([agent(), sw({ key: 'verdict' })], 'a', 's');
+  it('writes the key the switch already tests, from either shape', () => {
+    const routes = { routes: [{ target: 'x', match: 'all', conditions: [{ key: 'verdict', op: 'equals', value: 'ok' }] }] };
+    const out = wireAgentToSwitch([agent(), sw(routes)], 'a', 's');
     expect(out[0].data.output).toEqual(['verdict']);
-    expect(out[1].data.config).toEqual({ key: 'verdict' });
+    expect(out[1].data.config).toEqual(routes);
+    const legacy = wireAgentToSwitch([agent(), sw({ key: 'score', cases: [{ op: 'gt', value: 3, target: 'x' }] })], 'a', 's');
+    expect(legacy[0].data.output).toEqual(['score']);
+  });
+
+  it('names the key after the agent when the switch has no conditions yet', () => {
+    const out = wireAgentToSwitch([agent(), sw()], 'a', 's');
+    expect(out[0].data.output).toEqual(['checker_result']);
+    expect(out[1].data.config).toEqual({});
   });
 
   it('leaves an agent that already writes a key, and other joins, as they are', () => {

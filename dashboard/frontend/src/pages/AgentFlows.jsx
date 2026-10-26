@@ -138,7 +138,7 @@ const AgentFlows = () => {
       const response = await exportFlow(flow.id);
       const blob = new Blob([response.data], { type: 'application/x-yaml' });
       const url = URL.createObjectURL(blob);
-      const slug = (flow.name || flow.id).replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '') || 'flow';
+      const slug = (flow.name || flow.id).replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '') || 'flow';
       const link = document.createElement('a');
       link.href = url;
       link.download = `${slug}.yaml`;
@@ -178,6 +178,7 @@ const AgentFlows = () => {
       const response = await importFlow({
         yaml: importYaml,
         name: importName.trim() || undefined,
+        workspace: selectedWorkspace || undefined,
       });
       closeImport();
       navigate(`/flows/${response.data.id}/edit`);
@@ -233,6 +234,7 @@ const AgentFlows = () => {
       const response = await createFlow({
         name: wizardResult.name || t('agentFlows.aiGeneratedFlow'),
         description: wizardResult.description || '',
+        workspace: selectedWorkspace || undefined,
       });
       const flowId = response.data.id;
 
@@ -384,13 +386,15 @@ const AgentFlows = () => {
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {visibleFlows.map((flow) => (
-                <div key={flow.id} className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+                <div key={flow.id} className="group relative rounded-lg border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+                  {/* The whole card opens the page: the name's link covers it (its
+                      ::after), the actions sit above it. */}
                   <div className="mb-3 flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <Link
                           to={`/flows/${flow.id}`}
-                          className="block truncate text-sm font-semibold text-gray-900 hover:text-cyan-600"
+                          className="block truncate text-sm font-semibold text-gray-900 group-hover:text-cyan-600 after:absolute after:inset-0 after:rounded-lg"
                         >
                           {flow.name}
                         </Link>
@@ -427,7 +431,7 @@ const AgentFlows = () => {
                     </div>
                   </div>
 
-                  <div className="flex justify-end gap-1">
+                  <div className="relative z-10 flex justify-end gap-1">
                     <Link
                       to={`/flows/${flow.id}/edit`}
                       className="rounded-lg border border-transparent p-1.5 text-gray-400 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600"
@@ -469,7 +473,7 @@ const AgentFlows = () => {
       </section>
 
       {/* Create flow: template, then name and description */}
-      {createOpen && <CreateFlowDialog onClose={() => setCreateOpen(false)} />}
+      {createOpen && <CreateFlowDialog workspace={selectedWorkspace} onClose={() => setCreateOpen(false)} />}
 
       {/* Import Modal — review parsed YAML before validating + storing it */}
       {importOpen && (
