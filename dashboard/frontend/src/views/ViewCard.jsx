@@ -111,6 +111,32 @@ function Modal({ children, onClose, title, fill = false }) {
 // `className` — extra classes on the root.
 const CHAT_DECK_WIDTH = { width: 'clamp(16rem, calc((100vw - 38rem) * 0.367), 40rem)' };
 
+// A long content kind in a chat reply shows only its top part, CHAT_PEEK_PX
+// high, fading out at the bottom; the header's Expand button shows the whole
+// view. It folds only when there is a fair amount to hide (CHAT_FOLD_SLACK
+// times the peek), so a view a few lines over the cap is shown whole.
+const CHAT_PEEK_PX = 384;
+const CHAT_FOLD_SLACK = 1.25;
+
+// The natural height of `ref`'s element, kept current as it grows (a table
+// still loading rows, an image decoding).
+// `active` is falsy while there is nothing to measure, and changes when the
+// measured element is replaced (another view).
+function useContentHeight(ref, active) {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!active || !el) return undefined;
+    const measure = () => setHeight(el.scrollHeight);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, active]);
+  return height;
+}
+
 export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false, fill = false, inChat = false, className = '' }) {
   const { t } = useI18n();
   const viewId = viewRef?.view_id;
@@ -124,6 +150,13 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
 
   const bodyRef = useRef(null);
   const fillBody = Boolean(view) && FILL_KINDS.has(view.kind);
+
+  // Fill kinds size to the frame, not to their content: they have no
+  // overflow to fold. Content kinds in a chat reply do.
+  const foldable = inChat && Boolean(view) && !fillBody;
+  const contentRef = useRef(null);
+  const contentHeight = useContentHeight(contentRef, foldable && view.view_id);
+  const folded = foldable && contentHeight > CHAT_PEEK_PX * CHAT_FOLD_SLACK;
 
   // Interactive control/param changes: optimistic local apply + persist as a
   // user op (echoed on the view channel for any Studio watching the same view).
@@ -198,8 +231,18 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
             <AlertCircle className="w-4 h-4 text-amber-500" /> {error}
           </div>
         )}
-        {view && <ViewRenderer view={view} onOp={onOp} className={fillBody ? 'flex-1 min-h-0' : ''} />}
+        {view && foldable && (
+          <div data-testid="view-fold" className={`relative ${folded ? 'overflow-hidden' : ''}`}
+            style={folded ? { maxHeight: CHAT_PEEK_PX } : undefined}>
+            <div ref={contentRef}><ViewRenderer view={view} onOp={onOp} /></div>
+            {folded && (
+              <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-white dark:from-gray-900" />
+            )}
+          </div>
+        )}
+        {view && !foldable && <ViewRenderer view={view} onOp={onOp} className={fillBody ? 'flex-1 min-h-0' : ''} />}
       </div>
+
 
       {expanded && view && (
         <Modal title={title} onClose={close} fill={FILL_KINDS.has(view.kind)}>
