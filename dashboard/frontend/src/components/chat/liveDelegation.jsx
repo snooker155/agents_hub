@@ -8,10 +8,11 @@
  */
 import { BrainCircuit, CheckCircle2, MessageSquareText, Repeat, Terminal, Workflow, XCircle, Zap } from 'lucide-react';
 import { useI18n } from '../../i18n';
-import { SKILL_TOOL, shortText } from '../processUtils';
+import { SKILL_TOOL } from '../processUtils';
+import { toolActivity } from './toolActivity';
 import { foldDelegationTools } from './trail';
 import ToolStatusMark from '../ToolStatusMark';
-import { tidyThought } from './reasoningText';
+import { tickerText } from './reasoningText';
 
 function Dots({ tone = 'bg-indigo-400' }) {
   return (
@@ -23,9 +24,9 @@ function Dots({ tone = 'bg-indigo-400' }) {
   );
 }
 
-// The last three lines of text still being written.
+// The last three lines of text still being written, blank lines folded out.
 function Tail({ icon: Icon, iconCls, text: raw }) {
-  const text = tidyThought(raw);
+  const text = tickerText(raw);
   return (
     <div className="flex items-start gap-1.5">
       <Icon className={`w-3.5 h-3.5 flex-shrink-0 mt-0.5 ${iconCls}`} />
@@ -67,14 +68,14 @@ function Step({ step }) {
   }
   if (step.type === 'tool') {
     const isSkill = step.tool === SKILL_TOOL;
+    // What the call does, in words; the tool's own name on hover.
     return (
-      <span className="flex items-center gap-1.5 min-w-0 text-[11px]" data-testid="live-delegation-tool">
+      <span className="flex items-center gap-1.5 min-w-0 text-[11px]" data-testid="live-delegation-tool" title={step.tool || ''}>
         <ToolStatusMark entry={step} />
         {isSkill
           ? <Zap className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
           : <Terminal className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />}
-        <span className={`font-semibold flex-shrink-0 ${isSkill ? 'text-violet-700' : 'text-amber-700'}`}>{step.tool || 'tool'}</span>
-        {step.input ? <span className="text-gray-400 truncate">{shortText(step.input, 80)}</span> : null}
+        <span className={`truncate ${isSkill ? 'text-violet-700' : 'text-amber-700'}`}>{toolActivity(t, step.tool, step.input)}</span>
       </span>
     );
   }

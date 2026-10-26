@@ -18,6 +18,14 @@ function tidyThought(raw) {
   return String(raw).replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd();
 }
 
+// The live ticker shows the last three lines of a thought in a box that
+// clips at its top edge, so a blank line between paragraphs scrolls up into
+// view as an empty first line. The ticker reads the thought as lines of text
+// only: runs of blank lines fold into one line break.
+function tickerText(raw) {
+  return tidyThought(raw).replace(/\r\n?/g, '\n').replace(/\n(?:[ \t]*\n)+/g, '\n');
+}
+
 function parseReasoningContent(raw) {
   return tidyThought(rawReasoningContent(raw));
 }
@@ -44,4 +52,4 @@ function rawReasoningContent(raw) {
   return text;
 }
 
-export { parseReasoningContent, tidyThought };
+export { parseReasoningContent, tickerText, tidyThought };
