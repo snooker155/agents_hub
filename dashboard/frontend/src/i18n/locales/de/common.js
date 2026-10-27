@@ -145,6 +145,8 @@ export default {
     year: 'JJJJ',
     timeHint: 'hh:mm',
     time: 'Uhrzeit',
+    hours: 'Stunden',
+    minutes: 'Minuten',
     today: 'Heute',
     openCalendar: 'Kalender öffnen',
     previousMonth: 'Vorheriger Monat',

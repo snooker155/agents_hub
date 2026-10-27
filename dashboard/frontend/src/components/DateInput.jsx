@@ -1,12 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { parseDateValue, formatDateValue } from '../lib/dateValue';
+import ClockFace from './ClockFace';
 
 // Native <input type="date"> / "datetime-local" always render in the *browser*
 // locale, which the app's language switcher cannot touch. This component keeps
 // the same value contract but formats — and parses — everything through the
 // selected language instead.
+//
+// The calendar is drawn into <body>, placed from the field: inside a modal
+// that scrolls its content, a popup positioned in the field's own box is cut
+// off at the modal's edge. The time is picked on a clock dial.
 
 const pad = (n) => String(n).padStart(2, '0');
 const DATE_FIELDS = ['day', 'month', 'year'];
@@ -96,6 +102,12 @@ export default function DateInput({
 
   const selected = useMemo(() => parseDateValue(value), [value]);
   const [open, setOpen] = useState(false);
+  // What the popup shows: the month, or the dial for the hour or the minute.
+  const [view, setView] = useState('calendar');
+  // Where the popup sits on the screen (fixed), below the field or above it,
+  // whichever fits, and never past the window's edges.
+  const [pos, setPos] = useState(null);
+  const popRef = useRef(null);
   const [cursor, setCursor] = useState(() => startOfMonth(selected || new Date()));
   // `draft` holds the half-typed text and only exists while the field has focus.
   // Everywhere else the text is derived from the value and the current language,
@@ -108,7 +120,10 @@ export default function DateInput({
 
   useEffect(() => {
     if (!open) return undefined;
-    const onPointer = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const onPointer = (e) => {
+      if (wrapRef.current?.contains(e.target) || popRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onPointer);
     document.addEventListener('keydown', onKey);
@@ -117,6 +132,44 @@ export default function DateInput({
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+
+  // The popup is not inside the field's DOM any more, so a parent that
+  // closes on a mousedown outside itself (a due date box, a dropdown) would
+  // take a click on a day for one outside. Its mousedowns stop here.
+  useEffect(() => {
+    const pop = popRef.current;
+    if (!open || !pop) return undefined;
+    const stop = (e) => e.stopPropagation();
+    pop.addEventListener('mousedown', stop);
+    return () => pop.removeEventListener('mousedown', stop);
+  }, [open]);
+
+  const place = useCallback(() => {
+    const field = wrapRef.current?.getBoundingClientRect();
+    const pop = popRef.current;
+    if (!field || !pop) return;
+    const margin = 8;
+    const { offsetWidth: w, offsetHeight: h } = pop;
+    const below = window.innerHeight - field.bottom - margin;
+    const above = field.top - margin;
+    let top = below >= h + 4 || below >= above ? field.bottom + 4 : field.top - h - 4;
+    top = Math.max(margin, Math.min(top, window.innerHeight - h - margin));
+    const left = Math.max(margin, Math.min(field.left, window.innerWidth - w - margin));
+    setPos((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }));
+  }, []);
+
+  // Placed before it is painted, again when its content changes height (the
+  // calendar and the dial differ), and while the page or the modal scrolls.
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, view, place]);
 
   const emit = useCallback((date) => { onChange?.(formatDateValue(date, format)); }, [onChange, format]);
 
@@ -138,16 +191,16 @@ export default function DateInput({
       day.getFullYear(), day.getMonth(), day.getDate(),
       base?.getHours() || 0, base?.getMinutes() || 0,
     ));
-    if (!withTime) setOpen(false);
+    // With a time to set, the dial for the hour follows the day.
+    if (withTime) setView('hours');
+    else setOpen(false);
   };
 
-  const setTimePart = (part, raw) => {
-    const digits = raw.replace(/\D/g, '').slice(0, 2);
-    const n = digits === '' ? 0 : parseInt(digits, 10);
+  const setTimePart = (part, n) => {
     const base = selected || new Date(new Date().setHours(0, 0, 0, 0));
     const next = new Date(base);
-    if (part === 'hours') next.setHours(Math.min(23, n));
-    else next.setMinutes(Math.min(59, n));
+    if (part === 'hours') next.setHours(n);
+    else next.setMinutes(n);
     next.setSeconds(0, 0);
     emit(next);
   };
@@ -155,6 +208,8 @@ export default function DateInput({
   const openCalendar = () => {
     if (disabled) return;
     setCursor(startOfMonth(selected || new Date()));
+    setView('calendar');
+    setPos(null);
     setOpen((o) => !o);
   };
 
@@ -213,8 +268,15 @@ export default function DateInput({
         </button>
       </div>
 
-      {open && (
-        <div className="absolute z-50 mt-1 w-64 bg-white border border-gray-200 rounded-xl shadow-lg p-3">
+      {open && createPortal(
+        <div
+          ref={popRef}
+          data-testid="date-popup"
+          className="fixed z-[80] w-64 bg-white border border-gray-200 rounded-xl shadow-lg p-3"
+          // Hidden for the one frame before it is placed, so it never shows at 0,0.
+          style={pos ? { top: pos.top, left: pos.left } : { top: 0, left: 0, visibility: 'hidden' }}
+        >
+          {view === 'calendar' ? (<>
           <div className="flex items-center justify-between mb-2">
             <button
               type="button"
@@ -264,28 +326,64 @@ export default function DateInput({
             })}
           </div>
 
-          {withTime && (
+          </>) : (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <button
+                  type="button"
+                  onClick={() => setView('calendar')}
+                  className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  {selected ? new Intl.DateTimeFormat(language, { day: 'numeric', month: 'long' }).format(selected) : monthLabel}
+                </button>
+                <span className="flex items-baseline gap-0.5 text-2xl font-semibold tabular-nums">
+                  <button type="button" onClick={() => setView('hours')}
+                    className={`rounded px-1 ${view === 'hours' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:text-gray-600'}`}>
+                    {selected ? pad(selected.getHours()) : '--'}
+                  </button>
+                  <span className="text-gray-300">:</span>
+                  <button type="button" onClick={() => setView('minutes')}
+                    className={`rounded px-1 ${view === 'minutes' ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:text-gray-600'}`}>
+                    {selected ? pad(selected.getMinutes()) : '--'}
+                  </button>
+                </span>
+              </div>
+              <ClockFace
+                mode={view}
+                value={selected ? (view === 'hours' ? selected.getHours() : selected.getMinutes()) : null}
+                label={view === 'hours' ? t('common.datePicker.hours') : t('common.datePicker.minutes')}
+                onChange={(n) => setTimePart(view, n)}
+                // The hour leads to the minute; the minute ends the pick.
+                onDone={(n) => {
+                  setTimePart(view, n);
+                  if (view === 'hours') setView('minutes');
+                  else setOpen(false);
+                }}
+              />
+            </div>
+          )}
+
+          {withTime && view === 'calendar' && (
             <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
               <span className="text-xs text-gray-500">{t('common.datePicker.time')}</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={selected ? pad(selected.getHours()) : ''}
-                placeholder="00"
-                onChange={(e) => setTimePart('hours', e.target.value)}
-                onFocus={(e) => e.target.select()}
-                className="w-10 border border-gray-200 rounded-md px-1 py-0.5 text-sm text-center focus:outline-none"
-              />
+              <button
+                type="button"
+                aria-label={t('common.datePicker.hours')}
+                onClick={() => setView('hours')}
+                className="min-w-[2.25rem] border border-gray-200 rounded-md px-1.5 py-0.5 text-sm tabular-nums hover:bg-gray-50"
+              >
+                {selected ? pad(selected.getHours()) : '--'}
+              </button>
               <span className="text-gray-400">:</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={selected ? pad(selected.getMinutes()) : ''}
-                placeholder="00"
-                onChange={(e) => setTimePart('minutes', e.target.value)}
-                onFocus={(e) => e.target.select()}
-                className="w-10 border border-gray-200 rounded-md px-1 py-0.5 text-sm text-center focus:outline-none"
-              />
+              <button
+                type="button"
+                aria-label={t('common.datePicker.minutes')}
+                onClick={() => setView('minutes')}
+                className="min-w-[2.25rem] border border-gray-200 rounded-md px-1.5 py-0.5 text-sm tabular-nums hover:bg-gray-50"
+              >
+                {selected ? pad(selected.getMinutes()) : '--'}
+              </button>
             </div>
           )}
 
@@ -305,7 +403,8 @@ export default function DateInput({
               {t('common.clear')}
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

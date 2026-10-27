@@ -149,6 +149,8 @@ export default {
     year: 'yyyy',
     timeHint: 'hh:mm',
     time: 'Time',
+    hours: 'Hours',
+    minutes: 'Minutes',
     today: 'Today',
     openCalendar: 'Open calendar',
     previousMonth: 'Previous month',
