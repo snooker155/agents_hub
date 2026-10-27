@@ -118,7 +118,24 @@ def test_linear_two_agent_dag(monkeypatch):
     assert "OUT[a]" not in prompts["a"]
     finish = events[-1]
     assert finish["ok"] is True and finish["any_failure"] is False
-    assert "### [a]" in finish["combined_output"] and "### [b]" in finish["combined_output"]
+    # No name of their own: the node ids head the parts.
+    assert "### a\n" in finish["combined_output"] and "### b\n" in finish["combined_output"]
+
+
+def test_combined_output_names_each_part_by_the_node_name(monkeypatch):
+    """A loop stores the combined output as its pass's output: each part is
+    headed by the name the flow shows, two nodes of one name told apart."""
+    _install_fakes(monkeypatch)
+    flow = {
+        "id": "f1", "name": "named",
+        "nodes": [{"id": "agent-1", "kind": "agent", "data": {"label": "Researcher"}},
+                  {"id": "agent-2", "kind": "agent", "data": {"label": "Writer"}},
+                  {"id": "agent-3", "kind": "agent", "data": {"label": "Writer"}}],
+        "edges": [{"source": "agent-1", "target": "agent-2"}, {"source": "agent-2", "target": "agent-3"}],
+    }
+    out = _drive(flow, _make_driver())[-1]["combined_output"]
+    assert "### Researcher\n" in out and "### Writer\n" in out and "### Writer (2)\n" in out
+    assert "agent-1" not in out.split("\n")[0]
 
 
 def test_condition_node_prunes_unselected_branch(monkeypatch):
