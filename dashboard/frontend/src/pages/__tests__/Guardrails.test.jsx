@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -12,7 +12,8 @@ const updateGuardrail = vi.fn(() => ok({}));
 const archiveGuardrail = vi.fn(() => ok({}));
 const deleteGuardrail = vi.fn(() => ok({}));
 const testGuardrail = vi.fn(() => ok({ applies: true, passed: true, reason: '' }));
-const getGuardrailEvents = vi.fn(() => ok([]));
+const NO_EVENTS = { items: [], total: 0 };
+const getGuardrailEvents = vi.fn(() => ok(NO_EVENTS));
 
 vi.mock('../../api/guardrails', () => ({
   getGuardrails: (...args) => getGuardrails(...args),
@@ -61,7 +62,7 @@ beforeEach(() => {
   testGuardrail.mockClear();
   getGuardrailEvents.mockClear();
   getGuardrails.mockImplementation(() => ok([]));
-  getGuardrailEvents.mockImplementation(() => ok([]));
+  getGuardrailEvents.mockImplementation(() => ok(NO_EVENTS));
 });
 
 describe('Guardrails — empty state', () => {
@@ -75,7 +76,7 @@ describe('Guardrails — the list', () => {
   it('shows a guardrail with its stage, kind and action', async () => {
     getGuardrails.mockImplementation(() => ok([GUARDRAIL]));
     show();
-    await screen.findByText('no-secrets-out');
+    await screen.findByText('no-secrets-out', { selector: 'span' });
     expect(screen.getByText('Blocks API keys leaking in the answer')).toBeInTheDocument();
     expect(getGuardrails).toHaveBeenCalledWith(undefined, false);
   });
@@ -83,7 +84,7 @@ describe('Guardrails — the list', () => {
   it('archives a guardrail', async () => {
     getGuardrails.mockImplementation(() => ok([GUARDRAIL]));
     show();
-    await screen.findByText('no-secrets-out');
+    await screen.findByText('no-secrets-out', { selector: 'span' });
     fireEvent.click(screen.getByTitle('Archive'));
     await waitFor(() => expect(archiveGuardrail).toHaveBeenCalledWith('g-1'));
   });
@@ -92,7 +93,7 @@ describe('Guardrails — the list', () => {
     getGuardrails.mockImplementation(() => ok([GUARDRAIL]));
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     show();
-    await screen.findByText('no-secrets-out');
+    await screen.findByText('no-secrets-out', { selector: 'span' });
     fireEvent.click(screen.getByTitle('Delete'));
     await waitFor(() => expect(deleteGuardrail).toHaveBeenCalledWith('g-1'));
   });
@@ -100,7 +101,7 @@ describe('Guardrails — the list', () => {
   it('runs a dry-run test from the inline test box', async () => {
     getGuardrails.mockImplementation(() => ok([GUARDRAIL]));
     show();
-    await screen.findByText('no-secrets-out');
+    await screen.findByText('no-secrets-out', { selector: 'span' });
     fireEvent.click(screen.getByTitle('Test'));
     const textarea = await screen.findByPlaceholderText(/paste text to check/i);
     fireEvent.change(textarea, { target: { value: 'sk-abcdefghijklmnop' } });
@@ -116,7 +117,7 @@ describe('Guardrails — create', () => {
     fireEvent.click(screen.getByRole('button', { name: /new guardrail/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/no-secrets-out/i), { target: { value: 'no-swearing' } });
-    const kindSelects = screen.getAllByRole('combobox');
+    const kindSelects = within(screen.getByRole('dialog')).getAllByRole('combobox');
     // scope, stage, kind, action, appliesTo — kind is the third select in the modal.
     fireEvent.change(kindSelects[2], { target: { value: 'keywords' } });
     const keywordsBox = await screen.findByPlaceholderText(/one per line/i);
@@ -128,5 +129,29 @@ describe('Guardrails — create', () => {
     expect(payload.name).toBe('no-swearing');
     expect(payload.kind).toBe('keywords');
     expect(payload.config.keywords).toEqual(['badword']);
+  });
+});
+
+describe('Guardrails — the event log', () => {
+  const event = (i) => ({
+    id: `e-${i}`, at: '2026-10-27T10:00:00Z', guardrail_id: 'g-1', guardrail_name: 'no-secrets-out',
+    stage: 'output', action: 'block', reason: 'contains what looks like api key', excerpt: '****', run_id: '',
+  });
+
+  it('filters by guardrail and loads the next batch', async () => {
+    getGuardrails.mockImplementation(() => ok([GUARDRAIL]));
+    getGuardrailEvents.mockImplementation((params) => ok({
+      items: Array.from({ length: Math.min(params.limit, 25) }, (_, i) => event(i)), total: 25,
+    }));
+    show();
+    await screen.findByText('25 found');
+    expect(getGuardrailEvents).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 20, offset: 0, sort: 'at' }));
+
+    fireEvent.click(screen.getByRole('button', { name: /load 5 more/i }));
+    await waitFor(() => expect(getGuardrailEvents).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 40 })));
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Guardrail' }), { target: { value: 'g-1' } });
+    await waitFor(() => expect(getGuardrailEvents).toHaveBeenLastCalledWith(
+      expect.objectContaining({ guardrail_id: 'g-1', limit: 20 })));
   });
 });

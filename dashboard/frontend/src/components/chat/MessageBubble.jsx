@@ -26,11 +26,11 @@ import { currentActivity, foldDelegationTools } from './trail';
 import { steerCaption } from './steering';
 import { toolActivity } from './toolActivity';
 import ToolApprovals from './ToolApprovalCard';
-import RefusalCard from './RefusalCard';
+import RefusalCard, { GuardrailWarnings } from './RefusalCard';
 import { pendingApproval } from './toolApprovals';
 import { ChatPageContext } from './context';
 import { ChatCodeActionsContext } from './chatMarkdownContext';
-import { Bot, User } from 'lucide-react';
+import { Bot, Square, User } from 'lucide-react';
 
 function WorkingDots({ label }) {
   return (
@@ -173,6 +173,8 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
         <ToolApprovals msg={msg} live={isStreaming} />
         {/* What a build chat's turn changed in the thing it is pinned to. */}
         {done && <MessageChanges changes={msg.changes} />}
+        {/* Warn guardrails that found something: the reply stands, this says so. */}
+        {done && !refusal && <GuardrailWarnings warnings={msg.guardrail_warnings} />}
         {done && (
           <>
             {/* The views the turn built, delegated runs included, as live previews. */}
@@ -187,6 +189,13 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
             {msg.response_obj?.kind === 'view_ref' && <ViewCard viewRef={msg.response_obj} inChat />}
           </>
         )}
+        {/* The person stopped this turn: what it got so far stays above. */}
+        {done && msg.stopped ? (
+          <span className={`flex items-center gap-1.5 text-xs text-gray-500 ${text ? 'mt-2' : ''}`} data-testid="turn-stopped">
+            <Square className="w-3 h-3" />
+            {t('chat.stoppedByYou')}
+          </span>
+        ) : null}
         {/* Files the agent created / edited / deleted during this turn: the
             last thing in the bubble, in a field of their own under a line. */}
         <MessageFiles files={msg.files} entities={msg.entities} className={size.footer} />

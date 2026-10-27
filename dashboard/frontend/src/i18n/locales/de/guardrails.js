@@ -128,6 +128,10 @@ export default {
     reason: 'Grund',
     excerpt: 'Ausschnitt',
     run: 'Lauf',
+    allGuardrails: 'Alle Guardrails',
+    anyAction: 'Jede Aktion',
+    anyStage: 'Jede Phase',
+    matching: '{{count}} gefunden',
   },
   errors: {
     nameRequired: 'Name ist erforderlich',

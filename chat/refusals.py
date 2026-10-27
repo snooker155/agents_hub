@@ -8,17 +8,20 @@ in place: a ``code`` (``capability_guard``), the agent and the blocked
 capability combination. The text message stays beside it for every consumer
 that only reads strings.
 
-``refusal_of`` reads an exception. The result goes on a chat ``done`` event as
+``refusal_of`` reads an exception, ``guardrail_refusal`` a run a guardrail
+stopped (``AgentResult.guardrail``); ``guardrail_warnings`` the warns of a
+turn that went on, which travel on the ``done`` event beside the reply. The result goes on a chat ``done`` event as
 ``refusal``.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 log = logging.getLogger(__name__)
 
 CAPABILITY_GUARD = "capability_guard"
+GUARDRAIL = "guardrail"
 
 
 def capability_refusal(exc: Any) -> Dict[str, Any]:
@@ -47,6 +50,40 @@ def capability_refusal(exc: Any) -> Dict[str, Any]:
     return out
 
 
+def guardrail_refusal(trip: Dict[str, Any], *, agent_id: Optional[str] = None) -> Dict[str, Any]:
+    """The structured form of a guardrail trip (guardrails/runtime.py): which
+    guardrail stopped the turn, on its input or its output, and what it found
+    as data (``detail``), so the card says it in the person's language. A
+    judge's reason is the judge model's own words and travels as they are."""
+    return {
+        "code": GUARDRAIL,
+        "agent_id": agent_id or "",
+        "message": str(trip.get("message") or ""),
+        "guardrail_id": str(trip.get("guardrail_id") or ""),
+        "name": str(trip.get("name") or ""),
+        "stage": str(trip.get("stage") or ""),
+        "kind": str(trip.get("kind") or ""),
+        "detail": dict(trip.get("detail") or {}),
+        "reason": str(trip.get("reason") or ""),
+    }
+
+
+def guardrail_warnings(loop: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The warn guardrails that found something in a turn that went on
+    (``AgentResult.loop["guardrails"]``, guardrails/runtime.py), shaped like a
+    guardrail refusal so the chat says them the same way, under the reply."""
+    out: List[Dict[str, Any]] = []
+    for check in (loop or {}).get("guardrails") or []:
+        if not isinstance(check, dict) or check.get("passed") or check.get("action") != "warn":
+            continue
+        warning = guardrail_refusal(check)
+        warning.pop("code", None)
+        warning.pop("agent_id", None)
+        warning.pop("message", None)
+        out.append(warning)
+    return out
+
+
 def refusal_of(exc: BaseException, *, agent_id: Optional[str] = None,
                workspace: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """The refusal an exception stands for, or None for an ordinary failure.
@@ -60,4 +97,5 @@ def refusal_of(exc: BaseException, *, agent_id: Optional[str] = None,
     return None
 
 
-__all__ = ["CAPABILITY_GUARD", "capability_refusal", "refusal_of"]
+__all__ = ["CAPABILITY_GUARD", "GUARDRAIL", "capability_refusal", "guardrail_refusal", "guardrail_warnings",
+           "refusal_of"]

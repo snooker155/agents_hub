@@ -128,6 +128,10 @@ export default {
     reason: 'Причина',
     excerpt: 'Фрагмент',
     run: 'Запуск',
+    allGuardrails: 'Все guardrails',
+    anyAction: 'Любое действие',
+    anyStage: 'Любой этап',
+    matching: 'Найдено: {{count}}',
   },
   errors: {
     nameRequired: 'Название обязательно',

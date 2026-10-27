@@ -174,6 +174,21 @@ def check_rule(kind: str, config: Dict[str, Any], text: str) -> Tuple[Optional[s
     return fn(config, text) if fn else (None, [])
 
 
+def rule_detail(kind: str, config: Dict[str, Any], text: str, hits: List[str]) -> Dict[str, Any]:
+    """What a rule found, as data a surface can phrase in its own language
+    (the reason string above is English). Never the matched text itself:
+    a card number or a key must not travel back to the person who sent it
+    in a refusal."""
+    if kind == "pii":
+        return {"detectors": [name for name in config.get("detectors") or list(_PII_FINDERS)
+                              if name in _PII_FINDERS and _PII_FINDERS[name](text or "")]}
+    if kind == "keywords":
+        return {"keyword": hits[0]} if hits else {}
+    if kind == "max_chars":
+        return {"length": len(text or ""), "limit": int(config.get("max_chars") or 0)}
+    return {}
+
+
 # ── judge ────────────────────────────────────────────────────────────────────
 
 _JUDGE_SYSTEM = (
@@ -280,6 +295,6 @@ def check_judge(config: Dict[str, Any], text: str, *, guardrail_model: Optional[
 
 
 __all__ = [
-    "check_rule", "check_judge", "is_rule_kind", "mask",
+    "check_rule", "check_judge", "is_rule_kind", "mask", "rule_detail",
     "find_emails", "find_phones", "find_credit_cards", "find_ibans", "find_api_keys",
 ]

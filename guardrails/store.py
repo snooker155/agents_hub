@@ -79,23 +79,45 @@ def add_event(event: Dict[str, Any]) -> str:
     return event_id
 
 
-def list_events(*, workspace: Optional[str] = None, run_id: Optional[str] = None,
-                guardrail_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
-    """The most recent events matching every filter given, newest first.
+#: Sort keys the events list accepts, each with the field it orders by.
+EVENT_SORTS = {"at": "at", "guardrail": "guardrail_name", "stage": "stage", "action": "action"}
+
+
+def _matching_events(*, workspace: Optional[str] = None, run_id: Optional[str] = None,
+                     guardrail_id: Optional[str] = None, action: Optional[str] = None,
+                     stage: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Every event matching every filter given, unsorted.
 
     A full scan of the collection, like environments/service.py's usage
     queries: the events table stays small under its own retention window
     (:func:`prune_events`), so this is cheap enough not to need an index.
     """
-    rows = [e for e in _events.values() if isinstance(e, dict)]
-    if workspace:
-        rows = [e for e in rows if e.get("workspace") == workspace]
-    if run_id:
-        rows = [e for e in rows if e.get("run_id") == run_id]
-    if guardrail_id:
-        rows = [e for e in rows if e.get("guardrail_id") == guardrail_id]
+    wanted = {"workspace": workspace, "run_id": run_id, "guardrail_id": guardrail_id,
+              "action": action, "stage": stage}
+    wanted = {k: v for k, v in wanted.items() if v}
+    # Not all(): this module's own all() lists the guardrails.
+    return [e for e in _events.values()
+            if isinstance(e, dict) and not any(e.get(k) != v for k, v in wanted.items())]
+
+
+def page_events(*, limit: int = 20, offset: int = 0, sort: str = "at", order: str = "desc",
+                **filters: Optional[str]) -> Dict[str, Any]:
+    """One window of the matching events and how many match in all:
+    ``{items, total}``, the shape the dashboard's long lists load more of."""
+    rows = _matching_events(**filters)
+    field = EVENT_SORTS.get(sort, "at")
+    # Ties (one name, one stage) keep the newest first whichever way the sort goes.
     rows.sort(key=lambda e: str(e.get("at") or ""), reverse=True)
-    return rows[: max(1, min(int(limit), 2000))]
+    rows.sort(key=lambda e: str(e.get(field) or "").casefold(), reverse=order != "asc")
+    start = max(0, int(offset))
+    return {"items": rows[start:start + max(1, min(int(limit), 2000))], "total": len(rows)}
+
+
+def list_events(*, workspace: Optional[str] = None, run_id: Optional[str] = None,
+                guardrail_id: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
+    """The most recent events matching every filter given, newest first."""
+    return page_events(workspace=workspace, run_id=run_id, guardrail_id=guardrail_id,
+                       limit=limit)["items"]
 
 
 def prune_events(retention_days: int) -> int:

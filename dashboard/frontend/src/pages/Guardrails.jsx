@@ -1,12 +1,12 @@
 /**
  * Guardrails page: the list of guardrails (rules and judges checking a run's
  * input/output), a create/edit modal per kind, an inline test box per row,
- * and a table of recent events. Backend: guardrails/, routes/guardrails.py.
+ * and the event log (GuardrailEventsPanel, which loads its own rows). Backend: guardrails/, routes/guardrails.py.
  */
 import { Fragment, useState, useEffect, useCallback } from 'react';
 import { useWorkspace } from '../components/workspace';
 import {
-  getGuardrails, archiveGuardrail, deleteGuardrail, getGuardrailEvents,
+  getGuardrails, archiveGuardrail, deleteGuardrail,
 } from '../api/guardrails';
 import {
   ShieldCheck, Plus, Loader, RefreshCw, Archive, Trash2, Pencil, FlaskConical,
@@ -16,14 +16,15 @@ import { useI18n } from '../i18n';
 import { StageBadge, KindBadge, ActionBadge } from '../components/guardrails/badges';
 import GuardrailModal from '../components/guardrails/GuardrailModal';
 import GuardrailTestBox from '../components/guardrails/GuardrailTestBox';
-import GuardrailEventsTable from '../components/guardrails/GuardrailEventsTable';
+import GuardrailEventsPanel from '../components/guardrails/GuardrailEventsPanel';
 import PageLoader from '../components/PageLoader';
 
 export default function Guardrails() {
   const { t } = useI18n();
   const { workspaceFilter } = useWorkspace();
   const [guardrails, setGuardrails] = useState([]);
-  const [events, setEvents] = useState([]);
+  // Bumped by Refresh and after a change, so the event log refetches too.
+  const [refreshKey, setRefreshKey] = useState(0);
   const [includeArchived, setIncludeArchived] = useState(false);
   // Loading is derived from the scope the lists were fetched for.
   const [loadedKey, setLoadedKey] = useState(null);
@@ -35,12 +36,8 @@ export default function Guardrails() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [{ data: rows }, { data: recentEvents }] = await Promise.all([
-        getGuardrails(workspaceFilter, includeArchived),
-        getGuardrailEvents({ workspace: workspaceFilter || undefined, limit: 50 }),
-      ]);
+      const { data: rows } = await getGuardrails(workspaceFilter, includeArchived);
       setGuardrails(rows || []);
-      setEvents(recentEvents || []);
     } catch (err) {
       console.error('Failed to load guardrails', err);
     } finally {
@@ -53,11 +50,16 @@ export default function Guardrails() {
     fetchData();
   }, [fetchData]);
 
+  const reload = () => {
+    setRefreshKey((k) => k + 1);
+    return fetchData();
+  };
+
   const act = async (id, fn) => {
     setActing((s) => ({ ...s, [id]: true }));
     try {
       await fn();
-      await fetchData();
+      await reload();
     } catch (err) {
       window.alert(err?.response?.data?.detail || t('guardrails.errors.actionFailed'));
     } finally {
@@ -78,7 +80,7 @@ export default function Guardrails() {
               className="h-3.5 w-3.5 rounded border-gray-300 text-indigo-600" />
             {t('guardrails.showArchived')}
           </label>
-          <button onClick={fetchData}
+          <button onClick={reload}
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
             <RefreshCw className="w-4 h-4" /> {t('guardrails.refresh')}
           </button>
@@ -189,17 +191,14 @@ export default function Guardrails() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-gray-200 p-4">
-        <h3 className="text-sm font-bold text-gray-900 mb-3">{t('guardrails.events.title')}</h3>
-        <GuardrailEventsTable events={events} />
-      </div>
+      <GuardrailEventsPanel workspace={workspaceFilter || ''} guardrails={guardrails} refreshKey={refreshKey} />
 
       {modalGuardrail !== undefined && (
         <GuardrailModal
           guardrail={modalGuardrail}
           workspace={workspaceFilter}
           onClose={() => setModalGuardrail(undefined)}
-          onSaved={() => { setModalGuardrail(undefined); fetchData(); }}
+          onSaved={() => { setModalGuardrail(undefined); reload(); }}
         />
       )}
     </PageContainer>

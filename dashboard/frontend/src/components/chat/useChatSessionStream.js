@@ -158,6 +158,7 @@ export function useChatSessionStream(deps) {
                     context_window: event.usage?.context_window ?? null,
                     context_overflow: event.error_code === 'context_overflow',
                     refusal: event.refusal || null,
+                    guardrail_warnings: event.guardrail_warnings || null,
                   }
                 : m
             ),

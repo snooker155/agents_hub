@@ -100,11 +100,15 @@ async def create_guardrail(payload: GuardrailCreate):
 @router.get("/api/guardrails/events")
 async def list_guardrail_events(workspace: Optional[str] = None,
                                 run_id: Optional[str] = None, guardrail_id: Optional[str] = None,
-                                limit: int = 200):
-    """Recent findings (blocks and warns; passes are not recorded), newest
-    first."""
-    return store.list_events(workspace=workspace, run_id=run_id, guardrail_id=guardrail_id,
-                             limit=limit)
+                                action: Optional[str] = None, stage: Optional[str] = None,
+                                limit: int = 20, offset: int = 0, sort: str = "at",
+                                order: str = "desc"):
+    """Findings (blocks and warns; passes are not recorded) as ``{items,
+    total}``: one window of the matching rows, newest first unless ``sort`` /
+    ``order`` say otherwise (store.EVENT_SORTS)."""
+    return store.page_events(workspace=workspace, run_id=run_id, guardrail_id=guardrail_id,
+                             action=action, stage=stage, limit=limit, offset=offset,
+                             sort=sort, order=order)
 
 
 @router.get("/api/guardrails/{guardrail_id}")
