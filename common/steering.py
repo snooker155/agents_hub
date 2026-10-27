@@ -17,11 +17,6 @@ and reaches the run one of three ways:
   loop like an inject, but appended to the system prompt for the rest of the
   run instead of placed in the conversation (``agents/loop_ext/steering.py``).
   The operator sends it from the dashboard; no agent tool sends one.
-- ``switch_model``: the body is a catalog model id (``provider/model``). The
-  loop claims it like the other two and runs every later model call of the
-  run on that model, with the same tools bound and the trail kept
-  (``agents/loop_ext/steering.py``). The route checks the id against the
-  enabled models.
 
 The loop checks for messages before every model call, from the backend
 process for a chat turn and from the run's own process (or container, over
@@ -46,15 +41,21 @@ log = logging.getLogger(__name__)
 MODE_INJECT = "inject"
 MODE_INTERRUPT = "interrupt"
 MODE_SYSTEM = "system"
-MODE_SWITCH_MODEL = "switch_model"
-MODES = (MODE_INJECT, MODE_INTERRUPT, MODE_SYSTEM, MODE_SWITCH_MODEL)
+MODES = (MODE_INJECT, MODE_INTERRUPT, MODE_SYSTEM)
 
 #: Modes the agent loop takes before its next model call.
-LOOP_MODES = (MODE_INJECT, MODE_SYSTEM, MODE_SWITCH_MODEL)
+LOOP_MODES = (MODE_INJECT, MODE_SYSTEM)
 
 #: Loop modes that are not words for the conversation: one no run took is
 #: never handed back to a chat as its next turn.
-OPERATOR_MODES = (MODE_SYSTEM, MODE_SWITCH_MODEL)
+OPERATOR_MODES = (MODE_SYSTEM,)
+
+
+def handed_back(msg: Dict[str, Any]) -> bool:
+    """Whether a message no run took goes back to a chat as its next turn:
+    only the person's own words do. A system message, or a row in a mode this
+    build no longer takes (the retired ``switch_model``), simply expires."""
+    return str(msg.get("mode") or MODE_INJECT) in (MODE_INJECT, MODE_INTERRUPT)
 
 STATUS_PENDING = "pending"
 STATUS_DELIVERED = "delivered"
@@ -71,7 +72,7 @@ _COLUMNS = ("seq", "msg_id", "run_id", "body", "mode", "author_id", "author_name
 
 # The loop's check: pending inject and system messages of one run. Served by
 # the index on (run_id, delivered_at).
-_LOOP_MODES_SQL = "mode IN ('inject', 'system', 'switch_model')"
+_LOOP_MODES_SQL = "mode IN ('inject', 'system')"
 _PENDING_WHERE = ("run_id = ? AND delivered_at IS NULL AND status = 'pending' "
                   f"AND {_LOOP_MODES_SQL}")
 
@@ -169,7 +170,7 @@ def settle_turn(run_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
     and ``undelivered`` as ``[{msg_id, body}]``, the latter marked expired so
     the client sends them as its next turn. The client uses both to settle the
     bubbles it drew, since a multi-run turn may not stream every notice. A
-    system message or a model switch no run took is expired and not handed
+    system message no run took is expired and not handed
     back: it was meant for those runs, not words for the conversation."""
     delivered_out: List[Dict[str, Any]] = []
     undelivered_out: List[Dict[str, Any]] = []
@@ -177,7 +178,7 @@ def settle_turn(run_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         for m in delivered(rid):
             delivered_out.append({"msg_id": m["msg_id"], "after_step": m.get("delivered_step")})
         for m in mark_expired(rid):
-            if m.get("mode") in OPERATOR_MODES:
+            if not handed_back(m):
                 continue
             undelivered_out.append({"msg_id": m["msg_id"], "body": m["body"]})
     return {"delivered": delivered_out, "undelivered": undelivered_out}
@@ -317,9 +318,9 @@ def mark(msg_id: str, status: str, *, next_run_id: Optional[str] = None) -> Opti
 
 __all__ = [
     "MODES", "LOOP_MODES", "OPERATOR_MODES", "MODE_INJECT", "MODE_INTERRUPT", "MODE_SYSTEM",
-    "MODE_SWITCH_MODEL", "MAX_BODY_CHARS",
+    "MAX_BODY_CHARS",
     "STATUS_PENDING", "STATUS_DELIVERED", "STATUS_EXPIRED", "STATUS_INTERRUPTED",
     "STATUS_FAILED",
     "post", "get", "pending_count", "claim_pending", "delivered", "list_for_run",
-    "undelivered", "mark_expired", "mark",
+    "undelivered", "mark_expired", "mark", "handed_back",
 ]

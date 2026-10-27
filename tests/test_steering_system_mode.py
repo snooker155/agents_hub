@@ -289,3 +289,13 @@ def test_a_remote_agent_takes_no_system_message(client, monkeypatch):
     run_id = _rid()
     _open(run_id)
     assert _steer(client, run_id).status_code == 409
+
+
+def test_a_run_model_cannot_be_switched_while_it_runs(client):
+    """There is no ``switch_model`` mode: a run keeps the model it started with."""
+    run_id = _rid()
+    _open(run_id, session_type="task")
+    resp = _steer(client, run_id, message="openai/gpt-5", mode="switch_model")
+    assert resp.status_code == 400
+    assert "mode must be one of" in resp.text
+    assert steering.pending_count(run_id) == 0

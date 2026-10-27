@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import {
   History, Bot, Layers, MessageSquareText,
-  ShieldCheck, ShieldAlert, FileJson, Cpu, ScrollText, FileOutput, Box, Repeat,
+  ShieldCheck, ShieldAlert, FileJson, Cpu, ScrollText, FileOutput, Box,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import AgentVersion from './AgentVersion';
@@ -75,35 +75,12 @@ export default function RunLoopPanel({ run, onChanged, showVersion = true }) {
             {loop.answered_by.map((a, i) => (
               <li key={i} className="text-sm text-gray-700 flex items-center gap-2 flex-wrap">
                 <span className="font-mono text-xs">{[a.provider, a.model].filter(Boolean).join('/')}</span>
-                {a.switched ? (
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800">
-                    {t('runLoop.switched')}
-                  </span>
-                ) : a.fallback && (
+                {a.fallback && (
                   <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
                     {t('runLoop.fallback')}
                   </span>
                 )}
-                {a.reason && !a.switched && <span className="text-xs text-gray-400">{a.reason}</span>}
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      {/* A person moved the run to another model mid-run (steering mode
-          `switch_model`); every model call after the step ran on the new one. */}
-      {hasLoop && loop.model_switches?.length > 0 && (
-        <Section icon={Repeat} title={t('runLoop.modelSwitches')}>
-          <ul className="space-y-1">
-            {loop.model_switches.map((sw, i) => (
-              <li key={sw.msg_id || i} className="text-sm text-gray-700 flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-gray-400">{t('runLoop.afterStep', { step: sw.after_step })}</span>
-                <span className="font-mono text-xs">
-                  {sw.from ? t('runLoop.switchFromTo', { from: sw.from, to: sw.to }) : sw.to}
-                </span>
-                {sw.by && <span className="text-xs text-gray-400">{t('runLoop.switchBy', { name: sw.by })}</span>}
-                {sw.error && <span className="text-xs text-red-600">{t('runLoop.switchFailed', { error: sw.error })}</span>}
+                {a.reason && <span className="text-xs text-gray-400">{a.reason}</span>}
               </li>
             ))}
           </ul>

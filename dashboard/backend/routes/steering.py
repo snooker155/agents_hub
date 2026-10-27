@@ -17,12 +17,6 @@ right now, in one of three modes:
   the run's system prompt for the rest of the run. Only the operator sends
   it, from the dashboard: no agent tool reaches this route, so no agent and
   no delegated run can raise its own instructions.
-- ``switch_model``: the message is a catalog model id (``provider/model``,
-  checked against the enabled models and stored in that form). The loop
-  moves the run to that model before its next model call and keeps going
-  with its whole trail. The operator decides it: no agent tool reaches this
-  route, so an agent cannot move its own run to another (and possibly
-  dearer) model.
 
 ``run_id`` may also name a team run (teams/store.py): an inject is posted on
 the team's board as the user's message for the next member to read, an
@@ -69,17 +63,6 @@ class SteerBody(BaseModel):
 # Background turns started here (an interrupted chat carried on from the run
 # page), kept referenced so they are not collected while they run.
 _TURNS: "set" = set()
-
-
-def _catalog_model(text: str) -> str:
-    """The canonical ``provider/model`` id of an enabled catalog model, 400
-    otherwise (the same lookup delegation and fallback models use)."""
-    from tools.delegation import resolve_model
-    try:
-        provider, model = resolve_model(text)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return f"{provider}/{model}"
 
 
 def _task_of(run: Dict[str, Any]):
@@ -250,8 +233,6 @@ def _validated(body: SteerBody):
     if len(text) > steering.MAX_BODY_CHARS:
         raise HTTPException(status_code=400,
                             detail=f"The message is longer than {steering.MAX_BODY_CHARS} characters")
-    if mode == steering.MODE_SWITCH_MODEL:
-        text = _catalog_model(text)
     return mode, text
 
 
@@ -266,7 +247,7 @@ def _steer_team(team_run: Any, body: SteerBody, request: Request) -> Dict[str, A
     mode, text = _validated(body)
     if mode in steering.OPERATOR_MODES:
         raise HTTPException(status_code=400, detail=(
-            "A system message or a model switch goes to one agent run; "
+            "A system message goes to one agent run; "
             "steer a team with inject or interrupt"))
     status = str(team_run.status or "")
     if status != "running":

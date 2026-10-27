@@ -46,7 +46,6 @@ export default {
   publishGit: 'Публикую в git',
   deploy: 'Разворачиваю',
   askUser: 'Задаю вам вопрос',
-  switchModel: 'Переключаю модель',
   generic: {
     search: 'Ищу {{object}}',
     create: 'Создаю {{object}}',

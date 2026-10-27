@@ -47,7 +47,6 @@ export default {
   publishGit: 'Veröffentlicht in Git',
   deploy: 'Stellt bereit',
   askUser: 'Stellt Ihnen eine Frage',
-  switchModel: 'Wechselt das Modell',
   generic: {
     search: 'Sucht {{object}}',
     create: 'Erstellt {{object}}',

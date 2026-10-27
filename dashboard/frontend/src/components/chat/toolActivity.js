@@ -85,7 +85,6 @@ const PHRASES = {
   git_publish: 'publishGit',
   deploy_project: 'deploy',
   ask_user: 'askUser',
-  switch_model: 'switchModel',
 };
 
 // Prefixes of tool families that share one phrase.

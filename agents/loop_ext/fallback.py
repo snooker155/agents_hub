@@ -128,11 +128,6 @@ class _CandidateCallback(BaseCallbackHandler):
         state = self.state
         if state is None:
             return
-        if self.is_primary and getattr(state, "scratch", {}).get("model_switch"):
-            # A person switched the run's model (steering mode switch_model):
-            # the "primary" here is the switched model, whose own callback
-            # (agents/loop_ext/steering.py) records the answer and its price.
-            return
         model_name = _response_model_name(response) or self.ref.get("model") or ""
         entry = {
             "provider": self.ref.get("provider") or "",
@@ -222,13 +217,9 @@ class FallbackExtension(LoopExtension):
     def wrap_model(self, state: Any, bound: Any, rebind: Any) -> Any:
         if not self.fallbacks:
             return bound
-        # Read by the switched model's callback (agents/loop_ext/steering.py):
-        # a refusal is this chain's to handle, not an answer to record.
-        state.scratch["fallback_active"] = True
         reason_holder: Dict[str, str] = {}
         # ``with_config`` replaces a binding's callbacks rather than adding to
-        # them, so keep the ones an earlier extension attached (the switched
-        # model's, agents/loop_ext/steering.py).
+        # them, so keep the ones an earlier extension attached.
         earlier = (getattr(bound, "config", None) or {}).get("callbacks")
         earlier = list(earlier) if isinstance(earlier, list) else []
         primary = bound.with_config(

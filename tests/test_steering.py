@@ -89,6 +89,16 @@ def test_mark_expired_only_touches_pending_injects():
     assert steering.mark_expired(run_id) == []
 
 
+def test_only_the_persons_words_go_back_to_the_chat():
+    # A model switch stored before the mode was retired is no message for
+    # the conversation: it expires instead of becoming the next turn.
+    assert steering.handed_back({"mode": "inject"})
+    assert steering.handed_back({"mode": "interrupt"})
+    assert steering.handed_back({})
+    assert not steering.handed_back({"mode": "system"})
+    assert not steering.handed_back({"mode": "switch_model"})
+
+
 def test_post_validates():
     with pytest.raises(ValueError):
         steering.post(_rid(), "   ")
