@@ -134,10 +134,19 @@ def test_notify_user_and_view_serve_can_exfiltrate():
     assert CAN_EXFILTRATE in grants_of("view_serve")
 
 
-def test_run_agent_tool_and_wait_for_agent_tool_are_delegating_not_granting():
-    """Their capability is not a static grant — see
-    test_delegation_guard.py for what they actually compose into."""
+def test_run_agent_tool_is_delegating_not_granting():
+    """Its capability is not a static grant — see test_delegation_guard.py
+    for what it actually composes into."""
     assert "run_agent_tool" in DELEGATING_TOOLS
-    assert "wait_for_agent_tool" in DELEGATING_TOOLS
     assert grants_of("run_agent_tool") == frozenset()
-    assert grants_of("wait_for_agent_tool") == frozenset()
+
+
+def test_watching_and_assigning_a_task_are_not_delegation_edges():
+    """wait_for_agent_tool is get_agent_status_tool after a sleep and returns
+    the same status fields; assign_agent_tool and assign_flow_tool put an
+    executor on a task and return confirmation. None hands work to another
+    agent in a way the caller's tool list does not already show, and none
+    returns run content (that is get_task_result, with its own grant)."""
+    for tool_id in ("wait_for_agent_tool", "get_agent_status_tool", "assign_agent_tool", "assign_flow_tool"):
+        assert tool_id not in DELEGATING_TOOLS, tool_id
+        assert grants_of(tool_id) == frozenset(), tool_id

@@ -42,6 +42,7 @@ export default {
   run_code: { label: 'Code ausführen (Sandbox)', description: 'Führt Python-, Node- oder Bash-Code in einer Wegwerf-Sandbox aus.' },
   calculator: { label: 'Rechner', description: 'Berechnet einen mathematischen Ausdruck.' },
   assign_agent_tool: { label: 'Agent zuweisen', description: 'Weist einer Aufgabe einen Agenten zu, ohne ihn zu starten.' },
+  assign_flow_tool: { label: 'Flow zuweisen', description: 'Setzt einen gespeicherten Flow als Ausführer einer Aufgabe und startet ihn, nachdem die Person zugestimmt hat.' },
   start_agent_tool: { label: 'Agent starten', description: 'Startet den der Aufgabe zugewiesenen Agenten.' },
   run_agent_tool: { label: 'Agent ausführen (ohne Aufgabe)', description: 'Gibt eine Anfrage ohne Aufgabe an einen anderen Agenten.' },
   list_flows_tool: { label: 'Flows auflisten', description: 'Listet die Flows im Arbeitsbereich.' },

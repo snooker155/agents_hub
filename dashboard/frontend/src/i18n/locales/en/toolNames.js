@@ -44,6 +44,7 @@ export default {
   run_code: { label: 'Run Code (sandboxed)', description: 'Run a Python, Node or Bash snippet in a throwaway sandbox.' },
   calculator: { label: 'Calculator', description: 'Evaluate a math expression.' },
   assign_agent_tool: { label: 'Assign Agent', description: 'Assign an agent to a task without starting it.' },
+  assign_flow_tool: { label: 'Assign Flow', description: 'Put a saved flow on a task as its executor and start it, after the user approved it.' },
   start_agent_tool: { label: 'Start Agent', description: 'Start the agent assigned to a task.' },
   run_agent_tool: { label: 'Run Agent (taskless)', description: 'Delegate a request to another agent without a task.' },
   list_flows_tool: { label: 'List Flows', description: 'List the flows in the workspace.' },
