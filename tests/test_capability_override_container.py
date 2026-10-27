@@ -158,8 +158,30 @@ def test_build_time_isolated_docker_honours_the_override_when_strict(monkeypatch
     monkeypatch.setattr(settings, "capability_override_requires_container", True)
     monkeypatch.setattr(settings, "agent_mode", "docker")
     monkeypatch.setattr(settings, "agent_docker_network", "none")
+    # The stamp the container manager gives a container started with no network.
+    monkeypatch.setenv("AGENTS_HUB_RUN_NETWORK", "none")
 
     enforce_built_tools("agent", ["run_shell"], override=True)  # must not raise
+
+
+def test_build_time_on_the_hub_refuses_the_override_whatever_the_settings(monkeypatch):
+    """A chat turn is built in the hub process, which no container stamped:
+    docker mode with network none describes background runs, not this one."""
+    from agents.capability_guard import (
+        CapabilityViolation, enforce_built_tools, override_honoured_at_build,
+    )
+    from common.config import settings
+    monkeypatch.setattr(settings, "capability_override_requires_container", True)
+    monkeypatch.setattr(settings, "agent_mode", "docker")
+    monkeypatch.setattr(settings, "agent_docker_network", "none")
+    monkeypatch.delenv("AGENTS_HUB_RUN_NETWORK", raising=False)
+    monkeypatch.setattr("managers.container_manager.db_shared_with_containers", lambda: True)
+
+    # The editor hint still answers for background runs...
+    assert override_honoured_at_build("agent") is True
+    # ...while the build here refuses.
+    with pytest.raises(CapabilityViolation, match="chat turn runs on the hub"):
+        enforce_built_tools("agent", ["run_shell"], override=True)
 
 
 def test_build_time_override_honoured_everywhere_when_the_setting_is_off(monkeypatch):

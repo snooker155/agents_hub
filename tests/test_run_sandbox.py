@@ -40,6 +40,9 @@ def dot_env(monkeypatch):
     state = {}
     monkeypatch.setattr(config, "read_dot_env", lambda: dict(state))
     monkeypatch.delenv("AGENT_EXECUTION_MODE", raising=False)
+    # A host whose containers may share the database (Linux): on Docker
+    # Desktop docker mode keeps runs local (tests/test_sqlite_container_safety.py).
+    monkeypatch.setattr("managers.container_manager.db_shared_with_containers", lambda: True)
     return state
 
 

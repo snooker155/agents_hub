@@ -220,3 +220,23 @@ def test_rag_on_the_local_shape_sets_the_store_and_may_add_the_extra(monkeypatch
     assert "AGENTS_HUB_EGRESS_PROXY" not in plan.env
 
 
+
+
+def test_the_execution_question_explains_docker_desktop(monkeypatch):
+    """Where agent containers cannot share the database of a hub run from
+    this checkout, the question says what docker mode gives here and how the
+    volume setup behaves (common/state_sync.py)."""
+    monkeypatch.setattr(W, "_containers_share_db", lambda: False)
+    asker = _asker({"demo": False, "execution": "docker", "rag": False})
+    W.step_features(asker, W.Plan(quick=False, fresh=True))
+    text = asker.console.export_text()
+    assert "only the agents' shell commands" in text
+    assert "docker-compose.volume.yml" in text
+    assert ".agents_hub.prev" in text and "agents_hub_state" in text
+
+
+def test_the_execution_question_stays_short_where_containers_share_it(monkeypatch):
+    monkeypatch.setattr(W, "_containers_share_db", lambda: True)
+    asker = _asker({"demo": False, "execution": "docker", "rag": False})
+    W.step_features(asker, W.Plan(quick=False, fresh=True))
+    assert "docker-compose.volume.yml" not in asker.console.export_text()

@@ -163,13 +163,18 @@ def test_build_time_override_requires_container_when_strict(monkeypatch):
     with pytest.raises(CapabilityViolation):
         enforce_built_tools("a", ["run_shell"], override=True)
 
-    # ...and honoured again on a no-network container.
+    # The settings alone do not lift it: a chat turn is built on the hub.
     monkeypatch.setattr(settings, "agent_mode", "docker")
     monkeypatch.setattr(settings, "agent_docker_network", "none")
+    with pytest.raises(CapabilityViolation):
+        enforce_built_tools("a", ["run_shell"], override=True)
+
+    # ...but it is honoured inside a container started with no network.
+    monkeypatch.setenv("AGENTS_HUB_RUN_NETWORK", "none")
     enforce_built_tools("a", ["run_shell"], override=True)
 
-    # A bridge/host network still reaches the internet — not isolation.
-    monkeypatch.setattr(settings, "agent_docker_network", "host")
+    # A bridge/host network still reaches the internet, so not isolation.
+    monkeypatch.setenv("AGENTS_HUB_RUN_NETWORK", "agents-hub")
     with pytest.raises(CapabilityViolation):
         enforce_built_tools("a", ["run_shell"], override=True)
 

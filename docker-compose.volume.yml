@@ -1,0 +1,41 @@
+# The hub's state on a Docker volume instead of the checkout's .agents_hub.
+#   docker compose -f docker-compose.yml -f docker-compose.volume.yml up --build
+#
+# Needed for docker execution mode on Docker Desktop (macOS, Windows): a folder
+# shared from the host breaks SQLite between the hub and agent containers (its
+# locks and shared memory do not cross into the VM), so there task runs,
+# instances, teams, flows and loops otherwise stay on the hub. On a volume the
+# database lives inside Docker's VM, and every agent container mounts the same
+# volume (managers/container_manager.py mount_flags). docs/containers.md,
+# "State on a Docker volume", has the details.
+#
+# The volume and the checkout's .agents_hub follow each other
+# (common/state_sync.py): at start the folder is copied into the volume when a
+# hub on the host changed it since the last sync, and at stop the volume is
+# copied back to the folder (the previous folder kept as .agents_hub.prev).
+# When both changed, neither is overwritten and the backend log says so.
+
+services:
+  backend:
+    command:
+      - sh
+      - -c
+      - >-
+        python -m common.state_sync import &&
+        exec python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
+    environment:
+      AGENTS_HUB_ROOT: /data/agents_hub
+      # The volume's real name (not the compose-prefixed one): agent containers
+      # are started through the daemon and mount it by this name.
+      AGENTS_HUB_STATE_VOLUME: agents_hub_state
+      # The checkout's .agents_hub, kept in step with the volume.
+      AGENTS_HUB_STATE_SYNC_DIR: /app/.agents_hub
+    volumes:
+      - agents_hub_state:/data/agents_hub
+    # Room for the export at stop: agent containers stop first (up to 10 s),
+    # then the state is copied. Docker kills the backend after this.
+    stop_grace_period: 180s
+
+volumes:
+  agents_hub_state:
+    name: agents_hub_state

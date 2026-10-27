@@ -12,6 +12,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _ENV_ROOT = os.environ.get("AGENTS_HUB_ROOT")
 AGENTS_HUB_ROOT = Path(_ENV_ROOT).expanduser().resolve() if _ENV_ROOT else PROJECT_ROOT / ".agents_hub"
 
+#: Where every agent container sees AGENTS_HUB_ROOT (the state dir mount,
+#: managers/container_manager.py).
+CONTAINER_STATE_DIR = "/app/.agents_hub"
+
+
+def host_state_path(path: Optional[str]) -> Optional[str]:
+    """A path an agent container recorded (a run's ``log_file``, written by
+    the run itself from inside), as this process sees it: under
+    AGENTS_HUB_ROOT instead of the container's mount point. Anything else, and
+    every path inside a container, comes back unchanged."""
+    if not path or not str(path).startswith(CONTAINER_STATE_DIR + "/"):
+        return path
+    if str(AGENTS_HUB_ROOT) == CONTAINER_STATE_DIR:
+        return path
+    return str(AGENTS_HUB_ROOT / str(path)[len(CONTAINER_STATE_DIR) + 1:])
+
 # Single SQLite database holding the concurrency-critical stores: run records
 # (+ structured payloads), tasks (+ activity/results/routing sidecars),
 # session contexts (+ pending continuations) and node records. WAL mode makes

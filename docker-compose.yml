@@ -27,6 +27,10 @@ x-backend: &backend
     # mounted, anything running in this container has host-root-equivalent
     # access to the daemon. Without it, set AGENT_EXECUTION_MODE=local.
     - /var/run/docker.sock:/var/run/docker.sock
+    # ---- State on a named volume: use docker-compose.volume.yml ----
+    # That override does it the supported way (agent containers mount the
+    # same volume), and it is what docker execution mode needs on Docker
+    # Desktop. The note below explains why a plain volume swap here breaks.
     # ---- Named volume for .agents_hub: opt-in only, read this first ----
     # It is tempting to replace the whole-repo bind mount above with a named
     # volume for just the state directory, so state does not sit inside the

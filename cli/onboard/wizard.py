@@ -351,6 +351,29 @@ def step_providers(a: Asker, plan: Plan) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Said before the execution question where agent containers cannot share the
+# hub's SQLite database with a hub run from this checkout (Docker Desktop).
+_DOCKER_DESKTOP_NOTE = (
+    "Docker mode on this machine: the hub runs from this checkout, so its database sits in a "
+    "folder Docker Desktop shares into its VM, and SQLite breaks across that boundary. Tasks, "
+    "flows, teams, loops and instances therefore run as local processes even in docker mode; "
+    "only the agents' shell commands go into containers.\n"
+    "For full isolation run the hub itself in Docker with its state on a volume:\n"
+    "  docker compose -f docker-compose.yml -f docker-compose.volume.yml up --build\n"
+    "Then:\n{how}"
+)
+
+
+def _containers_share_db() -> bool:
+    """Whether agent containers could share the database of a hub run from
+    this checkout (managers.container_manager.db_shared_with_containers)."""
+    try:
+        from managers.container_manager import db_shared_with_containers
+        return db_shared_with_containers()
+    except Exception:  # noqa: BLE001 - unknown reads as the cautious answer
+        return False
+
+
 def step_features(a: Asker, plan: Plan) -> None:
     a.section(3, STEPS, "Features")
     if not plan.quick or a.answered("demo"):
@@ -363,9 +386,15 @@ def step_features(a: Asker, plan: Plan) -> None:
     if plan.quick:
         return
 
+    shared = _containers_share_db()
+    if not shared:
+        from common.state_sync import describe
+        a.note(_DOCKER_DESKTOP_NOTE.format(how=describe()))
     plan.env["AGENT_EXECUTION_MODE"] = a.choose("execution", "Where do agents run?", [
         ("local", "As processes of the backend", "simplest"),
-        ("docker", "Each in its own container", "needs a reachable Docker daemon"),
+        ("docker", "Each in its own container",
+         "needs a reachable Docker daemon" if shared
+         else "on this machine only the agents' shell commands; see the note above"),
     ], default=plan.cur("AGENT_EXECUTION_MODE", "local"))
 
     search = a.choose("web_search", "Web search for the web_search tool", [
