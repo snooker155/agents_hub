@@ -25,5 +25,6 @@ export default {
     auto_mode_approved: 'automatisch freigegeben: Automodus ist an',
     human_denied: 'eine Person hat ihn abgelehnt, oder niemand hat rechtzeitig geantwortet',
     think_required: 'abgelehnt, bis der Agent zuerst nachdenkt',
+    domain_policy: 'die Adresse liegt außerhalb der Domain-Richtlinie',
   },
 };

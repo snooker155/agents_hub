@@ -12,6 +12,20 @@ from tools.web import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_live_web_settings(monkeypatch):
+    """The domain lists are read live from .env and the active workspace; a
+    developer's own values there must not leak into these tests."""
+    from common import config
+    live = config.live_setting
+    monkeypatch.setattr("common.config.live_setting", lambda key, default="": (
+        default if key in _DOMAIN_KEYS else live(key, default)))
+    monkeypatch.setattr(web, "_workspace_web_settings", lambda workspace=None: {})
+
+
+_DOMAIN_KEYS = ("WEB_DENY_DOMAINS", "WEB_ALLOW_DOMAINS", "WEB_DOMAIN_POLICY_ENABLED")
+
+
 # -- SSRF guard ---------------------------------------------------------------
 
 @pytest.mark.parametrize("url", [

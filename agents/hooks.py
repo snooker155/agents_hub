@@ -810,7 +810,10 @@ class ToolGuard:
     def evaluate(self, tool_id: str, tool_input: Any, description: str = "") -> "_Verdict":
         """What should happen to one call, without acting on it.
 
-        Order: a ``PreToolUse`` hook that denies or asks wins outright (it is the
+        Order: a URL the domain policy rules out is refused first
+        (tools/web.py, :func:`~tools.web.precheck_call`), so no hook, classifier
+        or person is asked about a call the tool would refuse anyway; then a
+        ``PreToolUse`` hook that denies or asks wins outright (it is the
         workspace's rule about this very call); then the tool policy mode
         (tools/permission_policy.py): ``always_allow`` runs, ``always_ask``
         waits for a person, ``auto`` asks the classifier. With no policy set
@@ -822,15 +825,19 @@ class ToolGuard:
 
         task_id = self._task_id()
         run_id = self._run_id()
+        mode, source = self.resolve(tool_id)
+        call = _Call(tool=tool_id, input=tool_input, fingerprint=call_fingerprint(tool_id, tool_input),
+                     mode=mode, source=source, task_id=task_id, run_id=run_id)
+
+        refused = self._domain_refusal(call)
+        if refused is not None:
+            return refused
+
         outcome = run_pre_tool_use(
             tool_id, tool_input,
             agent_id=self.agent_id, run_id=run_id, task_id=task_id,
             workspace=self.workspace, config=self.hooks(),
         )
-        mode, source = self.resolve(tool_id)
-        call = _Call(tool=tool_id, input=tool_input, fingerprint=call_fingerprint(tool_id, tool_input),
-                     mode=mode, source=source, task_id=task_id, run_id=run_id)
-
         if outcome.denied:
             # The hook's own words go back as the tool's output, so the agent
             # learns why and can choose a different route instead of retrying.
@@ -1076,6 +1083,20 @@ class ToolGuard:
             policy.audit_decision(entry, agent_id=self.agent_id, run_id=call.run_id,
                                   task_id=call.task_id, workspace=self.workspace, code=code)
         return entry
+
+    def _domain_refusal(self, call: "_Call") -> Optional["_Verdict"]:
+        """The domain policy's refusal of a URL this call would fetch, or None."""
+        from tools import permission_policy as policy
+        from tools.web import precheck_call
+        try:
+            text = precheck_call(call.tool, call.input, self.spec, self.workspace)
+        except Exception:  # noqa: BLE001 - the tool checks every hop itself, so the gate may skip this
+            logger.warning("domain precheck failed for %s", call.tool, exc_info=True)
+            return None
+        if text is None:
+            return None
+        self._record(call, policy.DENY, text, by="domain")
+        return _Verdict(refusal=text)
 
     def _sequence(self, call: "_Call") -> Optional["_Verdict"]:
         """The workspace's sequence guardrails on this call (guardrails/sequence.py):

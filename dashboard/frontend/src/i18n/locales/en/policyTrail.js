@@ -26,5 +26,6 @@ export default {
     auto_mode_approved: 'auto mode approved this call',
     human_denied: 'a person denied it, or nobody answered in time',
     think_required: 'refused until the agent thinks first',
+    domain_policy: 'the URL is outside the domain policy',
   },
 };
