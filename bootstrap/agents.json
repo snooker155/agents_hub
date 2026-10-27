@@ -30,8 +30,6 @@
         "list_flows_tool",
         "delegate_task_tool",
         "list_models_tool",
-        "run_flow_tool",
-        "run_new_flow_tool",
         "search_docs",
         "read_doc",
         "schedule_notification",
