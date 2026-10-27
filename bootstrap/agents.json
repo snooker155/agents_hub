@@ -28,7 +28,6 @@
         "get_loop_run_tool",
         "stop_loop_run_tool",
         "list_flows_tool",
-        "run_agent_tool",
         "delegate_task_tool",
         "list_models_tool",
         "run_flow_tool",

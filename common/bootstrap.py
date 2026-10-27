@@ -202,6 +202,10 @@ _SEED_WITHDRAWN_TOOLS: dict[str, frozenset[str]] = {
     # Shell is a developer's tool: it moved to swe_agent. Handing a task to
     # another agent goes through the orchestrator.
     "main-agent": frozenset({"run_shell", "delegate_task_tool"}),
+    # The orchestrator does not run agents itself: it assigns them to tasks
+    # and starts them there (assign_agent_tool, start_agent_tool), and hands
+    # a piece of a tracked task on as a subtask (delegate_task_tool).
+    "orchestrator": frozenset({"run_agent_tool"}),
 }
 
 
