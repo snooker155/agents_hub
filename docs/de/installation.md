@@ -111,6 +111,24 @@ python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
 cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
+### In eine vorhandene Umgebung
+
+Weg C hängt nicht an der `.venv`, die er anlegt. Jede Umgebung mit Python 3.11+, die Sie ohnehin benutzen, eine conda-Umgebung, eine pyenv-Version oder eine eigene venv, nimmt dieselbe Installation an. Aktivieren Sie sie und führen Sie im Wurzelverzeichnis des Checkouts aus:
+
+```bash
+conda activate myenv                   # oder was Ihre Umgebung aktiviert
+pip install -e ".[backend,agents]"     # Dienst + der Befehl ah, in diese Umgebung
+ah config                              # direkter Modus, Zustand unter diesem Checkout
+```
+
+Damit liegt `ah` im `bin` der Umgebung und das Paket `agents_hub` editierbar in ihren site-packages. Drei Dinge sind zu wissen:
+
+- **Editierbar (`-e`) ist Pflicht, keine Vorliebe.** Das installierte Paket findet den Checkout über seinen eigenen Speicherort. `pip install .` ohne `-e` kopiert es in die site-packages, und der Befehl bricht sofort mit `No module named 'cli'` ab.
+- **`ah` ist nur im PATH, solange die Umgebung aktiv ist.** Damit der Befehl in jeder Shell verfügbar ist, mit oder ohne Aktivierung, installieren Sie den Shell-Hook einmal aus der aktiven Umgebung: `ah shell-init --install`. Der geschriebene Block enthält den absoluten Pfad zu `ah` dieser Umgebung (`ah shell-init zsh` gibt ihn zur Kontrolle aus), sodass ein neues Terminal den Befehl findet, ohne etwas zu aktivieren. Wiederholen Sie das nach einem Umzug des Checkouts oder einem Neuanlegen der Umgebung.
+- **Direkter Modus, mit den Paketen dieser Umgebung.** `ah` führt den Dienst im eigenen Prozess aus, auf den Abhängigkeiten der Umgebung, in die er installiert wurde, und liest und schreibt `.agents_hub/` unter dem Checkout genau wie die venv des Installationsprogramms. Auch `ah up` startet das Backend von hier. Darüber hinaus fügt das Installationsprogramm nur die Kopie der `.env`, die npm-Pakete des Dashboards und die geführte Einrichtung hinzu; das decken die übrigen Zeilen von Weg C und [`ah setup`](#geführte-einrichtung-ah-setup) ab.
+
+Aktualisieren wie bei Weg C: `git pull`, danach `pip install -e ".[backend,agents]"` in derselben Umgebung, sobald sich die Requirement-Dateien geändert haben.
+
 ## Der Befehl `ah` auf jedem Weg
 
 `ah` erreicht den Dienst auf eine von zwei Arten ([cli](cli.md), "Two ways it reaches the service"): **direkt**, in einem Prozess, der den Checkout, dessen Python-Abhängigkeiten und das Zustandsverzeichnis hat, oder **über REST**, zu einem laufenden Backend, das `AGENTS_HUB_URL` nennt. Welche davon verfügbar ist, hängt vom Weg ab:
@@ -120,7 +138,7 @@ cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 | A. Veröffentlichte Images | Nicht installiert. Client hinzufügen (unten), REST zu `http://localhost:8080` | `docker compose exec backend ah ...`, direkt |
 | B. Compose aus einem Checkout | Nicht installiert. Client hinzufügen (unten), REST zu `http://localhost:8080` oder `:8000` | `docker compose exec backend ah ...`, direkt |
 | C. Installationsprogramm | Im PATH in einem neuen Terminal, direkt | |
-| D. Von Hand | In der aktivierten venv nach `pip install -e ...`, direkt; ohne Installation `python -m cli` aus dem Checkout | |
+| D. Von Hand | In der aktivierten venv oder in [jeder Umgebung, in die Sie installiert haben](#in-eine-vorhandene-umgebung), nach `pip install -e ...`, direkt; ohne Installation `python -m cli` aus dem Checkout | |
 
 Der direkte Modus auf dem Host erreicht keine Docker-Installation. Bei Weg A liegt der Zustand auf einem benannten Volume, das der Host nicht öffnen kann. Bei Weg B gehört die Datenbank im eingebundenen Checkout dem Backend im Container: Ein zweiter Prozess auf dem Host bräuchte dieselben Abhängigkeiten und Einstellungen, und unter macOS und Windows halten die Sperren von SQLite über die Dateifreigabe von Docker Desktop nicht. Auf A und B spricht der Host deshalb REST, und die Befehle, die nur direkt funktionieren, laufen im Container: `ah db ...`, `ah worker` und `ah deployment`. `ah up` und `ah server start` starten einen Dienst auf diesem Rechner und sind für eine Docker-Installation nicht gedacht.
 
@@ -297,6 +315,6 @@ Eine editierbare Installation braucht für Code-Änderungen keine Neuinstallatio
 - **Das Backend beendet sich sofort.** Die virtuelle Umgebung ist nicht aktiv, oder die Extras sind nicht installiert. Führen Sie `pip install -e ".[backend,agents]"` noch einmal aus und lesen Sie die Ausgabe.
 - **Das Dashboard erreicht die API nicht.** Es zielt auf `http://localhost:8000/api`. Prüfen Sie, ob das Backend auf diesem Port läuft und keine lokale CORS-Überschreibung es blockiert.
 - **Runs schlagen sofort nach dem Start fehl.** Ein fehlender oder falscher Anbieterschlüssel, ein Modell, das auf der Seite [Modelle](models.md) nicht aktiviert ist, oder `AGENT_EXECUTION_MODE=docker` ohne erreichbaren Docker-Daemon.
-- **`ah` wird nicht gefunden.** Die venv liegt nicht im PATH, und der Shell-Hook ist nicht installiert. Führen Sie `ah shell-init --install` aus der venv aus oder rufen Sie das Skript mit seinem absoluten Pfad auf. Siehe [cli](cli.md). Auf den Wegen A und B hat der Host keinen `ah`, bis Sie einen hinzufügen, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
+- **`ah` wird nicht gefunden.** Die venv (oder die conda-Umgebung, in die Sie installiert haben) liegt nicht im PATH, und der Shell-Hook ist nicht installiert. Führen Sie `ah shell-init --install` aus der aktivierten Umgebung aus oder rufen Sie das Skript mit seinem absoluten Pfad auf. Siehe [cli](cli.md). Auf den Wegen A und B hat der Host keinen `ah`, bis Sie einen hinzufügen, siehe [der Befehl `ah` auf jedem Weg](#der-befehl-ah-auf-jedem-weg).
 - **Weg A: `unable to open database file`.** Der Schritt `init`, der das Volume an den Benutzer des Backends übergibt, ist nicht gelaufen. `docker compose up -d` führt ihn erneut aus (er ist idempotent), und `docker compose logs init` zeigt, warum er fehlgeschlagen ist.
 - **Weg A: `.env` ist ein Verzeichnis.** Docker hat es angelegt, weil die Datei beim ersten Start des Stacks fehlte. Führen Sie `docker compose down` aus, dann `rmdir .env`, speichern Sie die Vorlage als `.env` und starten Sie noch einmal.

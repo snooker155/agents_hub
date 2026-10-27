@@ -178,6 +178,43 @@ python -m uvicorn dashboard.backend.main:app --host 0.0.0.0 --port 8000
 cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
+### Into an environment you already have
+
+Path C does not depend on the `.venv` it creates. Any Python 3.11+ environment
+you already use, a conda environment, a pyenv version or a venv of your own,
+takes the same install. Activate it and run, from the checkout root:
+
+```bash
+conda activate myenv                   # or whatever activates yours
+pip install -e ".[backend,agents]"     # service + the ah command, into that environment
+ah config                              # direct mode, state under this checkout
+```
+
+That puts `ah` into the environment's `bin` and the `agents_hub` package into
+its site-packages, editable. Three things to know:
+
+- **Editable (`-e`) is required, not a preference.** The installed package
+  finds the checkout through its own location, so `pip install .` without
+  `-e` copies it into site-packages and the command fails at once with
+  `No module named 'cli'`.
+- **`ah` is on PATH only while the environment is active.** To have it in
+  every shell, with or without the activation, install the shell hook once
+  from the active environment: `ah shell-init --install`. The block it writes
+  carries the environment's absolute path to `ah` (`ah shell-init zsh` prints
+  it to check), so a new terminal finds the command without activating
+  anything. Re-run it after moving the checkout or recreating the
+  environment.
+- **Direct mode, with that environment's packages.** `ah` runs the service in
+  this process, on the dependencies of the environment it was installed into,
+  and reads and writes `.agents_hub/` under the checkout exactly as the
+  installer's venv would. `ah up` starts the backend from here too. What the
+  installer adds beyond this is the `.env` copy, the dashboard's npm packages
+  and the guided setup, which the remaining lines of Path C and
+  [`ah setup`](#guided-setup-ah-setup) cover.
+
+Upgrading is the Path C line: `git pull`, then `pip install -e ".[backend,agents]"`
+in the same environment whenever the requirement files changed.
+
 ## The `ah` command on each path
 
 `ah` reaches the service in one of two ways ([cli](cli.md), "Two ways it
@@ -191,7 +228,7 @@ path:
 | A. Published images | Not installed. Add a client (below), REST to `http://localhost:8080` | `docker compose exec backend ah ...`, direct |
 | B. Compose from a checkout | Not installed. Add a client (below), REST to `http://localhost:8080` or `:8000` | `docker compose exec backend ah ...`, direct |
 | C. The installer | On PATH in a new terminal, direct | |
-| D. By hand | In the activated venv after `pip install -e ...`, direct; `python -m cli` from the checkout without any install | |
+| D. By hand | In the activated venv, or [any environment you installed into](#into-an-environment-you-already-have), after `pip install -e ...`, direct; `python -m cli` from the checkout without any install | |
 
 Direct mode on the host does not reach a Docker install. On Path A the
 state sits on a named volume the host cannot open. On Path B the database
@@ -581,9 +618,10 @@ notes** in the [changelog](changelog.md) first, and [deployment](deployment.md)
 - **Runs fail the moment they start.** A missing or wrong provider key, a model
   that is not enabled on the [models](models.md) page, or
   `AGENT_EXECUTION_MODE=docker` with no reachable Docker daemon.
-- **`ah` is not found.** The venv is not on PATH and the shell hook is not
-  installed. Run `ah shell-init --install` from the venv, or call the script by
-  its absolute path. See [cli](cli.md). On Paths A and B the host has no `ah`
+- **`ah` is not found.** The venv (or the conda environment you installed
+  into) is not on PATH and the shell hook is not installed. Run
+  `ah shell-init --install` from the activated environment, or call the
+  script by its absolute path. See [cli](cli.md). On Paths A and B the host has no `ah`
   until you add one, see [the `ah` command on each path](#the-ah-command-on-each-path).
 - **Path A: `unable to open database file`.** The `init` step that hands the
   volume to the backend's user did not run; `docker compose up -d` again
