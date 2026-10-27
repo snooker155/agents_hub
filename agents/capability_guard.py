@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 from typing import Iterable, List, Optional, Sequence
 
 from tools.capabilities import (
@@ -245,7 +246,11 @@ def override_honoured_at_build(agent_id: str) -> bool:
     block when the agent is built: always in ``warn``/``off`` mode or when the
     container requirement is off, otherwise only for a no-network container.
     The agent editor shows this next to the override switch so an operator
-    is not left with a saved override and a refused run."""
+    is not left with a saved override and a refused run.
+
+    Answers for a background run, which is what the settings describe. A chat
+    turn is built on the hub itself, outside any container, so the build
+    check (``enforce_built_tools``) still refuses the combination there."""
     if guard_mode() != "block":
         return True
     if not override_requires_container():
@@ -384,11 +389,23 @@ def enforce_agent_tools(
     raise CapabilityViolation(agent_id, violation)
 
 
+def override_honoured_in_chat() -> bool:
+    """Whether ``capability_override`` lifts the block for a chat turn. A
+    chat turn is built on the hub, outside any container, so with the
+    container requirement on in ``block`` mode it never does, whatever the
+    execution mode. The chat refusal card reads this after it switches the
+    override on, rather than ``override_honoured_at_build``."""
+    return guard_mode() != "block" or not override_requires_container()
+
+
 def _container_isolated(agent_id: str) -> bool:
-    """True when this agent is configured to run in a no-network container."""
+    """True when this agent is configured to run in a no-network container.
+
+    What the settings promise for a background run, not where this process
+    is: the save-time hint only. The build check asks ``_running_isolated``."""
     try:
-        from common.config import agent_execution_mode, live_setting, settings
-        if agent_execution_mode() != "docker":
+        from common.config import live_setting, run_execution_mode, settings
+        if run_execution_mode() != "docker":
             return False
         # A container that shares the host network is not isolated. Docker's
         # default bridge still reaches the internet, so only an explicit
@@ -401,6 +418,16 @@ def _container_isolated(agent_id: str) -> bool:
     except Exception:  # noqa: BLE001 - an unreadable setting falls back to the safe default
         log.debug("_container_isolated: ignored error", exc_info=True)
         return False
+
+
+def _running_isolated() -> bool:
+    """True when this process is itself an agent container started with no
+    network. The container manager stamps every agent container with the
+    network it was given (``AGENTS_HUB_RUN_NETWORK``), so this is a fact about
+    the running process rather than a reading of the settings: a chat turn,
+    or anything else built inside the hub, never has the stamp, whatever
+    execution mode the Settings page names."""
+    return os.environ.get("AGENTS_HUB_RUN_NETWORK", "").strip().lower() == "none"
 
 
 def enforce_built_tools(
@@ -427,7 +454,8 @@ def enforce_built_tools(
     delegation — see ``check_agent_tools``), so a tool injected on a *delegate*
     after its own record was written is caught here too, on the next build of
     whichever agent can still reach it. The per-agent override is honoured
-    here only when the run is genuinely container-isolated, if
+    here only when this process is a no-network agent container
+    (``_running_isolated``), if
     ``settings.capability_override_requires_container`` is on.
 
     ``delegates`` is the built spec's own allowlist, threaded through for the
@@ -449,7 +477,7 @@ def enforce_built_tools(
         return
 
     if override:
-        if not override_requires_container() or _container_isolated(agent_id):
+        if not override_requires_container() or _running_isolated():
             return
         log.error(
             "capability guard: agent %r has capability_override but is not container-isolated, "
@@ -464,9 +492,10 @@ def enforce_built_tools(
             explanation=(
                 violation.explanation
                 + " This agent carries capability_override, which is honoured only "
-                "when it runs container-isolated with no network (execution mode "
-                "docker, see docs/containers.md); in local mode the combination "
-                "stays refused."
+                "inside a background run's container with no network (execution mode "
+                "docker and AGENT_DOCKER_NETWORK=none, see docs/containers.md). A chat "
+                "turn runs on the hub itself, so there the combination stays refused, "
+                "as it does in local mode."
             ),
         )
 

@@ -200,7 +200,16 @@ def main() -> None:
     parser.add_argument("--desc", default="", help="Shared context / description override")
     parser.add_argument("--seed", default="", help="JSON seed state merged into the flow's initial state (scheduled/webhook triggers)")
     parser.add_argument("--resume-from", default="", help="Flow run id whose checkpoint this run continues")
+    # runtime.entity_launch appends it to every containerized entity command.
+    parser.add_argument("--write-stdout-to-log", action="store_true",
+                        help="Mirror stdout/stderr into the run's log file (Docker execution mode)")
     args = parser.parse_args()
+
+    if args.write_stdout_to_log:
+        log_file = os.environ.get("AGENT_LOG_FILE")
+        if log_file:
+            from runtime.loop_run import _tee_stdout_to_log
+            _tee_stdout_to_log(log_file)
 
     # No load_dotenv() here: like runtime/agent_run.py, this subprocess inherits
     # the launcher's already-populated environment (.env is loaded once by the

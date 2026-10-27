@@ -804,6 +804,16 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
                 pass
             except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
                 log.debug("now: best-effort step failed", exc_info=True)
+        # A flow run in docker mode has a container instead of a pid; its
+        # nodes and any nested run it started live in there too.
+        container = fr.get("container_name")
+        if container:
+            try:
+                from managers.container_manager import stop_container
+                if await asyncio.to_thread(stop_container, str(container), 5):
+                    stopped = True
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("flow container stop failed", exc_info=True)
 
         # 3) Stop this instance's in-flight node runs (they carry flow_run_id).
         for r in all_runs:

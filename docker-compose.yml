@@ -30,6 +30,10 @@ x-backend: &backend
     # The model runtime's volume, read only: the backend reads the token the
     # runtime wrote there (AGENTS_HUB_MODELS_TOKEN_FILE below).
     - models_data:/models-data:ro
+    # ---- State on a named volume: use docker-compose.volume.yml ----
+    # That override does it the supported way (agent containers mount the
+    # same volume), and it is what docker execution mode needs on Docker
+    # Desktop. The note below explains why a plain volume swap here breaks.
     # ---- Named volume for .agents_hub: opt-in only, read this first ----
     # It is tempting to replace the whole-repo bind mount above with a named
     # volume for just the state directory, so state does not sit inside the

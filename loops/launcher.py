@@ -119,7 +119,7 @@ def start_loop_run(
         "workspace": ws_name, "ws_path": ws_path,
         "task_id": task_id, "session_id": session_id,
         "log_file": log_file, "header": "Loop run started", "mode": "w",
-        "execution_mode": "local", "resume": False,
+        "execution_mode": entity_launch.execution_mode_for(ws_name), "resume": False,
     }
     entity_launch.dispatch(spec, launch_prepared)
     return store.get_run(run.loop_run_id) or run
@@ -167,12 +167,12 @@ def resume_loop_run(loop_run_id: str, *, auto: bool = False) -> LoopRun:
     ws_name = run.workspace or loop.workspace
     ws_name = (create_workspace_folder(ws_name).name if ws_name
                else create_workspace_folder().name)
+    # The folder, never the bare name: in docker mode it is what gets mounted.
     ws_path = ws_name
     try:
         from tasks import service as _ts
         task = _ts.get_task(run.task_id) if run.task_id else None
-        if task is not None:
-            _, ws_path = resolve_task_workspace(task, as_param_dict({"workspace": ws_name}))
+        _, ws_path = resolve_task_workspace(task, as_param_dict({"workspace": ws_name}))
     except Exception:  # noqa: BLE001 - the workspace root is a fine fallback for the cwd
         log.debug("resolving task workspace failed", exc_info=True)
 
@@ -182,7 +182,7 @@ def resume_loop_run(loop_run_id: str, *, auto: bool = False) -> LoopRun:
         "workspace": ws_name, "ws_path": str(ws_path),
         "task_id": run.task_id, "session_id": run.session_id,
         "log_file": log_file, "header": "Loop run resumed", "mode": "a",
-        "execution_mode": "local", "resume": True,
+        "execution_mode": entity_launch.execution_mode_for(ws_name), "resume": True,
     }
     entity_launch.dispatch(spec, launch_prepared)
     return store.get_run(loop_run_id) or run
@@ -190,7 +190,7 @@ def resume_loop_run(loop_run_id: str, *, auto: bool = False) -> LoopRun:
 
 def launch_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
     """The process half of a loop launch: spawn ``runtime/loop_run.py`` on
-    this host from a spec :func:`start_loop_run` or :func:`resume_loop_run`
+    this host (or in a container, by the workspace's execution mode) from a spec :func:`start_loop_run` or :func:`resume_loop_run`
     prepared. The shared envelope records the pid and the host and moves the
     record to ``running``; the flow's coarse running marker is flipped by the
     runner itself once the first iteration starts."""

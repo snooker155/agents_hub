@@ -116,6 +116,20 @@ def _host_path(path: str) -> str:
         return str(Path(path).resolve())
 
 
+def _volume_mounts(code_dir: str, workspace: Optional[str]) -> Tuple[Optional[List[str]], Optional[List[str]]]:
+    """The code and workspace mounts as ``--mount`` flags of the state volume,
+    when the hub keeps its state on one (both live under the state dir);
+    (None, None) otherwise, for the plain bind mounts."""
+    try:
+        from managers.container_manager import mount_flags, state_volume
+    except Exception:  # noqa: BLE001 - no container manager means plain bind mounts
+        return None, None
+    if not state_volume():
+        return None, None
+    return (mount_flags(code_dir, "/code", readonly=True),
+            mount_flags(workspace, "/work", readonly=True) if workspace else None)
+
+
 def _scratch_root() -> Path:
     """Temporary directories live under the state directory rather than /tmp:
     when the hub runs in a container, only paths under the project root can be
@@ -171,6 +185,8 @@ def build_docker_command(
     interactive: bool = False,
     network: str = "none",
     extra_env: Optional[Dict[str, str]] = None,
+    code_mount: Optional[List[str]] = None,
+    workspace_mount: Optional[List[str]] = None,
 ) -> List[str]:
     """The full ``docker run`` argv for one snippet. Pure: no I/O.
 
@@ -198,8 +214,13 @@ def build_docker_command(
     for key, value in (extra_env or {}).items():
         if value:
             cmd += ["-e", f"{key}={value}"]
-    cmd += ["-v", f"{code_dir}:/code:ro"]
-    if workspace_dir:
+    # ``code_mount`` / ``workspace_mount`` replace the plain bind mounts when
+    # the caller resolved them itself (a state dir on a Docker volume,
+    # managers.container_manager.mount_flags).
+    cmd += code_mount or ["-v", f"{code_dir}:/code:ro"]
+    if workspace_mount:
+        cmd += workspace_mount + ["-e", "WORK=/work"]
+    elif workspace_dir:
         # $WORK names the mount, the same variable sandbox/local.py sets, so a
         # snippet finds its files under either provider without a fallback.
         cmd += ["-v", f"{workspace_dir}:/work:ro", "-e", "WORK=/work"]
@@ -273,13 +294,14 @@ class DockerProvider(SandboxProvider):
         image = request.image or parse_images(s.code_runner_images)[language]
         workspace_host = _host_path(request.workspace) if request.workspace else None
         code_dir = _write_snippet(language, request.code or "", request.extra_files)
+        code_mount, workspace_mount = _volume_mounts(str(code_dir), request.workspace)
         name = f"{_CONTAINER_PREFIX}{uuid.uuid4().hex[:12]}"
         cmd = build_docker_command(
             language=language, code_dir=_host_path(str(code_dir)), image=image, name=name,
             memory=request.memory or s.code_runner_memory, cpus=request.cpus or s.code_runner_cpus,
             pids_limit=request.pids_limit or s.code_runner_pids_limit,
             workspace_dir=workspace_host, interactive=request.stdin is not None,
-            network=network_name, extra_env=extra_env,
+            network=network_name, extra_env=extra_env, code_mount=code_mount, workspace_mount=workspace_mount,
         )
         started = time.monotonic()
         try:

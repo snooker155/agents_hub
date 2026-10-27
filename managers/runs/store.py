@@ -22,7 +22,7 @@ from common import attribution as _attribution
 from common import db
 from common import run_payloads as rp
 from common.db_migrate import RUN_COLUMNS
-from common.paths import AGENTS_HUB_ROOT
+from common.paths import AGENTS_HUB_ROOT, host_state_path
 from common.session_broker import notify_change
 
 from .notifications import (_notify_task_run_finished, _publish_run_delta,
@@ -55,6 +55,8 @@ def _row_to_record(row) -> Dict[str, Any]:
     extra = db.loads(row["extra"], {}) or {}
     if isinstance(extra, dict):
         rec.update(extra)
+    # A run in a container records its log under the container's mount.
+    rec["log_file"] = host_state_path(rec.get("log_file"))
     has_stats = row["duration_ms"] is not None or any(
         row[k] is not None for k in ("prompt_tokens", "completion_tokens", "total_tokens")
     )
@@ -180,6 +182,8 @@ def _list_row_to_record(row) -> Dict[str, Any]:
     extra = db.loads(row["extra"], {}) or {}
     if isinstance(extra, dict):
         rec.update(extra)
+    # A run in a container records its log under the container's mount.
+    rec["log_file"] = host_state_path(rec.get("log_file"))
     if row["duration_ms"] is not None or any(
         row[k] is not None for k in ("prompt_tokens", "completion_tokens", "total_tokens")
     ):

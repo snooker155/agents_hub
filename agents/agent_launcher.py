@@ -294,15 +294,11 @@ def prepare_run(
     # workspace's own override (Settings → workspace → agent_mode) wins over
     # the global setting, both read live so a Settings-page change reaches the
     # next run without a restart.
-    from common.config import agent_execution_mode
-    _ws_agent_mode: Optional[str] = None
-    if ws_name:
-        try:
-            from workspace import get_workspace_metadata
-            _ws_agent_mode = (get_workspace_metadata(ws_name).get("settings") or {}).get("agent_mode") or None
-        except Exception:  # noqa: BLE001 - launch bookkeeping is best effort and must not block the run
-            log.debug("prepare_run: ignored error", exc_info=True)
-    execution_mode = _ws_agent_mode or agent_execution_mode()
+    # Local where a container cannot share the database (Docker Desktop with
+    # SQLite): the run opens it itself, and a read-only relay does not cover
+    # what an agent build reads (common.config.run_execution_mode).
+    from common.config import run_execution_mode
+    execution_mode = run_execution_mode(ws_name)
 
     # Two optional contributions to the launch, each a module that may be
     # absent or fail without changing the launch: the per-run money cap
@@ -557,12 +553,14 @@ def _start_run_in_docker(
 
     # How the container reaches its own run/task records: direct SQLite access
     # by default (the state dir mount is read-write, same as always), or the
-    # HTTP relay when the operator opted into AGENT_RUN_STATE_TRANSPORT=http,
-    # which is also what pins the state dir mount read-only for this run (see
+    # HTTP relay when the operator opted into AGENT_RUN_STATE_TRANSPORT=http
+    # or when the container must not open the database at all (Docker Desktop:
+    # managers.container_manager.db_shared_with_containers). http is also what
+    # pins the state dir mount read-only for this run (see
     # managers.container_manager.build_run_command). Resolved live, like
     # AGENT_EXECUTION_MODE, so a Settings change applies to the next run.
-    from common.config import run_state_transport as _run_state_transport
-    docker_env["AGENT_RUN_STATE_TRANSPORT"] = _run_state_transport()
+    from managers.container_manager import container_state_transport
+    docker_env["AGENT_RUN_STATE_TRANSPORT"] = container_state_transport()
 
     with open(log_file, "w", encoding="utf-8") as lf:
         lf.write(

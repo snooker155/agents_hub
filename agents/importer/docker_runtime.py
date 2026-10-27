@@ -134,9 +134,11 @@ def workspace_for_path(path: Optional[str]) -> str:
 
 
 def mounts_for(workspace: str) -> List[Tuple[str, str]]:
-    """``(host_path, container_path)`` pairs for one workspace: its folder,
-    and its eval folder when that lives outside it. Container paths equal
-    host paths, which is what lets the per-run ``workspace`` resolve."""
+    """``(path, container_path)`` pairs for one workspace: its folder, as
+    this process sees it. Container paths equal these paths, which is what
+    lets the per-run ``workspace`` resolve. ``docker run`` gets them through
+    managers.container_manager.mount_flags (a bind mount of the path as the
+    daemon sees it, or the state volume)."""
     from managers.container_manager import _host_path
     from workspace import WORKSPACES_ROOT, create_workspace_folder
 
@@ -333,8 +335,10 @@ def ensure_container(agent_id: str, descriptor: Dict[str, Any], workspace: str) 
         "--label", f"{LABEL_WORKSPACE}={workspace}",
         "-p", f"127.0.0.1:{host_port}:{port}",
     ]
-    for host_path, container_path in mounts_for(workspace):
-        argv += ["-v", f"{host_path}:{container_path}"]
+    from managers.container_manager import mount_flags, user_flags
+    argv += user_flags()  # the hub's user, so it can write the workspace on a volume
+    for path, container_path in mounts_for(workspace):
+        argv += mount_flags(path, container_path)
     for key, value in container_env(descriptor, workspace).items():
         argv += ["-e", f"{key}={value}"]
     argv.append(tag)

@@ -1,5 +1,5 @@
 """
-FlowRunner: launches agent flow runs as subprocesses.
+FlowRunner: launches agent flow runs as subprocesses (or containers in docker mode).
 
 A flow run creates one session for the whole flow. Each node in the DAG
 gets its own run record (open_run / close_run), all linked to that session.
@@ -172,18 +172,35 @@ def start_flow_run(
         import json as _json
         cli_args += ["--seed", _json.dumps(seed)]
 
+    execution_mode = _execution_mode(ws_name)
     _dispatch({
         "kind": QUEUE_KIND, "run_id": run_id, "entity_id": flow_id, "flow_id": flow_id,
         "entrypoint": "flow_run", "cli_args": cli_args, "task_id": str(task_id) if task else None,
-        "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
+        "session_id": session_id, "workspace": ws_name,
+        "ws_path": _launch_dir(execution_mode, ws_path),
         "log_file": str(log_file), "header": "Flow run started", "mode": "w",
-        "execution_mode": "local", "resume": False,
+        "execution_mode": execution_mode, "resume": False,
     })
     return run_id, session_id
 
 
 #: What a flow launch is called on the queue.
 QUEUE_KIND = "flow"
+
+
+def _execution_mode(ws_name: Optional[str]) -> str:
+    """``docker`` when the workspace runs agents in containers: the flow
+    process then runs in a run container, its agent nodes with it."""
+    from runtime.entity_launch import execution_mode_for
+    return execution_mode_for(ws_name)
+
+
+def _launch_dir(execution_mode: str, ws_path: Any) -> str:
+    """Where the flow process starts. Locally the project root, as always
+    (its nodes take the workspace from ``--workspace``); in a container the
+    workspace folder, since that directory is what gets mounted at
+    /workspace, and the project root must never be."""
+    return str(ws_path) if execution_mode == "docker" else str(PROJECT_ROOT)
 
 
 def _dispatch(spec: Dict[str, Any]) -> None:
@@ -195,7 +212,7 @@ def _dispatch(spec: Dict[str, Any]) -> None:
 
 def launch_prepared(spec: Dict[str, Any]) -> None:
     """The process half of a flow launch: spawn ``runtime/flow_run.py`` on
-    this host from a spec :func:`start_flow_run` or :func:`resume_flow_run`
+    this host (or in a container) from a spec :func:`start_flow_run` or :func:`resume_flow_run`
     prepared (the shared envelope records the pid and the host), then flip
     the flow's coarse running marker and, on a resume, put the task back to
     work."""
@@ -308,12 +325,14 @@ def resume_flow_run(
     ]
     if task is not None:
         cli_args += ["--task-id", task_id]
+    execution_mode = _execution_mode(ws_name)
     _dispatch({
         "kind": QUEUE_KIND, "run_id": flow_run_id, "entity_id": flow_id, "flow_id": flow_id,
         "entrypoint": "flow_run", "cli_args": cli_args, "task_id": task_id or None,
-        "session_id": session_id, "workspace": ws_name, "ws_path": str(PROJECT_ROOT),
+        "session_id": session_id, "workspace": ws_name,
+        "ws_path": _launch_dir(execution_mode, ws_path),
         "log_file": str(log_file), "header": "Flow run resumed", "mode": "a",
-        "execution_mode": "local", "resume": True,
+        "execution_mode": execution_mode, "resume": True,
     })
     rec = run_store.get_flow_run(flow_run_id) or {}
     return {

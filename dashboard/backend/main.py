@@ -380,6 +380,10 @@ async def lifespan(app: FastAPI):
         _db.close_pool()
     except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
         log.debug("_load: best-effort step failed", exc_info=True)
+    # Last: a hub in Docker with its state on a volume copies it back to the
+    # checkout's .agents_hub (common/state_sync.py; off unless configured).
+    from common import state_sync
+    await asyncio.to_thread(state_sync.export_on_shutdown)
 
 
 # Initialize FastAPI app

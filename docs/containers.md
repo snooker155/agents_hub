@@ -1,15 +1,125 @@
 # Containers
 
 Agents can run in-process or in Docker. Container mode isolates a run: its own
-filesystem view, its own network posture, its own lifetime. Both surfaces that
-run agents use it: **resident instances** (`instances/carrier.py`, the agent page's Run) and
-one-shot **task runs** (`agents/agent_launcher.py`).
+filesystem view, its own network posture, its own lifetime. Every background
+surface uses it: **resident instances** (`instances/carrier.py`, the agent page's Run),
+one-shot **task runs** (`agents/agent_launcher.py`), and **team, flow and loop
+runs** (`runtime/entity_launch.py`).
 
 ## Execution modes
 
 Set per workspace, falling back to the global `AGENT_EXECUTION_MODE` setting,
 resolved live on every instance start and every task run. `local` runs agents as a
 subprocess of the backend; `docker` runs each in its own container.
+
+Set per workspace means `settings.agent_mode` on the workspace, read by
+`common.config.agent_execution_mode(workspace)` for task runs, instances,
+teams and `run_shell` alike.
+
+A chat turn is not one of them: it always runs in the hub process (flows and
+teams started from chat too), whatever the mode says.
+
+A team, flow or loop run (where a container may share the database, see
+below) is one container for the whole run: its agent nodes
+run inside the run's process, so they share that container and the base image
+(a per-agent image applies to task runs and instances only). The workspace
+folder is mounted at `/workspace`; a run with no workspace gets no mount,
+never the project root. A nested team, loop or flow the run starts is a
+subprocess in the same container: inside an agent container the mode always
+reads `local`, so nothing tries to start docker from there. Stopping a flow
+stops its container. In `docker` mode its
+`run_shell` commands still go into a container: a throwaway one per command
+(`managers/container_manager.build_shell_command`), on the agent's image and
+network, with the run profile's limits below and only the command's working
+directory mounted read-write at `/workspace`. No hub environment and no state
+directory reach it. Docker down means the command is refused, never run on the
+host. The rest of the turn (file tools, web, MCP) runs with the hub's rights.
+
+## SQLite and Docker Desktop
+
+A container may open the hub's SQLite database through the state mount only on
+a Linux host whose state directory sits on a local filesystem
+(`managers/container_manager.db_shared_with_containers`, which reads the
+filesystem type from `/proc/mounts`). Docker Desktop on macOS or Windows
+reaches a host folder through a shared-folder filesystem (virtiofs, seen as
+`fakeowner` inside a container) that carries neither SQLite's locks nor its
+shared memory. A container that closes the database there believes it was the
+last user, folds the WAL into the file and deletes it under every other user;
+they keep writing to the deleted file, and everything they wrote is lost.
+
+Measured on Docker Desktop for Mac: a host process and a container lose the
+WAL, and so do two containers on the same macOS folder; two containers on a
+Docker volume do not. A hub in Docker on a Mac keeps its state in such a
+folder by default (`docker-compose.yml` bind mounts the checkout), so running
+the hub in Docker helps only with the state on a volume, below.
+
+### State on a Docker volume
+
+The way around it on Docker Desktop: run the hub in Docker with its state on a
+Docker volume, which lives on the VM's own disk.
+
+    docker compose -f docker-compose.yml -f docker-compose.volume.yml up --build
+
+`docker-compose.volume.yml` mounts the volume `agents_hub_state` at
+`/data/agents_hub`, points `AGENTS_HUB_ROOT` there and names the volume in
+`AGENTS_HUB_STATE_VOLUME`. Every path under the state dir then reaches an agent
+container as `--mount type=volume,src=agents_hub_state,volume-subpath=...`
+(`managers/container_manager.mount_flags`): run and instance containers, shell
+command containers, `run_code` snippets and imported agents alike. A volume
+keeps real ownership, so those containers run as the hub's user
+(`user_flags`). Inside the hub container the state reads as `ext4`, so
+`db_shared_with_containers` allows containers.
+
+The volume and the checkout's `.agents_hub` follow each other
+(`common/state_sync.py`, on when `AGENTS_HUB_STATE_SYNC_DIR` names the folder,
+as `docker-compose.volume.yml` does):
+
+- at start, before the backend opens the database, the folder is copied into
+  the volume when a hub on the host changed it since the last sync and this
+  hub stopped cleanly last time (so the volume holds nothing unexported);
+- at stop, the backend stops its agent containers and copies the volume to the
+  folder, keeping the previous folder as `.agents_hub.prev`. The compose file
+  gives it `stop_grace_period: 180s`.
+
+When both sides changed since the last sync (a hub on the host ran at the same
+time), nothing is copied either way and the backend log says so. The very
+first sync with a database on both sides needs a choice too. Settle either
+inside the hub's container: `docker compose exec backend ah state export
+--force` (the volume wins), or with the hub stopped `docker compose run --rm
+backend ah state import --force` (the folder wins); `ah state status` there
+shows the last sync. The backend prints all of this at every start, and the
+setup wizard says it where it asks where agents run.
+
+The folder's database is never opened while a `-wal` or `-shm` file sits next
+to it: a hub on the host has it open, or stopped without closing it (a
+read-only `sqlite3` session leaves them too). The sync then skips and says
+why. The database is copied with SQLite's backup API, never as a file.
+
+Without the volume, so on Docker Desktop, every hub process that opens
+the database (task runs, resident instances, teams, flows, loops) runs locally
+whatever the mode says (`common.config.run_execution_mode`). Only shell
+commands (`run_shell`, and `run_code` as always) go into a container: theirs
+never sees the database. The Settings page says so under the docker mode
+switch.
+
+The `http` state transport does not lift this: it relays a run's own records,
+but building an agent reads the registry and the task store from the database
+everywhere, so a run with the state dir mounted read-only fails at start. A
+container started anyway (a spec from elsewhere) gets `http` forced
+(`container_state_transport`), so the worst it does is fail, never write.
+
+A run in a container records its log under `/app/.agents_hub/...`; run records
+are read back with that path rebased onto the hub's state dir
+(`common.paths.host_state_path`), so the dashboard opens it.
+
+## Network
+
+Agent containers join `AGENT_DOCKER_NETWORK` when it is set (`none` for no
+network at all, `host`, or a network of your own), else the `agents-hub`
+bridge. Every agent container is stamped with the network it got in
+`AGENTS_HUB_RUN_NETWORK`: the process inside reads that, not the setting, to
+know how it is fenced. A run with network `none` cannot reach a model provider
+either, so it suits only models it can reach without one.
 
 ## Two container profiles
 
@@ -214,6 +324,12 @@ The capability override for a blocked tool combination can be configured to be
 honoured **only** for container-isolated, network-free runs. Containers are
 therefore not just tidiness; they are the mechanism that makes an otherwise
 refused combination survivable.
+
+The build check honours it only in a process stamped
+`AGENTS_HUB_RUN_NETWORK=none`, that is a background run whose container was
+started with no network. A chat turn is built on the hub, so the same agent is
+refused there even with `docker` mode and `AGENT_DOCKER_NETWORK=none`; the
+agent editor's hint answers for background runs.
 
 ## Gotchas
 

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from agents import registry
 from agents.capability_guard import (
     CapabilityViolation, capability_warning, guard_mode, is_system_workspace_agent,
-    override_honoured_at_build, override_requires_container,
+    override_honoured_at_build, override_honoured_in_chat, override_requires_container,
 )
 from models import AgentToolsUpdate, AgentDelegatesUpdate, AgentHandoffsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentCapabilityOverrideUpdate
 from workspace import system_agent_ids
@@ -67,6 +67,9 @@ def _capability_override_state(spec) -> Dict[str, Any]:
         # agent is built: not in block mode with the container requirement on
         # and a local execution mode. Shown next to the switch.
         "honoured_at_build": override_honoured_at_build(spec.id),
+        # The same for a chat turn, which is built on the hub and never in a
+        # container: what the chat refusal card shows after the switch.
+        "honoured_in_chat": override_honoured_in_chat(),
         "capability_warning": _capability_warning_dict(spec),
     }
 

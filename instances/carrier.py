@@ -172,16 +172,12 @@ def _environment_fields(workspace: Optional[str], environment_id: Optional[str])
 
 
 def _execution_mode(workspace: Optional[str], env_fields: Dict[str, Any]) -> str:
-    """Workspace override, else the live setting; an environment pins it."""
-    from common.config import agent_execution_mode
-    ws_mode: Optional[str] = None
-    if workspace:
-        try:
-            from workspace import get_workspace_metadata
-            ws_mode = (get_workspace_metadata(workspace).get("settings") or {}).get("agent_mode") or None
-        except Exception:  # noqa: BLE001 - an unreadable workspace override falls back to the default
-            log.debug("workspace agent_mode lookup failed for %s", workspace, exc_info=True)
-    mode = ws_mode or agent_execution_mode()
+    """Workspace override, else the live setting; an environment pins it.
+    Local where a container must not open the database (Docker Desktop with
+    SQLite, common.config.run_execution_mode): an instance process reads and
+    writes its records there directly."""
+    from common.config import run_execution_mode
+    mode = run_execution_mode(workspace)
     if env_fields.get("execution_mode") in ("local", "docker"):
         mode = env_fields["execution_mode"]
     from common import isolation
@@ -673,8 +669,12 @@ def restart(instance_id: str) -> Optional[Dict[str, Any]]:
     if not _carried_here(instance) and instance.get("carrier_status") in LIVE_CARRIER_STATUSES:
         return None
     append_log(instance, "[carrier_restart] requested")
+    # In place only while docker mode still applies: an instance started in a
+    # container before the database could no longer be shared with one
+    # (Docker Desktop, see _execution_mode) is stopped and respawned locally.
     if (instance.get("carrier_mode") == "docker" and instance.get("container_name")
-            and instance.get("carrier_status") in LIVE_CARRIER_STATUSES):
+            and instance.get("carrier_status") in LIVE_CARRIER_STATUSES
+            and _execution_mode(instance.get("workspace")) == "docker"):
         from managers.container_manager import restart_container
         store.update(instance_id, carrier_status="starting", state="starting")
         _close_carrier(instance_id, error="restarted")

@@ -124,7 +124,10 @@ RUN printf '#!/bin/sh\ntarget="$(pwd)"\ncd /app && exec python -m cli setup --in
 # host group via group_add, so the backend can keep driving the daemon
 # without running as root itself.
 RUN groupadd -g 1000 hub \
-    && useradd -u 1000 -g hub -m hub --shell /bin/bash
+    && useradd -u 1000 -g hub -m hub --shell /bin/bash \
+    && mkdir -p /data/agents_hub && chown hub:hub /data/agents_hub
+# /data/agents_hub: where docker-compose.volume.yml mounts the state volume. An
+# empty volume takes this directory's owner on first use, so the hub can write.
 
 COPY --chown=hub:hub . /app
 

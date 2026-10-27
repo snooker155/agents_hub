@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Annotated, Any, Tuple, List, Optional, Union, Literal
@@ -856,15 +857,35 @@ def blob_url() -> str:
     return live_setting("AGENTS_HUB_BLOB_URL", settings.blob_url)
 
 
-def agent_execution_mode() -> str:
+def agent_execution_mode(workspace: Optional[str] = None) -> str:
     """How agents are launched: "local" subprocess or "docker" container.
+
+    ``workspace`` names whose own override to honour first (Settings →
+    workspace → agent_mode, stored as ``settings.agent_mode`` on its
+    metadata); without one, or when it sets none, the global setting answers.
+    Every launcher and run_shell resolve the mode here, so a workspace
+    switched to docker is docker for its task runs, instances, teams, flows,
+    loops and commands alike. Inside an agent container it is always local.
 
     Resolved live, so flipping the mode on the Settings page takes effect on
     the next node start rather than on the next restart. Anything unrecognised
     (a typo, a half-written file) reads as local: the mode that needs no Docker
     daemon is the safe one to fall back to.
     """
-    mode = live_setting("AGENT_EXECUTION_MODE", settings.agent_mode).lower()
+    # Inside an agent container (the container manager stamps every one with
+    # its network) everything runs right here: a container never starts
+    # containers, and a workspace override read from the database must not
+    # make a nested launch try.
+    if os.environ.get("AGENTS_HUB_RUN_NETWORK"):
+        return "local"
+    mode = ""
+    if workspace:
+        try:
+            from workspace import get_workspace_metadata
+            mode = str((get_workspace_metadata(workspace).get("settings") or {}).get("agent_mode") or "")
+        except Exception:  # noqa: BLE001 - an unreadable workspace falls back to the global setting
+            logging.getLogger(__name__).debug("workspace agent_mode unreadable for %s", workspace, exc_info=True)
+    mode = (mode.strip() or live_setting("AGENT_EXECUTION_MODE", settings.agent_mode)).lower()
     return mode if mode in ("local", "docker") else "local"
 
 
@@ -876,6 +897,22 @@ def chat_execution() -> str:
     run in process whatever this says: a worker, and the replica itself."""
     mode = live_setting("AGENTS_HUB_CHAT_EXECUTION", settings.chat_execution).lower()
     return mode if mode in ("instances", "inprocess") else "instances"
+
+
+def run_execution_mode(workspace: Optional[str] = None) -> str:
+    """How a hub process that opens the database itself (a task run, an
+    instance, a team, flow or loop run) is launched: ``agent_execution_mode``,
+    except ``local`` where a container cannot share the SQLite database with
+    the hub (Docker Desktop on macOS or Windows, the hub on the host or not, see
+    managers.container_manager.db_shared_with_containers). Shell commands
+    (run_shell) follow ``agent_execution_mode`` alone: their container never
+    sees the database."""
+    mode = agent_execution_mode(workspace)
+    if mode == "docker":
+        from managers.container_manager import db_shared_with_containers
+        if not db_shared_with_containers():
+            return "local"
+    return mode
 
 
 def run_state_transport() -> str:

@@ -44,7 +44,7 @@ def fake_popen(monkeypatch):
         return _Proc()
 
     monkeypatch.setattr(carrier.subprocess, "Popen", _popen)
-    monkeypatch.setattr("common.config.agent_execution_mode", lambda: "local")
+    monkeypatch.setattr("common.config.agent_execution_mode", lambda workspace=None: "local")
     return calls
 
 
@@ -159,6 +159,29 @@ def test_restart_keeps_the_instance_and_adds_a_carrier(fake_agent, fake_popen):
     assert again["instance_id"] == iid
     assert again["state"] == "starting"
     assert [c["reason"] for c in carrier.carriers(iid)] == ["restart", "start"]
+
+
+def test_a_docker_instance_left_from_before_restarts_locally_on_docker_desktop(
+        fake_agent, fake_popen, monkeypatch):
+    """A live container carrier started before the database could no longer
+    be shared with containers is stopped and respawned on the hub, not
+    restarted in place (managers.container_manager.db_shared_with_containers)."""
+    monkeypatch.setattr("managers.container_manager.db_shared_with_containers", lambda: False)
+    monkeypatch.setattr("common.config.agent_execution_mode", lambda workspace=None: "docker")
+    stopped: list = []
+    monkeypatch.setattr("managers.container_manager.stop_container",
+                        lambda name, timeout=15: stopped.append(name) or True)
+    monkeypatch.setattr("managers.container_manager.restart_container",
+                        lambda name, timeout=15: pytest.fail("restarted the container in place"))
+    inst = _resident(container_name="agents-hub-node-x")
+    inst = store.update(inst["instance_id"], carrier_mode="docker", pid=None)
+    monkeypatch.setattr(carrier, "_carried_here", lambda instance: True)
+    monkeypatch.setattr("managers.container_manager.container_running", lambda name: True)
+
+    again = carrier.restart(inst["instance_id"])
+
+    assert stopped == ["agents-hub-node-x"]
+    assert again["carrier_mode"] == "local" and again["pid"] == 424242
 
 
 def test_remove_refuses_a_live_instance(monkeypatch):

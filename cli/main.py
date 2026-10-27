@@ -69,6 +69,9 @@ auth_app.add_typer(auth_keys_app, name="keys")
 app.add_typer(server_app, name="server")
 app.add_typer(auth_app, name="auth")
 app.add_typer(db_app, name="db")
+state_app = typer.Typer(help="A hub in Docker with its state on a volume: sync it with the checkout's .agents_hub.",
+                        no_args_is_help=True)
+app.add_typer(state_app, name="state")
 
 # agent/task/workspace/project/instance (cli/commands/), flow/loop/team/eval/mcp/user
 # (also cli/commands/), the `api` escape hatch and the OpenAPI-generated groups
@@ -507,6 +510,31 @@ def _require_direct_mode(what: str) -> None:
         console.print(f"[red]{what} works on the local database only[/red]: unset "
                       "AGENTS_HUB_URL and run it where the state lives.")
         raise typer.Exit(code=1)
+
+
+@state_app.command("status")
+def state_status():
+    """The last sync and whether the folder changed since (common/state_sync.py)."""
+    import json as _json
+    from common import state_sync
+    console.print_json(_json.dumps(state_sync.status(), default=str))
+
+
+@state_app.command("export")
+def state_export(force: bool = typer.Option(False, "--force", help="Overwrite the folder even if it changed too.")):
+    """Copy the volume's state to the checkout's .agents_hub (the old one kept as .agents_hub.prev)."""
+    raise typer.Exit(_state_sync_run("export", force))
+
+
+@state_app.command("import")
+def state_import(force: bool = typer.Option(False, "--force", help="Overwrite the volume even if it changed too.")):
+    """Copy the checkout's .agents_hub into the volume. Only with the hub stopped."""
+    raise typer.Exit(_state_sync_run("import", force))
+
+
+def _state_sync_run(command: str, force: bool) -> int:
+    from common import state_sync
+    return state_sync.main([command, "--force"] if force else [command, "--manual"])
 
 
 @db_app.command("status")

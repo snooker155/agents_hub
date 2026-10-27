@@ -40,12 +40,13 @@ the queue. A launched process records its pid (or container) and host on the
 run and beats its heartbeat from then on; the watchdog judges it by that beat
 and never by a pid on another host.
 
-Docker applies to a team or a scenario by the same rule as to an agent:
-``execution_mode`` on the spec, decided by the launcher from the workspace's
-agent execution mode, and the same hardened run container
-(runtime/docker_runner.py) with the same state transport. Flows and loops
-always run as a local subprocess: their nodes execute agents in-process, and
-the process is the orchestrator, not the sandbox.
+Docker applies to a team, a scenario, a flow and a loop by the same rule as
+to an agent: ``execution_mode`` on the spec, decided by the launcher from the
+workspace's agent execution mode, and the same hardened run container
+(runtime/docker_runner.py) with the same state transport. Their agent nodes
+run in-process, so the whole run shares that one container and its image
+(the base image: there is no per-agent image for a flow); a nested team,
+loop or flow it starts runs as a subprocess inside the same container.
 """
 from __future__ import annotations
 
@@ -165,17 +166,12 @@ def launcher_for(kind: str) -> Callable[[Dict[str, Any]], None]:
 def execution_mode_for(workspace: Optional[str]) -> str:
     """``docker`` when the workspace (or the installation) runs agents in
     containers, else ``local``: the same rule agent_launcher.prepare_run
-    applies to a task run."""
-    from common.config import agent_execution_mode
-    ws_mode = None
-    if workspace:
-        try:
-            from workspace import get_workspace_metadata
-            ws_mode = (get_workspace_metadata(workspace).get("orchestrator") or {}).get("agent_execution_mode")
-        except Exception:  # noqa: BLE001 - an unreadable workspace falls back to the global setting
-            log.debug("workspace execution mode lookup failed for %s", workspace, exc_info=True)
-    mode = str(ws_mode or agent_execution_mode() or "local").lower()
-    return mode if mode in ("local", "docker") else "local"
+    applies to a task run (common.config.agent_execution_mode), except where a
+    container must not open the database (Docker Desktop with SQLite, see
+    managers.container_manager.db_shared_with_containers): a team, flow or
+    loop process opens it itself, so there it runs on the hub."""
+    from common.config import run_execution_mode
+    return run_execution_mode(workspace)
 
 
 def build_env(spec: Dict[str, Any]) -> Dict[str, str]:
@@ -268,20 +264,41 @@ def spawn_docker(spec: Dict[str, Any], env: Dict[str, str]) -> Dict[str, Any]:
     """Start the entrypoint in a hardened run container (the same profile a
     docker task run gets) and return the docker_runner result, which carries
     ``container_name`` on success and ``error`` on failure."""
-    from managers.container_manager import CONTAINER_STATE_DIR
+    from managers.container_manager import CONTAINER_STATE_DIR, container_state_transport
     from runtime import docker_runner
-    from common.config import run_state_transport
 
     argv = _argv(spec, in_container=True)
     _write_header(spec, argv, where=" (in container)")
     docker_env = dict(env)
     docker_env["AGENT_LOG_FILE"] = f"{CONTAINER_STATE_DIR}/run_logs/{Path(str(spec['log_file'])).name}"
-    docker_env["AGENT_RUN_STATE_TRANSPORT"] = run_state_transport()
+    docker_env["AGENT_RUN_STATE_TRANSPORT"] = container_state_transport()
     agent_id = str(spec.get("agent_id") or f"{spec.get('kind')}:{spec.get('entity_id')}")
     return docker_runner.start_run_container(
         str(spec["run_id"]), agent_id, argv,
-        cwd=str(spec.get("ws_path") or PROJECT_ROOT), env=docker_env,
+        cwd=_mount_dir(spec.get("ws_path")), env=docker_env,
     )
+
+
+def _mount_dir(ws_path: Any) -> Optional[str]:
+    """The folder a run container gets at /workspace: the run's workspace
+    folder, or nothing. Never the project root or a folder above it (what a
+    run with no workspace would otherwise fall back to), since that would
+    hand the container the hub's own code and state."""
+    if not ws_path:
+        return None
+    path = Path(str(ws_path)).resolve()
+    root = Path(PROJECT_ROOT).resolve()
+    if path == root or path in root.parents or not path.is_dir():
+        return None
+    return str(path)
+
+
+def _container_may_run(spec: Dict[str, Any]) -> bool:
+    """Whether this entity run may go into a container. Its process reads and
+    writes its records in the database directly, so only where a container
+    can share the database (managers.container_manager.db_shared_with_containers)."""
+    from managers.container_manager import db_shared_with_containers
+    return db_shared_with_containers()
 
 
 def launch_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -303,6 +320,13 @@ def launch_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
     if isolation.is_isolated(spec.get("workspace")):
         mode = "local"
     host = socket.gethostname()
+    if mode == "docker" and not _container_may_run(spec):
+        # A team, flow or loop process opens the database itself (it has no
+        # http relay), which a container must not do here: it runs on the hub.
+        mode = "local"
+        spec["header"] = (f"{spec.get('header') or 'Run started'} on the hub: docker mode runs "
+                          "teams, flows and loops in a container only where the container can "
+                          "share the database (a Linux host with local state)")
 
     if mode == "docker":
         result = spawn_docker(spec, env)

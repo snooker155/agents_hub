@@ -958,6 +958,29 @@ def _apply_voice_http(a: Asker, plan: Plan, session: Optional[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Said before the execution question where agent containers cannot share the
+# hub's SQLite database with a hub run from this checkout (Docker Desktop).
+_DOCKER_DESKTOP_NOTE = (
+    "Docker mode on this machine: the hub runs from this checkout, so its database sits in a "
+    "folder Docker Desktop shares into its VM, and SQLite breaks across that boundary. Tasks, "
+    "flows, teams, loops and instances therefore run as local processes even in docker mode; "
+    "only the agents' shell commands go into containers.\n"
+    "For full isolation run the hub itself in Docker with its state on a volume:\n"
+    "  docker compose -f docker-compose.yml -f docker-compose.volume.yml up --build\n"
+    "Then:\n{how}"
+)
+
+
+def _containers_share_db() -> bool:
+    """Whether agent containers could share the database of a hub run from
+    this checkout (managers.container_manager.db_shared_with_containers)."""
+    try:
+        from managers.container_manager import db_shared_with_containers
+        return db_shared_with_containers()
+    except Exception:  # noqa: BLE001 - unknown reads as the cautious answer
+        return False
+
+
 def step_features(a: Asker, plan: Plan) -> None:
     a.section(7, STEPS, "Features")
     if not plan.quick or a.answered("demo"):

@@ -159,6 +159,45 @@ def _resolve_shell_cwd() -> str:
         return os.getcwd()
 
 
+def _shell_in_container() -> bool:
+    """True when a command must run in a container rather than here: the
+    execution mode is docker (common.config.agent_execution_mode for the
+    active workspace, as every launcher resolves it) and this process
+    is not already an agent container. A chat turn runs on the hub whatever
+    the mode says, so without this its commands would reach the host."""
+    if os.environ.get("AGENTS_HUB_RUN_NETWORK"):
+        return False  # inside an agent container already: the container is the fence
+    from common.config import agent_execution_mode
+    ws = None
+    try:
+        from common.workspace_context import resolve_active_workspace
+        ws = resolve_active_workspace()
+    except Exception:  # noqa: BLE001 - no active workspace leaves the global mode
+        log.debug("active workspace unresolved", exc_info=True)
+    return agent_execution_mode(ws) == "docker"
+
+
+def _run_in_container(command: str, workspace: str, timeout: int) -> subprocess.CompletedProcess:
+    """Run ``command`` in a throwaway container with ``workspace`` at
+    /workspace (managers.container_manager.build_shell_command). Raises
+    ``subprocess.TimeoutExpired`` like a plain run, after removing the
+    container, since killing the docker CLI leaves it running."""
+    import uuid
+    from common.agent_context import current_agent_id
+    from managers import container_manager as cm
+    agent_id = current_agent_id.get() or ""
+    name = f"agents-hub-shell-{uuid.uuid4().hex[:12]}"
+    argv = cm.build_shell_command(
+        container_name=name, agent_id=agent_id, image=cm.image_tag_for_agent(agent_id),
+        network=cm.agent_network(), workspace=workspace, command=command,
+    )
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+        raise
+
+
 class RunShellInput(BaseModel):
     command: str = Field(..., description="Shell command to run inside the workspace")
     timeout: Optional[int] = Field(
@@ -212,16 +251,32 @@ def run_shell(command: str, timeout: Optional[int] = 30) -> str:
         parts.append("sandbox: isolated workspace, no network")
         return "\n".join(parts)
 
+    in_container = _shell_in_container()
+    if in_container:
+        from sandbox.docker import docker_available
+        if not docker_available():
+            # Refused, not run on the host: the execution mode promised a container.
+            return ("exit_code: -1\nerror: the execution mode is docker but no docker daemon "
+                    "answers on this host, so the command was not run.")
+
     try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=scrubbed_env(),
-        )
+        if in_container:
+            proc = _run_in_container(command, workspace, timeout)
+            if proc.returncode == 125:
+                # docker itself failed (no image, bad network), not the command.
+                return (f"exit_code: -1\nerror: the command's container did not start: "
+                        f"{(proc.stderr or '').strip()[:2000]} Build the base image on the "
+                        f"Containers page if it is missing.")
+        else:
+            proc = subprocess.run(
+                command,
+                shell=True,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=scrubbed_env(),
+            )
         stdout = proc.stdout or ""
         stderr = proc.stderr or ""
 

@@ -318,6 +318,19 @@ def test_the_route_stops_a_group(client):
     assert flow_run_store.get_flow_run("fr-stop")["status"] == "stopped"
 
 
+def test_stopping_a_flow_in_a_container_stops_the_container(client, monkeypatch):
+    """A flow run in docker mode records a container instead of a pid; the
+    stop reaches it, since its nodes and nested runs live in there."""
+    _a_flow_run("fr-dock")
+    flow_run_store.update_flow_run("fr-dock", {"pid": None, "container_name": "agents-hub-run-fr-dock"})
+    stopped: list = []
+    monkeypatch.setattr("managers.container_manager.stop_container",
+                        lambda name, timeout=15: stopped.append(name) or True)
+    assert client.post("/api/runs/groups/flow/fr-dock/stop").json()["stopped"] is True
+    assert stopped == ["agents-hub-run-fr-dock"]
+    assert flow_run_store.get_flow_run("fr-dock")["status"] == "stopped"
+
+
 def test_the_route_answers_404_for_an_unknown_group_and_400_for_an_unknown_kind(client):
     assert client.get("/api/runs/groups/flow/nope").status_code == 404
     assert client.get("/api/runs/groups/nope/x").status_code == 400

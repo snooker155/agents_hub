@@ -372,7 +372,10 @@ mount from and refuse the request instead of silently ignoring it).
 
 ### Why prefer it over run_shell
 
-`run_shell` runs on the hub's host, in the workspace, with the network: the
+`run_shell` runs in the workspace with the network: on the hub's host in
+`local` mode, in a container on the agent's image in `docker` mode (inside a
+run's own container, or a throwaway one per command for a chat turn, see
+[containers](containers.md)). It is the
 right tool for building and testing a project the agent owns, and the wrong
 one for a snippet whose content came from a web page, a user or another
 model. `run_code` gives that snippet nothing to damage and nowhere to send
