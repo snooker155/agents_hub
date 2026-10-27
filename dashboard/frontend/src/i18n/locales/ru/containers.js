@@ -14,6 +14,8 @@ export default {
   buildBase: 'Собрать базовый',
   buildImage: 'Собрать образ',
   buildBaseFirst: 'Сначала соберите базовый образ',
+  baseImageHint: 'Из этого образа собираются все агенты, поэтому соберите его первым:',
+  build: 'Собрать',
   stats: {
     baseImage: 'Базовый образ',
     agentImages: 'Образы агентов',

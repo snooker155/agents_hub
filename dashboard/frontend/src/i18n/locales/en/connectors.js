@@ -21,7 +21,6 @@ export default {
   alerts: {
     intro: 'Raise a notification in the bell on your own when a run fails or spend crosses a threshold, no agent or person needed to ask for it.',
     rules: 'Alert rules',
-    rulesHint: 'When the workspace should raise a notification on its own: a run failing, or spend past a threshold.',
     noRules: 'No alert rules yet.',
     ruleKind: 'Rule',
     ruleKinds: {
@@ -54,11 +53,8 @@ export default {
       jira: "Jira Cloud",
     },
     intro: {
-      jira: "Read a project's issues into tasks and let agents comment, transition and create issues. Connect a project to a Jira project on its page.",
+      jira: "Read a project's issues into tasks and let agents comment, transition and create issues. Connect a project to a Jira project on its page, where the sync runs.",
     },
-  },
-  trackers: {
-    intro: "Credentials for Jira. Which Jira project a hub project mirrors is set on the project's page, where the sync runs.",
   },
   git: {
     username: "Username",

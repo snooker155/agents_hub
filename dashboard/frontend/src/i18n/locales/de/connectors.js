@@ -21,7 +21,6 @@ export default {
   alerts: {
     intro: 'Lösen Sie selbst eine Benachrichtigung in der Glocke aus, wenn ein Lauf fehlschlägt oder die Ausgaben eine Schwelle überschreiten, ohne dass ein Agent oder eine Person danach fragen muss.',
     rules: 'Alarmregeln',
-    rulesHint: 'Wann der Arbeitsbereich selbst eine Benachrichtigung auslösen soll: ein fehlgeschlagener Lauf oder Ausgaben über einer Schwelle.',
     noRules: 'Noch keine Alarmregeln.',
     ruleKind: 'Regel',
     ruleKinds: {
@@ -54,11 +53,8 @@ export default {
       jira: "Jira Cloud",
     },
     intro: {
-      jira: "Liest die Vorgänge eines Projekts als Aufgaben ein und lässt Agenten kommentieren, Status wechseln und Vorgänge anlegen. Ein Projekt wird auf seiner Seite mit einem Jira-Projekt verbunden.",
+      jira: "Liest die Vorgänge eines Projekts als Aufgaben ein und lässt Agenten kommentieren, Status wechseln und Vorgänge anlegen. Ein Projekt wird auf seiner Seite mit einem Jira-Projekt verbunden, dort läuft auch die Synchronisation.",
     },
-  },
-  trackers: {
-    intro: "Zugangsdaten für Jira. Welches Jira-Projekt ein Hub-Projekt spiegelt, wird auf der Projektseite festgelegt, wo auch die Synchronisation läuft.",
   },
   git: {
     username: "Benutzername",

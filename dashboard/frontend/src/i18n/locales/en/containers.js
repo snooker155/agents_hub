@@ -14,6 +14,8 @@ export default {
   buildBase: 'Build base',
   buildImage: 'Build image',
   buildBaseFirst: 'Build base image first',
+  baseImageHint: 'Every agent image is built on top of this one, so build it first:',
+  build: 'Build',
   stats: {
     baseImage: 'Base image',
     agentImages: 'Agent images',

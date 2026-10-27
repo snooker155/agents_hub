@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BellRing, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Plus, RefreshCw, Trash2 } from 'lucide-react';
 import {
   listNotifyRules, createNotifyRule, updateNotifyRule, deleteNotifyRule,
 } from '../../api';
@@ -146,7 +146,7 @@ function RulesSection({ workspace }) {
 
   return (
     <SectionCard title={`${t('connectors.alerts.rules')} (${rules.length})`}>
-      <p className="text-sm text-gray-600">{t('connectors.alerts.rulesHint')}</p>
+      <p className="text-sm text-gray-600">{t('connectors.alerts.intro')}</p>
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">{error}</div>}
       {loading ? (
         <PageLoader size="sm" />
@@ -204,15 +204,10 @@ function RulesSection({ workspace }) {
 }
 
 export default function AlertRulesConnector() {
-  const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start gap-2 text-sm text-gray-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
-        <BellRing className="w-4 h-4 mt-0.5 text-indigo-500 shrink-0" />
-        <span>{t('connectors.alerts.intro')}</span>
-      </div>
       <RulesSection workspace={selectedWorkspace} />
     </div>
   );

@@ -14,6 +14,8 @@ export default {
   buildBase: 'Basis erstellen',
   buildImage: 'Image erstellen',
   buildBaseFirst: 'Zuerst das Basis-Image erstellen',
+  baseImageHint: 'Alle Agenten-Images bauen auf diesem auf, daher zuerst dieses erstellen:',
+  build: 'Erstellen',
   stats: {
     baseImage: 'Basis-Image',
     agentImages: 'Agenten-Images',
