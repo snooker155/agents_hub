@@ -56,6 +56,7 @@ import PageLoader from '../components/PageLoader';
 import { deleteView, getView, listViews } from '../api';
 import ViewCard from '../views/ViewCard';
 import { ownerLink } from '../views/owner';
+import { allDirPaths, buildFileTree } from '../components/files/fileTree';
 
 const SOURCES = ['upload', 'chat', 'agent', 'memory', 'task', 'eval', 'api'];
 // The virtual folder the views sit in; `?folder=` and the tree use the same key.
@@ -83,30 +84,10 @@ function readView() {
   }
 }
 
-/** The files as folders by their workspace path (an upload with no path sits
- * at the root), plus the views in a virtual folder of their own at the root. */
+/** The files as folders by their workspace path (components/files/fileTree.js),
+ * plus the views in a virtual folder of their own at the root. */
 function buildTree(files, views = [], viewsName = 'Views') {
-  const mk = (name, path) => ({ name, path, dirs: new Map(), files: [] });
-  const root = mk('', '');
-  for (const f of files) {
-    const parts = String(f.meta?.path || f.name || '').split('/').filter(Boolean);
-    let node = root;
-    for (let i = 0; i < parts.length - 1; i += 1) {
-      const seg = parts[i];
-      if (!node.dirs.has(seg)) node.dirs.set(seg, mk(seg, node.path ? `${node.path}/${seg}` : seg));
-      node = node.dirs.get(seg);
-    }
-    node.files.push({ ...f, leaf: parts[parts.length - 1] || f.name });
-  }
-  const finish = (node) => {
-    node.children = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name)).map(finish);
-    node.files.sort((a, b) => a.leaf.localeCompare(b.leaf));
-    node.count = node.files.length + node.children.reduce((sum, c) => sum + c.count, 0);
-    node.bytes = node.files.reduce((sum, f) => sum + (f.size || 0), 0)
-      + node.children.reduce((sum, c) => sum + c.bytes, 0);
-    return node;
-  };
-  finish(root);
+  const root = buildFileTree(files);
   if (views.length) {
     root.children.unshift({
       name: viewsName, path: VIEWS_PATH, virtual: true, dirs: new Map(), children: [], files: [],
@@ -127,11 +108,6 @@ function findDir(root, path) {
     if (node.path === path) return node;
   }
   return node;
-}
-
-function allDirPaths(node, out = []) {
-  for (const c of node.children) { out.push(c.path); allDirPaths(c, out); }
-  return out;
 }
 
 function TreeFile({ file, depth, openId, openFile, onPreview, t, formatDate }) {

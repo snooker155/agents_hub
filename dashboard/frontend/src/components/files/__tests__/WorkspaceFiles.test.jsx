@@ -28,7 +28,11 @@ import FileIdsField from '../FileIdsField';
 
 const wrap = (ui) => render(<I18nProvider><MemoryRouter>{ui}</MemoryRouter></I18nProvider>);
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  listWorkspaceFiles.mockImplementation(() => ok({ files: [A, B] }));
+  try { localStorage.removeItem('files.picker.view'); } catch { /* storage unavailable */ }
+});
 
 describe('WorkspaceFilePicker', () => {
   it('picks several files and skips the ones already added', async () => {
@@ -40,6 +44,45 @@ describe('WorkspaceFilePicker', () => {
     fireEvent.click(screen.getByText('a.md'));
     fireEvent.click(screen.getByRole('button', { name: 'Add 1 file' }));
     expect(onPick).toHaveBeenCalledWith([A]);
+  });
+
+  it('shows the files as a tree of their folders, a folder picked at once', async () => {
+    const C = { file_id: 'file_cccccccccccccccc', name: 'plan.md', size: 5, source: 'upload', meta: { path: 'docs/plan.md' } };
+    const D = { file_id: 'file_dddddddddddddddd', name: 'spec.md', size: 7, source: 'upload', meta: { path: 'docs/specs/spec.md' } };
+    listWorkspaceFiles.mockImplementation(() => ok({ files: [A, C, D] }));
+    const onPick = vi.fn();
+    wrap(<WorkspaceFilePicker workspace="acme" onPick={onPick} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText('a.md')).toBeInTheDocument());
+    // The list names a folder file's folder.
+    expect(screen.getByText(/docs\/specs\//)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tree' }));
+    expect(localStorage.getItem('files.picker.view')).toBe('tree');
+    // The tree asks for more files at once, so its folders are whole.
+    await waitFor(() => expect(listWorkspaceFiles).toHaveBeenLastCalledWith('acme', { q: '', limit: 1000 }));
+    const tree = await screen.findByTestId('picker-tree');
+    // Closed folders: only the root file and the top folder show.
+    expect(tree).toHaveTextContent('docs');
+    expect(screen.queryByText('plan.md')).toBeNull();
+    fireEvent.click(screen.getByText('docs'));
+    expect(screen.getByText('plan.md')).toBeInTheDocument();
+    expect(screen.getByText('specs')).toBeInTheDocument();
+
+    // The folder's box takes every file under it, its subfolder's too.
+    fireEvent.click(screen.getByRole('button', { name: 'Pick every file in docs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 2 files' }));
+    expect(onPick.mock.calls[0][0].map((r) => r.file_id)).toEqual([C.file_id, D.file_id]);
+  });
+
+  it('opens on the view picked last time, and a search opens every folder', async () => {
+    localStorage.setItem('files.picker.view', 'tree');
+    const C = { file_id: 'file_cccccccccccccccc', name: 'plan.md', size: 5, source: 'upload', meta: { path: 'docs/plan.md' } };
+    listWorkspaceFiles.mockImplementation(() => ok({ files: [C] }));
+    wrap(<WorkspaceFilePicker workspace="acme" onPick={() => {}} onClose={() => {}} />);
+    await screen.findByTestId('picker-tree');
+    expect(screen.queryByText('plan.md')).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('Search files'), { target: { value: 'plan' } });
+    await waitFor(() => expect(screen.getByText('plan.md')).toBeInTheDocument());
   });
 
   it('asks for a workspace when there is none', () => {
