@@ -840,6 +840,7 @@
       "default_workspace_only": false,
       "shared": false,
       "skills_enabled": false,
+      "capability_override": true,
       "delegates": [
         "orchestrator",
         "agent_creator",
@@ -893,6 +894,7 @@
       "default_workspace_only": false,
       "shared": false,
       "skills_enabled": false,
+      "capability_override": true,
       "delegates": [
         "orchestrator",
         "agent_creator",
