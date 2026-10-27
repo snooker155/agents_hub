@@ -100,6 +100,8 @@ export default {
     cancel: 'Отмена',
     uploadNew: 'Загрузить новый файл',
     alreadyAdded: 'Уже добавлен',
+    pickFolder: 'Выбрать все файлы папки',
+    pickFolderNamed: 'Выбрать все файлы в {{name}}',
   },
   field: {
     label: 'Файлы',

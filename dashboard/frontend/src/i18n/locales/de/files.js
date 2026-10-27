@@ -92,6 +92,8 @@ export default {
     cancel: 'Abbrechen',
     uploadNew: 'Neue Datei hochladen',
     alreadyAdded: 'Bereits hinzugefügt',
+    pickFolder: 'Alle Dateien des Ordners auswählen',
+    pickFolderNamed: 'Alle Dateien in {{name}} auswählen',
   },
   field: {
     label: 'Dateien',

@@ -92,6 +92,8 @@ export default {
     cancel: 'Cancel',
     uploadNew: 'Upload a new file',
     alreadyAdded: 'Already added',
+    pickFolder: 'Pick every file in the folder',
+    pickFolderNamed: 'Pick every file in {{name}}',
   },
   field: {
     label: 'Files',
