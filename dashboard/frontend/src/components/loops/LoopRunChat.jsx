@@ -13,6 +13,7 @@ import { StatusBadge } from './loopUi';
 import { hasScore, stopReasonLabel } from './loopFormat';
 import { isEvaluating } from './passLog';
 import AgentTranscript from '../chat/AgentTranscript';
+import RunApprovals from '../runs/RunApprovals';
 
 const NO_LIVE = [];
 
@@ -62,7 +63,7 @@ function attachedLine(t, attached) {
 export default function LoopRunChat({
   loop, run, iterations, logs, nodes, live, workspace, active = true,
   goal, onGoalChange, onRun, onStop, starting, estimate, onEstimate, onEstimateClose,
-  liveMessages = NO_LIVE,
+  liveMessages = NO_LIVE, passFlowRunId = null,
 }) {
   const { t } = useI18n();
   const scrollerRef = useRef(null);
@@ -187,6 +188,9 @@ export default function LoopRunChat({
                   />
                 </ReplyRow>
               ))}
+
+              {/* A tool call of the pass under way that waits for a person. */}
+              {passFlowRunId ? <RunApprovals flowRunId={passFlowRunId} className="mx-auto max-w-3xl" /> : null}
 
               {/* The pass under way: its nodes at work, as replies being
                   written (components/runs/liveTurns.js). */}

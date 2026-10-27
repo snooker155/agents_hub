@@ -44,14 +44,16 @@ function errorKey(err) {
 // proposal's fields and a Connect button, instead of a raw input dump
 // (connection-proposals-contract.md). The check runs before any hook of the
 // generic card below, so it can switch cards without breaking hook order.
-export function ToolApprovalCard({ approval, live = true }) {
+// `onAnswered`: told once this card's own answer landed (a page that lists
+// the waiting calls drops the card's row with it).
+export function ToolApprovalCard({ approval, live = true, onAnswered = null }) {
   if (approval.tool === 'propose_connection') {
     return <ConnectionProposalCard approval={approval} live={live} />;
   }
-  return <GenericToolApprovalCard approval={approval} live={live} />;
+  return <GenericToolApprovalCard approval={approval} live={live} onAnswered={onAnswered} />;
 }
 
-function GenericToolApprovalCard({ approval, live = true }) {
+function GenericToolApprovalCard({ approval, live = true, onAnswered = null }) {
   const { t } = useI18n();
   const [note, setNote] = useState('');
   const [sending, setSending] = useState('');
@@ -68,7 +70,9 @@ function GenericToolApprovalCard({ approval, live = true }) {
     setError('');
     try {
       const { data } = await decideToolApproval(approval.approval_id, decision, note.trim());
-      setAnswered(data?.approval || { status: decision === 'approve' ? 'approved' : 'denied' });
+      const settled = data?.approval || { status: decision === 'approve' ? 'approved' : 'denied' };
+      setAnswered(settled);
+      onAnswered?.(settled);
     } catch (err) {
       setError(t(errorKey(err)));
     } finally {

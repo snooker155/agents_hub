@@ -18,7 +18,7 @@ import asyncio
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from langchain_core.callbacks import BaseCallbackHandler
 
@@ -158,6 +158,9 @@ def _run_agent_node(
     port: int,
     outcome: Any = None,
     stream_channels: Optional[list] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+    flow_name: str = "",
+    approval_link: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Execute an agent node in-process: open a run record, run the LLM agent
     with callbacks against the prebuilt ``prompt``, write its output to flow
@@ -170,6 +173,13 @@ def _run_agent_node(
     ``stop_event`` rides along as an extra callback: it is how
     ``_stop_agent_node`` actually reaches into this call from the engine's
     side once the node's ``timeout_seconds`` has passed.
+
+    A tool call that needs a person waits in this node
+    (common/tool_approvals.py ``background_scope``): the card goes out on the
+    run's channels, a notification lands in the bell, and the wait ends with
+    an answer, the node's timeout, ``should_stop`` (the flow's or the loop's
+    stop) or the background approval timeout. ``approval_link`` is what the
+    notification links to besides the flow run (a loop's ids).
     """
     from uuid import uuid4
 
@@ -342,15 +352,25 @@ def _run_agent_node(
     artifact_token = artifact_sink.set_recorder(callback.record_artifact)
     entity_token = entity_sink_mod.set_sink(node_entities)
     citation_token = citation_sink_mod.set_sink(node_citations)
+    def _stop_wanted() -> bool:
+        if outcome is not None and outcome.stop_event.is_set():
+            return True
+        return bool(should_stop and should_stop())
+
+    from common import tool_approvals
     try:
-        return run_agent_lifecycle(
-            agent_id, args.workspace, prompt,
-            overrides=agent_overrides,
-            extra_callbacks=extra_callbacks, catch_invoke_exceptions=True,
-            after_build=lambda agent: callback.bind_model(getattr(agent, "provider", "") or "",
-                                                          getattr(agent, "model", "") or ""),
-            on_build_error=_on_build_error, on_success=_on_success, on_failure=_on_failure,
-        )
+        with tool_approvals.background_scope(
+                kind=tool_approvals.KIND_FLOW, group_run_id=args.run_id, entity_id=args.flow_id,
+                entity_name=flow_name, seat_id=node_id, seat_label=label,
+                emitter=relay, should_stop=_stop_wanted, link=approval_link):
+            return run_agent_lifecycle(
+                agent_id, args.workspace, prompt,
+                overrides=agent_overrides,
+                extra_callbacks=extra_callbacks, catch_invoke_exceptions=True,
+                after_build=lambda agent: callback.bind_model(getattr(agent, "provider", "") or "",
+                                                              getattr(agent, "model", "") or ""),
+                on_build_error=_on_build_error, on_success=_on_success, on_failure=_on_failure,
+            )
     finally:
         relay.flush()
         artifact_sink.reset_recorder(artifact_token)
@@ -371,6 +391,7 @@ def build_task_driver(
     port: int,
     agent_overrides: Optional[Dict[str, Any]] = None,
     stream_channels: Optional[list] = None,
+    approval_link: Optional[Dict[str, Any]] = None,
 ) -> FlowEngineDriver:
     """Build the task-surface :class:`FlowEngineDriver`.
 
@@ -385,9 +406,15 @@ def build_task_driver(
     loop's own channel for its pass): the flow chat's events, ``flow_meta``,
     ``node_start``, the agent's steps tagged with their node, ``node_skip``
     and ``node_done``, so a page shows a background run as it shows its own.
+
+    A tool call that waits for a person in a node ends its wait when the
+    driver's ``should_stop`` says so, read at the time: a loop replaces that
+    hook after this returns, and its stop counts too.
     """
     from common import run_stream
     channels = [run_stream.run_channel(run_id), *(stream_channels or [])]
+    # The driver this returns, for a node's stop check (see above).
+    driver_box: list = []
 
     def _stream(event: Dict[str, Any]) -> None:
         run_stream.publish(channels, {**event, "flow_id": flow_id, "flow_run_id": run_id})
@@ -412,6 +439,8 @@ def build_task_driver(
             _run_agent_node, node, node_id, prompt,
             args=args, flow_state=flow_state, agent_overrides=agent_overrides,
             port=port, outcome=outcome, stream_channels=channels,
+            should_stop=lambda: bool(driver_box) and driver_box[0].should_stop(),
+            flow_name=str(flow.get("name") or ""), approval_link=approval_link,
         )
         if dr.extras:
             node_extras[node_id] = dr.extras
@@ -599,7 +628,7 @@ def build_task_driver(
             "state": ev.get("state"),
         })
 
-    return FlowEngineDriver(
+    driver = FlowEngineDriver(
         build_agent_prompt=_build_agent_input,
         run_agent_node=_run_agent_node_async,
         make_run_context=_make_run_context,
@@ -616,3 +645,5 @@ def build_task_driver(
         # human_interrupt node work here and not in flow chat.
         supports_interrupt=True,
     )
+    driver_box.append(driver)
+    return driver

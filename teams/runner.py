@@ -250,12 +250,22 @@ def _run_member(
     artifact_token = artifact_sink.set_recorder(watcher.record_artifact)
     entity_token = entity_sink_mod.set_sink(turn_entities)
     citation_token = citation_sink_mod.set_sink(turn_citations)
+    # A tool call that needs a person waits in this turn (common/tool_approvals.py
+    # ``background_scope``): the card on the team's channel, a notification
+    # in the bell, the turn clock paused, until an answer, a stop or the
+    # background approval timeout.
+    from common import tool_approvals
     try:
-        inv = invoke_agent(
-            agent, prompt, run_id=run_id,
-            extra_callbacks=[control.TeamStopCallback(team_run_id),
-                             RunStopCallback(run_id), collector, watcher],
-        )
+        with tool_approvals.background_scope(
+                kind=tool_approvals.KIND_TEAM, group_run_id=team_run_id, entity_id=team.team_id,
+                entity_name=team.name, seat_id=speaker, seat_label=speaker, emitter=relay,
+                should_stop=lambda: control.is_stopped(team_run_id) or store.stop_requested(team_run_id),
+                on_wait=lambda waiting: control.note_wait(team_run_id, waiting)):
+            inv = invoke_agent(
+                agent, prompt, run_id=run_id,
+                extra_callbacks=[control.TeamStopCallback(team_run_id),
+                                 RunStopCallback(run_id), collector, watcher],
+            )
     finally:
         artifact_sink.reset_recorder(artifact_token)
         entity_sink_mod.reset_sink(entity_token)
@@ -473,10 +483,12 @@ def _run_turns(
                 except Exception as e:  # noqa: BLE001
                     turns.append(Turn(speaker=member.display_name(),
                                       error=f"{type(e).__name__}: {e}"))
-            if done and pending:
+            if (done and pending) or control.is_waiting(team_run_id):
                 # Somebody answered, so the provider is working through the
                 # round rather than hanging; whoever it serves next starts
-                # their own clock instead of inheriting the wait.
+                # their own clock instead of inheriting the wait. A member
+                # whose tool call waits for a person is not slow either: the
+                # clock starts again once the person answered.
                 deadline = time.monotonic() + _budget(len(pending))
             if pending and time.monotonic() > deadline:
                 for future in pending:
@@ -1051,7 +1063,9 @@ def _check_between_rounds(
 ) -> None:
     if control.is_stopped(team_run_id) or store.stop_requested(team_run_id):
         raise TeamStopped("stopped", "stopped by request")
-    elapsed = time.monotonic() - started
+    # Time members spent waiting for a person to approve a tool call is not
+    # the team working: it does not count against the cap.
+    elapsed = time.monotonic() - started - control.waited_seconds(team_run_id)
     if elapsed > wall_cap:
         raise TeamStopped("wall_clock", f"wall-clock cap reached ({elapsed:.0f}s of {wall_cap:.0f}s)")
     if team.cost_ceiling and spend >= float(team.cost_ceiling):

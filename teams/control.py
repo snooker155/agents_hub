@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Any, Dict, List, Set, Tuple
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -34,6 +35,10 @@ _lock = threading.Lock()
 _events: Dict[str, threading.Event] = {}
 #: team_run_id → the agent run ids currently executing for it.
 _active: Dict[str, Set[str]] = {}
+#: team_run_id → [member calls waiting for a person now, when the current wait
+#: began, seconds waited before it]. A turn that waits for a person is not a
+#: slow turn: the round's turn clock and the run's wall clock leave it out.
+_waits: Dict[str, List[float]] = {}
 
 
 def register(team_run_id: str) -> threading.Event:
@@ -52,6 +57,7 @@ def release(team_run_id: str) -> None:
     with _lock:
         _events.pop(team_run_id, None)
         _active.pop(team_run_id, None)
+        _waits.pop(team_run_id, None)
 
 
 def is_stopped(team_run_id: str) -> bool:
@@ -91,6 +97,37 @@ def track(team_run_id: str, run_id: str) -> None:
 def untrack(team_run_id: str, run_id: str) -> None:
     with _lock:
         _active.get(team_run_id, set()).discard(run_id)
+
+
+def note_wait(team_run_id: str, waiting: bool) -> None:
+    """A member's tool call started (``True``) or stopped (``False``) waiting
+    for a person (common/tool_approvals.py ``background_scope``)."""
+    now = time.monotonic()
+    with _lock:
+        count, since, waited = _waits.get(team_run_id, [0, 0.0, 0.0])
+        if waiting:
+            if not count:
+                since = now
+            count += 1
+        elif count:
+            count -= 1
+            if not count:
+                waited += now - since
+        _waits[team_run_id] = [count, since, waited]
+
+
+def is_waiting(team_run_id: str) -> bool:
+    """Whether a member of this run waits for a person right now."""
+    with _lock:
+        return bool(_waits.get(team_run_id, [0])[0])
+
+
+def waited_seconds(team_run_id: str) -> float:
+    """How long members of this run have waited for a person so far, counting
+    a wait still going on (overlapping waits count once)."""
+    with _lock:
+        count, since, waited = _waits.get(team_run_id, [0, 0.0, 0.0])
+    return waited + (time.monotonic() - since if count else 0.0)
 
 
 class TeamRunStopped(InterruptedError):

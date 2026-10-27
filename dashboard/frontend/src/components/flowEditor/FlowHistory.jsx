@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n';
 import { RUN_STATUS_STYLES, fmtDateTime, rerunBubbleText, routeText } from './runFormat';
 import AgentTranscript from '../chat/AgentTranscript';
 import SaveAsEvalCaseDialog from '../evals/SaveAsEvalCaseDialog';
+import RunApprovals from '../runs/RunApprovals';
 
 const NO_LIVE = [];
 
@@ -122,6 +123,10 @@ export function FlowRunMessages({ run, messages: given = [], live = NO_LIVE, onC
       <div className="flex-1 overflow-y-auto px-3 py-3">
         {onAnswer && pendingQuestion(run, status) ? (
           <AnswerBox question={pendingQuestion(run, status)} onAnswer={onAnswer} />
+        ) : null}
+        {/* A node's tool call that waits for a person: Approve / Deny here. */}
+        {!isChat && run?.run_group ? (
+          <RunApprovals flowRunId={run.run_group} className="mx-auto mb-4 max-w-3xl" />
         ) : null}
         {messages.length === 0 && !live.length ? (
           <div className="flex h-full min-h-[200px] flex-col items-center justify-center text-center text-sm text-slate-500">

@@ -7,6 +7,12 @@ For a person:
 - ``GET /api/runs/{run_id}/tool-approvals`` lists the calls a run waited on
   (``?status=pending`` for the ones still waiting), so a chat reopened while
   its turn waits can show the card again.
+- ``GET /api/flow-runs/{flow_run_id}/tool-approvals`` lists the calls the
+  nodes of a background flow run waited on (``?status=pending`` likewise):
+  the flow run's page, the loop's page and the chat that started the run
+  show their cards from it ("In a background flow, loop or team").
+- ``GET /api/team-runs/{team_run_id}/tool-approvals`` does the same for the
+  members of a team run: the team page and the chat that started it.
 - ``GET /api/tool-approvals/{approval_id}`` reads one.
 - ``POST /api/tool-approvals/{approval_id}`` answers one: ``{"decision":
   "approve"|"deny", "note": "..."}``. 409 when the call is no longer waiting
@@ -124,6 +130,16 @@ def list_run_approvals(run_id: str, request: Request, status: Optional[str] = No
     return {"approvals": rows}
 
 
+@router.get("/api/flow-runs/{flow_run_id}/tool-approvals")
+def list_flow_run_approvals(flow_run_id: str, status: Optional[str] = None):
+    return {"approvals": tool_approvals.list_for_flow_run(flow_run_id, status=status or None)}
+
+
+@router.get("/api/team-runs/{team_run_id}/tool-approvals")
+def list_team_run_approvals(team_run_id: str, status: Optional[str] = None):
+    return {"approvals": tool_approvals.list_for_team_run(team_run_id, status=status or None)}
+
+
 @router.get("/api/tool-approvals/{approval_id}")
 def get_approval(approval_id: str, request: Request):
     approval = _load(approval_id)
@@ -189,6 +205,8 @@ class OpenBody(BaseModel):
     workspace: Optional[str] = None
     conversation_id: Optional[str] = None
     owner: Optional[str] = None
+    flow_run_id: Optional[str] = None
+    team_run_id: Optional[str] = None
     timeout_s: float = tool_approvals.DEFAULT_TIMEOUT_SECONDS
 
 

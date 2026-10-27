@@ -843,6 +843,8 @@ def _policy_payload(name: str) -> dict:
         # Only when set: absent means the default (common/tool_approvals.py).
         **({"tool_approval_timeout": settings["tool_approval_timeout"]}
            if settings.get("tool_approval_timeout") is not None else {}),
+        **({"tool_approval_background_timeout": settings["tool_approval_background_timeout"]}
+           if settings.get("tool_approval_background_timeout") is not None else {}),
     }
 
 
@@ -950,7 +952,7 @@ async def update_workspace_policy(request: Request, name: str, payload: dict):
 
     updates: dict = {}
     settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model", "tool_approval_timeout",
-                     "allow_auto_approve")
+                     "tool_approval_background_timeout", "allow_auto_approve")
     if any(key in payload for key in settings_keys):
         from tools.permission_policy import modes as _policy_modes, split_model_id
         settings = dict(get_workspace_metadata(name).get("settings") or {})
@@ -962,25 +964,28 @@ async def update_workspace_policy(request: Request, name: str, payload: dict):
                 settings.pop("allow_auto_approve", None)
             else:
                 settings["allow_auto_approve"] = False
-        if "tool_approval_timeout" in payload:
-            # How long a call held in a dashboard chat turn waits for a person
-            # (common/tool_approvals.py); empty means the default.
-            raw_timeout = payload.get("tool_approval_timeout")
+        # How long a call held in a dashboard chat turn, or in a background
+        # flow node, waits for a person (common/tool_approvals.py); empty
+        # means the default.
+        for timeout_key in ("tool_approval_timeout", "tool_approval_background_timeout"):
+            if timeout_key not in payload:
+                continue
+            raw_timeout = payload.get(timeout_key)
             if raw_timeout in (None, ""):
-                settings.pop("tool_approval_timeout", None)
-            else:
-                from common.tool_approvals import MAX_TIMEOUT_SECONDS, MIN_TIMEOUT_SECONDS
-                try:
-                    seconds = int(float(raw_timeout))
-                except (TypeError, ValueError):
-                    seconds = -1
-                if not MIN_TIMEOUT_SECONDS <= seconds <= MAX_TIMEOUT_SECONDS:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(f"tool_approval_timeout must be a number of seconds from "
-                                f"{int(MIN_TIMEOUT_SECONDS)} to {int(MAX_TIMEOUT_SECONDS)}"),
-                    )
-                settings["tool_approval_timeout"] = seconds
+                settings.pop(timeout_key, None)
+                continue
+            from common.tool_approvals import MAX_TIMEOUT_SECONDS, MIN_TIMEOUT_SECONDS
+            try:
+                seconds = int(float(raw_timeout))
+            except (TypeError, ValueError):
+                seconds = -1
+            if not MIN_TIMEOUT_SECONDS <= seconds <= MAX_TIMEOUT_SECONDS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"{timeout_key} must be a number of seconds from "
+                            f"{int(MIN_TIMEOUT_SECONDS)} to {int(MAX_TIMEOUT_SECONDS)}"),
+                )
+            settings[timeout_key] = seconds
         if "tool_policy" in payload:
             # Per-tool modes: tool id (or "*" for every other tool) to a mode.
             # A bad entry is refused rather than dropped, so what the page saved

@@ -34,7 +34,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from loops import store
-from loops.evaluator import evaluate
+from loops.evaluator import evaluate, resolve_evaluator
 from loops.models import (
     Iteration, Loop, LoopRun, MAX_ITERATIONS_CAP, MAX_WALL_SECONDS_CAP,
     Verdict, utc_iso,
@@ -228,6 +228,7 @@ def _run_flow_once(
     seed_state: Dict[str, Any],
     should_stop: Callable[[], bool],
     step_note: str = "",
+    loop_id: str = "",
 ) -> Tuple[Dict[str, Any], Dict[str, str]]:
     """Drive the flow once through the shared engine. Returns ``(finish_event,
     node_run_ids)``.
@@ -255,6 +256,8 @@ def _run_flow_once(
         args=args, flow=flow, flow_id=flow_id, run_id=flow_run_id, task_id=task_id,
         session_id=session_id, task_title=title, node_run_ids=node_run_ids,
         port=int(os.environ.get("DASHBOARD_PORT", "8000")),
+        # A call that waits for a person links its notification to the loop.
+        approval_link={"loop_id": loop_id, "loop_run_id": loop_run_id},
     )
     # The task driver stops on its own flow-run record; a loop must also stop
     # when the *loop* is stopped, so both are checked. FlowEngineDriver is a
@@ -637,6 +640,41 @@ def run_loop(
     return run
 
 
+def _judge(loop: Loop, flow: Dict[str, Any], run: LoopRun, flow_run_id: str, *,
+           record: Optional[Dict[str, Any]] = None, **kw: Any) -> Tuple[Verdict, float]:
+    """Judge a pass. An agent judge runs with its own tools, and a call of its
+    that needs a person waits for one as a node's would
+    (common/tool_approvals.py ``background_scope``): the card on the pass's
+    channel, which the loop's page and the chat that started the loop follow,
+    a notification in the bell, until an answer, a stop of the loop or the
+    background approval timeout. Without that the call was refused, and the
+    judge scored without running what it meant to run, or asked for
+    permission in prose that became the next pass's feedback.
+
+    The agent judge's run is a run record too (loops/evaluator.py
+    ``_open_judge_run``), placed by ``record`` under the pass's flow run as
+    the node ``judge``."""
+    mode, agent_id = resolve_evaluator(loop, flow)
+    if mode not in ("final_agent", "agent") or not agent_id or str(getattr(loop, "rubric", "") or "").strip():
+        return evaluate(loop, flow, **kw)
+    from uuid import uuid4
+
+    from common import run_stream, tool_approvals
+    relay = run_stream.ChannelRelay([run_stream.run_channel(flow_run_id)],
+                                    {"agent_label": agent_id, "judge": True})
+    with tool_approvals.background_scope(
+            kind=tool_approvals.KIND_FLOW, group_run_id=flow_run_id, entity_id=loop.flow_id,
+            entity_name=str(flow.get("name") or loop.name or loop.flow_id), seat_id="judge",
+            seat_label=agent_id, emitter=relay,
+            should_stop=lambda: store.stop_requested(run.loop_run_id),
+            link={"loop_id": loop.loop_id, "loop_run_id": run.loop_run_id}):
+        # A run id of its own: a call can only wait on a run it names.
+        return evaluate(loop, flow, run_id=str(uuid4()), record={
+            "flow_id": loop.flow_id, "flow_run_id": flow_run_id,
+            "flow_node_id": "judge", "flow_node_label": "Judge", **(record or {}),
+        }, **kw)
+
+
 def _execute_iteration(
     *,
     loop: Loop, flow: Dict[str, Any], run: LoopRun, iteration: int,
@@ -671,7 +709,7 @@ def _execute_iteration(
     try:
         final, node_run_ids = _run_flow_once(
             flow=flow, flow_id=loop.flow_id, flow_run_id=flow_run_id,
-            loop_run_id=run.loop_run_id, iteration=iteration,
+            loop_run_id=run.loop_run_id, loop_id=loop.loop_id, iteration=iteration,
             workspace_path=ws_path, workspace_name=ws_name, task_id=task_id,
             session_id=session_id,
             title=f"{loop.name or 'Loop'} — iteration {iteration}",
@@ -702,9 +740,11 @@ def _execute_iteration(
     # opinion about, and the evaluation would be another paid call after the
     # user has already asked for the loop to end.
     if it.status != "stopped":
-        v, eval_cost = evaluate(
-            loop, flow, goal=goal, output=it.output, iteration=iteration,
+        v, eval_cost = _judge(
+            loop, flow, run, flow_run_id, goal=goal, output=it.output, iteration=iteration,
             history=history, state=final.get("state"), workspace=ws_path,
+            record={"workspace": ws_name, "task_id": task_id, "session_id": session_id,
+                    "title": f"{loop.name or 'Loop'} — judge, iteration {iteration}"},
         )
         it.score, it.verdict = v.score, v.verdict
         it.reason, it.feedback = v.reason, v.feedback

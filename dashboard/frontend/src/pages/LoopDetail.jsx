@@ -560,6 +560,7 @@ export default function LoopDetail() {
             <LoopRunChat
               loop={loop} run={run} iterations={iterations} logs={shownLogs}
               nodes={nodes} live={live} liveMessages={liveMessages} workspace={selectedWorkspace} active={tab === 'run'}
+              passFlowRunId={runningPass?.flow_run_id || null}
               goal={goal} onGoalChange={setGoal}
               onRun={handleStart} onStop={handleStop} starting={starting}
               estimate={estimate} onEstimate={handleEstimate} onEstimateClose={() => setEstimate(null)}

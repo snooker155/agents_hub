@@ -903,8 +903,9 @@ class ToolGuard:
 
     def _hold(self, call: "_Call", reason: str, *, by: str, hook: str = "",
               record: bool = True, check_approved: bool = True) -> "_Verdict":
-        """A call that needs a person: park it in a task, wait for an answer in
-        a dashboard chat turn, refuse it in any other chat."""
+        """A call that needs a person: wait for an answer in a dashboard chat
+        turn, a background flow node or a team member's turn, park it in a
+        task, refuse it anywhere else."""
         from tools import permission_policy as policy
         from tools.approval import gate_refusal_text
 
@@ -912,6 +913,8 @@ class ToolGuard:
             if record:
                 self._record(call, policy.ASK, reason, by=by)
             held = self._hold_in_chat(call, reason, by=by, hook=hook)
+            if held is None:
+                held = self._hold_in_background(call, reason, by=by, hook=hook)
             if held is not None:
                 return held
             # Nobody in front of a card (Telegram, the widget, a channel,
@@ -928,6 +931,12 @@ class ToolGuard:
 
         if record:
             self._record(call, policy.ASK, reason, by=by)
+        # A flow node's or a team member's agent on a task: the flow driver
+        # would take a parked run for a finished node (a team, for the
+        # member's reply), so the call waits where it was made instead.
+        held = self._hold_in_background(call, reason, by=by, hook=hook)
+        if held is not None:
+            return held
         return _Verdict(pending={
             "tool": call.tool,
             "input": call.input,
@@ -952,7 +961,6 @@ class ToolGuard:
         for a no, a timeout or a stop.
         """
         from tools import permission_policy as policy
-        from tools.approval import chat_answer_text
         try:
             from common import tool_approvals
             ctx = tool_approvals.chat_context(call.run_id)
@@ -982,20 +990,61 @@ class ToolGuard:
             return None
         if answer is None:
             return None
+        return self._answered(call, answer, by=by, timeout=timeout, where="in the chat")
+
+    def _hold_in_background(self, call: "_Call", reason: str, *, by: str,
+                            hook: str = "") -> Optional["_Verdict"]:
+        """Wait in a background flow node (a flow on a task, from a chat or a
+        schedule, a loop's pass) or a team member's turn for a person to
+        answer this call: the card on the run's page, a notification in the
+        bell, this thread waiting until an answer, a stop of the run, or the
+        background timeout. None when this run is neither
+        (common/tool_approvals.py ``background_scope``)."""
+        from tools.approval import gate_refusal_text
+        try:
+            from common import tool_approvals
+            ctx = tool_approvals.background_context(call.run_id)
+        except Exception:  # noqa: BLE001 - no context means the caller's own rule applies
+            logger.debug("tool approvals: no background context for %s", call.tool, exc_info=True)
+            return None
+        if ctx is None:
+            return None
+        try:
+            timeout = tool_approvals.background_timeout_seconds(self.settings())
+            answer = tool_approvals.hold(
+                ctx, tool=call.tool, tool_input=call.input, reason=reason,
+                fingerprint=call.fingerprint, by=by, hook=hook, agent_id=self.agent_id,
+                workspace=self.workspace, timeout_s=timeout)
+        except Exception:  # noqa: BLE001 - a broken wait refuses the call, never runs it
+            logger.warning("tool approvals: could not hold %s in a background run", call.tool,
+                           exc_info=True)
+            answer = None
+        if answer is None:
+            return _Verdict(refusal=gate_refusal_text(call.tool, call.input, reason))
+        return self._answered(call, answer, by=by, timeout=timeout, where="on the run page",
+                              background=True)
+
+    def _answered(self, call: "_Call", answer: Dict[str, Any], *, by: str, timeout: float,
+                  where: str, background: bool = False) -> "_Verdict":
+        """What a person's answer (or its absence) makes of a held call."""
+        from common import tool_approvals
+        from tools import permission_policy as policy
+        from tools.approval import chat_answer_text
         note = str(answer.get("note") or "").strip()
         if answer.get("status") == tool_approvals.STATUS_APPROVED:
-            self._record(call, policy.RUN, "A person approved this call in the chat."
+            self._record(call, policy.RUN, f"A person approved this call {where}."
                          + (f" Note: {note}" if note else ""), by=by, approved=True, trail=False)
             _revise_trail(call, policy.PERMISSION_ALLOW, "human_approved")
             return _Verdict()
         why = {
-            tool_approvals.STATUS_DENIED: "A person denied this call in the chat.",
+            tool_approvals.STATUS_DENIED: f"A person denied this call {where}.",
             tool_approvals.STATUS_CANCELLED: "The run was stopped while the call waited for a person.",
         }.get(str(answer.get("status")), f"Nobody answered within {int(timeout)} seconds.")
         self._record(call, policy.DENY, why + (f" Note: {note}" if note else ""), by=by,
                      code="human_denied", trail=False)
         _revise_trail(call, policy.PERMISSION_DENY, "human_denied")
-        return _Verdict(refusal=chat_answer_text(call.tool, call.input, answer, timeout))
+        return _Verdict(refusal=chat_answer_text(call.tool, call.input, answer, timeout,
+                                                 background=background))
 
     @staticmethod
     def _consume(call: "_Call") -> bool:

@@ -19,6 +19,7 @@ import { DiffView } from './panels';
 import { AVATAR_NAME_CLS, BUBBLE_SIZES } from './bubbleSizes';
 import { ChatPageContext } from './context';
 import { ChatCodeActionsContext } from './chatMarkdownContext';
+import ToolApprovals from './ToolApprovalCard';
 import { Bot, ChevronDown, ChevronUp, FileText, User } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -204,6 +205,8 @@ function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false, com
         )}
         {/* The thought being written, until it lands as a step above. */}
         {isStreaming && msg.thinking_live ? <LiveThoughts text={msg.thinking_live} /> : null}
+        {/* A tool call waiting for a person: Approve / Deny, as in the Chat view. */}
+        <ToolApprovals msg={msg} live={isStreaming} />
         <MessageViews views={views} />
       </div>
     </div>

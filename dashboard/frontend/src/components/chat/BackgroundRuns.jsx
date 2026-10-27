@@ -21,6 +21,7 @@ import { reconstructRunMessages, routeText } from '../flowEditor/runFormat';
 import { activityText, footerText, progressText, runPagePath, turnKind, workChannels } from './backgroundRunInfo';
 import { useMessagesWithTrails } from './runTrail';
 import { BuildMessage } from './BuildMessage';
+import RunApprovals from '../runs/RunApprovals';
 
 const KIND_ICON = { flow: Workflow, loop: Repeat, team: UsersRound };
 
@@ -40,6 +41,8 @@ export function BackgroundRunCard({ run }) {
       <RunHeader run={run} icon={Icon} text={run.finished
         ? t('chat.background.workFinished')
         : `${t('chat.background.inBackground')}${progress ? ` · ${progress}` : ''}`} />
+      {/* A node's tool call that waits for a person: answered right here. */}
+      {approvalsRun(run) ? <RunApprovals {...approvalsRun(run)} className="mb-2" /> : null}
       {entries.map(([key, { meta, turn, done, ok }]) => {
         // A node or member that finished keeps its reply, marked so, instead
         // of vanishing when the next one starts.
@@ -66,6 +69,16 @@ export function BackgroundRunCard({ run }) {
       )}
     </div>
   );
+}
+
+// Whose waiting calls the card shows: the flow run itself, a loop's pass
+// under way, or the team run.
+function approvalsRun(run) {
+  if (run.finished) return null;
+  if (run.kind === 'flow') return run.run_id ? { flowRunId: run.run_id } : null;
+  if (run.kind === 'team') return run.run_id ? { teamRunId: run.run_id } : null;
+  const pass = (workChannels(run)[0] || '').replace(/^run:/, '');
+  return run.kind === 'loop' && pass ? { flowRunId: pass } : null;
 }
 
 function RunHeader({ run, icon: Icon, text }) {

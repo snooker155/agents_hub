@@ -24,6 +24,19 @@ describe('notificationText', () => {
     expect(notificationText(n, tr('en')).body).toBe("Agent 'a' failed.");
   });
 
+  it('builds a scheduled task start in the reader\'s language', () => {
+    const n = {
+      title: 'Scheduled task started: Digest',
+      source: { message: { key: 'scheduledTaskStarted', params: { title: 'Digest', agent: 'researcher' } } },
+    };
+    expect(notificationText(n, tr('ru'))).toEqual({
+      title: 'Запущена задача по расписанию: Digest',
+      body: 'Агент «researcher» начал работу над задачей.',
+    });
+    const routed = { source: { message: { key: 'scheduledTaskStarted', params: { title: 'Digest' } } } };
+    expect(notificationText(routed, tr('ru')).body).toBe('Задача передана оркестратору для распределения.');
+  });
+
   it('keeps the stored text for a notification without a message', () => {
     const n = { title: 'Reminder', body: 'Call Bob' };
     expect(notificationText(n, tr('ru'))).toEqual({ title: 'Reminder', body: 'Call Bob' });
