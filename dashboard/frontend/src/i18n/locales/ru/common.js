@@ -155,6 +155,8 @@ export default {
     year: 'гггг',
     timeHint: 'чч:мм',
     time: 'Время',
+    hours: 'Часы',
+    minutes: 'Минуты',
     today: 'Сегодня',
     openCalendar: 'Открыть календарь',
     previousMonth: 'Предыдущий месяц',
