@@ -8,7 +8,7 @@ import { appendUserMessage, buildAssistantBubble, buildNewConversation } from '.
 import { handleAgentEvent } from './send/handleAgentResponse';
 import { handleFlowEvent } from './send/handleFlowResponse';
 import { handleTeamEvent } from './send/handleTeamResponse';
-import { mapSendError, noStreamPatch } from './send/errors';
+import { mapSendError, markStopped, noStreamPatch } from './send/errors';
 import { DETACHED, streamChatOverChannel } from './send/channelStream';
 import { claimTurn, releaseTurn } from '../chatLiveTurn';
 import {
@@ -258,6 +258,10 @@ export function useChatSend(deps) {
     // The turn's handoffs (the agent gave the conversation to another one, see
     // send/handleAgentResponse), read once the turn is over however it ended.
     const handoffs = [];
+    // Read by the catch below: which bubble a stopped turn was writing.
+    let ctx = null;
+    // Stopped by the person (not let go of by leaving the page).
+    let stopped = false;
 
     try {
       // In agent mode we create one assistant bubble up front and stream into it.
@@ -278,7 +282,7 @@ export function useChatSend(deps) {
       // handoffs collects the turn's `handoff` events (the agent gave the
       // conversation to another one, see send/handleAgentResponse).
       const state = { runId: null, finalPayload: null, currentNodeId: null, nodeMsgIds: {}, handoffs };
-      const ctx = {
+      ctx = {
         convId, setConversations,
         setActiveRunId: (id) => { noteTurn(convId, { runId: id }); if (here()) setActiveRunId(id); },
         setSessionId: (id) => { noteTurn(convId, { sessionId: id }); if (here()) setSessionId(id); },
@@ -337,6 +341,16 @@ export function useChatSend(deps) {
         loadProcessData(state.runId || state.finalPayload.run_id);
       }
     } catch (err) {
+      if (err?.name === 'AbortError' && ctrl.signal.reason !== DETACHED) {
+        stopped = true;
+        // ctx.assistantId: after a handoff the open bubble is the receiving
+        // agent's; in a flow, the node that was running.
+        const bubbleId = ctx && (ctx.assistantId || ctx.state.nodeMsgIds[ctx.state.currentNodeId]);
+        setConversations((prev) => prev.map((c) => (
+          c.id !== convId ? c : { ...c, messages: markStopped(c.messages, bubbleId, ctx?.state.runId) }
+        )));
+        return;
+      }
       const errMsg = mapSendError(err, t);
       if (!errMsg) return;
       setConversations((prev) =>
@@ -346,8 +360,13 @@ export function useChatSend(deps) {
       );
     } finally {
       endTurn(convId, ctrl);
-      if (overChannel) releaseTurn(turnKey);
-      else setTimeout(() => releaseTurn(turnKey), ECHO_GRACE_MS);
+      // A stopped turn stays claimed: the server still finishes it ("Stopped
+      // by user"), and that echo would otherwise be mirrored as someone
+      // else's turn over the bubble marked stopped above.
+      if (!stopped) {
+        if (overChannel) releaseTurn(turnKey);
+        else setTimeout(() => releaseTurn(turnKey), ECHO_GRACE_MS);
+      }
       // The conversation now belongs to the agent that answered: the top bar
       // shows it and the next turn goes to it (the conversation record was
       // pointed at it when the handoff arrived).

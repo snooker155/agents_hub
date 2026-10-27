@@ -337,7 +337,7 @@ export default function Chat() {
   const unfinishedRunId = useMemo(() => {
     const last = messages[messages.length - 1];
     return last?.role === 'agent' && last.run_id && last.duration_ms == null
-      && last.total_tokens == null && !last.error
+      && last.total_tokens == null && !last.error && !last.stopped
       ? String(last.run_id) : null;
   }, [messages]);
   const mirrorTakesOver = Boolean(
@@ -351,7 +351,12 @@ export default function Chat() {
     if (!mirrorTakesOver && liveTurn.notice) {
       bubbles.push({ id: 'live-notice', role: 'system', notice: liveTurn.notice, content: '' });
     }
-    if (!mirrorTakesOver && (liveTurn.user || '').trim()) {
+    // A conversation opened with its message stored (a scheduled run) already
+    // shows it as the last bubble.
+    const lastStored = messages[messages.length - 1];
+    const userStored = lastStored?.role === 'user'
+      && String(lastStored.content || '').trim() === (liveTurn.user || '').trim();
+    if (!mirrorTakesOver && !userStored && (liveTurn.user || '').trim()) {
       bubbles.push({ id: 'live-user', role: 'user', content: liveTurn.user });
     }
     // A turn that changed hands: each handing agent's reply, then the agent
@@ -374,7 +379,7 @@ export default function Chat() {
       run_id: liveTurn.runId,
     });
     return bubbles;
-  }, [liveTurn, mirrorTakesOver, selectedAgent]);
+  }, [liveTurn, mirrorTakesOver, selectedAgent, messages]);
   // What the feed renders: the stored transcript, plus the mirrored turn while
   // one is in flight. The mirror is appended here and nowhere else, so nothing
   // downstream of `messages` (persistence, context fill, run ids) ever sees it.

@@ -340,7 +340,12 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
         if notice:
             turn.append({"id": f"srv-n-{run_id}", "role": "system", "notice": notice,
                          "content": _notice_text(notice)})
-        if (user_message or "").strip():
+        # A conversation opened with its message already in it (a scheduled
+        # run, plans/service.py) keeps that one bubble.
+        last = messages[-1] if messages else {}
+        asked_already = (last.get("role") == "user"
+                         and str(last.get("content") or "").strip() == (user_message or "").strip())
+        if (user_message or "").strip() and not asked_already:
             turn.append({"id": f"srv-u-{run_id}", "role": "user",
                          "content": user_message})
         turn.append({
@@ -358,6 +363,66 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
             (len(_messages(doc)), doc["updated_at"], db.dumps(doc), str(chat_id)),
         )
     _mirror(chat_id, chat.get("origin"))
+    return True
+
+
+def mark_stopped(chat_id: str, *, run_id: str, user_message: str,
+                 agent_id: Optional[str] = None) -> bool:
+    """Record in a stored chat that the person stopped a turn. Returns whether
+    anything changed.
+
+    The page that ran the turn marks its own bubble when its Stop button ends
+    it. A turn stopped from anywhere else (another tab, the page opened again
+    after it was left, the run's own page) has no page to write that, so the
+    mark is made here, the same safety net as :func:`append_turn`:
+
+    * the bubble already holding the run gets ``stopped`` and keeps the text
+      it was saved with;
+    * a turn the transcript holds without its run (stopped before the server
+      named it) is found by its message, the last one the person sent, and
+      its reply is marked, or added empty when the page saved none;
+    * a turn the transcript does not hold at all is added: the message and an
+      empty reply marked stopped.
+    """
+    if not chat_id or not run_id:
+        return False
+    with db.transaction() as conn:
+        row = conn.execute("SELECT doc FROM chats WHERE chat_id = ?",
+                           (str(chat_id),)).fetchone()
+        chat = _row_to_chat(row) if row else None
+        if chat is None:
+            return False
+        messages = list(_messages(chat))
+        reply = {"id": f"srv-a-{run_id}", "role": "agent", "agent_id": agent_id,
+                 "content": "", "error": False, "run_id": str(run_id), "stopped": True}
+        same_run = [i for i, m in enumerate(messages)
+                    if str(m.get("run_id") or "") == str(run_id)]
+        if same_run:
+            i = same_run[-1]
+            if messages[i].get("stopped"):
+                return False
+            messages[i] = {**messages[i], "stopped": True, "thinking_live": "", "running_tool": None}
+        else:
+            users = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+            asked = (user_message or "").strip()
+            if asked and users and str(messages[users[-1]].get("content") or "").strip() == asked:
+                after = [i for i in range(users[-1] + 1, len(messages))
+                         if messages[i].get("role") == "agent" and not messages[i].get("run_id")]
+                if after:
+                    i = after[-1]
+                    messages[i] = {**messages[i], "stopped": True, "run_id": str(run_id),
+                                   "thinking_live": "", "running_tool": None}
+                else:
+                    messages.insert(users[-1] + 1, reply)
+            else:
+                if asked:
+                    messages.append({"id": f"srv-u-{run_id}", "role": "user", "content": user_message})
+                messages.append(reply)
+        doc = _fit({**chat, "messages": messages, "updated_at": _now()})
+        conn.execute(
+            "UPDATE chats SET message_count = ?, updated_at = ?, doc = ? WHERE chat_id = ?",
+            (len(_messages(doc)), doc["updated_at"], db.dumps(doc), str(chat_id)),
+        )
     return True
 
 
@@ -415,6 +480,6 @@ def import_chats(items: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"imported": imported, "skipped": skipped}
 
 
-__all__ = ["list_chats", "get_chat", "save_chat", "delete_chat", "append_turn",
+__all__ = ["list_chats", "get_chat", "save_chat", "delete_chat", "append_turn", "mark_stopped",
            "import_chats",
            "chat_ids", "MAX_MESSAGES", "MAX_DOC_BYTES"]

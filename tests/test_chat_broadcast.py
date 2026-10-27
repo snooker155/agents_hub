@@ -393,6 +393,32 @@ async def _body_test_a_half_written_bubble_gets_the_final_answer(broker):
     assert saved and saved[0]["chat_id"] == "conv-1" and saved[0]["origin_client"] is None
 
 
+async def _body_test_a_turn_stopped_elsewhere_is_marked_in_the_stored_reply(broker):
+    """Stopped from a page that did not send it: no page marks the bubble, so
+    the server does, and the mark outlives the live mirror."""
+    from chat.broadcast import broadcast_turn
+    from common import chat_store
+
+    chat_store.save_chat({"id": "conv-1", "messages": [
+        {"id": "m1", "role": "user", "content": "how do I ship this?"},
+        {"id": "m2", "role": "agent", "content": "ship", "run_id": "run-1",
+         "duration_ms": None, "total_tokens": None},
+    ]})
+    client_id, queue = broker.open_client(["chat:conv-1"])
+    async for _ in broadcast_turn(FakeRequest(), _pipeline([
+        {"type": "done", "ok": False, "stopped": True, "response": "Stopped by user",
+         "error": "stopped by user", "run_id": "run-1"},
+    ])):
+        pass
+    await asyncio.sleep(0)
+    broker.close_client(client_id)
+
+    messages = chat_store.get_chat("conv-1")["messages"]
+    assert [m["id"] for m in messages] == ["m1", "m2"]
+    assert messages[1]["stopped"] is True and messages[1]["content"] == "ship"
+    assert any(e["type"] == "chat_saved" for e in _drain(queue))
+
+
 # ── running the async bodies above ──────────────────────────────────────────
 # The suite has no pytest-asyncio; async work is driven with asyncio.run, and
 # the broker's queues are created and read inside that same loop.
@@ -523,3 +549,6 @@ def test_the_running_endpoint_lists_only_chats_the_caller_can_see(client, monkey
     monkeypatch.setattr(chats, "_chat_visible", lambda principal, chat: chat["id"] != "conv-hidden")
 
     assert client.get("/api/chats/running").json() == {"conversations": ["conv-mine"]}
+
+def test_a_turn_stopped_elsewhere_is_marked_in_the_stored_reply(broker):
+    asyncio.run(_body_test_a_turn_stopped_elsewhere_is_marked_in_the_stored_reply(broker))

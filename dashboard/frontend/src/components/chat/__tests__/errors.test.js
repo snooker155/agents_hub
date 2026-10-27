@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapSendError, noStreamPatch } from '../send/errors';
+import { mapSendError, markStopped, noStreamPatch } from '../send/errors';
 
 const t = (key) => (key === 'chat.failedToGetResponse' ? 'Failed to get a response.' : key);
 
@@ -40,5 +40,24 @@ describe('noStreamPatch', () => {
   it('marks the bubble as an error with the no-output message', () => {
     const tt = (key) => (key === 'chat.noStreamedOutput' ? 'No streamed output received.' : key);
     expect(noStreamPatch(tt)).toEqual({ content: 'No streamed output received.', error: true });
+  });
+});
+
+describe('markStopped', () => {
+  it('marks the bubble the stopped turn was writing and keeps its text', () => {
+    const messages = [
+      { id: 'u1', role: 'user', content: 'hi' },
+      { id: 'a1', role: 'agent', content: 'half an ans', running_tool: 'web_search' },
+    ];
+    const out = markStopped(messages, 'a1', 'run-1');
+    expect(out).toHaveLength(2);
+    expect(out[1]).toMatchObject({ id: 'a1', content: 'half an ans', stopped: true, running_tool: null });
+    expect(out[0]).toBe(messages[0]);
+  });
+
+  it('adds a bubble of its own when the turn drew none yet', () => {
+    const out = markStopped([{ id: 'u1', role: 'user', content: 'hi' }], undefined, 'run-2');
+    expect(out).toHaveLength(2);
+    expect(out[1]).toMatchObject({ role: 'agent', content: '', stopped: true, run_id: 'run-2' });
   });
 });
