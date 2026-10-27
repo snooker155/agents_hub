@@ -1,12 +1,15 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeyRound, Loader, Plus, Trash2 } from 'lucide-react';
 import {
   deleteWorkspaceSecret, getWorkspaceSecrets, setWorkspaceSecret, setWorkspaceSecretHosts,
 } from '../../api';
 import { useI18n } from '../../i18n';
+import AgentPicker from '../chat/AgentPicker';
 
 const inputCls = 'border border-gray-200 rounded-lg px-2 py-1 text-xs '
   + ' focus:outline-none';
+// The add form's fields stand as tall as the agent picker's field beside them.
+const fieldCls = 'border border-gray-200 rounded-lg px-3 h-[42px] text-sm focus:outline-none';
 
 // Mirrors common/secrets.NAME_RE: a secret becomes an environment variable.
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
@@ -16,13 +19,18 @@ const EMPTY_DRAFT = { name: '', value: '', agent_id: '', user_id: '', hosts: '' 
 // "a.com, b.org" as the list the backend takes (it normalises the rest).
 const splitHosts = (text) => String(text || '').split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
 
+// The row's hosts box grows with its text (in mono a ch is a character), so a
+// long list is read whole rather than scrolled inside a short box.
+const hostsWidth = (text, min) => ({ width: `${Math.min(64, Math.max(min, String(text || '').length + 3))}ch` });
+
 /**
  * The workspace's secrets: names, scopes and a hint, never a value.
  *
  * The operator keeps keys out of `.env` here. A 403 or 404 on the first load
  * hides the card rather than showing an error where a card should be.
  *
- * `agents` is the workspace's allowed agent ids, for the optional agent scope.
+ * `agents` is the workspace's allowed agents, for the optional agent scope:
+ * records as the agents list returns them, or bare ids.
  */
 export default function WorkspaceSecrets({ workspace, agents = [] }) {
   const { t } = useI18n();
@@ -37,6 +45,10 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   // The row whose hosts are being edited: its key and the text in the box.
   const [hostEdit, setHostEdit] = useState(null);
+  const agentRecords = useMemo(
+    () => agents.map((a) => (typeof a === 'string' ? { id: a } : a)).filter((a) => a?.id),
+    [agents],
+  );
 
   // A promise chain rather than an async body, so the effect below may call it
   // without a synchronous setState.
@@ -97,6 +109,7 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
   };
 
   const remove = async (row) => {
+    if (!window.confirm(t('secrets.confirmDelete', { name: row.name, scope: scopeLabel(row) }))) return;
     const params = {};
     if (row.agent_id) params.agent_id = row.agent_id;
     if (row.user_id) params.user_id = row.user_id;
@@ -172,7 +185,8 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
                         <input value={hostEdit.text} aria-label={t('secrets.editHosts', { name: row.name })}
                           placeholder={t('secrets.hostsField')}
                           onChange={(e) => setHostEdit({ ...hostEdit, text: e.target.value })}
-                          className={`${inputCls} font-mono`} />
+                          style={hostsWidth(hostEdit.text || t('secrets.hostsField'), 24)}
+                          className={`${inputCls} font-mono max-w-[60vw]`} />
                         <button type="button" onClick={() => saveHosts(row)}
                           className="text-indigo-600 hover:text-indigo-800">{t('secrets.saveHosts')}</button>
                         <button type="button" onClick={() => setHostEdit(null)}
@@ -213,22 +227,27 @@ export default function WorkspaceSecrets({ workspace, agents = [] }) {
         <input value={draft.name} placeholder={t('secrets.fields.name')}
           aria-label={t('secrets.columns.name')} title={t('secrets.nameHint')}
           onChange={(e) => setDraft({ ...draft, name: e.target.value.toUpperCase() })}
-          className={`${inputCls} font-mono`} />
+          className={`${fieldCls} font-mono w-48`} />
         <input type="password" autoComplete="new-password" value={draft.value}
           placeholder={t('secrets.fields.value')} aria-label={t('secrets.fields.value')}
           onChange={(e) => setDraft({ ...draft, value: e.target.value })}
-          className={inputCls} />
-        <select value={draft.agent_id} className={inputCls} aria-label={t('secrets.fields.anyAgent')}
-          onChange={(e) => setDraft({ ...draft, agent_id: e.target.value })}>
-          <option value="">{t('secrets.fields.anyAgent')}</option>
-          {agents.map((id) => <option key={id} value={id}>{id}</option>)}
-        </select>
+          className={`${fieldCls} w-48`} />
+        <div className="w-64">
+          <AgentPicker
+            variant="field"
+            details={false}
+            agents={agentRecords}
+            value={draft.agent_id}
+            onChange={(id) => setDraft({ ...draft, agent_id: id })}
+            noneOption={{ label: t('secrets.fields.anyAgent') }}
+          />
+        </div>
         <input value={draft.hosts} placeholder={t('secrets.hostsField')}
           aria-label={t('secrets.hostsField')} title={t('secrets.hostsHint')}
           onChange={(e) => setDraft({ ...draft, hosts: e.target.value })}
-          className={`${inputCls} font-mono`} />
+          className={`${fieldCls} font-mono flex-1 min-w-[22rem]`} />
         <button type="submit" disabled={!nameOk || !draft.value}
-          className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50">
+          className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 h-[42px] rounded-lg text-sm font-medium disabled:opacity-50">
           <Plus className="w-3.5 h-3.5" /> {t('secrets.add')}
         </button>
       </form>
