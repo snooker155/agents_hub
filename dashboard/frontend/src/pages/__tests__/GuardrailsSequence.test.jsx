@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -21,7 +21,7 @@ vi.mock('../../api/guardrails', () => ({
   deleteGuardrail: vi.fn(() => ok({})),
   testGuardrail: vi.fn(() => ok({})),
   testGuardrailCalls: (...a) => testGuardrailCalls(...a),
-  getGuardrailEvents: vi.fn(() => ok([])),
+  getGuardrailEvents: vi.fn(() => ok({ items: [], total: 0 })),
 }));
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ workspaceFilter: undefined, selectedWorkspace: 'default' }),
@@ -48,12 +48,13 @@ describe('Guardrails: sequence rules', () => {
     await screen.findByText(/no guardrails yet/i);
     fireEvent.click(screen.getByRole('button', { name: /new guardrail/i }));
     fireEvent.change(screen.getByPlaceholderText(/no-secrets-out/i), { target: { value: 'transfer cap' } });
-    const selects = screen.getAllByRole('combobox');
+    const dialog = within(screen.getByRole('dialog'));
+    const selects = dialog.getAllByRole('combobox');
     fireEvent.change(selects[2], { target: { value: 'sequence' } });
     // The stage is fixed to tool calls, the actions are block and ask.
-    expect(screen.getByRole('option', { name: 'Tool calls' })).toBeTruthy();
-    expect(screen.queryByRole('option', { name: /^Warn/ })).toBeNull();
-    fireEvent.change(screen.getAllByRole('combobox')[3], { target: { value: 'ask' } });
+    expect(dialog.getByRole('option', { name: 'Tool calls' })).toBeTruthy();
+    expect(dialog.queryByRole('option', { name: /^Warn/ })).toBeNull();
+    fireEvent.change(dialog.getAllByRole('combobox')[3], { target: { value: 'ask' } });
     fireEvent.change(screen.getByRole('combobox', { name: 'Rule' }), { target: { value: 'sum_max' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Tools' }), { target: { value: 'pay\nrefund' } });
     fireEvent.change(screen.getByRole('textbox', { name: 'Argument' }), { target: { value: 'amount' } });
@@ -73,8 +74,8 @@ describe('Guardrails: sequence rules', () => {
       applies: true, passed: false, index: 1, tool: 'pay', reason: 'over the limit',
     }));
     show();
-    await screen.findByText('transfer cap');
-    expect(screen.getByText('Tool calls')).toBeTruthy();
+    await screen.findByText('transfer cap', { selector: 'span' });
+    expect(screen.getByText('Tool calls', { selector: 'span' })).toBeTruthy();
     expect(screen.getByText('Tool call sequence')).toBeTruthy();
     fireEvent.click(screen.getByTitle('Test'));
     const box = await screen.findByRole('textbox', { name: 'Tool calls' });
@@ -88,7 +89,7 @@ describe('Guardrails: sequence rules', () => {
   it('refuses calls that are not a JSON list', async () => {
     getGuardrails.mockImplementation(() => ok([SEQUENCE]));
     show();
-    await screen.findByText('transfer cap');
+    await screen.findByText('transfer cap', { selector: 'span' });
     fireEvent.click(screen.getByTitle('Test'));
     fireEvent.change(await screen.findByRole('textbox', { name: 'Tool calls' }), { target: { value: '{"tool": 1}' } });
     fireEvent.click(screen.getByRole('button', { name: /run test/i }));

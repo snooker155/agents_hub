@@ -227,6 +227,13 @@ async def drive_streaming_run(
             final_ok = True
         else:
             final_error = agent_result.error or "Agent returned no output"
+            if getattr(agent_result, "status", "") == "guardrail_tripped":
+                # The streamed tokens are the very text the guardrail stopped:
+                # the run record keeps the guardrail's message, never them.
+                final_response = str(agent_result.agent_output or "") or final_error
+                if agent_result.guardrail:
+                    from chat.refusals import guardrail_refusal
+                    result.refusal = guardrail_refusal(agent_result.guardrail)
     except asyncio.CancelledError:
         # A stopped turn has no result, but its loop may have done things
         # worth keeping (steering, tool policy decisions, compactions).

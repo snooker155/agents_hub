@@ -52,7 +52,9 @@ An input guardrail that blocks stops the run before the model is called at all. 
 
 ## Findings and audit
 
-Every block and every warning is written to the guardrail event log with the run, task, agent, workspace, stage and reason, and an excerpt of the text in which matched secrets are masked. A sequence guardrail's finding has stage `tool`, the tool's name and an excerpt of the call's input, masked the same way, and is audited as `guardrail.trip` (block) or `guardrail.ask` (ask). Events are kept `AGENTS_HUB_GUARDRAIL_EVENTS_RETENTION_DAYS` days (default 30). Blocks are audited as `guardrail.trip`, warnings as `guardrail.warn` (see [audit](audit.md)).
+In the chat, a block shows as a card in place of the reply: which guardrail stopped the message or the answer and what it found, in the interface language. A warning lets the reply through and shows under it the same way. The card never repeats the matched text.
+
+Every block and every warning is written to the guardrail event log with the run, task, agent, workspace, stage and reason, and an excerpt of the text in which matched secrets are masked. A sequence guardrail's finding has stage `tool`, the tool's name and an excerpt of the call's input, masked the same way. Events are kept `AGENTS_HUB_GUARDRAIL_EVENTS_RETENTION_DAYS` days (default 30). The Guardrails page lists them a batch at a time (Load more), newest first, with a filter by guardrail, action and stage. Blocks are audited as `guardrail.trip`, warnings as `guardrail.warn`, a sequence guardrail's ask as `guardrail.ask` (see [audit](audit.md)).
 
 ## Managing guardrails
 
@@ -63,7 +65,7 @@ API:
 - `GET /api/guardrails` (with `workspace`), `POST /api/guardrails`
 - `GET`, `PATCH`, `DELETE /api/guardrails/{id}`, `POST /api/guardrails/{id}/archive`
 - `POST /api/guardrails/{id}/test` with `{text, stage}`: a dry run; for a sequence guardrail with `{calls: [{tool, input, ok}]}`, the calls in the order a run would make them, answering the index of the first call it would stop and why
-- `GET /api/guardrails/events` with `workspace`, `run_id`, `guardrail_id`, `limit`
+- `GET /api/guardrails/events` with `workspace`, `run_id`, `guardrail_id`, `action`, `stage`, `limit`, `offset`, `sort` (`at`, `guardrail`, `stage`, `action`) and `order`: answers `{items, total}`
 - `PUT /api/agents/{agent_id}/guardrails` with `{guardrails: [ids]}`
 
 A workspace guardrail needs the editor role in that workspace, a global one needs an admin.

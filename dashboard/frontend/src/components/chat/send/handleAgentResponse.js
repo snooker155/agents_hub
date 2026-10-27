@@ -251,6 +251,8 @@ function handleAgentEvent(event, ctx) {
                     context_overflow: event.error_code === 'context_overflow',
                     // Why the turn was refused, when the guard or a limit said (RefusalCard).
                     refusal: event.refusal || null,
+                    // Warn guardrails that found something; the turn went on (GuardrailWarnings).
+                    guardrail_warnings: event.guardrail_warnings || null,
                   }
                 : m
             ),

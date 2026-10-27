@@ -109,5 +109,39 @@ describe('RefusalCard, workspace limit raised in place', () => {
   it('offers no inline raise for a person limit', () => {
     show(<RefusalCard refusal={{ code: 'budget', kind: 'person', spent_usd: 5, limit_usd: 5 }} />);
     expect(screen.queryByLabelText('New limit')).toBeNull();
+
+describe('RefusalCard, guardrail', () => {
+  const TRIP = { code: 'guardrail', name: 'no-cards', stage: 'input', kind: 'pii',
+    detail: { detectors: ['credit_card'] }, reason: 'contains what looks like credit card' };
+
+  it('says which guardrail stopped the message and what it found', () => {
+    show(<RefusalCard refusal={TRIP} />);
+    expect(screen.getByText('The message was stopped by the “no-cards” guardrail')).toBeTruthy();
+    expect(screen.getByText('The text contains what looks like a credit card number.')).toBeTruthy();
+  });
+
+  it('names the answer when the output was stopped', () => {
+    show(<RefusalCard refusal={{ ...TRIP, stage: 'output' }} />);
+    expect(screen.getByText('The agent’s answer was stopped by the “no-cards” guardrail')).toBeTruthy();
+  });
+
+  it('replaces the English error in the bubble', () => {
+    show(<MessageBubble msg={{ id: 'm2', role: 'agent', error: true, refusal: TRIP,
+      content: "Error: Guardrail 'no-cards' stopped the run on its input" }} />);
+    expect(screen.queryByText(/stopped the run on its input/)).toBeNull();
+    expect(screen.getByText('The message was stopped by the “no-cards” guardrail')).toBeTruthy();
+  });
+});
+
+describe('GuardrailWarnings under a reply', () => {
+  const WARN = { guardrail_id: 'g-w', name: 'no-cards', stage: 'input', kind: 'pii',
+    detail: { detectors: ['credit_card'] }, reason: 'contains what looks like credit card' };
+
+  it('keeps the reply and says what the warn guardrail found', () => {
+    show(<MessageBubble msg={{ id: 'm3', role: 'agent', content: 'Here is the answer', guardrail_warnings: [WARN] }} />);
+    expect(screen.getByText('Here is the answer')).toBeTruthy();
+    const note = screen.getByTestId('guardrail-warnings');
+    expect(note.textContent).toContain('The “no-cards” guardrail flagged the message.');
+    expect(note.textContent).toContain('a credit card number');
   });
 });

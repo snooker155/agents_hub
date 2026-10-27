@@ -226,6 +226,7 @@ class StandardAgent(AgentBase):
             error=f"Guardrail '{name}' stopped the run on its {stage}: {reason}",
             agent_output=str(trip.get("message") or ""),
             loop=state.summary(),
+            guardrail=dict(trip),
         )
 
     def _structured_output(self, state: Any, text: str) -> tuple:
