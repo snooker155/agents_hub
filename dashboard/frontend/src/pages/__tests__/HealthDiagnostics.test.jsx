@@ -124,6 +124,21 @@ describe('Health — Diagnostics', () => {
     expect(readMoreLinks[0].closest('a')).toHaveAttribute('href', '/docs/service-health#check-db');
   });
 
+  it('links each flagged skill to the Skills page in its own workspace', async () => {
+    getDoctor.mockImplementation(() => ok({
+      status: 'warn',
+      checks: [{
+        id: 'skills', title: 'Skill safety review', status: 'warn', summary: 'Flagged.',
+        detail: { catalog_high: [{ id: 's-1', name: 'claude-api', workspace: 'dev', agent_id: '' }] },
+      }],
+    }));
+    show();
+    await waitFor(() => expect(screen.getByText('Flagged.')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Flagged.'));
+    expect(screen.getByText('claude-api (dev)').closest('a'))
+      .toHaveAttribute('href', '/skills?workspace=dev&skill=s-1');
+  });
+
   it('re-runs the checks on Run', async () => {
     show();
     await waitFor(() => expect(getDoctor).toHaveBeenCalledTimes(1));

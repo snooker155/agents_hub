@@ -654,13 +654,21 @@ def check_system_workspace(snap: Dict[str, Any]) -> Result:
 
 # ── skills ───────────────────────────────────────────────────────────────────
 
+def _skill_names(rows: List[Dict[str, Any]]) -> str:
+    """The first three flagged skills as "name (workspace)", and how many more."""
+    names = ", ".join(f"{r['name']} ({r['workspace']})" for r in rows[:3])
+    return names if len(rows) <= 3 else f"{names} +{len(rows) - 3}"
+
+
 def check_skills(snap: Dict[str, Any]) -> Result:
     """Skills from outside the team that the review flagged
-    (memory/skill_review.py): a high flag on a skill attached to an agent is
-    the thing to look at today, a flagged catalog entry before anyone
-    attaches it. Also counts skills with scripts and published skills whose
-    license is not open (the API refuses those, so a count here means an
-    older record). Skip when there are no skills."""
+    (memory/skill_review.py), across every workspace: a high flag on a skill
+    attached to an agent is the thing to look at today, one on a skill no
+    agent holds yet before anyone attaches it. Each is named with its
+    workspace, since the Skills page shows one workspace at a time. Also
+    counts skills with scripts and published skills whose license is not open
+    (the API refuses those, so a count here means an older record). Skip when
+    there are no skills."""
     from memory.procedural import all_procedures
     from memory.skill_review import is_publishable
 
@@ -694,7 +702,7 @@ def check_skills(snap: Dict[str, Any]) -> Result:
         "skill_scanner": shutil.which("skill-scanner") is not None,
     }
     if attached_high:
-        names = ", ".join(r["name"] for r in attached_high[:3])
+        names = _skill_names(attached_high)
         return ("warn", Msg("skills.attachedHigh", f"{len(attached_high)} skill(s) attached to "
                                                    "agents carry a high safety flag "
                                                    f"({names}); review them on the Skills page.",
@@ -705,9 +713,11 @@ def check_skills(snap: Dict[str, Any]) -> Result:
                                                     "the global catalog.",
                             count=unpublishable_shared), detail)
     if catalog_high:
-        return ("warn", Msg("skills.catalogHigh", f"{len(catalog_high)} catalog skill(s) carry a high "
-                                                  "safety flag; review them before attaching them "
-                                                  "to an agent.", count=len(catalog_high)), detail)
+        names = _skill_names(catalog_high)
+        return ("warn", Msg("skills.catalogHigh", f"{len(catalog_high)} skill(s) not attached to any "
+                                                  f"agent carry a high safety flag ({names}); review "
+                                                  "them before attaching them to an agent.",
+                            count=len(catalog_high), names=names), detail)
     if unreviewed_repo:
         return ("warn", Msg("skills.unreviewed", f"{unreviewed_repo} repository skill(s) have no "
                                                  "review yet; run Sync from repositories on their "

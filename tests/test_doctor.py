@@ -397,8 +397,16 @@ def test_skills_check_skips_without_skills_and_warns_on_a_high_flag(monkeypatch)
 
     monkeypatch.setattr(procedural, "all_procedures", lambda: [clean, flagged])
     status, summary, detail = doc.check_skills(_snap())
-    assert status == "warn" and "bad" in summary
+    assert status == "warn" and "bad (w)" in summary
     assert detail["attached_high"][0]["agent_id"] == "agent-1"
+
+    # One no agent holds is named with its workspace too, not as a catalog entry.
+    loose = Procedure(name="loose", description="when", body="do", workspace="dev",
+                      safety={"severity": "high", "flags": [], "scripts": []})
+    monkeypatch.setattr(procedural, "all_procedures", lambda: [clean, loose])
+    status, summary, detail = doc.check_skills(_snap())
+    assert status == "warn" and "not attached" in summary and "loose (dev)" in summary
+    assert detail["catalog_high"][0]["workspace"] == "dev"
 
     closed = Procedure(name="closed", description="when", body="do", workspace="w",
                        shared=True, license="Proprietary")

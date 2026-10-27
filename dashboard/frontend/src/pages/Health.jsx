@@ -181,6 +181,26 @@ function detailValue(t, language, key, value) {
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
+// The skills check lists flagged skills from every workspace; each one opens
+// on the Skills page in its own workspace rather than printing as JSON.
+const SKILL_LIST_KEYS = new Set(['attached_high', 'catalog_high']);
+
+function SkillLinks({ rows }) {
+  return (
+    <span className="flex flex-col items-end gap-0.5">
+      {rows.map((r) => (
+        <Link
+          key={r.id}
+          to={`/skills?${new URLSearchParams({ workspace: r.workspace, skill: r.id })}`}
+          className="text-indigo-600 hover:text-indigo-800 font-sans"
+        >
+          {r.name} ({r.workspace})
+        </Link>
+      ))}
+    </span>
+  );
+}
+
 // One self check, expandable to its detail map. `doc`/`anchor` point at the
 // service-health doc's matching section rather than duplicating the
 // explanation here, so the two never drift apart.
@@ -231,7 +251,9 @@ function CheckRow({ check }) {
                 {t(`health.doctor.detail.${key}`, { defaultValue: key })}
               </span>
               <span className="text-gray-700 font-mono break-all text-right">
-                {detailValue(t, language, key, value)}
+                {SKILL_LIST_KEYS.has(key) && Array.isArray(value) && value.length > 0
+                  ? <SkillLinks rows={value} />
+                  : detailValue(t, language, key, value)}
               </span>
             </div>
           ))}

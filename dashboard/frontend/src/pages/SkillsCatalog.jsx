@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import {
   GraduationCap,
@@ -62,8 +63,13 @@ const EMPTY_DRAFT = { name: '', description: '', steps: '', body: '', tags: '', 
  */
 const SkillsCatalog = () => {
   const { t } = useI18n();
-  const { selectedWorkspace } = useWorkspace();
+  const { selectedWorkspace, setSelectedWorkspace } = useWorkspace();
   const workspace = selectedWorkspace || 'default';
+  // A link from the Health page names a flagged skill and its workspace
+  // (?workspace=dev&skill=<id>): switch to that workspace, then open the skill.
+  const [params, setParams] = useSearchParams();
+  const linkedWorkspace = params.get('workspace');
+  const linkedSkill = params.get('skill');
 
   const [tab, setTab] = useState('workspace');
   const [mine, setMine] = useState([]);
@@ -76,7 +82,7 @@ const SkillsCatalog = () => {
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
   const [busyId, setBusyId] = useState(null);
-  const [viewing, setViewing] = useState(null); // skill opened in the detail modal
+  const [opened, setViewing] = useState(null); // skill opened in the detail modal
 
   const [editor, setEditor] = useState(null);   // { draft, id | null }
   const [installFor, setInstallFor] = useState(null); // skill being attached/installed
@@ -111,6 +117,34 @@ const SkillsCatalog = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // The workspace param is applied once and dropped, so the picker can move
+  // away from it afterwards.
+  useEffect(() => {
+    if (!linkedWorkspace) return;
+    if (linkedWorkspace !== selectedWorkspace) setSelectedWorkspace(linkedWorkspace);
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('workspace');
+      return next;
+    }, { replace: true });
+  }, [linkedWorkspace, selectedWorkspace, setSelectedWorkspace, setParams]);
+
+  // The linked skill shows once its workspace has loaded; closing it drops
+  // the param.
+  const linked = linkedSkill && !linkedWorkspace && !loading
+    ? mine.find((s) => s.id === linkedSkill) || null : null;
+  const viewing = opened || linked;
+  const closeViewing = () => {
+    setViewing(null);
+    if (linkedSkill) {
+      setParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('skill');
+        return next;
+      }, { replace: true });
+    }
+  };
 
   const matches = (skill) => {
     const q = query.trim().toLowerCase();
@@ -819,11 +853,11 @@ const SkillsCatalog = () => {
             viewing.agent_id ? (viewing.agent?.name || viewing.agent_id) : '',
             viewing.license || '',
           ].filter(Boolean).join(' · ')}
-          onClose={() => setViewing(null)}
+          onClose={closeViewing}
           actions={tab === 'global' ? (
             !viewing.in_workspace && (
               <button
-                onClick={() => { setViewing(null); openInstall(viewing); }}
+                onClick={() => { closeViewing(); openInstall(viewing); }}
                 className="inline-flex items-center px-4 py-2 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
               >
                 <Download className="w-4 h-4 mr-1.5" /> {t('skillsCatalog.install')}
@@ -832,13 +866,13 @@ const SkillsCatalog = () => {
           ) : (
             <>
               <button
-                onClick={() => { setViewing(null); setHistoryFor(viewing); }}
+                onClick={() => { closeViewing(); setHistoryFor(viewing); }}
                 className="inline-flex items-center px-4 py-2 text-sm font-semibold border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50"
               >
                 <History className="w-4 h-4 mr-1.5" /> {t('skillsCatalog.historyButton')}
               </button>
               <button
-                onClick={() => { setViewing(null); openEdit(viewing); }}
+                onClick={() => { closeViewing(); openEdit(viewing); }}
                 disabled={viewing.source === 'repo' && !viewing.agent_id}
                 title={viewing.source === 'repo' && !viewing.agent_id ? t('skillsCatalog.editInRepo') : undefined}
                 className="inline-flex items-center px-4 py-2 text-sm font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
