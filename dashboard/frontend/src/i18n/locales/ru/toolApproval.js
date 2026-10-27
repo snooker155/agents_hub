@@ -27,4 +27,7 @@ export default {
     gone: 'Этот вызов уже не ждёт ответа.',
     failed: 'Не удалось отправить ответ. Попробуйте ещё раз.',
   },
+  // The connection proposal card (chat/ConnectionProposalCard.jsx) still says who answered and the note.
+  decidedBy: 'Ответ: {{name}}',
+  noteShown: 'Заметка: {{note}}',
 };

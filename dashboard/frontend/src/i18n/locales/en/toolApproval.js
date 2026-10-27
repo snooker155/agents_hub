@@ -27,4 +27,7 @@ export default {
     gone: 'This call is no longer waiting for an answer.',
     failed: 'Could not send the answer. Try again.',
   },
+  // The connection proposal card (chat/ConnectionProposalCard.jsx) still says who answered and the note.
+  decidedBy: 'Answered by {{name}}',
+  noteShown: 'Note: {{note}}',
 };

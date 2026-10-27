@@ -27,4 +27,7 @@ export default {
     gone: 'Dieser Aufruf wartet nicht mehr auf eine Antwort.',
     failed: 'Die Antwort konnte nicht gesendet werden. Bitte erneut versuchen.',
   },
+  // The connection proposal card (chat/ConnectionProposalCard.jsx) still says who answered and the note.
+  decidedBy: 'Beantwortet von {{name}}',
+  noteShown: 'Notiz: {{note}}',
 };
