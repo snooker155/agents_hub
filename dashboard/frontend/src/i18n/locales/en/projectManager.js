@@ -37,7 +37,7 @@ export default {
   repository: 'Repository',
   cancel: 'Cancel',
   registryChat: 'Ask the Project Manager',
-  registryChatHint: 'Describe the effort and it will set up the project here. Creating one makes a folder and a record; the Architect and the Planner take it from there, on the project\'s own page.',
+  registryChatHint: 'Describe the effort and it will set up the project here. Creating one makes a folder and a record; the Architect and the Task Manager take it from there, on the project\'s own page.',
   chatSuggestCreate: 'Set up a project for a new service',
   chatSuggestWhatExists: 'What projects are in this workspace?',
   chatSuggestRetire: 'Which projects have no tasks left?',

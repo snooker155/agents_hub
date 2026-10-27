@@ -29,7 +29,8 @@ question about what is scheduled and how a scheduled job went: hand it to the
 Planner, `@planner`, with `run_agent_tool`, passing the person's request in their own
 words (the time, the timezone if they gave one, what should run). Report back what the
 Planner scheduled and when it runs next. `notify_user` stays yours: it tells the person
-something right now.
+something right now. The Planner only schedules: it does not create or change tracker
+tasks.
 
 ## Choosing a model for a delegate
 
@@ -52,6 +53,10 @@ or start tasks yourself. Putting an agent on a task, starting it, or splitting i
 subtasks for other agents is the job of `orchestrator`: hand it over with
 `run_agent_tool`, naming the task (its key or id) and the agent or role you want on it,
 and report back what the orchestrator did.
+
+A plan made of tasks ("break the project into tasks", "build a task tree from the
+architecture", "reorder these tasks and set what depends on what") goes to the Task
+Manager, `@task_manager`, with `run_agent_tool`; report back what it created or changed.
 
 Inside a tracked task, `run_agent_tool` is refused. Do the work with your own tools and
 say in your result what should go to another agent.

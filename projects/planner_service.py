@@ -1,4 +1,6 @@
-"""The Planner agent: its prompt, and how it is built and run.
+"""The task planner chat of the Tasks page and of a project's Tasks tab: its
+prompt, and the agent behind it, the Task Manager (``task_manager``). The
+system agent named Planner owns scheduled jobs and is not this one.
 
 Split out of ``routes/projects.py``. The run-record bookkeeping, the chat-log
 scaffold and the SSE queue plumbing around one planner turn are shared with
@@ -13,13 +15,15 @@ from typing import List, Optional
 
 log = logging.getLogger(__name__)
 
-#: The Planner system agent's id — also the store key for its run records.
-PLANNER_AGENT_ID = "planner"
+#: The agent behind the task planner chat: the Task Manager system agent. Its
+#: run records are filed under this id; the chat history is keyed by the
+#: project or workspace, so it survives a change of agent.
+PLANNER_AGENT_ID = "task_manager"
 
 
 def ensure_planner_agent() -> bool:
-    """Ensure the Planner agent is registered, backfilling it on installs that
-    predate it. Returns False if it cannot be made available."""
+    """Ensure the Task Manager agent is registered, backfilling it on installs
+    that predate it. Returns False if it cannot be made available."""
     try:
         from agents.registry import get_agent
         if get_agent(PLANNER_AGENT_ID) is not None:
@@ -28,7 +32,7 @@ def ensure_planner_agent() -> bool:
         _ensure_system_agents()
         return get_agent(PLANNER_AGENT_ID) is not None
     except Exception:  # noqa: BLE001 - an unavailable registry means the Planner is reported as missing
-        log.debug("ensuring planner agent failed", exc_info=True)
+        log.debug("ensuring the task manager agent failed", exc_info=True)
         return False
 
 
@@ -74,7 +78,7 @@ def build_prompt(history: List[dict], user_message: str, *, project: bool = True
 
 
 def build_agent(workspace_path: Optional[str]):
-    """Create the Planner agent.
+    """Create the Task Manager agent for one planner turn.
 
     No repetition ceiling (``max_tool_repeats=0``): planning a project is task
     after task through the same tool, which is the work the agent exists to

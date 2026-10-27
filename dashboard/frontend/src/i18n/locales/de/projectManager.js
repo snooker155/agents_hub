@@ -37,7 +37,7 @@ export default {
   repository: 'Repository',
   cancel: 'Abbrechen',
   registryChat: 'Den Project Manager fragen',
-  registryChatHint: 'Beschreiben Sie das Vorhaben, und er legt das Projekt hier an. Dabei entstehen ein Ordner und ein Eintrag; weiter geht es mit Architekt und Planer auf der Projektseite.',
+  registryChatHint: 'Beschreiben Sie das Vorhaben, und er legt das Projekt hier an. Dabei entstehen ein Ordner und ein Eintrag; weiter geht es mit Architekt und Aufgabenmanager auf der Projektseite.',
   chatSuggestCreate: 'Lege ein Projekt für einen neuen Dienst an',
   chatSuggestWhatExists: 'Welche Projekte gibt es in diesem Workspace?',
   chatSuggestRetire: 'In welchen Projekten sind keine Aufgaben mehr offen?',

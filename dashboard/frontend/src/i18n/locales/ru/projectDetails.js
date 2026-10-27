@@ -53,7 +53,7 @@ export default {
   devCommand: 'Команда запуска',
   backend: 'Бэкенд',
   swaggerPath: 'Путь к Swagger',
-  showTheTaskPlanner: 'Показать планировщик задач',
+  showTheTaskPlanner: 'Показать менеджер задач',
   noRepoConfigured: 'Репозиторий не настроен',
   noUrl: 'без URL',
   created: 'Создан',
@@ -117,7 +117,7 @@ export default {
   headersJson: 'Заголовки (JSON)',
   bodyJson: 'Тело (JSON)',
   edit: 'Изменить',
-  planner: 'Планировщик',
+  planner: 'Менеджер задач',
   info: 'Информация',
   cancel: 'Отмена',
   errors: {

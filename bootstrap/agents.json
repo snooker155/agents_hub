@@ -57,6 +57,7 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
@@ -254,24 +255,16 @@
       "name": "Planner Agent",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Plans the work and when it runs. Turns a project's plans and structure into an actionable task tree in the shared tracker, and owns the workspace's schedules and deployments: reminders, agent work, flows and memory consolidation at a set time or on a recurrence, with their resources, auto pause and firing journal. It plans and schedules; it does not do the work itself.",
+      "description": "Plans when work runs. Owns the workspace's Plan and its deployments: reminders, agent work, flows, loops and memory consolidation at a set time or on a recurrence, with their resources, auto pause and firing journal. It schedules work; it does not do it, and it does not manage tracker tasks (that is the Task Manager).",
       "domain": "System",
       "system": true,
       "tools": [
-        "list_tasks",
-        "get_task",
-        "create_task",
-        "add_subtask",
-        "create_sequence",
-        "update_task",
-        "block_task",
-        "set_task_dependencies",
-        "get_task_result",
         "calculator",
         "search_docs",
         "read_doc",
         "schedule_notification",
         "schedule_task",
+        "schedule_agent_run",
         "schedule_flow",
         "schedule_loop",
         "schedule_memory_consolidation",
@@ -288,6 +281,44 @@
       ],
       "commands": [
         {
+          "name": "/schedule",
+          "description": "Schedule a reminder, agent work, a flow or a memory consolidation",
+          "template": "/schedule "
+        }
+      ],
+      "capacity": 1,
+      "memory_type": "none",
+      "memory_data": null,
+      "default_workspace_only": false,
+      "shared": false,
+      "temperature": 0.2,
+      "skills_enabled": false
+    },
+    {
+      "id": "task_manager",
+      "name": "Task Manager",
+      "type": "langchain",
+      "entrypoint": "agents.agent_factory:build_agent_executor",
+      "description": "Keeps the workspace's task tracker: turns a project's plans and structure into an actionable task tree, splits work into subtasks, sets the order with dependencies and keeps the tree current. It organizes the tasks; it does not do them, and it does not schedule anything (that is the Planner).",
+      "domain": "System",
+      "system": true,
+      "tools": [
+        "list_tasks",
+        "get_task",
+        "create_task",
+        "add_subtask",
+        "create_sequence",
+        "update_task",
+        "block_task",
+        "set_task_dependencies",
+        "get_task_result",
+        "list_agents_tool",
+        "calculator",
+        "search_docs",
+        "read_doc"
+      ],
+      "commands": [
+        {
           "name": "/plan",
           "description": "Create a task plan from the project's views and description",
           "template": "/plan "
@@ -296,11 +327,6 @@
           "name": "/plan-from-view",
           "description": "Create tasks from a specific project view",
           "template": "/plan-from-view view="
-        },
-        {
-          "name": "/schedule",
-          "description": "Schedule a reminder, agent work, a flow or a memory consolidation",
-          "template": "/schedule "
         }
       ],
       "capacity": 1,
@@ -745,6 +771,7 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
@@ -826,6 +853,7 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
@@ -1053,6 +1081,7 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
@@ -1107,6 +1136,7 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",

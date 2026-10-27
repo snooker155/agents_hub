@@ -57,7 +57,7 @@ _CAPABILITIES = (
 )
 # Agents that route, split, review or build other things: not who does a subtask.
 _NOT_WORKERS = frozenset({
-    "orchestrator", "decomposer", "code_reviewer", "outcome_grader", "planner",
+    "orchestrator", "decomposer", "code_reviewer", "outcome_grader", "planner", "task_manager",
     "memory_extractor", "agent_creator", "flow_creator", "loop_creator", "team_creator",
     "prompt-engineer",
 })
