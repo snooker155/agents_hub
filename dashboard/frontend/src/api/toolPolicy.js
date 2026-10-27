@@ -8,7 +8,7 @@
  */
 import api from './index';
 
-export { getWorkspacePolicy, updateWorkspacePolicy, getModelsCatalog } from './index';
+export { getWorkspacePolicy, updateWorkspacePolicy, getModelsCatalog, getTools } from './index';
 
 const agentPath = (agentId) => `/agents/${encodeURIComponent(agentId)}/tool-policy`;
 const wsParams = (workspace) => (workspace ? { params: { workspace } } : {});

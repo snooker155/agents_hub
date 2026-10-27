@@ -11,6 +11,7 @@ import { RefreshCw, CheckCircle, AlertCircle, Wifi, Lock, Save } from 'lucide-re
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import ToolPolicySettings from './ToolPolicySettings';
+import { useSettingsDraft } from './settingsDraft';
 import LoopSettingsWorkspace from './LoopSettingsWorkspace';
 import DefaultModelNote from './DefaultModelNote';
 
@@ -170,6 +171,7 @@ export function GlobalTemperatureSection({ s }) {
   const parsed = parseFloat(value);
   const valid = value.trim() !== '' && !Number.isNaN(parsed) && parsed >= 0 && parsed <= 2;
   const dirty = valid && parsed !== stored;
+  useSettingsDraft(s, 'temperature', dirty, () => s.saveGlobalTemperature(parsed));
   return (
     <SectionCard title={t('settings.temperatureTitle')}>
       <p className="text-xs text-gray-500">{t('settings.temperatureHint')}</p>
@@ -180,13 +182,6 @@ export function GlobalTemperatureSection({ s }) {
           className={`${inputCls} w-24`}
           aria-label={t('settings.temperatureTitle')}
         />
-        <button
-          onClick={() => s.saveGlobalTemperature(parsed)}
-          disabled={!dirty || s.temperatureSaving}
-          className="px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-gray-100 disabled:text-gray-400"
-        >
-          {s.temperatureSaving ? t('common.saving') : t('common.save')}
-        </button>
         {!valid && <span className="text-xs text-red-600">{t('settings.temperatureRange')}</span>}
       </div>
       <p className="text-xs text-gray-400">
@@ -442,6 +437,7 @@ export function ExecutionModeSection({ s }) {
         <p className="text-xs text-gray-500 mb-2">
           <strong>{t('settings.local')}</strong> {t('settings.agentsRunAsSubprocesses')} <strong>{t('settings.docker')}</strong> {t('settings.agentsRunInDocker')}
         </p>
+        <p className="text-xs text-gray-500 mb-2">{t('settings.dockerSqliteNote')}</p>
         <div className="flex gap-4">
           {['local', 'docker'].map(mode => (
             <label key={mode} className="flex items-center gap-2 cursor-pointer">
@@ -512,11 +508,32 @@ export function ToolPolicySection({ s }) {
           onBlur={(e) => {
             const value = e.target.value.trim();
             if (value === String(s.policy.tool_approval_timeout ?? '')) return;
-            s.savePolicy({ tool_approval_timeout: value === '' ? null : Number(value) });
+            s.stagePolicy({ tool_approval_timeout: value === '' ? null : Number(value) });
           }}
           className={inputCls.replace('w-full', 'w-28')}
         />
         <p className="w-full text-xs text-gray-500">{t('settings.toolApprovalTimeoutHint')}</p>
+      </div>
+      {/* How long a call held in a background flow or loop node waits. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label htmlFor="tool-approval-background-timeout" className="text-sm text-gray-700">{t('settings.toolApprovalBackgroundTimeout')}</label>
+        <input
+          id="tool-approval-background-timeout"
+          key={s.policy.tool_approval_background_timeout ?? 'default'}
+          type="number"
+          min={10}
+          max={86400}
+          defaultValue={s.policy.tool_approval_background_timeout ?? ''}
+          placeholder="86400"
+          disabled={s.policySaving}
+          onBlur={(e) => {
+            const value = e.target.value.trim();
+            if (value === String(s.policy.tool_approval_background_timeout ?? '')) return;
+            s.stagePolicy({ tool_approval_background_timeout: value === '' ? null : Number(value) });
+          }}
+          className={inputCls.replace('w-full', 'w-28')}
+        />
+        <p className="w-full text-xs text-gray-500">{t('settings.toolApprovalBackgroundTimeoutHint')}</p>
       </div>
       {/* Auto mode in chat (common/auto_mode.py): a person may accept every
           confirmation of a conversation in advance, unless this is off. */}
@@ -531,8 +548,8 @@ export function ToolPolicySection({ s }) {
 
       {/* The workspace's per-tool permission policy and the model
           that decides "auto" calls (tools/permission_policy.py). */}
-      <ToolPolicySettings workspace={workspace} />
-      <LoopSettingsWorkspace workspace={workspace} />
+      <ToolPolicySettings workspace={workspace} draft={s} />
+      <LoopSettingsWorkspace workspace={workspace} draft={s} />
 
       <div className="pt-4 border-t border-gray-100">
         <div className="flex items-center justify-between gap-2 mb-1">
@@ -566,22 +583,6 @@ export function ToolPolicySection({ s }) {
             </button>
           </div>
         )}
-        <div className="mt-2 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={s.saveHooks}
-            disabled={s.policySaving}
-            className="flex items-center gap-2 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-          >
-            <Save className="w-3.5 h-3.5" />
-            {s.policySaving ? t('common.saving') : t('settings.saveHooks')}
-          </button>
-          {s.policySaved && (
-            <span className="text-xs text-green-600 inline-flex items-center gap-1">
-              <CheckCircle className="w-3.5 h-3.5" /> {t('settings.policySaved')}
-            </span>
-          )}
-        </div>
       </div>
     </SectionCard>
   );
@@ -719,20 +720,6 @@ export function CodeRunnerSection({ s }) {
 }
 
 /** A save button plus a transient "saved" note, shared by the web cards. */
-function SaveRow({ s, dirty, onSave, label, saved }) {
-  const { t } = useI18n();
-  return (
-    <div className="flex items-center gap-3">
-      <button type="button" onClick={onSave} disabled={s.webAccessSaving || !dirty}
-        className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
-        {s.webAccessSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-        {s.webAccessSaving ? t('common.saving') : label}
-      </button>
-      {saved && <span className="text-xs text-green-700">{t('settings.webAccessSaved')}</span>}
-    </div>
-  );
-}
-
 /** A short-lived "saved" flag. */
 function useSavedFlag() {
   const [saved, setSaved] = useState(false);
@@ -754,7 +741,6 @@ function WebSearchProviderCard({ s }) {
   const [providerEdit, setProviderEdit] = useState(null);
   const [maxResultsEdit, setMaxResultsEdit] = useState(null);
   const [key, setKey] = useState('');
-  const [saved, flash] = useSavedFlag();
   const savedProvider = g.web_search_provider || '';
   const savedMax = Number(g.web_search_max_results || 5);
   const provider = providerEdit ?? savedProvider;
@@ -771,8 +757,10 @@ function WebSearchProviderCard({ s }) {
     const patch = { web_search_provider: provider, web_search_max_results: Number(maxResults) || 5 };
     if (key && !modelProvider) patch.web_search_api_key = key;
     const ok = await s.saveWebAccess(patch);
-    if (ok) { setKey(''); setProviderEdit(null); setMaxResultsEdit(null); flash(); }
+    if (ok) { setKey(''); setProviderEdit(null); setMaxResultsEdit(null); }
+    return ok;
   };
+  useSettingsDraft(s, 'webSearch', dirty, save);
   return (
     <SectionCard
       title={t('settings.webSearch')}
@@ -824,7 +812,6 @@ function WebSearchProviderCard({ s }) {
           <input type="number" min={1} max={20} value={maxResults} onChange={e => setMaxResultsEdit(e.target.value)} className={inputCls} aria-label={t('settings.webSearchMaxResults')} />
         </div>
       </div>
-      <SaveRow s={s} dirty={dirty} onSave={save} label={t('settings.webSearchSave')} saved={saved} />
       <p className="text-xs text-gray-400">
         {t('settings.globalSettingWrittenTo')} <code className="bg-gray-100 rounded px-1">.env</code> {t('settings.as')}
         <code className="bg-gray-100 rounded px-1 ml-1">WEB_SEARCH_PROVIDER</code>, <code className="bg-gray-100 rounded px-1">WEB_SEARCH_API_KEY</code>, <code className="bg-gray-100 rounded px-1">WEB_SEARCH_MAX_RESULTS</code>
@@ -847,7 +834,6 @@ function WebFetchCard({ s }) {
     web_fetch_max_redirects: Number(g.web_fetch_max_redirects ?? 5),
   };
   const [edit, setEdit] = useState({});
-  const [saved, flash] = useSavedFlag();
   const val = (k) => edit[k] ?? savedVals[k];
   const dirty = Object.keys(savedVals).some((k) => Number(val(k)) !== savedVals[k]);
   const save = async () => {
@@ -856,8 +842,10 @@ function WebFetchCard({ s }) {
       web_fetch_timeout: Number(val('web_fetch_timeout')),
       web_fetch_max_redirects: Number(val('web_fetch_max_redirects')),
     });
-    if (ok) { setEdit({}); flash(); }
+    if (ok) setEdit({});
+    return ok;
   };
+  useSettingsDraft(s, 'webFetch', dirty, save);
   const field = (k, label, hint, min, max, step = 1) => (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
@@ -873,7 +861,6 @@ function WebFetchCard({ s }) {
         {field('web_fetch_timeout', t('settings.webFetchTimeout'), t('settings.webFetchTimeoutHint'), 1, 120)}
         {field('web_fetch_max_redirects', t('settings.webFetchMaxRedirects'), t('settings.webFetchMaxRedirectsHint'), 0, 20)}
       </div>
-      <SaveRow s={s} dirty={dirty} onSave={save} label={t('settings.webFetchSave')} saved={saved} />
       <p className="text-xs text-gray-400">
         {t('settings.globalSettingWrittenTo')} <code className="bg-gray-100 rounded px-1">.env</code> {t('settings.as')}
         <code className="bg-gray-100 rounded px-1 ml-1">WEB_FETCH_MAX_CHARS</code>, <code className="bg-gray-100 rounded px-1">WEB_FETCH_TIMEOUT</code>, <code className="bg-gray-100 rounded px-1">WEB_FETCH_MAX_REDIRECTS</code>
@@ -901,7 +888,6 @@ function WebDomainPolicyCard({ s }) {
   const [enabledEdit, setEnabledEdit] = useState(null);
   const [allowEdit, setAllowEdit] = useState(null);
   const [denyEdit, setDenyEdit] = useState(null);
-  const [saved, flash] = useSavedFlag();
   const enabled = enabledEdit ?? savedEnabled;
   const allow = allowEdit ?? savedAllow;
   const deny = denyEdit ?? savedDeny;
@@ -912,8 +898,10 @@ function WebDomainPolicyCard({ s }) {
       web_allow_domains: listOf(allow),
       web_deny_domains: listOf(deny),
     });
-    if (ok) { setEnabledEdit(null); setAllowEdit(null); setDenyEdit(null); flash(); }
+    if (ok) { setEnabledEdit(null); setAllowEdit(null); setDenyEdit(null); }
+    return ok;
   };
+  useSettingsDraft(s, 'webDomains', dirty, save);
   const areaCls = `${inputCls} font-mono text-xs min-h-[6rem]`;
   return (
     <SectionCard title={t('settings.webDomains')}>
@@ -935,7 +923,6 @@ function WebDomainPolicyCard({ s }) {
         <textarea value={allow} onChange={e => setAllowEdit(e.target.value)} placeholder={'wikipedia.org\narxiv.org'} className={areaCls} aria-label={t('settings.webAllowDomains')} disabled={!enabled} />
         <p className="text-xs text-gray-500 mt-1">{enabled && listOf(allow).length === 0 ? t('settings.webAllowEmptyWarning') : t('settings.webAllowDomainsHint')}</p>
       </div>
-      <SaveRow s={s} dirty={dirty} onSave={save} label={t('settings.webDomainsSave')} saved={saved} />
       <p className="text-xs text-gray-400">
         {t('settings.globalSettingWrittenTo')} <code className="bg-gray-100 rounded px-1">.env</code> {t('settings.as')}
         <code className="bg-gray-100 rounded px-1 ml-1">WEB_DOMAIN_POLICY_ENABLED</code>, <code className="bg-gray-100 rounded px-1">WEB_ALLOW_DOMAINS</code>, <code className="bg-gray-100 rounded px-1">WEB_DENY_DOMAINS</code>
@@ -951,7 +938,7 @@ function WebDomainPolicyCard({ s }) {
  * even when it is off globally. Loaded and saved on its own, since it lives
  * in the workspace's metadata rather than in .env.
  */
-export function WorkspaceDomainPolicyCard({ workspace }) {
+export function WorkspaceDomainPolicyCard({ workspace, draft = null }) {
   const { t } = useI18n();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -995,12 +982,16 @@ export function WorkspaceDomainPolicyCard({ workspace }) {
       setData(body);
       setEnabledEdit(null); setAllowEdit(null); setDenyEdit(null);
       flash();
+      return true;
     } catch (e) {
       setError(e.response?.data?.detail || t('settings.errors.webAccessSave'));
+      return false;
     } finally {
       setSaving(false);
     }
   };
+  // On the Settings page the page's Save button stores these lists too.
+  useSettingsDraft(draft, `wsDomains:${workspace}`, dirty && Boolean(data), save);
   const areaCls = `${inputCls} font-mono text-xs min-h-[6rem]`;
   const globalHint = (list) => (list.length ? t('settings.wsDomainsGlobalList', { hosts: list.join(', ') }) : t('settings.wsDomainsGlobalEmpty'));
   return (
@@ -1029,14 +1020,14 @@ export function WorkspaceDomainPolicyCard({ workspace }) {
             : listOf(allow).length ? t('settings.wsDomainsReplaces') : globalHint(global.allow_domains)}
         </p>
       </div>
-      <div className="flex items-center gap-3">
+      {!draft && <div className="flex items-center gap-3">
         <button type="button" onClick={save} disabled={saving || !dirty || !data}
           className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
           {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           {saving ? t('common.saving') : t('settings.wsDomainsSave', { workspace })}
         </button>
         {saved && <span className="text-xs text-green-700">{t('settings.webAccessSaved')}</span>}
-      </div>
+      </div>}
       {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
     </SectionCard>
   );
@@ -1051,7 +1042,7 @@ export function WebAccessSection({ s }) {
       <WebSearchProviderCard s={s} />
       <WebFetchCard s={s} />
       <WebDomainPolicyCard s={s} />
-      {s.workspace && <WorkspaceDomainPolicyCard key={s.workspace} workspace={s.workspace} />}
+      {s.workspace && <WorkspaceDomainPolicyCard key={s.workspace} workspace={s.workspace} draft={s} />}
     </div>
   );
 }
@@ -1092,11 +1083,16 @@ export function ExecutionSection({ s }) {
 /** The Save button for the override fields, labelled with the workspace it writes to. */
 export function SaveWorkspaceSettingsButton({ s }) {
   const { t } = useI18n();
+  // Always there, and active only while something on the page differs from
+  // what is stored (useWorkspaceSettings ``dirty``).
+  // Named after the workspace only when the workspace's fields are all it saves.
+  const onlyWorkspace = s.overridesDirty && !s.hasOtherChanges;
   return (
-    <button onClick={s.save} disabled={s.saving || s.loading}
-      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+    <button onClick={s.save} disabled={!s.dirty || s.saving || s.loading} data-testid="settings-save"
+      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600">
       {s.saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-      {s.saving ? t('common.saving') : t('settings.saveWorkspaceSettings', { workspace: s.workspace })}
+      {s.saving ? t('common.saving')
+        : onlyWorkspace ? t('settings.saveWorkspaceSettings', { workspace: s.workspace }) : t('settings.saveChanges')}
     </button>
   );
 }
@@ -1108,7 +1104,9 @@ export function WorkspaceSettingsStatus({ s }) {
     <>
       {s.saved && (
         <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-3 text-sm">
-          {t('settings.workspaceSettingsSaved', { workspace: s.workspace })}
+          {s.savedScope === 'workspace'
+            ? t('settings.workspaceSettingsSaved', { workspace: s.workspace })
+            : t('settings.changesSaved')}
         </div>
       )}
       {s.error && (

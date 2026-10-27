@@ -6,10 +6,16 @@ const api = vi.hoisted(() => ({
   getWorkspacePolicy: vi.fn(),
   updateWorkspacePolicy: vi.fn(),
   getModelsCatalog: vi.fn(),
+  getTools: vi.fn(),
 }));
 vi.mock('../../api/toolPolicy', () => api);
 vi.mock('../../i18n', () => ({
-  useI18n: () => ({ t: (k, vars) => (vars ? `${k} ${JSON.stringify(vars)}` : k) }),
+  useI18n: () => ({
+    t: (k, vars) => {
+      if (vars && 'defaultValue' in vars) return vars.defaultValue;
+      return vars ? `${k} ${JSON.stringify(vars)}` : k;
+    },
+  }),
 }));
 
 import ToolPolicySettings from '../settings/ToolPolicySettings';
@@ -19,6 +25,16 @@ describe('ToolPolicySettings', () => {
     api.getWorkspacePolicy.mockReset();
     api.updateWorkspacePolicy.mockReset();
     api.getModelsCatalog.mockReset();
+    api.getTools.mockReset();
+    api.getTools.mockResolvedValue({
+      data: {
+        all: [
+          { id: 'run_shell', display_name: 'Run shell', category: 'system' },
+          { id: 'delete_file', display_name: 'Delete file', category: 'files' },
+          { id: 'web_search', display_name: 'Web search', category: 'web' },
+        ],
+      },
+    });
     api.getWorkspacePolicy.mockResolvedValue({
       data: { require_tool_approval: true, hooks: {}, tool_policy: { run_shell: 'always_ask' }, tool_policy_model: null },
     });
@@ -49,10 +65,14 @@ describe('ToolPolicySettings', () => {
     await waitFor(() => expect(screen.getByText('run_shell')).toBeInTheDocument());
     await waitFor(() => expect(screen.getByRole('option', { name: 'openai/gpt-mini' })).toBeInTheDocument());
 
-    const input = screen.getByLabelText('toolPolicy.toolIdPlaceholder');
-    fireEvent.change(input, { target: { value: 'delete_file' } });
+    const pick = screen.getByTestId('tool-policy-tool-pick');
+    await waitFor(() => expect(pick).not.toBeDisabled());
+    fireEvent.click(pick);
+    fireEvent.change(screen.getByLabelText('toolPolicy.toolSearch'), { target: { value: 'delete' } });
+    expect(screen.queryByRole('option', { name: /Web search/ })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: /Delete file/ }));
     fireEvent.change(screen.getByLabelText('toolPolicy.newMode'), { target: { value: 'auto' } });
-    fireEvent.submit(input.closest('form'));
+    fireEvent.click(screen.getByRole('button', { name: /toolPolicy.addOverride/ }));
     expect(screen.getByText('delete_file')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('toolPolicy.workspaceDefault'), { target: { value: 'always_allow' } });
@@ -83,11 +103,15 @@ describe('ToolPolicySettings', () => {
     }));
   });
 
-  it('refuses an empty tool id', async () => {
+  it('offers only tools without their own mode, and adds nothing until one is picked', async () => {
     render(<ToolPolicySettings workspace="w1" />);
     await waitFor(() => expect(screen.getByText('run_shell')).toBeInTheDocument());
-    fireEvent.submit(screen.getByLabelText('toolPolicy.toolIdPlaceholder').closest('form'));
-    expect(await screen.findByText('toolPolicy.badToolId')).toBeInTheDocument();
+    expect(api.getTools).toHaveBeenCalledWith('w1');
+    expect(screen.getByRole('button', { name: /toolPolicy.addOverride/ })).toBeDisabled();
+    const pick = screen.getByTestId('tool-policy-tool-pick');
+    await waitFor(() => expect(pick).not.toBeDisabled());
+    fireEvent.click(pick);
+    expect(screen.getByRole('option', { name: /Run shell/ })).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('shows the validation error the backend returns', async () => {

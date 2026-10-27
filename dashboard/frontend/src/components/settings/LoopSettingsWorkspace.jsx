@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useSettingsDraft } from './settingsDraft';
 import { CheckCircle, Save } from 'lucide-react';
 import { getWorkspaceLoopSettings, updateWorkspaceLoopSettings } from '../../api/loopSettings';
 import { useI18n } from '../../i18n';
@@ -60,7 +61,7 @@ function sourceOf(data, key) {
  * Saved through PUT /api/workspaces/{name}/loop-settings, which merges a
  * partial object into the stored block; a key sent as null resets it.
  */
-export default function LoopSettingsWorkspace({ workspace }) {
+export default function LoopSettingsWorkspace({ workspace, draft = null }) {
   const { t } = useI18n();
   const [data, setData] = useState(null);
   const [values, setValues] = useState({});
@@ -105,7 +106,7 @@ export default function LoopSettingsWorkspace({ workspace }) {
   };
 
   const save = async () => {
-    if (!dirty) return;
+    if (!dirty) return true;
     setSaving(true);
     setError('');
     setDone(false);
@@ -118,12 +119,16 @@ export default function LoopSettingsWorkspace({ workspace }) {
       setValues(merged);
       setBaseline(merged);
       setDone(true);
+      return true;
     } catch (e) {
       setError(e?.response?.data?.detail || t('loopSettings.saveFailed'));
+      return false;
     } finally {
       setSaving(false);
     }
   };
+  // On the Settings page these fields are saved by the page's Save button.
+  useSettingsDraft(draft, `loopSettings:${workspace}`, dirty && Boolean(workspace), save);
 
   const resetField = async (key) => {
     setResetting(key);
@@ -211,7 +216,7 @@ export default function LoopSettingsWorkspace({ workspace }) {
         })}
       </div>
 
-      <div className="flex items-center gap-3">
+      {!draft && <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={save}
@@ -226,7 +231,7 @@ export default function LoopSettingsWorkspace({ workspace }) {
             <CheckCircle className="w-3.5 h-3.5" /> {t('loopSettings.saved')}
           </span>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useSettingsDraft } from './settingsDraft';
 import { CheckCircle, Plus, Save, X } from 'lucide-react';
-import { getModelsCatalog, getWorkspacePolicy, updateWorkspacePolicy } from '../../api/toolPolicy';
+import { getModelsCatalog, getTools, getWorkspacePolicy, updateWorkspacePolicy } from '../../api/toolPolicy';
 import { useI18n } from '../../i18n';
+import { toolCategoryLabel, toolLabel } from '../../lib/toolText';
+import SearchSelect from '../SearchSelect';
 
 const MODES = ['always_allow', 'always_ask', 'auto'];
 const NONE = '';
@@ -11,19 +14,21 @@ const fieldCls = 'border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:ou
 /**
  * The workspace's per-tool permission policy, inside the Settings tool policy
  * block (tools/permission_policy.py): a default mode for every tool ("*"),
- * per-tool overrides, and the model that decides "auto" calls.
+ * per-tool overrides, and the model that decides "auto" calls. A tool for an
+ * override is picked with a search from the tools the hub has.
  *
  * Saved through the same /workspaces/{name}/policy endpoint as the approval
  * gate and the hooks, but only the two keys this block owns, so it never
  * writes over the gate flag or the hook config edited next to it. An agent's
  * own tool policy (its Tools tab) wins over what is set here.
  */
-export default function ToolPolicySettings({ workspace }) {
+export default function ToolPolicySettings({ workspace, draft = null }) {
   const { t } = useI18n();
   const [policy, setPolicy] = useState({});
   const [model, setModel] = useState('');
   const [saved, setSaved] = useState({ policy: {}, model: '' });
   const [models, setModels] = useState([]);
+  const [tools, setTools] = useState([]);
   const [newTool, setNewTool] = useState('');
   const [newMode, setNewMode] = useState('always_ask');
   const [saving, setSaving] = useState(false);
@@ -67,6 +72,37 @@ export default function ToolPolicySettings({ workspace }) {
       .catch(() => setModels([]));
   }, []);
 
+  useEffect(() => {
+    if (!workspace) return;
+    getTools(workspace)
+      .then(({ data }) => setTools(data?.all || []))
+      .catch(() => setTools([]));
+  }, [workspace]);
+
+  const toolNames = useMemo(() => {
+    const out = {};
+    tools.forEach((tool) => {
+      const id = tool.id || tool.name;
+      if (id) out[id] = toolLabel(t, id, tool.display_name || tool.label);
+    });
+    return out;
+  }, [tools, t]);
+  // A tool that already has its own mode stays in the list but cannot be
+  // picked twice; its mode is changed in the row above.
+  const toolItems = useMemo(() => tools
+    .map((tool) => {
+      const id = tool.id || tool.name;
+      return {
+        id,
+        name: toolNames[id] || id,
+        subtitle: `${id} · ${toolCategoryLabel(t, tool.category)}`,
+        disabled: id in policy,
+        hint: id in policy ? t('toolPolicy.toolAlreadySet') : undefined,
+      };
+    })
+    .filter((item) => item.id)
+    .sort((a, b) => a.name.localeCompare(b.name)), [tools, toolNames, policy, t]);
+
   const overrides = useMemo(
     () => Object.entries(policy).filter(([tool]) => tool !== '*'),
     [policy],
@@ -95,7 +131,7 @@ export default function ToolPolicySettings({ workspace }) {
   const addOverride = (e) => {
     e.preventDefault();
     const tool = newTool.trim();
-    if (!tool || tool === '*') {
+    if (!tool || tool === '*' || tool in policy) {
       setError(t('toolPolicy.badToolId'));
       return;
     }
@@ -119,12 +155,16 @@ export default function ToolPolicySettings({ workspace }) {
       setModel(loadedModel);
       setSaved({ policy: loaded, model: loadedModel });
       setDone(true);
+      return true;
     } catch (e) {
       setError(e?.response?.data?.detail || t('toolPolicy.saveFailed'));
+      return false;
     } finally {
       setSaving(false);
     }
   };
+  // On the Settings page the policy is saved by the page's Save button.
+  useSettingsDraft(draft, `toolPolicy:${workspace}`, dirty && Boolean(workspace), save);
 
   const modeLabel = (mode) => t(`toolPolicy.modes.${mode}`);
 
@@ -156,7 +196,10 @@ export default function ToolPolicySettings({ workspace }) {
           <ul className="space-y-1.5 mb-2">
             {overrides.map(([tool, mode]) => (
               <li key={tool} className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-xs text-gray-800 min-w-[10rem]">{tool}</span>
+                <span className="min-w-[12rem] text-sm text-gray-800">
+                  {toolNames[tool] && toolNames[tool] !== tool && <span className="mr-1.5">{toolNames[tool]}</span>}
+                  <span className="font-mono text-xs text-gray-500">{tool}</span>
+                </span>
                 <select
                   value={mode}
                   onChange={(e) => setMode(tool, e.target.value)}
@@ -179,13 +222,19 @@ export default function ToolPolicySettings({ workspace }) {
           </ul>
         )}
         <form className="flex flex-wrap items-center gap-2" onSubmit={addOverride}>
-          <input
-            value={newTool}
-            onChange={(e) => setNewTool(e.target.value)}
-            placeholder={t('toolPolicy.toolIdPlaceholder')}
-            aria-label={t('toolPolicy.toolIdPlaceholder')}
-            className={`${fieldCls} font-mono w-60`}
-          />
+          <div className="w-72 max-w-full">
+            <SearchSelect
+              items={toolItems}
+              value={newTool}
+              onChange={(id) => { setError(''); setNewTool(id); }}
+              placeholder={t('toolPolicy.toolPick')}
+              searchPlaceholder={t('toolPolicy.toolSearch')}
+              noMatchText={t('toolPolicy.toolNoMatch')}
+              emptyText={t('toolPolicy.toolsEmpty')}
+              singleLine
+              testId="tool-policy-tool-pick"
+            />
+          </div>
           <select
             value={newMode}
             onChange={(e) => setNewMode(e.target.value)}
@@ -196,7 +245,8 @@ export default function ToolPolicySettings({ workspace }) {
           </select>
           <button
             type="submit"
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            disabled={!newTool}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
             <Plus className="w-3.5 h-3.5" /> {t('toolPolicy.addOverride')}
           </button>
@@ -218,7 +268,7 @@ export default function ToolPolicySettings({ workspace }) {
       <p className="text-xs text-gray-500">{t('toolPolicy.modelHint')}</p>
 
       {error && <p className="text-xs text-red-600">{error}</p>}
-      <div className="flex items-center gap-3">
+      {!draft && <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={save}
@@ -233,7 +283,7 @@ export default function ToolPolicySettings({ workspace }) {
             <CheckCircle className="w-3.5 h-3.5" /> {t('toolPolicy.saved')}
           </span>
         )}
-      </div>
+      </div>}
     </div>
   );
 }
