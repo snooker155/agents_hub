@@ -185,6 +185,9 @@ function BudgetRefusal({ refusal, onRetry, canRetry }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
 
 // What the guardrail found, in a sentence. Never the matched text: the
 // backend does not send it (guardrails/checks.py rule_detail).
