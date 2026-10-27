@@ -122,3 +122,12 @@ export function localizeViolation(violation, t) {
 export function capabilityLabel(cap, t) {
   return t(`capabilities.labels.${cap}`, { defaultValue: CAPABILITY_LABELS[cap] || cap });
 }
+
+/** The line under a banner for a record that was saved anyway: why it went through. */
+export function capabilityFooter(violation, { overridden, guardMode }, t) {
+  if (!violation) return null;
+  if (!violation.blocking) return t('agentDetails.capabilityAllowed');
+  if (overridden) return t('agentDetails.capabilityOverrideAccepted');
+  if ((guardMode || 'block') !== 'block') return t('agentDetails.capabilityGuardWarnGlobal');
+  return t('agentDetails.capabilityBlocked');
+}

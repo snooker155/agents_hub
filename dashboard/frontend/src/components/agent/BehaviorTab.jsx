@@ -381,8 +381,10 @@ export default function BehaviorTab() {
             </div>
           </div>
 
-          {/* The secret names a run of this agent may receive (docs/secrets.md). */}
-          <AgentSecretsCard agentId={id} readOnly={Boolean(agent.system)} />
+          {/* The secret names a run of this agent may receive (docs/secrets.md).
+              A system agent may declare them too: one declaration for every
+              workspace, the value falling back to the default workspace's. */}
+          <AgentSecretsCard agentId={id} system={Boolean(agent.system)} />
 
           {/* The hosts web_search, fetch_url and the browser may reach (tools/web.py). */}
           <AgentWebDomainsCard agentId={id} readOnly={Boolean(agent.system)} />

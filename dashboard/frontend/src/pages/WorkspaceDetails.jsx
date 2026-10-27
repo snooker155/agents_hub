@@ -1162,7 +1162,11 @@ const WorkspaceDetails = () => {
       {activeTab === 'agents' && <WorkspaceMembers workspace={name} />}
 
       {activeTab === 'settings' && (
-        <WorkspaceSettingsTab workspace={name} agents={ws?.metadata?.allowed_agents || []} />
+        <WorkspaceSettingsTab
+          workspace={name}
+          agents={allowedAgentIds}
+          agentRecords={allowedAgentIds.map((id) => agentById.get(id) || { id })}
+        />
       )}
 
       {activeTab === 'instructions' && (
@@ -1248,7 +1252,7 @@ const SETTINGS_GROUPS = [
  * The workspace's own settings: agent roles, personal memory, secrets and the
  * default palette. The open section lives in the URL (?tab=settings&section=…).
  */
-function WorkspaceSettingsTab({ workspace, agents }) {
+function WorkspaceSettingsTab({ workspace, agents, agentRecords }) {
   const { t } = useI18n();
   const auth = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1335,7 +1339,7 @@ function WorkspaceSettingsTab({ workspace, agents }) {
               <WorkspaceDataClass key={`dc-${workspace}`} workspace={workspace} />
             </div>
           )}
-          {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agents} />}
+          {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agentRecords} />}
           {active.id === 'remoteSync' && <WorkspaceHubSync key={workspace} workspace={workspace} />}
           {/* This workspace's default palette (docs/settings.md "Palette"). */}
           {active.id === 'palette' && <WorkspacePaletteDefault workspace={workspace} />}

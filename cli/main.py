@@ -1324,10 +1324,35 @@ def _secrets_audit(action: str, workspace: str, name: str, agent: Optional[str],
 
 
 @secrets_app.command("keygen")
-def secrets_keygen():
-    """Print a fresh key for AGENTS_HUB_SECRET_KEY."""
+def secrets_keygen(
+    write: bool = typer.Option(False, "--write",
+                               help="Save the key to .env instead of printing it, when none is set yet."),
+    env_file: Optional[Path] = typer.Option(None, "--env-file",
+                                            help="The .env to write (default: the checkout's)."),
+):
+    """Print a fresh key for AGENTS_HUB_SECRET_KEY, or save it with --write."""
     from common.secrets import keygen
-    typer.echo(keygen())
+    if not write:
+        typer.echo(keygen())
+        return
+    from common.paths import PROJECT_ROOT
+    from cli.onboard.wizard import read_env, write_env
+    path = env_file or PROJECT_ROOT / ".env"
+    # Never replaced: stored secrets are encrypted under the key that is set,
+    # and a new one would leave every one of them unreadable.
+    if read_env(path).get("AGENTS_HUB_SECRET_KEY", "").strip():
+        console.print(f"[red]Error:[/red] AGENTS_HUB_SECRET_KEY is already set in {path}; "
+                      "replacing it would make the stored secrets unreadable.")
+        raise typer.Exit(1)
+    if os.environ.get("AGENTS_HUB_SECRET_KEY", "").strip():
+        console.print("[red]Error:[/red] AGENTS_HUB_SECRET_KEY is already set in the environment, "
+                      f"which wins over {path}.")
+        raise typer.Exit(1)
+    backup = write_env(path, PROJECT_ROOT / ".env.example",
+                       {"AGENTS_HUB_SECRET_KEY": keygen()}, fresh=False)
+    console.print(f"Saved AGENTS_HUB_SECRET_KEY to {path}"
+                  + (f" (backup: {backup.name})" if backup else "") + ".")
+    console.print("[dim]Restart the backend to use it.[/dim]")
 
 
 @secrets_app.command("list")

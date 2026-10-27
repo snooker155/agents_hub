@@ -31,6 +31,35 @@ def test_keygen_prints_a_usable_fernet_key():
     Fernet(out.stdout.strip().encode())  # raises if it is not a key
 
 
+def test_keygen_write_fills_an_empty_key_in_place(tmp_path, monkeypatch):
+    from cryptography.fernet import Fernet
+    from cli.onboard.wizard import read_env
+    monkeypatch.delenv("AGENTS_HUB_SECRET_KEY", raising=False)
+    env = tmp_path / ".env"
+    env.write_text('OPENAI_API_KEY="sk-x"\nAGENTS_HUB_SECRET_KEY=""\n')
+    out = runner.invoke(cli.app, ["secrets", "keygen", "--write", "--env-file", str(env)])
+    assert out.exit_code == 0, out.stdout
+    values = read_env(env)
+    Fernet(values["AGENTS_HUB_SECRET_KEY"].encode())
+    assert values["OPENAI_API_KEY"] == "sk-x"
+    assert values["AGENTS_HUB_SECRET_KEY"] not in out.stdout
+    assert list(tmp_path.glob(".env.bak-*"))
+
+
+def test_keygen_write_never_replaces_a_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENTS_HUB_SECRET_KEY", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("AGENTS_HUB_SECRET_KEY=kept\n")
+    out = runner.invoke(cli.app, ["secrets", "keygen", "--write", "--env-file", str(env)])
+    assert out.exit_code == 1
+    assert "already set" in out.stdout
+    assert env.read_text() == "AGENTS_HUB_SECRET_KEY=kept\n"
+    monkeypatch.setenv("AGENTS_HUB_SECRET_KEY", "from-env")
+    fresh = tmp_path / "other.env"
+    out = runner.invoke(cli.app, ["secrets", "keygen", "--write", "--env-file", str(fresh)])
+    assert out.exit_code == 1 and not fresh.exists()
+
+
 def test_direct_set_list_delete(direct):
     set_ = runner.invoke(cli.app, ["secrets", "set", "API_KEY", "--value", "sk-cli-value-123",
                                    "--workspace", "ws", "--agent", "a1"])

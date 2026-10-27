@@ -47,10 +47,10 @@ def no_key(monkeypatch):
     monkeypatch.setattr(settings, "secret_backend", "local", raising=False)
 
 
-def _agent(agent_id: str, *, tools=(), secrets=()):
+def _agent(agent_id: str, *, tools=(), secrets=(), system=False):
     from agents.registry import AgentSpec, add_agent
     add_agent(AgentSpec(id=agent_id, name=agent_id, type="local", entrypoint="m:f",
-                        tools=list(tools), secrets=list(secrets)), user_edit=False)
+                        tools=list(tools), secrets=list(secrets), system=system), user_edit=False)
 
 
 # ── encryption ───────────────────────────────────────────────────────────────
@@ -172,6 +172,24 @@ def test_env_for_run_follows_the_agents_declared_list(key):
     assert secrets.env_for_run("ws", "holder", None) == {"GITHUB_TOKEN": "ghp_agentsown1234"}
     assert secrets.env_for_run("ws", "bystander", None) == {}
     assert secrets.env_for_run("ws", "nobody", None) == {}
+
+
+def test_a_system_agent_falls_back_to_the_default_workspace_and_a_workspace_value_wins(key):
+    """One secret for every workspace: an operator declares a name on a
+    system agent and stores the value once in default; a workspace's own
+    value under that name wins for its runs, and an agent of the person's
+    own never reaches into default."""
+    from common import secrets
+    _agent("shared_sys", secrets=["READ_TOKEN"], system=True)
+    _agent("own_agent", secrets=["READ_TOKEN"])
+    secrets.set_secret("default", "READ_TOKEN", "default-value-1234")
+    assert secrets.env_for_run("ws_a", "shared_sys", None) == {"READ_TOKEN": "default-value-1234"}
+    assert secrets.env_for_run("default", "shared_sys", None) == {"READ_TOKEN": "default-value-1234"}
+    assert secrets.env_for_run("ws_a", "own_agent", None) == {}
+    secrets.set_secret("ws_b", "READ_TOKEN", "workspace-b-value-99")
+    assert secrets.env_for_run("ws_b", "shared_sys", None) == {"READ_TOKEN": "workspace-b-value-99"}
+    with secrets.activate("ws_a", "shared_sys"):
+        assert secrets.get("READ_TOKEN") == "default-value-1234"
 
 
 def test_env_for_run_hands_out_nothing_on_error(key, monkeypatch):
@@ -445,8 +463,8 @@ def test_agent_allowlist_route_validates_and_guards(single, client, monkeypatch)
     from common.config import settings
     monkeypatch.setattr(settings, "capability_guard", "block", raising=False)
     _agent("worker")
-    assert client.get("/api/agents/worker/secrets").json() == {"secrets": [],
-                                                               "github_identity": "app"}
+    body = client.get("/api/agents/worker/secrets").json()
+    assert body["secrets"] == [] and body["github_identity"] == "app"
     assert client.put("/api/agents/worker/secrets", json={"secrets": ["bad name"]}).status_code == 400
     ok = client.put("/api/agents/worker/secrets", json={"secrets": ["TOKEN", "TOKEN"]})
     assert ok.status_code == 200 and ok.json()["secrets"] == ["TOKEN"]
@@ -466,6 +484,33 @@ def test_multi_mode_agent_allowlist_needs_an_admin(multi, client):
                       headers=bob).status_code == 403
     assert client.put("/api/agents/worker/secrets", json={"secrets": ["T"]},
                       headers=admin).status_code == 200
+
+
+def test_a_save_the_guard_lets_through_still_returns_the_warning(client, monkeypatch):
+    """In warn mode, or on the agent's own exemption, the save goes through,
+    and it used to say nothing at all (found live). The response carries the
+    combination, the mode and the exemption, as the tools save does."""
+    from common.config import settings
+    monkeypatch.setattr(settings, "capability_guard", "warn", raising=False)
+    _agent("scout", tools=["fetch_url", "read_workspace_file"])
+    resp = client.put("/api/agents/scout/secrets", json={"secrets": ["SUPPLIER_TOKEN"]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["secrets"] == ["SUPPLIER_TOKEN"] and body["guard_mode"] == "warn"
+    warning = body["capability_warning"]
+    assert warning and "secrets:SUPPLIER_TOKEN" in str(warning["sources"])
+    assert client.get("/api/agents/scout/secrets").json()["capability_warning"] == warning
+
+
+def test_declaring_a_secret_keeps_a_system_agent_tracking_the_seed(client):
+    """The seed does not own ``secrets``: saving them is not an edit that
+    detaches a system agent from the shipped updates of its tools and prompt."""
+    from agents.registry import get_agent
+    _agent("shipped", system=True)
+    ok = client.put("/api/agents/shipped/secrets", json={"secrets": ["READ_TOKEN"]})
+    assert ok.status_code == 200
+    spec = get_agent("shipped")
+    assert spec.secrets == ["READ_TOKEN"] and spec.user_modified is False
 
 
 def test_a_flow_gets_its_agents_names_at_workspace_and_user_scope_only(key, monkeypatch):

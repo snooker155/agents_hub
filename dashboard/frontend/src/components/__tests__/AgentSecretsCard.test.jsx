@@ -46,6 +46,37 @@ describe('AgentSecretsCard', () => {
     expect(api.updateAgentSecrets).not.toHaveBeenCalled();
   });
 
+  it('lets a system agent declare names, explains the default fallback and offers the default workspace names', async () => {
+    api.getWorkspaceSecrets.mockImplementation((ws) => Promise.resolve({
+      data: ws === 'default' ? [{ name: 'READ_TOKEN' }] : [{ name: 'GITHUB_TOKEN' }],
+    }));
+    render(<AgentSecretsCard agentId="writer" system />);
+    await waitFor(() => expect(screen.getByText('GITHUB_TOKEN')).toBeInTheDocument());
+    expect(screen.getByTestId('agent-secrets-system')).toHaveTextContent('agentDetails.secretsSystemNote');
+    expect(api.getWorkspaceSecrets).toHaveBeenCalledWith('default');
+    fireEvent.click(await screen.findByRole('button', { name: 'READ_TOKEN' }));
+    fireEvent.click(screen.getByRole('button', { name: 'agentDetails.saveSecrets' }));
+    await waitFor(() => expect(api.updateAgentSecrets).toHaveBeenCalledWith('writer', ['GITHUB_TOKEN', 'READ_TOKEN']));
+  });
+
+  it('shows the combination a save let through, and why it went through', async () => {
+    const warning = {
+      rule_id: 'lethal_trifecta', blocking: true, title: 'Lethal trifecta', explanation: 'all three',
+      capabilities: ['reads_private'], sources: { reads_private: ['secrets:SUPPLIER_TOKEN'] },
+    };
+    api.updateAgentSecrets.mockResolvedValueOnce({ data: {
+      secrets: ['GITHUB_TOKEN', 'SLACK_TOKEN'], capability_warning: warning,
+      guard_mode: 'warn', capability_override: true,
+    } });
+    render(<AgentSecretsCard agentId="a1" />);
+    await waitFor(() => expect(screen.getByText('GITHUB_TOKEN')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'SLACK_TOKEN' }));
+    fireEvent.click(screen.getByRole('button', { name: 'agentDetails.saveSecrets' }));
+    const banner = await screen.findByTestId('agent-secrets-guard');
+    expect(banner).toHaveTextContent('secrets:SUPPLIER_TOKEN');
+    expect(banner).toHaveTextContent('agentDetails.capabilityOverrideAccepted');
+  });
+
   it('shows the guard refusal as it comes back', async () => {
     api.updateAgentSecrets.mockRejectedValueOnce({ response: { data: { detail: 'lethal trifecta' } } });
     render(<AgentSecretsCard agentId="a1" />);

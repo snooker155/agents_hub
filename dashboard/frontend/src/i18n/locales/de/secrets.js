@@ -6,7 +6,7 @@ export default {
   saveFailed: 'Das Secret konnte nicht gespeichert werden.',
   deleteFailed: 'Das Secret konnte nicht gelöscht werden.',
   empty: 'In diesem Workspace gibt es noch keine Secrets.',
-  noKey: 'Zum Speichern von Secrets wird ein Schlüssel gebraucht. Setze AGENTS_HUB_SECRET_KEY in .env (erzeugen mit ah secrets keygen) und starte das Backend neu.',
+  noKey: 'Zum Speichern von Secrets wird ein Schlüssel gebraucht. Führe ah secrets keygen --write aus (der Schlüssel landet in .env) und starte das Backend neu.',
   columns: {
     name: 'Name',
     scope: 'Geltungsbereich',
@@ -27,6 +27,7 @@ export default {
   },
   add: 'Secret speichern',
   delete: 'Secret löschen',
+  confirmDelete: 'Secret {{name}} ({{scope}}) löschen? Läufe, die es nutzen, verlieren es, und der Wert lässt sich weder lesen noch wiederherstellen.',
   hostsColumn: 'Hosts',
   anyHost: 'jeder Host',
   hostsField: 'Erlaubte Hosts, z. B. api.github.com',
