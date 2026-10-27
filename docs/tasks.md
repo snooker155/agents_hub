@@ -126,8 +126,10 @@ or `reviewing`. The assignment is one of four executor kinds:
 - **team** — a team id
 - **loop** — a loop id
 
-A person assigns a flow, team or loop directly; the orchestrator assigns only
-agents. The task page offers a picker for any kind. `POST /api/tasks/{id}/assign`
+A person assigns a flow, team or loop directly; the orchestrator assigns an
+agent (`assign_agent_tool`) or, after the user confirms the flow, a saved flow
+(`assign_flow_tool`, which starts the flow's run on the task at once). The
+task page offers a picker for any kind. `POST /api/tasks/{id}/assign`
 accepts `{"executor": {"kind": "agent"|"flow"|"team"|"loop", "id": "..."}, "params": {...}}`
 as well as `{"agent_id": "..."}` for compatibility.
 

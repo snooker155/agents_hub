@@ -469,12 +469,19 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # assign_agent_tool and start_agent_tool set up and kick off a task-bound
     # agent run but return only confirmation, not the run's output — the
     # output is read later through get_task_result, which already carries its
-    # own grant. get_agent_status_tool and stop_agent_tool report/change run
-    # state (booleans, status strings), never run content. list_flows_tool
-    # lists flow ids/names for the user to pick from, not a flow's graph
-    # (that is get_flow_tool, itself configuration — see below).
-    "assign_agent_tool", "start_agent_tool", "get_agent_status_tool",
-    "stop_agent_tool", "list_flows_tool",
+    # own grant. assign_flow_tool does the same for a saved flow: the flow
+    # becomes the task's executor and its run starts, the tool returns the
+    # task and a run id, and the outcome is again read through
+    # get_task_result. get_agent_status_tool and stop_agent_tool report/change
+    # run state (booleans, status strings), never run content, and
+    # wait_for_agent_tool is get_agent_status_tool after a short sleep: it
+    # returns exactly the same status fields, for watching an agent work on
+    # a task, so it is no more a delegation edge than the status tool is.
+    # list_flows_tool lists flow ids/names for the user to pick from, not a
+    # flow's graph (that is get_flow_tool, itself configuration — see below).
+    "assign_agent_tool", "assign_flow_tool", "start_agent_tool",
+    "get_agent_status_tool", "wait_for_agent_tool", "stop_agent_tool",
+    "list_flows_tool",
     # reject_assignment_tool clears a pending assignment and resets task
     # status; same shape as stop_agent_tool, control only.
     "reject_assignment_tool",
@@ -775,9 +782,14 @@ def run_code_grants() -> FrozenSet[str]:
 # ``effective_capabilities`` below walks the graph these tools open and unions
 # in what is actually reachable.
 DELEGATING_TOOLS: FrozenSet[str] = frozenset({
-    "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "run_flow_tool",
+    "run_agent_tool", "delegate_task_tool", "run_flow_tool",
     "run_new_flow_tool", "run_team_tool", "run_loop_tool", "run_scenario_tool",
 })
+# wait_for_agent_tool is not an edge: it hands no work to anyone and returns
+# the same status fields as get_agent_status_tool (see the agent coordination
+# entry in REVIEWED_NO_GRANT above). assign_flow_tool and assign_agent_tool
+# are not edges for the same reason assign_agent_tool never was: the task
+# system runs the executor and the output is read through get_task_result.
 
 # create_agent_tool / modify_agent_tool are NOT in DELEGATING_TOOLS. They can
 # hand another agent an arbitrary tool list, which looks like the same shape —

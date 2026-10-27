@@ -23,6 +23,7 @@
         "assign_agent_tool",
         "get_scenario_run_tool",
         "stop_scenario_run_tool",
+        "assign_flow_tool",
         "get_team_run_tool",
         "stop_team_run_tool",
         "get_loop_run_tool",

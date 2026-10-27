@@ -38,6 +38,7 @@ from tools.human_input import ask_user
 from tools.langchain_tools import (
     list_agents_tool,
     assign_agent_tool,
+    assign_flow_tool,
     start_agent_tool,
     run_agent_tool,
     list_flows_tool,
@@ -493,6 +494,7 @@ class AgentFactory:
         coordination_tools = [
             list_agents_tool,
             assign_agent_tool,
+            assign_flow_tool,
             start_agent_tool,
             run_agent_tool,
             list_flows_tool,

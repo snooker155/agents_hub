@@ -944,6 +944,98 @@ def run_flow_tool(
         return _json_err(f"Failed to run flow: {e}")
 
 
+class AssignFlowInput(BaseModel):
+    task_id: str = Field(..., description="UUID of the task")
+    flow_id: str = Field(..., min_length=1, description="Id of a saved flow in the active workspace (see list_flows_tool)")
+    params_json: Optional[str] = Field(
+        None, description="Optional JSON object string with parameters for the flow run"
+    )
+    user_approved: bool = Field(
+        False, description="True only after the user named this flow for this task and said to start it"
+    )
+    reason: Optional[str] = Field(
+        None, description="Brief explanation of why this flow fits the task"
+    )
+
+    @field_validator("params_json", mode="before")
+    @classmethod
+    def coerce_params_json(cls, v):
+        if isinstance(v, (dict, list)):
+            return json.dumps(v)
+        return v
+
+
+@tool("assign_flow_tool", args_schema=AssignFlowInput)
+def assign_flow_tool(task_id: str, flow_id: str, params_json: Optional[str] = None,
+                     user_approved: bool = False, reason: Optional[str] = None) -> str:
+    """Put a saved flow on a task as its executor and start it, AFTER the user has approved it.
+
+    The flow becomes the task's executor (kind "flow") and its run starts at
+    once in the flow's workspace; from there on the run drives the task's
+    status itself, so do not assign an agent to the task or call
+    start_agent_tool for it. Read the outcome later with get_task_result.
+
+    Approval gate: this tool refuses unless `user_approved` is True. First call
+    list_flows_tool, tell the user which saved flow fits the task and ask them
+    to confirm; only once they have said to start it, call this with that
+    flow_id and user_approved=True. Returns JSON with the task and the run_id.
+    """
+    try:
+        from common.auto_mode import approved as _approved
+        if not _approved("assign_flow_tool", user_approved, {"task_id": task_id, "flow_id": flow_id}):
+            return _json_err(
+                "Flow assignment not approved. First call list_flows_tool, tell the user "
+                "which flow fits the task and ask them to confirm, then call "
+                "assign_flow_tool again with user_approved=True.",
+                code="approval_required",
+                extra={"task_id": task_id, "flow_id": flow_id},
+            )
+        tid = _uuid_from_str(task_id)
+        task = svc_get_task(tid)
+        if not task or _task_out_of_scope(task):
+            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
+        if getattr(task, "status", None) == TaskStatus.stopped:
+            return _json_err("Task is stopped and cannot be assigned", code="invalid_task")
+
+        from flow import store as flow_store
+        flow = flow_store.get_flow(flow_id)
+        if not flow:
+            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
+        ws = _active_workspace()
+        if check_record(flow.get("workspace"), what="flow", workspace=ws):
+            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
+
+        params: Optional[Dict[str, Any]] = None
+        if params_json:
+            try:
+                params = json.loads(params_json)
+            except json.JSONDecodeError as e:
+                return _json_err(f"Invalid params_json: {e}", code="invalid_params")
+            if not isinstance(params, dict):
+                return _json_err("params_json must be a JSON object", code="invalid_params")
+
+        from tasks.assign import AssignError, assign_executor_to_task
+        from tasks.models import Executor
+        try:
+            result = assign_executor_to_task(
+                tid, Executor(kind="flow", id=flow_id), params, task_to_dict=_task_to_dict,
+            )
+        except AssignError as e:
+            code = "not_found" if getattr(e, "status", 400) == 404 else "invalid_task"
+            return _json_err(str(e), code=code, extra={"task_id": task_id, "flow_id": flow_id})
+        return _json_ok({
+            "message": (
+                f"Flow '{flow_id}' is the task's executor and its run has started; "
+                "it drives the task from here on. Read the outcome with get_task_result."
+            ),
+            "run_id": result.get("run_id"),
+            "task": result.get("task"),
+            "reason": reason,
+        })
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to assign flow: {e}")
+
+
 class StartAgentInput(BaseModel):
     task_id: str = Field(..., description="UUID of the task with an assigned agent")
 

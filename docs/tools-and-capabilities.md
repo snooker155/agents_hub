@@ -91,10 +91,14 @@ the 4xx or 402 body carry the structure as `refusal` (`code`
 
 An agent that cannot itself exfiltrate, but can hand a request to an agent
 that can, effectively can. `run_agent_tool`, `delegate_task_tool`,
-`wait_for_agent_tool`, `run_flow_tool`, `run_new_flow_tool`, `run_team_tool`,
-`run_loop_tool` and `run_scenario_tool` are the edges of that graph: each one
-hands work (and, for the wait/poll tools, eventually the result) to another
-agent whose own tools are not in the caller's tool list at all.
+`run_flow_tool`, `run_new_flow_tool`, `run_team_tool`, `run_loop_tool` and
+`run_scenario_tool` are the edges of that graph: each one hands work to another agent whose own
+tools are not in the caller's tool list at all. `assign_agent_tool`,
+`assign_flow_tool`, `start_agent_tool`, `get_agent_status_tool` and
+`wait_for_agent_tool` are not edges: the task system runs the executor, the
+tools return confirmation or status fields (`wait_for_agent_tool` is the
+status tool after a short sleep, for watching an agent work on a task), and
+the outcome is read through `get_task_result`, which carries its own grant.
 `run_new_flow_tool` builds the flow it runs, so it also checks every agent in
 it against the caller's `delegates` list at run time (see
 [flows](flows.md#a-flow-an-agent-builds-for-one-request)).
