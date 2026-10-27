@@ -215,6 +215,21 @@ its site-packages, editable. Three things to know:
 Upgrading is the Path C line: `git pull`, then `pip install -e ".[backend,agents]"`
 in the same environment whenever the requirement files changed.
 
+**An environment that already runs the service.** When the environment has
+every dependency already, because the backend runs from it or the
+requirement files were installed by hand, there is nothing to resolve, only
+the command to add:
+
+```bash
+pip install -e . --no-deps          # the agents_hub shim and the ah script, nothing else
+```
+
+`--no-deps` skips dependency resolution entirely, so pip touches no installed
+package and downloads nothing. The extras are not needed here either, and
+`pip install -e .` without `--no-deps` is just as safe, it only takes the
+time to confirm what is already there. `ah doctor` afterwards tells you if
+something the service needs is missing after all.
+
 ## The `ah` command on each path
 
 `ah` reaches the service in one of two ways ([cli](cli.md), "Two ways it

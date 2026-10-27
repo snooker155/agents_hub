@@ -129,6 +129,14 @@ Damit liegt `ah` im `bin` der Umgebung und das Paket `agents_hub` editierbar in 
 
 Aktualisieren wie bei Weg C: `git pull`, danach `pip install -e ".[backend,agents]"` in derselben Umgebung, sobald sich die Requirement-Dateien geändert haben.
 
+**Eine Umgebung, in der der Dienst schon läuft.** Hat die Umgebung bereits jede Abhängigkeit, weil das Backend daraus läuft oder die Requirement-Dateien von Hand installiert wurden, gibt es nichts aufzulösen, nur den Befehl hinzuzufügen:
+
+```bash
+pip install -e . --no-deps          # das Paket agents_hub und das Skript ah, sonst nichts
+```
+
+`--no-deps` überspringt die Abhängigkeitsauflösung ganz: pip rührt kein installiertes Paket an und lädt nichts herunter. Die Extras sind hier ebenfalls unnötig, und `pip install -e .` ohne `--no-deps` ist genauso sicher, es kostet nur die Zeit, das Vorhandene zu bestätigen. `ah doctor` zeigt danach, ob dem Dienst doch etwas fehlt.
+
 ## Der Befehl `ah` auf jedem Weg
 
 `ah` erreicht den Dienst auf eine von zwei Arten ([cli](cli.md), "Two ways it reaches the service"): **direkt**, in einem Prozess, der den Checkout, dessen Python-Abhängigkeiten und das Zustandsverzeichnis hat, oder **über REST**, zu einem laufenden Backend, das `AGENTS_HUB_URL` nennt. Welche davon verfügbar ist, hängt vom Weg ab:
