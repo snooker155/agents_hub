@@ -997,8 +997,18 @@ async def run_flow_engine(
         for task in running.values():
             task.cancel()
 
+    # Each node's part under the name the flow shows for it, not its id
+    # (agent-1792784954866): a loop stores this as the pass's output and
+    # hands it to its judge and the next pass. Two nodes of the same name are
+    # told apart by a number.
+    names: Dict[str, str] = {}
+    seen_names: Dict[str, int] = {}
+    for m in meta_nodes:
+        base = str(m.get("label") or m["node_id"])
+        seen_names[base] = seen_names.get(base, 0) + 1
+        names[m["node_id"]] = base if seen_names[base] == 1 else f"{base} ({seen_names[base]})"
     combined_output = "\n\n".join(
-        f"### [{nid}]\n{out}" for nid, out in node_outputs.items()
+        f"### {names.get(nid, nid)}\n{out}" for nid, out in node_outputs.items()
         if out and nid not in carried_nodes
     )
     finish_ev = {
