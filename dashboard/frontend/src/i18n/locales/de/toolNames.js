@@ -68,6 +68,7 @@ export default {
   remove_workspace_agent: { label: 'Agent aus Arbeitsbereich', description: 'Nimmt einen Agenten aus einem Arbeitsbereich.' },
   schedule_notification: { label: 'Benachrichtigung planen', description: 'Plant eine Erinnerung für den Nutzer.' },
   schedule_task: { label: 'Aufgabe planen', description: 'Plant Agentenarbeit für später.' },
+  schedule_agent_run: { label: 'Agentenlauf planen', description: 'Führt einen Agenten später in einem neuen Gespräch aus, ohne Aufgabe.' },
   notify_user: { label: 'Nutzer benachrichtigen', description: 'Schickt dem Nutzer sofort eine Benachrichtigung.' },
   list_scheduled: { label: 'Geplante Jobs auflisten', description: 'Listet geplante Benachrichtigungen und Agentenaufgaben.' },
   cancel_scheduled: { label: 'Geplanten Job abbrechen', description: 'Bricht einen geplanten Job ab.' },

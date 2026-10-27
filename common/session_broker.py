@@ -136,6 +136,11 @@ class SessionBroker:
         """Called once at FastAPI startup to store the running event loop."""
         self._loop = loop
 
+    @property
+    def loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        """The backend's event loop, None outside the backend process."""
+        return self._loop
+
     # ── publish ──────────────────────────────────────────────────────────────
 
     def publish_threadsafe(self, channel: str, event: dict) -> None:

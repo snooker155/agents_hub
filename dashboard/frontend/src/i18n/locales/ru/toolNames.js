@@ -68,6 +68,7 @@ export default {
   remove_workspace_agent: { label: 'Агент из пространства', description: 'Убирает агента из рабочего пространства.' },
   schedule_notification: { label: 'Отложенное уведомление', description: 'Планирует напоминание для пользователя.' },
   schedule_task: { label: 'Отложенная задача', description: 'Планирует работу агента на будущее.' },
+  schedule_agent_run: { label: 'Отложенный запуск агента', description: 'Запускает агента позже в новом разговоре, без задачи.' },
   notify_user: { label: 'Уведомление пользователю', description: 'Сразу отправляет пользователю уведомление.' },
   list_scheduled: { label: 'Запланированное', description: 'Показывает запланированные уведомления и задачи агентов.' },
   cancel_scheduled: { label: 'Отмена запланированного', description: 'Отменяет запланированное задание.' },

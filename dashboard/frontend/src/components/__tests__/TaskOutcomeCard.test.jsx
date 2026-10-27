@@ -6,6 +6,8 @@ const api = vi.hoisted(() => ({
   getModelsCatalog: vi.fn(),
 }));
 const outcomesApi = vi.hoisted(() => ({
+  getTaskOutcome: vi.fn(),
+  setTaskUseAgentOutcome: vi.fn(),
   setTaskOutcome: vi.fn(),
   deleteTaskOutcome: vi.fn(),
   gradeTaskOutcome: vi.fn(),
@@ -48,6 +50,9 @@ describe('TaskOutcomeCard', () => {
     outcomesApi.gradeTaskOutcome.mockResolvedValue({ data: {
       outcome: { rubric: RUBRIC, max_iterations: 3 },
       evaluations: [evaluation(), evaluation({ iteration: 2, trigger: 'manual', passed: true, score: 1 })],
+    } });
+    outcomesApi.getTaskOutcome.mockResolvedValue({ data: {
+      outcome: null, use_agent_outcome: false, agent_outcome: null, agent_id: null, effective: null,
     } });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
@@ -142,5 +147,33 @@ describe('TaskOutcomeCard', () => {
     fireEvent.click(screen.getByRole('button', { name: /outcomes.remove/ }));
     await waitFor(() => expect(outcomesApi.deleteTaskOutcome).toHaveBeenCalledWith('t1'));
     expect(await screen.findByRole('button', { name: 'outcomes.about' })).toBeInTheDocument();
+  });
+
+  it('offers the agent criterion as an unticked checkbox and applies it on tick', async () => {
+    const agentRubric = { rubric: '- **Cited**: sources given', max_iterations: 2, threshold: null };
+    outcomesApi.getTaskOutcome.mockResolvedValue({ data: {
+      outcome: null, use_agent_outcome: false, agent_outcome: agentRubric, agent_id: 'triage', effective: null,
+    } });
+    outcomesApi.setTaskUseAgentOutcome.mockResolvedValue({ data: {
+      outcome: null, use_agent_outcome: true, agent_outcome: agentRubric, agent_id: 'triage',
+      effective: agentRubric, evaluations: [],
+    } });
+    const onChanged = vi.fn();
+    render(<TaskOutcomeCard task={{ ...taskWith(null), assigned_agent_type: 'triage' }} onChanged={onChanged} />);
+    const box = await screen.findByRole('checkbox');
+    expect(box).not.toBeChecked();
+    expect(screen.queryByText(/Cited/)).toBeNull();
+    fireEvent.click(box);
+    await waitFor(() => expect(outcomesApi.setTaskUseAgentOutcome).toHaveBeenCalledWith('t1', true));
+    expect(await screen.findByText(/Cited/)).toBeInTheDocument();
+    expect(screen.getByTestId('agent-outcome-note')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it('says so when no agent is assigned yet', async () => {
+    render(<TaskOutcomeCard task={taskWith(null)} onChanged={vi.fn()} />);
+    await screen.findByRole('checkbox');
+    expect(screen.getByText('outcomes.useAgentNoAgent')).toBeInTheDocument();
   });
 });

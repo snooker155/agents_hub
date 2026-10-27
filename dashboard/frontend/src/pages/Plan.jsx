@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
@@ -17,9 +17,10 @@ import {
   deleteNotification,
   getAgents,
   listFlows,
+  getLoops,
   getSharedMemories,
 } from '../api';
-import { AlertCircle, Bell, BellRing, Bot, Brain, CalendarClock, CheckCircle, Clock, Loader, MailOpen, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
+import { AlertCircle, Bell, BellRing, Bot, Brain, MessageSquare, CalendarClock, CheckCircle, Clock, Loader, MailOpen, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, RotateCw, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { TabRow } from '../components/PageTabs';
@@ -27,9 +28,13 @@ import { useI18n } from '../i18n';
 import DateInput from '../components/DateInput';
 import PageLoader from '../components/PageLoader';
 import CronHint from '../components/CronHint';
+import { describeRecurrence, RECURRENCE_OPTIONS } from '../lib/recurrenceText';
+import AgentPicker from '../components/chat/AgentPicker';
+import { agentJobStats } from '../components/chat/agentPickerModel';
 import { poolName } from '../components/memoryManager/helpers';
 import { NOTIFICATIONS_CHANGED, announceNotificationsChanged } from '../components/notificationsSync';
-import { notificationText } from '../components/notificationText';
+import { approvalRunPath, notificationText } from '../components/notificationText';
+import { ApprovalActions } from '../components/notificationApproval';
 // ---- helpers ----------------------------------------------------------------
 
 const STATUS_STYLES = {
@@ -73,10 +78,25 @@ function KindBadge({ kind }) {
       </span>
     );
   }
+  if (kind === 'agent_run') {
+    // An agent run with no task: its answer is in a conversation of its own.
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+        <MessageSquare className="w-3 h-3" /> {t('plan.kinds.agentRun')}
+      </span>
+    );
+  }
   if (kind === 'flow') {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
         <Workflow className="w-3 h-3" /> {t('plan.flow2')}
+      </span>
+    );
+  }
+  if (kind === 'loop') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+        <RotateCw className="w-3 h-3" /> {t('plan.kinds.loop')}
       </span>
     );
   }
@@ -133,7 +153,6 @@ function isoToLocalInput(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const RECURRENCE_OPTIONS = ['none', 'hourly', 'daily', 'weekly', 'cron'];
 
 function browserTimezone() {
   try {
@@ -145,8 +164,9 @@ function browserTimezone() {
 
 // ---- create / edit modal ----------------------------------------------------
 
-function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
+function JobModal({ job, jobs, agents, flows, loops, pools, onClose, onSaved, workspace }) {
   const { t } = useI18n();
+  const agentStats = useMemo(() => agentJobStats(jobs), [jobs]);
   const isEdit = !!job;
   const [kind, setKind] = useState(job?.kind || 'notification');
   const [title, setTitle] = useState(job?.title || '');
@@ -158,7 +178,9 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
   const [consolidatePoolId, setConsolidatePoolId] = useState(job?.consolidate_pool_id || '');
   const [consolidateSessionLimit, setConsolidateSessionLimit] = useState(job?.consolidate_session_limit ?? 10);
   const [agentId, setAgentId] = useState(job?.agent_id || '');
+  const [useAgentOutcome, setUseAgentOutcome] = useState(!!job?.use_agent_outcome);
   const [flowId, setFlowId] = useState(job?.flow_id || '');
+  const [loopId, setLoopId] = useState(job?.loop_id || '');
   const [seedText, setSeedText] = useState(job?.seed ? JSON.stringify(job.seed, null, 2) : '');
   const [maxConcurrent, setMaxConcurrent] = useState(job?.max_concurrent ?? 1);
   const [saving, setSaving] = useState(false);
@@ -170,6 +192,8 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
     if (!title.trim()) { setError(t('plan.errors.titleRequired')); return; }
     if (!runAt) { setError(t('plan.errors.timeRequired')); return; }
     if (kind === 'flow' && !flowId) { setError(t('plan.errors.pickFlow')); return; }
+    if (kind === 'agent_run' && !agentId) { setError(t('plan.errors.pickAgent')); return; }
+    if (kind === 'loop' && !loopId) { setError(t('plan.errors.pickLoop')); return; }
     if (kind === 'memory_consolidate' && !consolidatePoolId) { setError(t('plan.errors.pickPool')); return; }
     if (recurrence === 'cron' && !cron.trim()) { setError(t('plan.errors.cronRequired')); return; }
     let seed = null;
@@ -195,7 +219,8 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
           run_at: localInputToIso(runAt),
           recurrence,
           ...cronFields,
-          agent_id: kind === 'agent_task' ? (agentId || null) : null,
+          ...(kind === 'agent_task' || kind === 'agent_run' ? { agent_id: agentId || null } : {}),
+          ...(kind === 'agent_task' ? { use_agent_outcome: useAgentOutcome } : {}),
           channels,
           ...(kind === 'memory_consolidate' ? {
             consolidate_pool_id: consolidatePoolId || null,
@@ -211,9 +236,11 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
           recurrence,
           ...cronFields,
           workspace: workspace || null,
-          agent_id: kind === 'agent_task' ? (agentId || null) : null,
+          agent_id: kind === 'agent_task' || kind === 'agent_run' ? (agentId || null) : null,
+          use_agent_outcome: kind === 'agent_task' ? useAgentOutcome : false,
           flow_id: kind === 'flow' ? (flowId || null) : null,
           seed: kind === 'flow' ? seed : null,
+          loop_id: kind === 'loop' ? loopId : null,
           max_concurrent: kind === 'flow' ? (Number(maxConcurrent) || 0) : 1,
           consolidate_pool_id: kind === 'memory_consolidate' ? consolidatePoolId : null,
           consolidate_session_limit: kind === 'memory_consolidate' ? (Number(consolidateSessionLimit) || 10) : null,
@@ -239,17 +266,19 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
         </div>
 
         {!isEdit && (
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {[
               { value: 'notification', label: t('plan.kinds.notification'), icon: Bell, hint: t('plan.kinds.notificationHint') },
+              { value: 'agent_run', label: t('plan.kinds.agentRun'), icon: MessageSquare, hint: t('plan.kinds.agentRunHint') },
               { value: 'agent_task', label: t('plan.kinds.agentTask'), icon: Bot, hint: t('plan.kinds.agentTaskHint') },
               { value: 'flow', label: t('plan.kinds.flow'), icon: Workflow, hint: t('plan.kinds.flowHint') },
+              { value: 'loop', label: t('plan.kinds.loop'), icon: RotateCw, hint: t('plan.kinds.loopHint') },
               { value: 'memory_consolidate', label: t('plan.kinds.memoryConsolidate'), icon: Brain, hint: t('plan.kinds.memoryConsolidateHint') },
             ].map(({ value, label, icon: Icon, hint }) => (
               <button
                 key={value}
                 onClick={() => setKind(value)}
-                className={`flex-1 flex flex-col items-center gap-1 px-3 py-3 rounded-lg border text-sm transition-colors ${
+                className={`flex flex-col items-center gap-1 px-3 py-3 rounded-lg border text-sm text-center transition-colors ${
                   kind === value
                     ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
                     : 'border-gray-200 text-gray-600 hover:bg-gray-50'
@@ -270,20 +299,26 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={title}
             onChange={e => setTitle(e.target.value)}
-            placeholder={kind === 'agent_task' ? t('plan.taskTitle') : t('plan.reminderTitle')}
+            placeholder={kind === 'agent_task' ? t('plan.taskTitle')
+              : kind === 'agent_run' ? t('plan.runTitle')
+              : kind === 'loop' ? t('plan.loopTitle') : t('plan.reminderTitle')}
           />
         </div>
 
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">
-            {kind === 'agent_task' ? t('plan.taskDescription') : t('plan.message')}
+            {kind === 'agent_task' ? t('plan.taskDescription')
+              : kind === 'agent_run' ? t('plan.runMessage')
+              : kind === 'loop' ? t('plan.loopGoal') : t('plan.message')}
           </label>
           <textarea
             rows={3}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
             value={message}
             onChange={e => setMessage(e.target.value)}
-            placeholder={kind === 'agent_task' ? t('plan.taskPlaceholder') : t('plan.notificationPlaceholder')}
+            placeholder={kind === 'agent_task' ? t('plan.taskPlaceholder')
+              : kind === 'agent_run' ? t('plan.runPlaceholder')
+              : kind === 'loop' ? t('plan.loopGoalPlaceholder') : t('plan.notificationPlaceholder')}
           />
         </div>
 
@@ -304,7 +339,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
               value={recurrence}
               onChange={e => setRecurrence(e.target.value)}
             >
-              {RECURRENCE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+              {RECURRENCE_OPTIONS.map(r => <option key={r} value={r}>{t(`components.recurrence.options.${r}`)}</option>)}
             </select>
           </div>
         </div>
@@ -341,17 +376,50 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
           <CronHint recurrence={recurrence} cron={cron} timezone={tz} start={runAt} />
         )}
 
-        {kind === 'agent_task' && (
+        {(kind === 'agent_task' || kind === 'agent_run') && (
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.agent')}</label>
-            <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
+            <AgentPicker
+              variant="field"
+              agents={agents}
               value={agentId}
-              onChange={e => setAgentId(e.target.value)}
-            >
-              <option value="">{t('plan.letTheOrchestratorDecide')}</option>
-              {agents.map(a => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
-            </select>
+              onChange={setAgentId}
+              placeholder={t('plan.selectAnAgent')}
+              noneOption={kind === 'agent_task'
+                ? { label: t('plan.letTheOrchestratorDecide'), hint: t('plan.agentPicker.orchestratorHint') }
+                : null}
+              recent={agentStats.recent}
+              counts={agentStats.counts}
+              labels={{
+                recent: t('plan.agentPicker.inPlan'),
+                count: t('plan.agentPicker.jobs'),
+                pick: t('plan.agentPicker.pick'),
+                current: t('plan.agentPicker.current'),
+              }}
+            />
+            {kind === 'agent_run' && <p className="text-[11px] text-gray-400 mt-1">{t('plan.agentRunHint')}</p>}
+          </div>
+        )}
+
+        {kind === 'agent_task' && (
+          <div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={useAgentOutcome}
+                onChange={e => setUseAgentOutcome(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-indigo-600"
+              />
+              {t('plan.useAgentOutcome')}
+            </label>
+            <p className="text-[11px] text-gray-400 mt-1 ml-6">
+              {(() => {
+                if (!agentId) return t('plan.useAgentOutcomeHint');
+                const agent = agents.find(a => a.id === agentId);
+                if (agent && !agent.default_outcome) return t('plan.agentHasNoOutcome');
+                return t('plan.useAgentOutcomeHint');
+              })()}
+            </p>
           </div>
         )}
 
@@ -390,6 +458,23 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
               />
               <p className="text-[11px] text-gray-400 mt-1">{t('plan.mergedIntoTheFlowApos')}</p>
             </div>
+          </div>
+        )}
+
+        {kind === 'loop' && !isEdit && (
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('plan.loop')}</label>
+            <select
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
+              value={loopId}
+              onChange={e => setLoopId(e.target.value)}
+            >
+              <option value="">{t('plan.selectALoop')}</option>
+              {(loops || []).map(l => {
+                const id = l.loop_id || l.id;
+                return <option key={id} value={id}>{l.name || id}</option>;
+              })}
+            </select>
           </div>
         )}
 
@@ -441,7 +526,7 @@ function JobModal({ job, agents, flows, pools, onClose, onSaved, workspace }) {
 // ---- main page ----------------------------------------------------------------
 
 export default function Plan() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { workspaceFilter, liveUpdates } = useWorkspace();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab') === 'notifications' ? 'notifications' : 'jobs';
@@ -454,6 +539,7 @@ export default function Plan() {
   const [notifications, setNotifications] = useState([]);
   const [agents, setAgents] = useState([]);
   const [flows, setFlows] = useState([]);
+  const [loops, setLoops] = useState([]);
   const [pools, setPools] = useState([]);
   // Loading is derived from the workspace the data was fetched for.
   const [loadedFor, setLoadedFor] = useState(null);
@@ -520,6 +606,7 @@ export default function Plan() {
   useEffect(() => {
     getAgents(workspaceFilter).then(r => setAgents(r.data || [])).catch(() => {});
     listFlows(workspaceFilter).then(r => setFlows(r.data || [])).catch(() => {});
+    getLoops(workspaceFilter).then(r => setLoops(Array.isArray(r.data) ? r.data : (r.data?.loops || []))).catch(() => {});
     getSharedMemories(workspaceFilter).then(r => setPools(r.data || [])).catch(() => {});
   }, [workspaceFilter]);
 
@@ -644,6 +731,7 @@ export default function Plan() {
               {visibleJobs.map(job => {
                 const pending = ['scheduled', 'paused'].includes(job.status);
                 const lastTask = (job.created_task_ids || [])[job.created_task_ids?.length - 1];
+                const lastConversation = (job.created_conversation_ids || [])[job.created_conversation_ids?.length - 1];
                 return (
                   <div
                     key={job.id}
@@ -662,6 +750,11 @@ export default function Plan() {
                             {t('plan.createdTask')}
                           </Link>
                         )}
+                        {lastConversation && (
+                          <Link to={`/chat/${encodeURIComponent(lastConversation)}`} className="text-indigo-500 hover:underline" onClick={e => e.stopPropagation()}>
+                            {t('plan.openConversation')}
+                          </Link>
+                        )}
                       </div>
                     </div>
                     <div className="md:text-center"><KindBadge kind={job.kind} /></div>
@@ -671,17 +764,24 @@ export default function Plan() {
                     </div>
                     <div className="md:text-center text-sm text-gray-600">
                       {job.recurrence !== 'none' ? (
-                        <span className="inline-flex items-center gap-1" title={job.timezone || 'UTC'}>
-                          <Repeat className="w-3 h-3" />
-                          {job.recurrence === 'cron' ? (job.cron || 'cron') : job.recurrence}
+                        <span
+                          className="inline-flex items-center gap-1"
+                          title={[job.recurrence === 'cron' ? job.cron : '', job.timezone || 'UTC'].filter(Boolean).join(' · ')}
+                        >
+                          <Repeat className="w-3 h-3 shrink-0" />
+                          {describeRecurrence(job, t, language) || job.cron || job.recurrence}
                         </span>
                       ) : <span className="text-gray-400">{t('plan.once')}</span>}
                     </div>
                     <div className="md:text-center text-sm text-gray-600 truncate">
                       {job.kind === 'agent_task'
                         ? (job.agent_id || <span className="text-gray-400 italic">{t('plan.orchestrator')}</span>)
+                        : job.kind === 'agent_run'
+                          ? (job.agent_id || '—')
                         : job.kind === 'flow'
-                          ? (job.flow_id || '—')
+                          ? (flows.find(f => f.id === job.flow_id)?.name || job.flow_id || '—')
+                          : job.kind === 'loop'
+                            ? (loops.find(l => (l.loop_id || l.id) === job.loop_id)?.name || job.loop_id || '—')
                           : job.kind === 'memory_consolidate'
                             ? (pools.find(p => p.id === job.consolidate_pool_id)?.name || job.consolidate_pool_id || '—')
                             : '—'}
@@ -754,10 +854,19 @@ export default function Plan() {
                 <div className="flex-1 min-w-0">
                   <div className={`text-sm truncate ${n.read ? 'text-gray-600' : 'font-semibold text-gray-900'}`}>{notificationText(n, t).title}</div>
                   {notificationText(n, t).body && <div className="text-xs text-gray-500 mt-0.5">{notificationText(n, t).body}</div>}
+                  {n.source?.kind === 'tool_approval' && n.source?.approval_id && (
+                    <ApprovalActions
+                      notification={n}
+                      onAnswered={() => act(n.id, () => markNotificationRead(n.id, true).then(() => announceNotificationsChanged('plan')))}
+                    />
+                  )}
                   <div className="text-[11px] text-gray-400 mt-0.5 flex items-center gap-2">
                     <span>{formatLocal(n.created_at)}</span>
                     {n.source?.task_id && (
                       <Link to={`/tasks/${n.source.task_id}`} className="text-indigo-500 hover:underline">{t('plan.viewTask')}</Link>
+                    )}
+                    {n.source?.kind === 'tool_approval' && approvalRunPath(n.source) && (
+                      <Link to={approvalRunPath(n.source)} className="text-indigo-500 hover:underline">{t('toolApproval.openRun')}</Link>
                     )}
                   </div>
                 </div>
@@ -786,8 +895,10 @@ export default function Plan() {
       {modalJob !== undefined && (
         <JobModal
           job={modalJob}
+          jobs={jobs}
           agents={agents}
           flows={flows}
+          loops={loops}
           pools={pools}
           workspace={workspaceFilter}
           onClose={() => setModalJob(undefined)}

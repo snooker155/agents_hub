@@ -1,7 +1,7 @@
 export default {
   title: 'Definition of Done',
   about: 'Über die Definition of Done',
-  noneHint: 'Kein Ergebnisziel gesetzt. Die Aufgabe gilt als gelöst, sobald ihr Lauf endet.',
+  noneHint: 'Kein Ergebnisziel gesetzt. Die Aufgabe gilt als gelöst, sobald ihr Lauf endet, außer „Kriterium des Agenten verwenden“ ist gesetzt und der Agent hat eines.',
   add: 'Ergebnisziel hinzufügen',
   edit: 'Bearbeiten',
   remove: 'Entfernen',
@@ -46,4 +46,10 @@ export default {
   loopGraderPlaceholder: 'provider/model, leer für den Standard',
   loopJudgedByRubric: 'einen Rubrik-Bewerter',
   criteriaHeading: 'Kriterien',
+  useAgent: 'Kriterium des Agenten verwenden',
+  useAgentNamed: 'Kriterium von {{agent}} verwenden',
+  useAgentOwnWins: 'Das eigene Kriterium der Aufgabe hat Vorrang.',
+  useAgentNoAgent: 'Gilt, sobald der Aufgabe ein Agent zugewiesen ist.',
+  useAgentNoDefault: 'Dieser Agent hat kein Standardkriterium.',
+  agentCriterionNote: 'Das ist das Kriterium von {{agent}}. Es wird am Agenten geändert.',
 };

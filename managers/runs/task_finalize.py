@@ -26,6 +26,11 @@ from .store import _upsert_run, _utc_now_iso
 log = logging.getLogger(__name__)
 
 
+def _effective_outcome(task):
+    from tasks.outcome import effective_outcome
+    return effective_outcome(task)
+
+
 def finalize_task(
     task_id: str, status: str, exit_code: int, *,
     error: str | None = None, run_id: str | None = None, executor=None,
@@ -73,7 +78,7 @@ def finalize_task(
             # finalize_task_from_run.
             if (current_task and run_id is None and executor is None
                     and current_task.status not in agent_set_statuses
-                    and getattr(current_task, "outcome", None)):
+                    and _effective_outcome(current_task)):
                 try:
                     from tasks.outcome import on_executor_completed
                     if on_executor_completed(tid):
@@ -522,7 +527,7 @@ def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
                     current_task = None
                     outcome_handled = True
                 if current_task and current_task.status not in agent_set_statuses \
-                        and getattr(current_task, "outcome", None):
+                        and _effective_outcome(current_task):
                     try:
                         from tasks.outcome import on_run_completed
                         outcome_handled = on_run_completed(tid, run or {})

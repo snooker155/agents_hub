@@ -1,8 +1,8 @@
 # Deployments
 
 The Deployments page (`/deployments`, under Workspace) is a working view over
-the scheduled jobs that produce real work: `agent_task`, `flow` and
-`loop` jobs from the [Plan page](scheduling.md), filtered so a reminder
+the scheduled jobs that produce real work: `agent_run`, `agent_task`, `flow`
+and `loop` jobs from the [Plan page](scheduling.md), filtered so a reminder
 does not sit in the same list as a recurring pipeline. It adds the two things a
 production-shaped schedule needs and the Plan page keeps out of its way: the
 resources a job hands to every run it starts, and a firing journal that
@@ -10,8 +10,16 @@ answers "did this actually run, and what happened".
 
 ## What a deployment is
 
-A `ScheduledJob` of kind `agent_task`, `flow` or `loop`, the same records the
-Plan page manages, listed here through `GET /api/plan/jobs?kinds=agent_task,flow,loop`.
+A `ScheduledJob` of kind `agent_run`, `agent_task`, `flow` or `loop`, the same
+records the Plan page manages, listed here through
+`GET /api/plan/jobs?kinds=agent_run,agent_task,flow,loop`.
+
+An **agent run** is the plain one: each firing opens a new conversation with
+the agent and sends it the job's message, as if the person wrote it then. It
+makes no task; the answer stays in that conversation (Chat list, origin
+`schedule`). An **agent task** creates a task on the tracker for the agent,
+or for the orchestrator to route when no agent is named. The form starts on
+an agent run.
 Each row shows its target (the agent, flow or loop it fires), its schedule
 (cron and timezone, or a recurrence interval, plus the next occurrence and a
 tooltip with the following few), status with a paused-reason badge,
@@ -21,9 +29,9 @@ Creating or editing one sets, on top of the usual schedule fields:
 
 - **auto_pause_after**: how many consecutive firing failures pause the job
   automatically; `0` turns auto-pause off. Defaults to `3`.
-- **agent_version** (agent_task jobs only): pin the job to a stored agent
-  version. Requires `agent_id` and is copied onto the task at fire time. See
-  [agents](agents.md).
+- **agent_version** (agent runs and tasks): pin the job to a stored agent
+  version. Requires `agent_id`; copied onto the task at fire time, or the
+  version an agent run's turn is built from. See [agents](agents.md).
 
 For an `agent_task` job these are passed straight into
 `tasks_service.create_task` when the job fires. A `flow` or `loop` job creates
@@ -40,11 +48,17 @@ private data to another agent's runs. Add them on this page.
 
 ## Resources
 
-An `agent_task` deployment can carry what its runs need, the way a session
-of a hosted agent platform carries a repository, files and memory. All of it
-is copied onto every task the job creates and reaches only that task's runs;
-the agent record is never changed, so another task or a chat of the same
-agent sees none of it.
+An `agent_run` or `agent_task` deployment can carry what its runs need, the
+way a session of a hosted agent platform carries a repository, files and
+memory. For a task all of it is copied onto every task the job creates and
+reaches only that task's runs. For an agent run it reaches the one turn each
+firing starts: the project is the conversation's, the files are attached to
+the message by id (and named in it), and the pools and extra secret names
+are granted to the job's agent for that turn only, through the request's
+private `_grants` (`chat/runs.py`), which no client can send. A message the
+person writes later in that conversation, and an agent the turn is handed to,
+run with their own binding and secrets. The agent record is never changed, so
+another task or a chat of the same agent sees none of it.
 
 - **Project** (`project_id`): the task belongs to the project, with its
   folder and repository binding, and the run gets the project's structure
@@ -71,12 +85,15 @@ Files can be uploaded from the form itself: the file lands in the workspace's
 file store (docs/files.md, source `deployment`) and is selected at once.
 
 Every id must exist in the job's workspace (a pool may also be global). A
-flow or loop job cannot carry resources: its task is created by that launcher,
-not by the job. The run side is `runtime/agent_run.py` (`--memory-pool`, `--memory-access`,
+flow or loop job cannot carry resources: it does not run one agent it could
+hand them to. The run side is `runtime/agent_run.py` (`--memory-pool`, `--memory-access`,
 `--extra-secret`, set by `agents/agent_launcher.py` from the task) and the
 task path of `runtime/instance_run.py`; both pass the pools as the
 `memory_pool` build override and the names as `extra_secrets`, which the
-build-time capability check folds in.
+build-time capability check folds in. An agent run's turn gets the same
+two build overrides from `chat/runs.py` (`grant_overrides`) and the names in
+its secret scope (`grant_secrets`); its exchange is journaled into the first
+granted pool only when access is `write`, and into none when it is `read`.
 
 ## The firing journal
 
@@ -96,7 +113,7 @@ recovered, or fail to pause one that never will.
 
 The detail drawer on a deployment shows its journal with an only-failures
 filter (`GET /api/plan/jobs/{id}/fires?only_errors=`); each row links to the
-task it created, when it created one. `GET /api/plan/fires` gives the same
+task it created, or to the conversation an agent run opened. `GET /api/plan/fires` gives the same
 journal across every job in a workspace, for a wider view.
 
 Journal rows are retained for `AGENTS_HUB_PLAN_FIRES_RETENTION_DAYS` (default

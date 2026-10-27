@@ -11,3 +11,4 @@ export const setTaskOutcome = (taskId, body) => api.put(base(taskId), body);
 export const deleteTaskOutcome = (taskId) => api.delete(base(taskId));
 export const getOutcomeEvaluations = (taskId) => api.get(`${base(taskId)}/evaluations`);
 export const gradeTaskOutcome = (taskId) => api.post(`${base(taskId)}/grade`);
+export const setTaskUseAgentOutcome = (taskId, enabled) => api.put(`${base(taskId)}/use-agent`, { enabled: !!enabled });

@@ -1,7 +1,7 @@
 export default {
   title: 'Definition of done',
   about: 'About the definition of done',
-  noneHint: 'No outcome set. The task resolves as soon as its run finishes.',
+  noneHint: 'No outcome set. The task resolves as soon as its run finishes, unless "Use the agent\'s criterion" is ticked and its agent has one.',
   add: 'Add outcome',
   edit: 'Edit',
   remove: 'Remove',
@@ -46,4 +46,10 @@ export default {
   loopGraderPlaceholder: 'provider/model, empty for the default',
   loopJudgedByRubric: 'a rubric grader',
   criteriaHeading: 'Criteria',
+  useAgent: "Use the agent's criterion",
+  useAgentNamed: 'Use the criterion of {{agent}}',
+  useAgentOwnWins: "The task's own criterion takes priority.",
+  useAgentNoAgent: 'Applies once an agent is assigned to the task.',
+  useAgentNoDefault: 'This agent has no default criterion.',
+  agentCriterionNote: 'This is the criterion of {{agent}}. Edit it on the agent.',
 };
