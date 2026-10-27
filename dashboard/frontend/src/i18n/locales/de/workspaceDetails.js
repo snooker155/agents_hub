@@ -163,14 +163,15 @@ export default {
     loadFailed: 'Rollen konnten nicht geladen werden',
     saveFailed: 'Rolle konnte nicht geändert werden',
     names: {
-      coder: 'Programmierer', reviewer: 'Code-Reviewer', planner: 'Planer', researcher: 'Rechercheur',
+      coder: 'Programmierer', reviewer: 'Code-Reviewer', planner: 'Planer', task_manager: 'Aufgabenmanager', researcher: 'Rechercheur',
       analyst: 'Analyst', writer: 'Autor', verifier: 'Prüfer',
       visualizer: 'Visualisierer', web_search: 'Websuche',
     },
     summaries: {
       coder: 'Schreibt und ändert Code und Dateien in den Projekten des Arbeitsbereichs.',
       reviewer: 'Prüft Codeänderungen auf Korrektheit, Stil und Tests.',
-      planner: 'Macht aus Plänen und Struktur eines Projekts einen Aufgabenbaum.',
+      planner: 'Plant Arbeit für später: Erinnerungen, wiederkehrende Agentenarbeit, Flows, Loops, Deployments.',
+      task_manager: 'Führt die Aufgabenliste: macht aus Plänen einen Aufgabenbaum, teilt und ordnet Aufgaben.',
       researcher: 'Beantwortet Fragen, die Arbeitsbereich, Speicher und das offene Web zusammen brauchen.',
       analyst: 'Beantwortet Fragen aus den Daten des Arbeitsbereichs.',
       writer: 'Macht aus Notizen und Daten ein fertiges Dokument.',

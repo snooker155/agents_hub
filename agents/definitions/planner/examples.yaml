@@ -1,22 +1,22 @@
 # Example requests shown in the empty chat with this agent, by UI language.
 en:
-- Create tasks from this project's process view
-- Build a task plan from the architecture
 - Remind me tomorrow at 9 to check the release
 - Every weekday at 9:00, have the analyst summarise yesterday's sales
-- Break this project down into actionable tasks and sequence them
+- Run the trends flow every day at 7:00
+- Consolidate the guests memory pool once a week
+- What is scheduled at the moment?
 - Did last night's deployment run, and what happened?
 ru:
-- Создай задачи по схеме процесса этого проекта
-- Составь план задач по архитектуре
 - Напомни мне завтра в 9 проверить релиз
 - По будням в 9:00 пусть аналитик подводит итоги продаж за вчера
-- Разбей проект на конкретные задачи и выстрой их по порядку
+- Запускай поток трендов каждый день в 7:00
+- Раз в неделю консолидируй пул памяти guests
+- Что у нас сейчас запланировано?
 - Отработало ли ночное развёртывание и что случилось?
 de:
-- Leg Aufgaben aus der Prozessansicht dieses Projekts an
-- Erstelle einen Aufgabenplan aus der Architektur
 - Erinnere mich morgen um 9 daran, das Release zu prüfen
 - Lass den Analysten werktags um 9:00 die Verkäufe von gestern zusammenfassen
-- Zerlege das Projekt in umsetzbare Aufgaben und bring sie in eine Reihenfolge
+- Starte den Trend-Flow jeden Tag um 7:00
+- Konsolidiere den Speicherpool guests einmal pro Woche
+- Was ist gerade geplant?
 - Ist das nächtliche Deployment gelaufen, und was ist passiert?

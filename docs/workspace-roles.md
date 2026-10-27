@@ -14,6 +14,7 @@ delegates code. The code is `agents/roles.py`.
 | Coder | `@coder` | `swe_agent` | main-agent, orchestrator, universal_agent, the creators |
 | Code reviewer | `@reviewer` | `code_reviewer` | the same |
 | Planner | `@planner` | `planner` | the same |
+| Task manager | `@task_manager` | `task_manager` | the same |
 | Visualizer | `@visualizer` | `visualizer` | the same, analyst |
 | Verifier | `@verifier` | `verifier` | writer (handoff) |
 | Researcher | `@researcher` | `researcher` | your own agents |
