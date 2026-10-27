@@ -56,7 +56,7 @@ function GuardRefusal({ refusal, onRetry, canRetry }) {
       const { data } = await updateAgentCapabilityOverride(agentId, true);
       // The retry is a chat turn, built on the hub and never in a container.
       setState((data?.honoured_in_chat ?? data?.honoured_at_build) === false ? 'blocked' : 'allowed');
-    } catch {
+    } catch (err) {
       setState('idle');
       setError(err?.response?.status === 403 ? t('refusal.guard.forbidden') : t('refusal.guard.failed'));
     }

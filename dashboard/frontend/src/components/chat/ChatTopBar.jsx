@@ -74,7 +74,7 @@ export default function ChatTopBar() {
     currentConvId, flows, graphRun, processOpen, projects, selectableAgents, selectedAgent,
     selectedFlow, selectedProject, selectedTeam, selectedWorkspace, setArtifactsOpen,
     setConversations, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
-    setSelectedTeam, setTargetMode, setViewMode, t, targetMode, teams, viewMode, setListOpen,
+    setSelectedTeam, setTargetMode, setViewMode, t, targetMode, teams, viewMode, setListOpen, visibleConversations,
   } = useChatPage();
   const isBuild = viewMode === 'build';
   const toggleArtifacts = () => setArtifactsOpen((v) => !v);
@@ -130,7 +130,7 @@ export default function ChatTopBar() {
       )}
 
       {targetMode === 'agent' ? (
-        <AgentDropdown agents={selectableAgents} value={selectedAgent} onChange={(id) => {
+        <AgentDropdown agents={selectableAgents} value={selectedAgent} conversations={visibleConversations} onChange={(id) => {
           setSelectedAgent(id);
           pickTarget('agent_id', id);
         }} />
