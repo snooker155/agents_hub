@@ -139,7 +139,9 @@ def _fresh_database(db, path: Path) -> None:
 # inherit: dashboard/backend/main.py exports the file into os.environ on
 # import (load_dotenv), and common.config.live_setting reads the file first
 # and the environment second, so without this a guard test would see the
-# operator's "warn" instead of the default "block".
+# operator's "warn" instead of the default "block". The container
+# requirement is pinned to its shipped default too (on in this edition, which
+# has the run sandbox); a test of the other posture switches it itself.
 _PINNED_ENV = {
     "CAPABILITY_GUARD": ("capability_guard", "block"),
     "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", True),
@@ -171,6 +173,21 @@ def _dot_env_keys() -> set:
         return set(read_env())
     except Exception:  # noqa: BLE001 - no readable .env, nothing to strip
         return set()
+
+
+@pytest.fixture(autouse=True)
+def cli_selection_isolated(tmp_path, monkeypatch):
+    """The CLI's selection (``cli.main._state_file``, under XDG_CONFIG_HOME)
+    is the developer's own: a workspace chosen with ``ah workspace use`` must
+    not scope ``ah flow list`` and the like in a test. Every test gets an
+    empty config home and no selection from the environment, and the cached
+    cwd detection is dropped so it is recomputed from the test's own state."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+    for var in ("AGENTS_HUB_WORKSPACE", "AGENTS_HUB_PROJECT", "AGENTS_HUB_AUTO_WORKSPACE"):
+        monkeypatch.delenv(var, raising=False)
+    cli = _sys.modules.get("cli.main")
+    if cli is not None:
+        monkeypatch.setattr(cli, "_detected", None, raising=False)
 
 
 @pytest.fixture(autouse=True)
