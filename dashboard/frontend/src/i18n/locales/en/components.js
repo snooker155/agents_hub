@@ -5,6 +5,7 @@ export default {
     markReadFailed: 'Could not mark as read',
     markAllRead: 'Mark all read',
     empty: 'No notifications',
+    viewConversation: 'open conversation →',
     viewTask: 'view task →',
     viewAllInPlan: 'View all in Plan →',
     justNow: 'just now',
@@ -36,6 +37,16 @@ export default {
         body: 'Approve it on the task page so agent \'{{agent}}\' starts.',
         bodyWithReason: 'Approve it on the task page so agent \'{{agent}}\' starts. Why this agent: {{reason}}',
       },
+      toolApprovalNeeded: {
+        title: 'Approval needed: {{tool}}',
+        body: '"{{agent}}" in the flow "{{flow}}" wants to call {{tool}} and waits for your answer.',
+        bodyWithReason: '"{{agent}}" in the flow "{{flow}}" wants to call {{tool}} and waits for your answer. {{reason}}',
+      },
+      toolApprovalNeededTeam: {
+        title: 'Approval needed: {{tool}}',
+        body: '"{{agent}}" in the team "{{team}}" wants to call {{tool}} and waits for your answer.',
+        bodyWithReason: '"{{agent}}" in the team "{{team}}" wants to call {{tool}} and waits for your answer. {{reason}}',
+      },
       containerCompleted: {
         title: 'Task completed: {{title}}',
         body: 'All subtasks are done ({{count}}).',
@@ -44,6 +55,38 @@ export default {
         title: 'A task needs your input',
         body: '{{question}}',
         bodyNoQuestion: 'The agent is waiting for your answer.',
+      },
+      scheduledTaskStarted: {
+        title: 'Scheduled task started: {{title}}',
+        body: 'Agent \'{{agent}}\' was started on the task.',
+        bodyNoAgent: 'The task was handed to the orchestrator for routing.',
+      },
+      scheduledFlowStarted: {
+        title: 'Scheduled flow started: {{title}}',
+        body: 'Flow \'{{flow}}\' was started on schedule.',
+      },
+      scheduledRunStarted: {
+        title: 'Scheduled run started: {{title}}',
+        body: 'Agent \'{{agent}}\' was started on schedule.',
+      },
+      scheduledLoopStarted: {
+        title: 'Scheduled loop started: {{title}}',
+        body: 'Loop \'{{loop}}\' was started on schedule.',
+      },
+      scheduledJobPaused: {
+        title: 'Scheduled job paused after {{count}} failures',
+        body: '\'{{title}}\' was paused after repeated failures: {{error}}',
+        bodyNoError: '\'{{title}}\' was paused after repeated failures.',
+      },
+      scheduledJobFailed: {
+        title: 'Scheduled job failed: {{title}}',
+        body: '\'{{title}}\' could not start: {{error}}',
+        bodyNoError: '\'{{title}}\' could not start.',
+      },
+      scheduledJobTargetMissing: {
+        title: 'Scheduled job paused: {{title}}',
+        body: '\'{{title}}\' was paused: what it starts no longer exists ({{error}}). Pick another target and resume it.',
+        bodyNoError: '\'{{title}}\' was paused: what it starts no longer exists. Pick another target and resume it.',
       },
       reviewCycleLimit: {
         title: 'A task hit its review cycle limit',
@@ -66,5 +109,27 @@ export default {
   cronHint: {
     next: 'Next: {{times}}',
     checking: 'Checking…',
+  },
+  recurrence: {
+    options: { none: 'Once', hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly', cron: 'Custom (cron)' },
+    everyMinute: 'Every minute',
+    everyMinutes_one: 'Every minute',
+    everyMinutes_other: 'Every {{count}} minutes',
+    everyHour: 'Every hour',
+    everyHourAt: 'Every hour at :{{minute}}',
+    everyHours_one: 'Every hour',
+    everyHours_other: 'Every {{count}} hours',
+    everyHoursAt_one: 'Every hour at :{{minute}}',
+    everyHoursAt_other: 'Every {{count}} hours at :{{minute}}',
+    hourlyBetween: 'Every hour from {{from}} to {{to}}',
+    everyDay: 'Every day',
+    everyWeek: 'Every week',
+    weekdays: 'Weekdays',
+    weekends: 'Weekends',
+    onDays: 'every {{days}}',
+    monthly: 'Monthly on day {{days}}',
+    at: '{{day}} at {{time}}',
+    and: 'and',
+    days: { 0: 'Sunday', 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday' },
   },
 };

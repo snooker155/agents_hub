@@ -13,7 +13,8 @@ import { useI18n } from '../i18n';
 import { useToast, errorDetail } from './toast';
 import PageLoader from './PageLoader';
 import { NOTIFICATIONS_CHANGED, announceNotificationsChanged } from './notificationsSync';
-import { notificationText } from './notificationText';
+import { approvalRunPath, notificationText } from './notificationText';
+import { ApprovalActions } from './notificationApproval';
 
 function timeAgo(iso, t) {
   if (!iso) return '';
@@ -168,6 +169,9 @@ export default function NotificationBell() {
                     <div className="min-w-0 flex-1">
                       <div className={`text-sm truncate ${n.read ? 'text-gray-600' : 'font-semibold text-gray-900'}`}>{notificationText(n, t).title}</div>
                       {notificationText(n, t).body && <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{notificationText(n, t).body}</div>}
+                      {n.source?.kind === 'tool_approval' && n.source?.approval_id && (
+                        <ApprovalActions notification={n} onAnswered={handleMarkRead} />
+                      )}
                       <div className="text-[11px] text-gray-400 mt-0.5 flex items-center gap-2">
                         <span>{timeAgo(n.created_at, t)}</span>
                         {n.source?.task_id && (
@@ -177,6 +181,24 @@ export default function NotificationBell() {
                             className="text-indigo-500 hover:underline"
                           >
                             {t('components.notifications.viewTask')}
+                          </Link>
+                        )}
+                        {n.source?.kind === 'tool_approval' && approvalRunPath(n.source) && (
+                          <Link
+                            to={approvalRunPath(n.source)}
+                            onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+                            className="text-indigo-500 hover:underline"
+                          >
+                            {t('toolApproval.openRun')}
+                          </Link>
+                        )}
+                        {n.source?.conversation_id && (
+                          <Link
+                            to={`/chat/${encodeURIComponent(n.source.conversation_id)}`}
+                            onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+                            className="text-indigo-500 hover:underline"
+                          >
+                            {t('components.notifications.viewConversation')}
                           </Link>
                         )}
                       </div>

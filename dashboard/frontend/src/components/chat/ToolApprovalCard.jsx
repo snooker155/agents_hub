@@ -38,7 +38,9 @@ function errorKey(err) {
   return 'toolApproval.errors.failed';
 }
 
-export function ToolApprovalCard({ approval, live = true }) {
+// `onAnswered`: told once this card's own answer landed (a page that lists
+// the waiting calls drops the card's row with it).
+export function ToolApprovalCard({ approval, live = true, onAnswered = null }) {
   const { t } = useI18n();
   const [note, setNote] = useState('');
   const [sending, setSending] = useState('');
@@ -55,7 +57,9 @@ export function ToolApprovalCard({ approval, live = true }) {
     setError('');
     try {
       const { data } = await decideToolApproval(approval.approval_id, decision, note.trim());
-      setAnswered(data?.approval || { status: decision === 'approve' ? 'approved' : 'denied' });
+      const settled = data?.approval || { status: decision === 'approve' ? 'approved' : 'denied' };
+      setAnswered(settled);
+      onAnswered?.(settled);
     } catch (err) {
       setError(t(errorKey(err)));
     } finally {

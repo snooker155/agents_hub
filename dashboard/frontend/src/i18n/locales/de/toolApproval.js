@@ -22,6 +22,8 @@ export default {
   deny: 'Ablehnen',
   waitsUntil: 'Wartet bis {{time}}, danach wird der Aufruf abgelehnt.',
   waiting: 'Wartet auf Ihre Freigabe für {{tool}}',
+  inRun: '{{agent}} wartet auf Freigabe, der Lauf pausiert.',
+  openRun: 'Lauf öffnen',
   errors: {
     gone: 'Dieser Aufruf wartet nicht mehr auf eine Antwort.',
     failed: 'Die Antwort konnte nicht gesendet werden. Bitte erneut versuchen.',

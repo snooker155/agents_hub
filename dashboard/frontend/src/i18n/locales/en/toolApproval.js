@@ -22,6 +22,8 @@ export default {
   deny: 'Deny',
   waitsUntil: 'Waits until {{time}}, then the call is refused.',
   waiting: 'Waiting for your approval of {{tool}}',
+  inRun: '{{agent}} waits for approval; the run is paused.',
+  openRun: 'Open the run',
   errors: {
     gone: 'This call is no longer waiting for an answer.',
     failed: 'Could not send the answer. Try again.',

@@ -3,6 +3,7 @@ import { ExternalLink, Loader, Play, RotateCcw, StopCircle, UsersRound } from 'l
 import { Link } from 'react-router-dom';
 import { useI18n } from '../../i18n';
 import AgentTranscript from '../chat/AgentTranscript';
+import RunApprovals from '../runs/RunApprovals';
 import ViewModeToggle from '../chat/ViewModeToggle';
 import ComposerBox from '../chat/ComposerBox';
 import { COMPOSER_SEND_CLS, COMPOSER_STOP_CLS, COMPOSER_TEXTAREA_CLS } from '../chat/composerStyles';
@@ -154,6 +155,10 @@ export default function TeamRunChat({
                 agentName={team.name}
                 waiting={live && !working}
               />
+              {/* A member's tool call that waits for a person: Approve / Deny here. */}
+              {live && run.team_run_id ? (
+                <RunApprovals teamRunId={run.team_run_id} className="mx-auto mb-4 max-w-3xl" />
+              ) : null}
               {ended && run.error && (
                 <div className="mx-2 mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   {run.error}
