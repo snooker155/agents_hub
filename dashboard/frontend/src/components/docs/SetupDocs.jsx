@@ -56,6 +56,14 @@ cd dashboard/frontend && npm install && cd ../..`}</CodeBlock>
 cd dashboard/frontend && npm run dev -- --host 0.0.0.0 --port 5173`}</CodeBlock>
       <P><Rich>{t('docs.installDoc.byHandNoInstall')}</Rich></P>
 
+      <H3>{t('docs.installDoc.existingTitle')}</H3>
+      <CodeBlock label={t('docs.terminal')}>{`conda activate myenv                   # or whatever activates yours
+pip install -e ".[backend,agents]"     # service + the ah command, into that environment
+ah shell-init --install                # ah in every new terminal, no activation needed`}</CodeBlock>
+      <P><Rich>{t('docs.installDoc.existingBody')}</Rich></P>
+      <CodeBlock label={t('docs.terminal')}>{`pip install -e . --no-deps          # the agents_hub shim and the ah script, nothing else`}</CodeBlock>
+      <P><Rich>{t('docs.installDoc.existingNoDeps')}</Rich></P>
+
       <H3>{t('docs.installDoc.configTitle')}</H3>
       <CodeBlock label=".env">{`DEFAULT_PROVIDER=openai
 OPENAI_API_KEY=sk-...
