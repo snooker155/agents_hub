@@ -70,6 +70,7 @@ export default {
   remove_workspace_agent: { label: 'Remove Workspace Agent', description: 'Take an agent out of a workspace.' },
   schedule_notification: { label: 'Schedule Notification', description: 'Schedule a reminder for the user.' },
   schedule_task: { label: 'Schedule Task', description: 'Schedule agent work for later.' },
+  schedule_agent_run: { label: 'Schedule Agent Run', description: 'Run an agent later in a new conversation, with no task.' },
   notify_user: { label: 'Notify User', description: 'Send the user a notification right now.' },
   list_scheduled: { label: 'List Scheduled Jobs', description: 'List the scheduled notifications, agent tasks, flows and consolidations.' },
   cancel_scheduled: { label: 'Cancel Scheduled Job', description: 'Cancel a scheduled job.' },

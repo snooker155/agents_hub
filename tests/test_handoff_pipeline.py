@@ -114,6 +114,42 @@ def _request(**overrides):
 
 # ── the streaming turn ───────────────────────────────────────────────────────
 
+def test_a_turn_runs_in_the_secret_scope_with_its_grants_for_the_granted_agent_only(agents, monkeypatch):
+    """The streaming turn binds the agent's secret scope (it runs in this
+    process, so no environment carries them), with a scheduled run's granted
+    names on top; the granted pools reach the build. An agent the turn is
+    handed to gets its own scope and binding, not the grants."""
+    from common import secrets
+    built, scopes = {}, {}
+
+    def _create(agent_id, workspace=None, **kw):
+        built[agent_id] = kw
+        return _Agent(agent_id, scripts[agent_id], [])
+
+    def _scoped(agent_id, text, handoff):
+        def _play(prompt, history):
+            scopes[agent_id] = secrets._ACTIVE.get()
+            return text, handoff
+        return _play
+
+    scripts = {
+        "front": _scoped("front", "Passing you on.", _hand("billing")),
+        "billing": _scoped("billing", "Done.", None),
+    }
+    monkeypatch.setattr("chat.pipelines.create_agent", _create)
+    request = _request()
+    request._grants = {"agent_id": "front", "memory_pool_ids": ["pool-1"], "memory_access": "read",
+                       "secrets": ["JIRA_TOKEN"]}
+    events = asyncio.run(_collect(request))
+
+    assert events[-1]["ok"] is True
+    assert built["front"]["memory_pool"] == ["pool-1"] and built["front"]["extra_secrets"] == ["JIRA_TOKEN"]
+    assert "memory_pool" not in built["billing"] and "extra_secrets" not in built["billing"]
+    assert scopes["front"][1] == "front" and scopes["front"][3] == ("JIRA_TOKEN",)
+    assert scopes["billing"][1] == "billing" and scopes["billing"][3] == ()
+
+
+
 def test_a_handoff_is_two_runs_and_one_done(agents, monkeypatch):
     seen = _install(monkeypatch, {
         "front": lambda p, h: ("Let me pass you to Billing.", _hand("billing", note="invoice 42")),

@@ -4,7 +4,9 @@ import {
   ChevronDown, ChevronRight, Plus,
 } from 'lucide-react';
 import { getModelsCatalog } from '../../api';
-import { setTaskOutcome, deleteTaskOutcome, gradeTaskOutcome } from '../../api/outcomes';
+import {
+  getTaskOutcome, setTaskOutcome, deleteTaskOutcome, gradeTaskOutcome, setTaskUseAgentOutcome,
+} from '../../api/outcomes';
 import { useI18n } from '../../i18n';
 import { InfoHint } from '../PageLayout';
 
@@ -17,7 +19,9 @@ import { InfoHint } from '../PageLayout';
  * task is blocked for a person. The card sets and edits the rubric, its
  * attempt limit, grader model and pass threshold, lists every grading newest
  * first with its per-criterion feedback, and grades the latest run on request.
- * Without an outcome it stays a one-line affordance.
+ * Without an outcome it stays a one-line affordance. A checkbox, off by
+ * default, lets the task use its assigned agent's own default criterion when
+ * it has no rubric of its own; the agent never adds it by itself.
  */
 
 const DEFAULT_MAX_ITERATIONS = 3;
@@ -36,6 +40,28 @@ const formFrom = (outcome) => ({
 });
 
 const isAttempt = (ev) => (ev?.trigger || 'run') === 'run';
+
+function UseAgentToggle({ checked, busy, onToggle, agentId, hasAgent, agentRubric, ownRubric, t }) {
+  let note = '';
+  if (checked && ownRubric) note = t('outcomes.useAgentOwnWins');
+  else if (!hasAgent) note = t('outcomes.useAgentNoAgent');
+  else if (!agentRubric) note = t('outcomes.useAgentNoDefault', { agent: agentId });
+  return (
+    <div className="flex items-center gap-2 flex-wrap" data-testid="use-agent-outcome">
+      <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={busy}
+          onChange={(e) => onToggle(e.target.checked)}
+          className="rounded border-gray-300"
+        />
+        {agentId ? t('outcomes.useAgentNamed', { agent: agentId }) : t('outcomes.useAgent')}
+      </label>
+      {note && <span className="text-xs text-gray-500">{note}</span>}
+    </div>
+  );
+}
 
 function StatusBadge({ evaluation, t }) {
   if (!evaluation) return null;
@@ -136,6 +162,27 @@ export default function TaskOutcomeCard({ task, onChanged }) {
   const [models, setModels] = useState([]);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  // What the server says about the assigned agent's default criterion.
+  const [agentInfo, setAgentInfo] = useState(null);
+  const [useAgent, setUseAgent] = useState(!!task?.use_agent_outcome);
+  const agentKey = task?.executor?.kind === 'agent' && task.executor.id
+    ? task.executor.id
+    : (task?.assigned_agent_type || task?.container_agent || '');
+  const taskUseAgent = !!task?.use_agent_outcome;
+  const [syncedUse, setSyncedUse] = useState(taskUseAgent);
+  if (syncedUse !== taskUseAgent) {
+    setSyncedUse(taskUseAgent);
+    setUseAgent(taskUseAgent);
+  }
+
+  useEffect(() => {
+    if (!taskId) return undefined;
+    let cancelled = false;
+    getTaskOutcome(taskId)
+      .then(({ data }) => { if (!cancelled) setAgentInfo(data || null); })
+      .catch(() => { /* the checkbox still works without the agent's rubric */ });
+    return () => { cancelled = true; };
+  }, [taskId, agentKey, taskUseAgent]);
 
   // The page refetches the task after every change and on live updates; follow
   // it. The form keeps its own copy, so a refresh never wipes what is being typed.
@@ -164,6 +211,11 @@ export default function TaskOutcomeCard({ task, onChanged }) {
   }, [editing, models.length]);
 
   const newestFirst = useMemo(() => [...evaluations].reverse(), [evaluations]);
+  const agentRubric = agentInfo?.agent_outcome || null;
+  const agentId = agentInfo?.agent_id || agentKey || '';
+  // The own rubric always wins; the agent's applies only when ticked.
+  const effective = outcome || (useAgent ? agentRubric : null);
+  const fromAgent = !outcome && !!effective;
   const attempts = evaluations.filter(isAttempt).length;
   const latest = evaluations.length ? evaluations[evaluations.length - 1] : null;
 
@@ -172,6 +224,35 @@ export default function TaskOutcomeCard({ task, onChanged }) {
     setEvaluations(data?.evaluations || []);
     if (onChanged) onChanged();
   };
+
+  const toggleUseAgent = async (enabled) => {
+    setBusy('useAgent'); setError('');
+    setUseAgent(enabled);
+    try {
+      const { data } = await setTaskUseAgentOutcome(taskId, enabled);
+      setAgentInfo(data || null);
+      setUseAgent(!!data?.use_agent_outcome);
+      if (onChanged) onChanged();
+    } catch (e) {
+      setUseAgent(!enabled);
+      setError(e?.response?.data?.detail || t('outcomes.saveFailed'));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const toggle = (
+    <UseAgentToggle
+      checked={useAgent}
+      busy={busy === 'useAgent'}
+      onToggle={toggleUseAgent}
+      agentId={agentId}
+      hasAgent={!!agentKey}
+      agentRubric={agentRubric}
+      ownRubric={!!outcome}
+      t={t}
+    />
+  );
 
   const startEdit = () => {
     setForm(formFrom(outcome));
@@ -229,7 +310,7 @@ export default function TaskOutcomeCard({ task, onChanged }) {
 
   if (!task) return null;
 
-  if (!outcome && !editing) {
+  if (!effective && !editing) {
     return (
       <div className="bg-white shadow-sm border border-gray-200 rounded-xl px-4 py-3 mb-6 flex items-center gap-3 flex-wrap">
         <Target className="w-4 h-4 text-gray-400 shrink-0" />
@@ -244,6 +325,7 @@ export default function TaskOutcomeCard({ task, onChanged }) {
         >
           <Plus className="w-3.5 h-3.5" /> {t('outcomes.add')}
         </button>
+        <div className="w-full">{toggle}</div>
         {error && <p className="w-full text-sm text-red-600">{error}</p>}
       </div>
     );
@@ -256,19 +338,19 @@ export default function TaskOutcomeCard({ task, onChanged }) {
       <div className="flex items-center gap-3 flex-wrap">
         <Target className="w-4 h-4 text-indigo-600 shrink-0" />
         <h3 className="text-sm font-bold text-gray-900">{t('outcomes.title')}</h3>
-        {outcome && (
+        {effective && (
           <span className="text-xs text-gray-500">
             {[
               latest?.criteria?.length > 0 && t('outcomes.criteria', { count: latest.criteria.length }),
-              t('outcomes.attempts', { used: attempts, max: outcome.max_iterations }),
-              outcome.threshold !== null && outcome.threshold !== undefined
-                ? t('outcomes.thresholdLabel', { value: outcome.threshold })
+              t('outcomes.attempts', { used: attempts, max: effective.max_iterations }),
+              effective.threshold !== null && effective.threshold !== undefined
+                ? t('outcomes.thresholdLabel', { value: effective.threshold })
                 : t('outcomes.thresholdAll'),
             ].filter(Boolean).join(' · ')}
           </span>
         )}
         <StatusBadge evaluation={latest} t={t} />
-        {outcome && !editing && (
+        {effective && !editing && (
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
@@ -285,7 +367,8 @@ export default function TaskOutcomeCard({ task, onChanged }) {
               onClick={startEdit}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
             >
-              <Pencil className="w-3.5 h-3.5" /> {t('outcomes.edit')}
+              {fromAgent ? <Plus className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+              {fromAgent ? t('outcomes.add') : t('outcomes.edit')}
             </button>
           </div>
         )}
@@ -387,9 +470,14 @@ export default function TaskOutcomeCard({ task, onChanged }) {
         </div>
       ) : (
         <div className="mt-3">
-          {outcome?.rubric && (
+          {fromAgent && (
+            <p className="text-xs text-gray-500 mb-1" data-testid="agent-outcome-note">
+              {t('outcomes.agentCriterionNote', { agent: agentId })}
+            </p>
+          )}
+          {effective?.rubric && (
             <pre className="text-xs text-gray-700 whitespace-pre-wrap bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-40 overflow-auto">
-              {outcome.rubric}
+              {effective.rubric}
             </pre>
           )}
           {newestFirst.length === 0 ? (
@@ -413,6 +501,7 @@ export default function TaskOutcomeCard({ task, onChanged }) {
           )}
         </div>
       )}
+      <div className="mt-3 pt-3 border-t border-gray-100">{toggle}</div>
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
     </div>
   );

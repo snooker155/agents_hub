@@ -445,6 +445,20 @@ def get_run_by_id(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
     return _row_to_record(row) if row is not None else None
 
 
+def latest_run_for_task(task_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The newest run recorded against ``task_id``, or None. A chat turn
+    records its conversation id there (chat.runs.create_chat_run), so this
+    also finds the latest turn of a conversation."""
+    if not task_id:
+        return None
+    conn = db.get_conn()
+    rows = conn.execute("SELECT * FROM runs WHERE task_id = ?", (str(task_id),)).fetchall()
+    runs = [_row_to_record(r) for r in rows]
+    if not runs:
+        return None
+    return max(runs, key=lambda r: r.get("started_at") or r.get("created_at") or "")
+
+
 def get_in_progress_runs_for_instance(instance_id: str) -> List[Dict[str, Any]]:
     """Runs a resident instance's carrier has open right now."""
     conn = db.get_conn()

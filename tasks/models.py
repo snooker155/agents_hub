@@ -411,6 +411,10 @@ class Task(BaseModel):
     # {"rubric": markdown, "max_iterations": int, "grader": {"provider",
     # "model"} | None, "threshold": float | None}. None means no outcome check.
     outcome: Optional[Dict[str, Any]] = Field(default=None, description="Outcome rubric and grading settings, None = no outcome check")
+    # Off by default: the assigned agent's own default criterion (``AgentSpec.
+    # default_outcome``) applies to this task only when this is on and the task
+    # has no rubric of its own (tasks/outcome.py ``effective_outcome``).
+    use_agent_outcome: bool = Field(default=False, description="Apply the assigned agent's default outcome when the task has none of its own")
     # One entry per grading: {"iteration", "run_id", "passed", "score",
     # "criteria": [{"name", "passed", "score", "feedback"}], "feedback",
     # "grader": {"provider", "model"}, "cost_usd", "graded_at"}.

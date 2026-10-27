@@ -28,6 +28,10 @@ class JobKind(str, Enum):
     # never modified; firing only starts a background job and returns its id,
     # there is no Task and no run record for it.
     memory_consolidate = "memory_consolidate"
+    # Starts one run of an agent, with the job's message as its request, in a
+    # conversation of its own. A run, not a task: nothing lands on the
+    # tracker. Each firing opens a new conversation (created_conversation_ids).
+    agent_run = "agent_run"
 
 
 class JobStatus(str, Enum):
@@ -47,9 +51,10 @@ class Recurrence(str, Enum):
 
 
 class ScheduledJob(BaseModel):
-    """A future action: either a user notification or an agent task to start.
+    """A future action: a notification, an agent task, an agent run, a flow,
+    a loop or a memory consolidation to start.
 
-    Jobs are NOT tasks — a Task record is only materialized when an
+    Jobs are NOT tasks: a Task record is only materialized when an
     agent_task job fires, so node pollers never see future work early.
     """
 
@@ -91,8 +96,13 @@ class ScheduledJob(BaseModel):
     workspace: Optional[str] = None
     created_by: str = "user"  # "user" | "agent"
 
-    # agent_task only: preassigned agent. None → orchestrator routes the task.
+    # agent_task: preassigned agent, None → orchestrator routes the task.
+    # agent_run: the agent that runs (required).
     agent_id: Optional[str] = None
+    # agent_task only: the tasks it creates grade their work against the
+    # agent's default criterion (AgentSpec.default_outcome). Off by default:
+    # a task gets a criterion only when someone asks for one.
+    use_agent_outcome: bool = False
     # flow only: the flow to trigger, an optional JSON seed merged into its
     # initial state, and a concurrency cap (0 = unlimited) so a recurring flow
     # job can't stack up runaway instances.
@@ -113,17 +123,20 @@ class ScheduledJob(BaseModel):
     # task's own default" for all three.
     environment_id: Optional[str] = None
     budget_usd: Optional[float] = None
-    # Only meaningful for an agent_task job with a preassigned agent_id — a
-    # flow/loop job's task has no single agent to pin at fire time. Validated
-    # against agent_id at create/update time (plans.service).
+    # agent_task: the agent version pin (agents/versions.py) copied onto
+    # every task this job creates; agent_run: the version each turn is
+    # built from. Only meaningful with an agent_id: a flow/loop job's
+    # task has no single agent to pin at fire time. Validated against agent_id at create/update time
+    # (plans.service).
     agent_version: Optional[int] = None
 
-    # agent_task only: the resources of a deployment, copied onto every task
-    # it creates (docs/deployments.md, "Resources"). The project the task
-    # belongs to, the workspace files it gets, secret names handed to its
-    # runs on top of the agent's own allowlist, and memory pools bound for
-    # its runs only: the agent record keeps its own binding, so no chat or
-    # other task of the agent sees these pools.
+    # agent_task and agent_run: the resources of a deployment
+    # (docs/deployments.md, "Resources"), copied onto every task an
+    # agent_task job creates, handed to the turn an agent_run firing starts.
+    # The project the work belongs to, the workspace files it gets, secret
+    # names handed to its runs on top of the agent's own allowlist, and
+    # memory pools bound for those runs only: the agent record keeps its own
+    # binding, so no other chat or task of the agent sees these pools.
     project_id: Optional[str] = None
     file_ids: List[str] = Field(default_factory=list)
     secrets: List[str] = Field(default_factory=list)
@@ -154,6 +167,8 @@ class ScheduledJob(BaseModel):
     # pending event into its prompt and clears the list. Capped at
     # proactive.service.MAX_PENDING_EVENTS, oldest dropped first.
     pending_events: List[Dict[str, Any]] = Field(default_factory=list)
+    # agent_run: the conversations its firings opened (newest last).
+    created_conversation_ids: List[str] = Field(default_factory=list)
 
     # -------------------- auto pause on repeated failure --------------------
     # A recurring job that keeps failing pauses itself rather than firing
@@ -218,6 +233,9 @@ class FireRecord(BaseModel):
     task_id: Optional[str] = None
     notification_id: Optional[str] = None
     loop_run_id: Optional[str] = None
+    flow_run_id: Optional[str] = None
+    # agent_run: the conversation the firing opened; its run is found there.
+    conversation_id: Optional[str] = None
     duration_ms: Optional[int] = None
 
     # -------------------- heartbeat ticks (proactive/service.py) --------------------

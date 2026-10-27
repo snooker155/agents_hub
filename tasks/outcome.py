@@ -2,7 +2,9 @@
 Task outcomes: a rubric, an independent grader, and another attempt when the
 work falls short.
 
-A task may say what "done" means (``Task.outcome``): a markdown rubric, how
+A task may say what "done" means (``Task.outcome``, or the assigned agent's default one when the task has
+``use_agent_outcome`` on and no rubric of its own, see :func:`effective_outcome`;
+the agent never adds its criterion by itself): a markdown rubric, how
 many attempts the agent gets, which model grades, and an optional pass
 threshold. After every completed agent run on the task, the finalizer hands
 the run here (:func:`on_run_completed`). A fresh model call grades the result
@@ -219,6 +221,41 @@ def parse_grader_ref(value: Any, field: str = "grader") -> Optional[Dict[str, st
     raise OutcomeError(f"{field} must be 'provider/model' or an object with provider and model")
 
 
+def agent_outcome(task: Any) -> Optional[Dict[str, Any]]:
+    """The default outcome of the agent that works on ``task``, or None.
+
+    The agent is the task's executor when that is an agent, else its assigned
+    agent type, else its container agent. Best effort: any error is None.
+    """
+    try:
+        executor = getattr(task, "executor", None)
+        agent_id = ""
+        if executor is not None and getattr(executor, "kind", None) == "agent":
+            agent_id = str(getattr(executor, "id", "") or "")
+        agent_id = (agent_id or str(getattr(task, "assigned_agent_type", "") or "")
+                    or str(getattr(task, "container_agent", "") or ""))
+        if not agent_id:
+            return None
+        from agents.registry import get_agent
+        spec = get_agent(agent_id)
+        default = getattr(spec, "default_outcome", None) if spec else None
+        return dict(default) if default else None
+    except Exception:  # noqa: BLE001 - a lookup that fails means no agent criterion
+        log.debug("could not read the agent outcome of task %s", getattr(task, "id", None), exc_info=True)
+        return None
+
+
+def effective_outcome(task: Any) -> Optional[Dict[str, Any]]:
+    """The outcome that grades ``task``: its own rubric, else the agent's
+    default one when ``use_agent_outcome`` is on, else None."""
+    own = getattr(task, "outcome", None)
+    if isinstance(own, dict) and str(own.get("rubric") or "").strip():
+        return own
+    if getattr(task, "use_agent_outcome", False):
+        return agent_outcome(task)
+    return None
+
+
 def normalize_outcome(data: Dict[str, Any]) -> Dict[str, Any]:
     """Validate an outcome definition and return it in its stored shape.
 
@@ -396,7 +433,7 @@ def grade_outcome(task: Any, output: str, *, run_id: Optional[str] = None,
     """
     from evals.graders import _load_run_payload, grade_rubric
 
-    outcome = dict(getattr(task, "outcome", None) or {})
+    outcome = dict(effective_outcome(task) or {})
     rubric = str(outcome.get("rubric") or "").strip()
     if not rubric:
         raise OutcomeError("the task has no outcome rubric")
@@ -686,7 +723,7 @@ def on_run_completed(task_id: Any, run: Dict[str, Any]) -> bool:
 
     tid = task_id if isinstance(task_id, UUID) else UUID(str(task_id))
     task = _ts.get_task(tid)
-    outcome = getattr(task, "outcome", None) if task else None
+    outcome = effective_outcome(task) if task else None
     if not outcome or not str(outcome.get("rubric") or "").strip():
         return False
     agent_id = str((run or {}).get("agent_id") or "")
@@ -799,7 +836,7 @@ def on_executor_completed(task_id: Any) -> bool:
 
     tid = task_id if isinstance(task_id, UUID) else UUID(str(task_id))
     task = _ts.get_task(tid)
-    outcome = getattr(task, "outcome", None) if task else None
+    outcome = effective_outcome(task) if task else None
     if not outcome or not str(outcome.get("rubric") or "").strip():
         return False
     executor = getattr(task, "executor", None)
@@ -848,7 +885,7 @@ def on_container_completed(task_id: Any) -> bool:
 
     tid = task_id if isinstance(task_id, UUID) else UUID(str(task_id))
     task = _ts.get_task(tid)
-    outcome = getattr(task, "outcome", None) if task else None
+    outcome = effective_outcome(task) if task else None
     agent_id = str(getattr(task, "container_agent", "") or "") if task else ""
     if not outcome or not str(outcome.get("rubric") or "").strip() or not agent_id:
         return False
@@ -913,7 +950,7 @@ def grade_now(task_id: Any) -> Dict[str, Any]:
     task = _ts.get_task(tid)
     if not task:
         raise OutcomeError("task not found")
-    if not getattr(task, "outcome", None):
+    if not effective_outcome(task):
         raise OutcomeError("the task has no outcome to grade against")
     run_id, output = _latest_gradable_run(tid)
     if not run_id and not output.strip() and not _subtasks_section(task):
@@ -940,7 +977,7 @@ def instruction_sections(task: Any) -> str:
     not pass, the grader's per-criterion feedback on that attempt: an agent
     that is not told why it is running again produces the same thing again.
     """
-    outcome = getattr(task, "outcome", None) or {}
+    outcome = effective_outcome(task) or {}
     rubric = str(outcome.get("rubric") or "").strip()
     if not rubric:
         return ""

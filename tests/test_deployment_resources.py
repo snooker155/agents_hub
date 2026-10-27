@@ -38,7 +38,7 @@ def resource_stores(monkeypatch):
     monkeypatch.setattr("projects.storage.ProjectStore.get",
                         lambda self, pid: SimpleNamespace(id=pid, workspace="dev") if pid == "proj-1" else None)
     monkeypatch.setattr("files.service.get_files",
-                        lambda ids: [{"id": i, "workspace": "dev"} for i in ids if i == "file_1"])
+                        lambda ids: [{"file_id": i, "name": f"{i}.txt", "workspace": "dev"} for i in ids if i == "file_1"])
     monkeypatch.setattr("memory.store.MemoryStore.load",
                         lambda self: [SimpleNamespace(id="pool-1", workspace="dev"), SimpleNamespace(id="pool-g", workspace=None)])
 

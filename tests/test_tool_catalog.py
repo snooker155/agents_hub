@@ -88,7 +88,7 @@ def _tool_objects_by_id() -> dict:
     from tools.docs_tool import DOCS_TOOLS
     from tools.eval_ops import EVAL_TOOLS
     from tools.schedule_management import (
-        schedule_notification, schedule_task, schedule_flow, schedule_loop,
+        schedule_notification, schedule_task, schedule_agent_run, schedule_flow, schedule_loop,
         schedule_memory_consolidation,
         notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
         pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,
@@ -131,7 +131,7 @@ def _tool_objects_by_id() -> dict:
         *TEAM_MANAGEMENT_TOOLS, *LOOP_MANAGEMENT_TOOLS,
         *PROJECT_MANAGEMENT_TOOLS,
         *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
-        schedule_notification, schedule_task, schedule_flow, schedule_loop,
+        schedule_notification, schedule_task, schedule_agent_run, schedule_flow, schedule_loop,
         schedule_memory_consolidation,
         notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
         pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,

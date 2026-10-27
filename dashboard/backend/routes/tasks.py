@@ -171,6 +171,7 @@ async def create_task(task: TaskCreate):
             # agent is assigned, on the /assign and PATCH routes.
             agent_version=task.agent_version,
             outcome=outcome,
+            use_agent_outcome=bool(task.use_agent_outcome),
             file_ids=file_ids,
         )
     except ValueError as e:
@@ -270,6 +271,8 @@ async def update_task(task_id: UUID, update: TaskUpdate):
             raise HTTPException(status_code=400, detail=str(e))
     if "outcome" in fields:
         fields["outcome"] = _normalized_outcome(fields["outcome"])
+    if "use_agent_outcome" in fields:
+        fields["use_agent_outcome"] = bool(fields["use_agent_outcome"])
     if "file_ids" in fields:
         fields["file_ids"] = _validated_file_ids(fields["file_ids"], t.workspace)
 

@@ -266,8 +266,181 @@ def test_schedule_loop_creates_a_loop_deployment_and_refuses_an_unknown_loop():
     from tools.schedule_management import schedule_loop
     loop = _loop()
     out = _call(schedule_loop, title="polish", loop_id=loop.loop_id, delay_minutes=5,
-                recurrence="daily", auto_pause_after=1)
+                recurrence="daily", auto_pause_after=1, user_approved=True)
     assert out["ok"] is True
     assert (out["job"]["kind"], out["job"]["loop_id"], out["job"]["auto_pause_after"]) == ("loop", loop.loop_id, 1)
-    bad = _call(schedule_loop, title="polish", loop_id="no-such-loop", delay_minutes=5)
-    assert bad["ok"] is False and "does not exist" in bad["error"]
+    bad = _call(schedule_loop, title="polish", loop_id="no-such-loop", delay_minutes=5, user_approved=True)
+    assert bad["ok"] is False and bad["code"] == "not_found" and "list_loops_tool" in bad["error"]
+
+
+def test_schedule_loop_asks_first_and_names_the_real_loop():
+    """The planner scheduled an existing loop under the name of one that did
+    not exist, and asked nothing (found live). Without user_approved it now
+    creates nothing and hands back the loop's own name to show the person."""
+    from tools.schedule_management import schedule_loop
+    loop = _loop()
+    out = _call(schedule_loop, title="Доработать анонс запуска", loop_id=loop.loop_id,
+                cron="0 10 * * 1", timezone="Europe/Berlin")
+    assert out["ok"] is False and out["code"] == "approval_required"
+    assert out["loop_name"] == "nightly polish"
+    assert out["requested_title"] == "Доработать анонс запуска"
+    assert out["recurrence"] == "cron" and out["first_run_at"]
+    assert ps.list_jobs() == []
+
+
+# ── cron needs no start time ─────────────────────────────────────────────────
+
+def test_a_cron_task_needs_no_run_at_and_starts_on_the_next_cron_time():
+    from datetime import datetime
+    from tools.schedule_management import schedule_task
+    out = _call(schedule_task, title="weekday report", recurrence="cron",
+                cron="0 9 * * 1-5", timezone="Europe/Berlin")
+    job = out["job"]
+    assert job["recurrence"] == "cron"
+    first = datetime.fromisoformat(job["run_at"])
+    assert first == datetime.fromisoformat(ps.upcoming_runs("0 9 * * 1-5", "Europe/Berlin", count=1)[0])
+
+
+def test_a_bare_cron_expression_means_a_cron_schedule():
+    from tools.schedule_management import schedule_notification
+    job = _call(schedule_notification, title="stand-up", cron="30 9 * * *")["job"]
+    assert job["recurrence"] == "cron" and job["cron"] == "30 9 * * *"
+
+
+def test_a_cron_run_at_off_the_grid_moves_to_the_next_cron_time():
+    from datetime import datetime
+    from tools.schedule_management import schedule_task
+    job = _call(schedule_task, title="nightly", recurrence="cron", cron="0 3 * * *",
+                run_at="2030-01-01T10:00:00+00:00")["job"]
+    assert datetime.fromisoformat(job["run_at"]) == datetime.fromisoformat("2030-01-02T03:00:00+00:00")
+
+
+def test_a_cron_expression_wins_over_weekly():
+    """The Planner sent recurrence='weekly' with cron='0 7 * * 1' and was refused."""
+    from tools.schedule_management import schedule_task
+    job = _call(schedule_task, title="weekly fold", recurrence="weekly",
+                cron="0 7 * * 1", timezone="Europe/Berlin")["job"]
+    assert job["recurrence"] == "cron" and job["cron"] == "0 7 * * 1"
+
+
+def test_weekly_without_a_time_starts_a_week_from_now():
+    from datetime import datetime, timedelta, timezone
+    from tools.schedule_management import schedule_task
+    before = datetime.now(timezone.utc)
+    job = _call(schedule_task, title="weekly", recurrence="weekly", run_at=None,
+                delay_minutes=None, cron=None)["job"]
+    first = datetime.fromisoformat(job["run_at"])
+    assert job["recurrence"] == "weekly"
+    assert timedelta(weeks=1) <= first - before < timedelta(weeks=1, minutes=1)
+
+
+def test_a_one_off_without_a_time_and_cron_without_an_expression_are_refused():
+    from pydantic import ValidationError
+    from tools.schedule_management import schedule_task
+    with pytest.raises(ValidationError, match="one-off job"):
+        schedule_task.invoke({"title": "x"})
+    with pytest.raises(ValidationError, match="requires a cron expression"):
+        schedule_task.invoke({"title": "x", "recurrence": "cron"})
+
+
+def test_switching_a_job_to_cron_moves_it_onto_the_cron_grid():
+    from datetime import datetime
+    from tools.schedule_management import schedule_notification, update_scheduled
+    job = _call(schedule_notification, title="ping", delay_minutes=7)["job"]
+    updated = _call(update_scheduled, id=job["id"], cron="0 12 * * *")["job"]
+    assert updated["recurrence"] == "cron"
+    assert datetime.fromisoformat(updated["run_at"]) == datetime.fromisoformat(
+        ps.upcoming_runs("0 12 * * *", None, count=1)[0])
+
+
+# ── a memory pool by name ────────────────────────────────────────────────────
+
+def _pools(monkeypatch, *pools):
+    from types import SimpleNamespace
+    from memory.store import MemoryStore
+    items = [SimpleNamespace(id=i, name=n, workspace=w, kind=k) for i, n, w, k in pools]
+    monkeypatch.setattr(MemoryStore, "load", lambda self, *a, **k: items)
+
+
+def test_a_consolidation_finds_its_pool_by_name_in_the_workspace(monkeypatch):
+    """The Planner passed pool_id='guests', the name the person said."""
+    from datetime import datetime, timedelta, timezone
+    from plans.models import JobKind
+    _pools(monkeypatch, ("p-zerno", "guests", "zerno", "shared"), ("p-dev", "guests", "dev", "shared"))
+    when = datetime.now(timezone.utc) + timedelta(hours=1)
+    job = ps.create_job(kind=JobKind.memory_consolidate, title="fold", run_at=when,
+                        workspace="zerno", consolidate_pool_id="Guests")
+    assert job.consolidate_pool_id == "p-zerno"
+    with pytest.raises(ValueError, match="its pools: 'guests' \\(p-zerno\\)"):
+        ps.create_job(kind=JobKind.memory_consolidate, title="fold", run_at=when,
+                      workspace="zerno", consolidate_pool_id="visitors")
+
+
+def test_two_pools_with_one_name_ask_for_an_id(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from plans.models import JobKind
+    _pools(monkeypatch, ("a", "guests", "zerno", "shared"), ("b", "guests", "zerno", "shared"))
+    when = datetime.now(timezone.utc) + timedelta(hours=1)
+    with pytest.raises(ValueError, match="several memory pools"):
+        ps.create_job(kind=JobKind.memory_consolidate, title="fold", run_at=when,
+                      workspace="zerno", consolidate_pool_id="guests")
+
+
+# ── the Task Manager keeps the tracker ───────────────────────────────────────
+# The Planner held the task tools too, and a small model asked "which jobs do
+# we have?" listed tracker tasks, or created a task when asked to pause a job
+# (found live). Tasks now belong to task_manager, which also replaces the
+# Planner in the task planner chat.
+
+TASK_TOOLS = ("list_tasks", "get_task", "create_task", "add_subtask", "create_sequence",
+              "update_task", "block_task", "set_task_dependencies", "get_task_result")
+
+
+def test_the_planner_holds_no_task_tool_and_the_task_manager_holds_them_all():
+    planner, manager = _seed("planner"), _seed("task_manager")
+    assert not set(TASK_TOOLS) & set(planner["tools"])
+    assert set(TASK_TOOLS) <= set(manager["tools"])
+    assert not {t for t in manager["tools"] if "schedul" in t}
+    assert manager["system"] is True
+    assert {c["name"] for c in manager["commands"]} == {"/plan", "/plan-from-view"}
+    assert "/plan" not in {c["name"] for c in planner["commands"]}
+
+
+def test_every_agent_that_reaches_the_planner_also_reaches_the_task_manager():
+    data = json.loads((ROOT / "bootstrap" / "agents.json").read_text(encoding="utf-8"))
+    for agent in data["agents"]:
+        if "@planner" in (agent.get("delegates") or []):
+            assert "@task_manager" in agent["delegates"], agent["id"]
+
+
+def test_the_task_planner_chat_runs_the_task_manager_and_it_is_a_role():
+    from agents import roles
+    from projects import planner_service
+    assert planner_service.PLANNER_AGENT_ID == "task_manager"
+    role = {r.id: r for r in roles.ROLES}["task_manager"]
+    assert role.default == "task_manager"
+
+
+def test_migration_0046_moves_the_tasks_off_the_planner():
+    import importlib.util
+    path = ROOT / "common" / "migrations" / "0046_task_manager_owns_tasks.py"
+    spec = importlib.util.spec_from_file_location("m0046", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    conn = _db({
+        "planner": {"id": "planner", "user_modified": True,
+                    "tools": ["list_tasks", "schedule_task", "create_task", "list_scheduled"],
+                    "tool_policy": {"create_task": "always_ask"},
+                    "commands": [{"name": "/plan"}, {"name": "/schedule"}]},
+        "main-agent": {"id": "main-agent", "user_modified": True, "tools": ["create_task"],
+                       "delegates": ["orchestrator", "@planner", "@writer"]},
+        "mine": {"id": "mine", "delegates": ["@task_manager", "@planner"]},
+    })
+    mod.upgrade(conn, "sqlite")
+    planner = _doc(conn, "planner")
+    assert planner["tools"] == ["schedule_task", "list_scheduled"]
+    assert planner["tool_policy"] == {} and planner["commands"] == [{"name": "/schedule"}]
+    main = _doc(conn, "main-agent")
+    assert main["delegates"] == ["orchestrator", "@planner", "@task_manager", "@writer"]
+    assert main["tools"] == ["create_task"]
+    assert _doc(conn, "mine")["delegates"] == ["@task_manager", "@planner"]

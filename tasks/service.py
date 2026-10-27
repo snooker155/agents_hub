@@ -105,6 +105,7 @@ def create_task(
     environment_id: Optional[str] = None,
     agent_version: Optional[int] = None,
     outcome: Optional[Dict[str, Any]] = None,
+    use_agent_outcome: bool = False,
     file_ids: Optional[Sequence[str]] = None,
     secrets: Optional[Sequence[str]] = None,
     memory_pool_ids: Optional[Sequence[str]] = None,
@@ -155,6 +156,7 @@ def create_task(
         environment_id=environment_id,
         agent_version=agent_version,
         outcome=outcome,
+        use_agent_outcome=use_agent_outcome,
         file_ids=file_ids,
         secrets=secrets,
         memory_pool_ids=memory_pool_ids,
@@ -165,6 +167,11 @@ def create_task(
         append_task_activity_log(task.id, "dependency_block", task.blocked_reason)
     notify_change("tasks", task_id=str(task.id))
     return task
+
+
+def _effective_rubric(task) -> str:
+    from tasks.outcome import effective_outcome
+    return str((effective_outcome(task) or {}).get("rubric") or "")
 
 
 def get_task(task_id: UUID, *, store: TaskStore = default_store) -> Optional[Task]:
@@ -1033,7 +1040,7 @@ def _complete_parent_when_done(parent_id: UUID, *, store: TaskStore) -> None:
     # The parent's definition of done is about the whole of the work, so it
     # is graded on the subtasks' results now; an unmet outcome starts another
     # attempt on the parent or blocks it instead of completing it.
-    if getattr(parent, "container_agent", None) and (getattr(parent, "outcome", None) or {}).get("rubric"):
+    if getattr(parent, "container_agent", None) and _effective_rubric(parent):
         try:
             from tasks.outcome import on_container_completed
             if on_container_completed(parent.id):
@@ -1684,11 +1691,9 @@ def assign_executor(
     with it on the next read (tasks.storage._sync_executor) so every caller
     written for the old, agent-only shape of a task keeps working.
 
-    An agent executor carrying a ``default_outcome`` (agents/registry.py,
-    set on a kit's agents by their manifest) is inherited onto the task when
-    it has no outcome of its own yet: this is "assigned", whether the task
-    is getting its first executor or a later reassignment, so one hook
-    covers both without a call on every task-creation path.
+    The agent's own ``default_outcome`` is NOT copied onto the task: it applies
+    only when the task has ``use_agent_outcome`` on (tasks/outcome.py
+    ``effective_outcome``).
     """
     if not isinstance(executor, Executor):
         executor = Executor.model_validate(executor)
@@ -1701,16 +1706,6 @@ def assign_executor(
     current = store.get(task_id)
     if current and current.pre_assignment_status is None:
         fields["pre_assignment_status"] = current.status
-    if current and not current.outcome and executor.kind == "agent" and executor.id:
-        try:
-            from agents.registry import get_agent
-            agent_spec = get_agent(executor.id)
-            default_outcome = getattr(agent_spec, "default_outcome", None) if agent_spec else None
-            if default_outcome:
-                fields["outcome"] = dict(default_outcome)
-        except Exception:  # noqa: BLE001 - inheriting a default rubric must not block the assignment
-            log.debug("could not inherit default_outcome for task %s from agent %s",
-                      task_id, executor.id, exc_info=True)
     updated = store.update(task_id, **fields)
     if updated:
         # Who now works on the task, in its activity (a relaunch of the same

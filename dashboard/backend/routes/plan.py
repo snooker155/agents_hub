@@ -4,6 +4,7 @@ user notification inbox.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
@@ -41,7 +42,11 @@ class JobCreate(BaseModel):
                     "firing instead of jumping straight to the next future one.",
     )
     workspace: Optional[str] = None
+    # agent_task: the agent to run the task (None: the orchestrator routes it);
+    # agent_run: the agent to run (required).
     agent_id: Optional[str] = None
+    # agent_task only: the tasks it creates use the agent's default criterion.
+    use_agent_outcome: bool = False
     # flow jobs: which flow to trigger, an optional JSON seed, and a concurrency cap.
     flow_id: Optional[str] = None
     seed: Optional[Dict[str, Any]] = None
@@ -59,7 +64,7 @@ class JobCreate(BaseModel):
     # plans.service.create_job).
     agent_version: Optional[int] = None
     auto_pause_after: int = 3
-    # agent_task only: the deployment's resources (plans.service._validate_resources).
+    # agent_task and agent_run: the deployment's resources (plans.service._validate_resources).
     project_id: Optional[str] = None
     file_ids: Optional[List[str]] = None
     secrets: Optional[List[str]] = None
@@ -78,6 +83,8 @@ class JobCreate(BaseModel):
             raise ValueError("flow jobs require flow_id")
         if self.kind == JobKind.memory_consolidate and not self.consolidate_pool_id:
             raise ValueError("memory_consolidate jobs require consolidate_pool_id")
+        if self.kind == JobKind.agent_run and not self.agent_id:
+            raise ValueError("agent_run jobs require agent_id")
         return self
 
     def resolved_run_at(self) -> datetime:
@@ -95,6 +102,7 @@ class JobUpdate(BaseModel):
     timezone: Optional[str] = None
     catch_up: Optional[bool] = None
     agent_id: Optional[str] = None
+    use_agent_outcome: Optional[bool] = None
     channels: Optional[List[str]] = None
     environment_id: Optional[str] = None
     budget_usd: Optional[float] = None
@@ -160,6 +168,7 @@ async def create_job(payload: JobCreate):
             consolidate_pool_id=payload.consolidate_pool_id,
             consolidate_session_limit=payload.consolidate_session_limit,
             loop_id=payload.loop_id,
+            use_agent_outcome=payload.use_agent_outcome,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -261,12 +270,15 @@ async def run_job_now(job_id: UUID):
 
 @router.get("/jobs/{job_id}/fires")
 async def list_job_fires(job_id: UUID, limit: int = 50, only_errors: bool = False):
-    """The firing journal for one job, newest first."""
+    """The firing journal for one job, newest first, each firing with what
+    the work it started has come to (plans.service.fire_result)."""
     job = plan_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    items = plan_service.list_job_fires(job_id, only_errors=only_errors, limit=limit)
-    return [fire_to_dict(f) for f in items]
+    items = await asyncio.to_thread(plan_service.list_job_fires, job_id,
+                                    only_errors=only_errors, limit=limit)
+    results = await asyncio.to_thread(lambda: [plan_service.fire_result(f) for f in items])
+    return [{**fire_to_dict(f), "result": r} for f, r in zip(items, results)]
 
 
 @router.get("/fires")

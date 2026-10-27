@@ -1,14 +1,21 @@
 # Scheduling and the Plan page
 
-Future work: notifications, agent tasks and flow triggers, plus the inbox
-showing what fired.
+Future work: notifications, agent runs, agent tasks, flow and loop triggers and
+memory consolidation, plus the inbox showing what fired.
 
 ## Job kinds
 
-- **notification** — a reminder. Lands in the inbox and the bell, and in
+- **notification**: a reminder. Lands in the inbox and the bell, and in
   Telegram when asked.
-- **agent_task** — creates and starts a real task at the appointed time. With an
-  agent named, that agent runs it; without, the orchestrator routes it.
+- **agent_run**: runs an agent at the appointed time with no task. Each firing
+  opens a new conversation with the agent (titled after the job, with the date
+  for a recurring one) and sends it the job's message, recorded with
+  `message_origin` "schedule"; the answer stays in that conversation and the
+  bell links to it. The agent is required.
+- **agent_task**: creates and starts a real task at the appointed time. With an
+  agent named, that agent runs it; without, the orchestrator routes it. The
+  task is graded against the agent's default criterion only when the job's
+  `use_agent_outcome` is on (off by default, see [outcomes](outcomes.md)).
 - **flow**: triggers a flow run, with an optional JSON seed merged into its
   initial state and a concurrency cap so a recurring flow job cannot stack up
   runaway instances.
@@ -61,7 +68,8 @@ The Planner's tools:
 | Tool | Does |
 | --- | --- |
 | `schedule_notification` | A reminder in your notification inbox. |
-| `schedule_task` | Agent work: a task created and started when the job fires, with the deployment fields below. |
+| `schedule_agent_run` | An agent run with no task: a new conversation with the agent each time the job fires. |
+| `schedule_task` | Agent work as a tracker task, created and started when the job fires, with the deployment fields below and `use_agent_outcome`. |
 | `schedule_flow` | A flow run, with a seed for its state and a cap on runs going at once. |
 | `schedule_loop` | A loop run; a firing while the previous run is still going is skipped. |
 | `schedule_memory_consolidation` | Folds a memory pool and its recent sessions into a new pool. |
@@ -71,7 +79,9 @@ The Planner's tools:
 | `run_scheduled_now` | Fires a job once through the hub, like the Run now button. |
 
 Any other agent can be given these tools on its page; only the Planner has them
-out of the box.
+out of the box. The Planner holds no task tools: tracker tasks are the Task
+Manager's (`@task_manager`), so "which jobs do we have" is always answered from
+the Plan.
 
 ## The scheduler itself
 
@@ -115,6 +125,15 @@ guessed at. `GET /api/plan/jobs/{id}/fires` reads one job's journal,
 `0` disables it) are pruned by the daily maintenance sweep. The
 [Deployments page](deployments.md) is where this journal is actually read,
 with an only-failures filter and a link from each row to the task it created.
+
+A firing's `ok` says only that the work was started. The one-job journal route and
+the Planner's `get_scheduled` add each firing's `result`
+(`plans.service.fire_result`): where the task, flow run, loop run or
+conversation it started stands now. `state` is `running`, `waiting` (on a
+person: a blocked task, a question), `completed`, `failed`, `stopped` or
+`missing` (deleted since), with `status` as the record spells it and `result`
+quoting the start of what it produced. The record keeps `flow_run_id` and
+`conversation_id` for this; flow firings recorded before them have no result.
 
 ## Auto pause
 

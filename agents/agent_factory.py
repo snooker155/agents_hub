@@ -74,6 +74,7 @@ from tools.eval_ops import EVAL_TOOLS
 from tools.schedule_management import (
     schedule_notification,
     schedule_task,
+    schedule_agent_run,
     schedule_flow,
     schedule_loop,
     schedule_memory_consolidation,
@@ -556,6 +557,7 @@ class AgentFactory:
         schedule_tools = [
             schedule_notification,
             schedule_task,
+            schedule_agent_run,
             schedule_flow,
             schedule_loop,
             schedule_memory_consolidation,

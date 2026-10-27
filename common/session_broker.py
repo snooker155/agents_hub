@@ -191,6 +191,11 @@ class SessionBroker:
         client's own counter for that one event."""
         self._id_provider = provider
 
+    @property
+    def loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        """The backend's event loop, None outside the backend process."""
+        return self._loop
+
     # ── publish ──────────────────────────────────────────────────────────────
 
     def publish_threadsafe(self, channel: str, event: dict, *, skip_sinks: bool = False) -> None:

@@ -49,9 +49,10 @@ from .attachments import materialize_attachments
 from .references import resolve_references
 from .runs import (
     utc_iso,
-    get_pool_id,
     auto_journal,
     agent_overrides,
+    grant_secrets,
+    journal_pool_id,
     request_overrides,
     validate_chat_request,
     load_flow_definition,
@@ -85,10 +86,10 @@ def _settle_steering(run_id: str) -> list:
     losing them (common/steering.py)."""
     try:
         from common import steering
-        # A system message or a model switch (an operator's, for this run)
+        # A system message (an operator's, for this run)
         # expires with the run; it is never handed back as a chat turn.
         return [{"msg_id": m["msg_id"], "body": m["body"]} for m in steering.mark_expired(run_id)
-                if m.get("mode") not in steering.OPERATOR_MODES]
+                if steering.handed_back(m)]
     except Exception:  # noqa: BLE001 - a steering lookup failing must not break closing the turn
         return []
 
@@ -191,6 +192,18 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
     message_started = time.perf_counter()
 
     async def _run_agent_async():
+        # The chat turn runs in this process, so the agent's secrets cannot
+        # arrive through the environment the way a subprocess run's do: the
+        # secret scope binds them for the turn (docs/secrets.md), with what a
+        # deployment granted this agent on top (chat/runs.py grant_secrets).
+        # The threads the turn starts copy the scope with the context.
+        from common import secrets as _secrets
+        from common.identity import current_user_id
+        with _secrets.activate(step.ws_name or "", request.agent_id or "", current_user_id(),
+                               extra_names=grant_secrets(request)):
+            return await _run_agent_body()
+
+    async def _run_agent_body():
         # Who is running, in which conversation and run: tools read these
         # (the delegation allowlist, the web log). Set inside the task, so the
         # threads the run starts copy them and the request's context is untouched.
@@ -333,6 +346,7 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
                 "ok": False,
                 "response": "Stopped by user",
                 "error": "stopped by user",
+                "stopped": True,
                 "run_id": run_id,
                 "session_id": session_id,
                 "agent_id": request.agent_id,
@@ -365,7 +379,7 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
                 _append_log(log_lines, f"[handoff] to={intent.to_agent_id} "
                                        f"history={intent.history_filter} reason={intent.reason}", log_file)
             _write_log(log_file, log_lines + ["", f"Finished: {finished}", "Status  : completed"])
-            auto_journal(request.agent_id, get_pool_id(request.agent_id, request.workspace), request.message, final_response, run_id)
+            auto_journal(request.agent_id, journal_pool_id(request), request.message, final_response, run_id)
             # Resolve the structured response to its transport payload. An inline
             # view is persisted here and replaced with a lightweight view_ref, so
             # both the stored run record and the client carry the reference (never
@@ -410,6 +424,12 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
             # Sources the reply cites as [n]; the chat renders them under it.
             if drive.citations:
                 done_event["citations"] = drive.citations
+            # A warn guardrail lets the turn go on; the chat says what it found
+            # under the reply, or a warn would only ever reach the events table.
+            from chat.refusals import guardrail_warnings
+            warnings = guardrail_warnings(drive.loop)
+            if warnings:
+                done_event["guardrail_warnings"] = warnings
             if undelivered:
                 done_event["undelivered"] = undelivered
             outcome.done = done_event
@@ -516,6 +536,8 @@ def _close_unstarted(step: _AgentStep, *, status: str, error: str, refusal: dict
         "error": error, "run_id": run_id, "session_id": session_id,
         "agent_id": step.request.agent_id,
     }
+    if status == "stopped":
+        done["stopped"] = True
     if refusal:
         done["refusal"] = _with_agent(refusal, step.request.agent_id)
     return done

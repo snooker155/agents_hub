@@ -390,12 +390,12 @@ def _agent_management_specs() -> List[ToolSpec]:
 
 def _schedule_management_specs() -> List[ToolSpec]:
     from tools.schedule_management import (
-        schedule_notification, schedule_task, schedule_flow, schedule_loop,
+        schedule_notification, schedule_task, schedule_agent_run, schedule_flow, schedule_loop,
         schedule_memory_consolidation, notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
         pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,
     )
     tools = [
-        schedule_notification, schedule_task, schedule_flow, schedule_loop,
+        schedule_notification, schedule_task, schedule_agent_run, schedule_flow, schedule_loop,
         schedule_memory_consolidation, notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
         pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,
     ]

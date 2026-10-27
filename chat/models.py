@@ -8,7 +8,7 @@ module re-exports them for the route layer and other backend consumers.
 """
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, PrivateAttr, field_validator, model_validator
 
 
 class ChatHistoryMessage(BaseModel):
@@ -123,6 +123,12 @@ class ChatRequest(BaseModel):
     # card. Honoured only from the Chat page or the assistant's thread, and
     # only where the workspace allows it (pipelines.execute_locally checks).
     auto_approve: bool = False
+    # What a deployment grants the job's agent for this one turn (a scheduled
+    # agent run, plans/service.py): ``agent_id``, ``memory_pool_ids``,
+    # ``memory_access`` and ``secrets``. Private, so no client can send it:
+    # extra secrets and pools widen what an agent reads, and only a job the
+    # capability guard checked when it was saved may carry them.
+    _grants: Optional[Dict[str, Any]] = PrivateAttr(default=None)
 
     @field_validator("agent_id")
     @classmethod

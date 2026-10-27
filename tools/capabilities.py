@@ -496,10 +496,11 @@ REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # and update_scheduled report/change a job the caller named by id. Reading
     # the roster (list_scheduled) is classified above.
     "schedule_task", "cancel_scheduled", "update_scheduled",
-    # schedule_flow, schedule_loop and schedule_memory_consolidation create a
-    # job for a flow, a loop or a pool of the workspace; pause/resume change a job's status. None
+    # schedule_agent_run, schedule_flow, schedule_loop and
+    # schedule_memory_consolidation create a job for an agent, a flow, a loop
+    # or a pool of the workspace; pause/resume change a job's status. None
     # can set a deployment's secrets, the one resource that is a grant.
-    "schedule_flow", "schedule_loop", "schedule_memory_consolidation", "pause_scheduled",
+    "schedule_agent_run", "schedule_flow", "schedule_loop", "schedule_memory_consolidation", "pause_scheduled",
     "resume_scheduled",
 
     # ── flow / world / scenario / team / loop management ─────────────────────

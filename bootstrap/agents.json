@@ -1029,6 +1029,7 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",

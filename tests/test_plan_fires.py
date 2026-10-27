@@ -14,6 +14,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+from types import SimpleNamespace
 
 from plans import service as ps
 from plans.models import JobKind, JobStatus, Notification, Recurrence, ScheduledJob
@@ -268,6 +269,61 @@ def test_success_resets_consecutive_errors(store, no_side_effects, monkeypatch):
     after = store.get(job.id)
     assert after.consecutive_errors == 0
     assert after.status == JobStatus.scheduled
+
+
+@pytest.fixture
+def notices(monkeypatch):
+    """Each notification as (message key, params, severity)."""
+    sent = []
+
+    def _fake(**kw):
+        message = (kw.get("source") or {}).get("message") or {}
+        sent.append((message.get("key"), message.get("params") or {}, kw.get("severity", "info")))
+        return Notification(title=kw.get("title", ""), body=kw.get("body", ""))
+
+    monkeypatch.setattr(ps, "create_notification", _fake)
+    return sent
+
+
+def test_a_failed_one_off_job_says_so(store, notices, monkeypatch):
+    """A one-off job is over after its firing, so it fails rather than
+    pausing; the inbox still hears of it."""
+    monkeypatch.setattr(ps, "_fire_flow", lambda job: (_ for _ in ()).throw(ValueError("Flow not found: f-gone")))
+    job = store.add(_job(kind=JobKind.flow, flow_id="f-gone", title="Temp",
+                         run_at=datetime.now(UTC) - timedelta(seconds=5)))
+    ps.fire_job(job, trigger="manual")
+    assert store.get(job.id).status == JobStatus.failed
+    assert notices == [("scheduledJobFailed", {"title": "Temp", "error": "Flow not found: f-gone"}, "error")]
+
+
+def test_each_failure_short_of_the_threshold_says_so_and_the_pause_once(store, notices, monkeypatch):
+    monkeypatch.setattr(ps, "_fire_agent_task", lambda job: (_ for _ in ()).throw(RuntimeError("boom")))
+    job = store.add(_job(kind=JobKind.agent_task, recurrence=Recurrence.hourly,
+                         run_at=datetime.now(UTC) - timedelta(seconds=5)))
+    for _ in range(3):
+        _fire_next_slot(store, job.id)
+    assert [k for k, _, _ in notices] == ["scheduledJobFailed", "scheduledJobFailed", "scheduledJobPaused"]
+
+
+def test_a_missing_target_pauses_with_its_own_message(store, notices, monkeypatch):
+    monkeypatch.setattr(ps, "_fire_flow", lambda job: (_ for _ in ()).throw(ValueError("Flow not found: f-gone")))
+    job = store.add(_job(kind=JobKind.flow, flow_id="f-gone", title="Daily", recurrence=Recurrence.daily,
+                         run_at=datetime.now(UTC) - timedelta(seconds=5)))
+    ps.fire_job(job)
+    assert store.get(job.id).paused_reason == "target_missing"
+    assert notices == [("scheduledJobTargetMissing", {"title": "Daily", "error": "Flow not found: f-gone"}, "warning")]
+
+
+def test_a_started_loop_is_named_not_numbered(store, notices, monkeypatch):
+    from loops import launcher, store as loop_store
+    monkeypatch.setattr(loop_store, "get_loop", lambda lid: SimpleNamespace(loop_id=lid, name="Coffee trends", workspace=None))
+    monkeypatch.setattr(loop_store, "list_runs", lambda lid, limit=20: [])
+    monkeypatch.setattr(launcher, "start_loop_run",
+                        lambda *a, **k: SimpleNamespace(loop_run_id="lrun_1", task_id=None))
+    job = store.add(_job(kind=JobKind.loop, loop_id="loop_4dc935ecd2b44f75", title="Nightly",
+                         run_at=datetime.now(UTC) - timedelta(seconds=5)))
+    ps.fire_job(job)
+    assert notices[0][0] == "scheduledLoopStarted" and notices[0][1]["loop"] == "Coffee trends"
 
 
 def test_resume_clears_paused_reason_and_consecutive_errors(store, no_side_effects, monkeypatch):

@@ -30,6 +30,8 @@ class TaskCreate(BaseModel):
     # Outcome rubric: {"rubric", "max_iterations", "grader", "threshold"}
     # (tasks/outcome.py). None = no outcome check.
     outcome: Optional[Dict[str, Any]] = None
+    # Apply the assigned agent's default criterion when the task has none of its own.
+    use_agent_outcome: Optional[bool] = None
     # Workspace files (files/service.py) the task works from, by id.
     file_ids: Optional[List[str]] = None
 
@@ -54,6 +56,8 @@ class TaskUpdate(BaseModel):
     agent_version: Optional[int] = None
     # Outcome rubric (see TaskCreate); null clears it.
     outcome: Optional[Dict[str, Any]] = None
+    # Apply the agent's default criterion when the task has no rubric of its own.
+    use_agent_outcome: Optional[bool] = None
     # Replace the task's workspace files (ids); [] or null clears them.
     file_ids: Optional[List[str]] = None
 

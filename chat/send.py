@@ -34,9 +34,10 @@ from chat.attachments import materialize_attachments
 from chat.references import resolve_references
 from chat.runs import (
     utc_iso,
-    get_pool_id,
     auto_journal,
     agent_overrides,
+    grant_secrets,
+    journal_pool_id,
     request_overrides,
     validate_chat_request,
     create_chat_run,
@@ -251,7 +252,8 @@ async def _run_one(request: ChatRequest, *, prompt: str, history: list,
         # resolved for the person who sent the message (docs/secrets.md).
         from common import secrets as _secrets
         from common.identity import current_user_id
-        with _secrets.activate(ws_name, request.agent_id, current_user_id()):
+        with _secrets.activate(ws_name, request.agent_id, current_user_id(),
+                              extra_names=grant_secrets(request)):
             return _run_agent()
 
     # The handoff tool reads the turn and records its decision on this sink
@@ -322,7 +324,7 @@ async def _run_one(request: ChatRequest, *, prompt: str, history: list,
                          f"reason={intent.reason}"] if intent is not None else [])
         _write_log(log_file, log_lines + [response_text, *handoff_line, "", f"Finished: {finished}", "Status  : completed"])
         update_run(run_id, {"status": "completed", "finished_at": finished, "exit_code": 0})
-        auto_journal(request.agent_id, get_pool_id(request.agent_id, request.workspace), request.message, response_text, run_id)
+        auto_journal(request.agent_id, journal_pool_id(request), request.message, response_text, run_id)
         return {"response": response_text, "ok": True, "run_id": run_id}, intent
 
     error_text = result.error or "Agent returned no output"
