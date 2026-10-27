@@ -91,6 +91,22 @@ const SECTIONS = GROUPS.flatMap((group) => group.items);
 // would answer them by quietly showing something else.
 const MOVED_TO_CONNECTORS = ['telegram', 'git', 'blender'];
 
+// Sections that act at once (a backend added, the demo seeded, the first run
+// reset) rather than collecting changes for the page's Save button.
+const ACT_AT_ONCE = ['custom', 'demo', 'firstRun', 'apiAccess', 'browser', 'hubLink', 'isolation', 'observability'];
+// The sections whose changes the page's Save button stores, by id.
+const STAGED_SECTIONS = {
+  providers: ProvidersSection,
+  temperature: GlobalTemperatureSection,
+  local: LocalServersSection,
+  rag: RagSection,
+  logging: LoggingSection,
+  execution: ExecutionSection,
+  toolPolicy: ToolPolicySection,
+  tasks: TaskAssignmentSection,
+  webAccess: WebAccessSection,
+};
+
 
 // ── Custom backends tab ───────────────────────────────────────────────────────
 
@@ -519,6 +535,14 @@ export default function Settings() {
 
   const ws = useWorkspaceSettings(activeWorkspace);
 
+  // The sections whose changes wait for the Save button above. A section once
+  // opened stays mounted (hidden when another is shown), so what was changed
+  // in it is still there, and still saved, after a look at another section.
+  // Custom backends, the demo and the first run act at once and are not kept.
+  const staged = !ACT_AT_ONCE.includes(active.id);
+  const [visited, setVisited] = useState(() => (staged ? [active.id] : []));
+  if (staged && !visited.includes(active.id)) setVisited([...visited, active.id]);
+
   if (ws.loading) {
     return (
       <PageLoader />
@@ -545,7 +569,7 @@ export default function Settings() {
         </>}
         // On the title line, right after the heading, rather than out at the
         // far edge of the header away from the sections it saves.
-        badges={active.workspaceScoped && <SaveWorkspaceSettingsButton s={ws} />}
+        badges={staged && <SaveWorkspaceSettingsButton s={ws} />}
       />
 
       <div className="flex min-h-0 flex-1 gap-6">
@@ -624,20 +648,21 @@ export default function Settings() {
 
             <WorkspaceSettingsStatus s={ws} />
 
-            {active.id === 'providers' && <ProvidersSection s={ws} />}
-            {active.id === 'temperature' && <GlobalTemperatureSection s={ws} />}
-            {active.id === 'local' && <LocalServersSection s={ws} />}
-            {active.id === 'observability' && <ObservabilitySection s={ws} />}
-            {active.id === 'rag' && <RagSection s={ws} />}
+            {visited.map((id) => {
+              const Section = STAGED_SECTIONS[id];
+              if (!Section) return null;
+              return (
+                <div key={id} hidden={id !== active.id} className="space-y-5">
+                  <Section s={ws} />
+                </div>
+              );
+            })}
             {active.id === 'custom' && <CustomBackendsTab />}
             {active.id === 'demo' && <DemoWorkspaceTab />}
             {active.id === 'firstRun' && <FirstRunSettings />}
-            {active.id === 'logging' && <LoggingSection s={ws} />}
+            {/* Sections of this edition that save themselves. */}
+            {active.id === 'observability' && <ObservabilitySection s={ws} />}
             {active.id === 'apiAccess' && <ApiAccessTab />}
-            {active.id === 'execution' && <ExecutionSection s={ws} />}
-            {active.id === 'toolPolicy' && <ToolPolicySection s={ws} />}
-            {active.id === 'tasks' && <TaskAssignmentSection s={ws} />}
-            {active.id === 'webAccess' && <WebAccessSection s={ws} />}
             {active.id === 'browser' && <BrowserServiceSection />}
             {active.id === 'hubLink' && <HubLinkSection />}
             {active.id === 'isolation' && (

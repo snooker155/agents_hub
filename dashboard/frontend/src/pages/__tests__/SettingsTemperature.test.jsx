@@ -55,7 +55,8 @@ const renderSection = (section) => render(
 );
 
 const field = () => screen.getByRole('spinbutton', { name: 'Temperature' });
-const saveButton = () => field().parentElement.querySelector('button');
+// The page's one Save button, active only while something is unsaved.
+const saveButton = () => screen.queryByTestId('settings-save');
 
 beforeEach(() => {
   updateSettings.mockClear();
@@ -79,7 +80,7 @@ describe('Settings global temperature', () => {
     fireEvent.change(field(), { target: { value: '0.7' } });
     // A typed value stays typed: nothing resets the draft after the change.
     expect(field()).toHaveValue(0.7);
-    expect(saveButton()).toBeEnabled();
+    await waitFor(() => expect(saveButton()).toBeEnabled());
     fireEvent.click(saveButton());
 
     await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ temperature: 0.7 }));

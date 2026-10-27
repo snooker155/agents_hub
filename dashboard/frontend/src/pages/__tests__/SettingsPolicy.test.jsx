@@ -11,6 +11,7 @@ import { I18nProvider } from '../../i18n';
 // here rather than sent to the backend.
 
 const ok = (data) => Promise.resolve({ data });
+const updateSettings = vi.fn(() => ok({}));
 
 const HOOKS = {
   PreToolUse: [{ matcher: 'run_shell', type: 'command', command: './check.sh' }],
@@ -49,7 +50,7 @@ vi.mock('../../api', () => ({
   updateWorkspaceSettingsOverrides: () => ok({}),
   getWorkspacePolicy: () => ok({ require_tool_approval: false, hooks: HOOKS }),
   updateWorkspacePolicy: (...args) => updateWorkspacePolicy(...args),
-  updateSettings: () => ok({}),
+  updateSettings: (...args) => updateSettings(...args),
   getApiToken: () => '',
   setApiToken: () => {},
   API_ORIGIN: 'http://localhost:8000',
@@ -76,13 +77,22 @@ describe('Settings tool policy', () => {
     expect(approvalToggle().checked).toBe(false);
   });
 
-  it('saves the gate as soon as it is toggled', async () => {
+  it('keeps a toggled gate until the page is saved, and saves it then', async () => {
     updateWorkspacePolicy.mockClear();
     const { container } = renderExecution();
     await waitFor(() => expect(container.textContent).toMatch(/Tool Policy/));
+    expect(screen.getByTestId('settings-save')).toBeDisabled();
 
     fireEvent.click(approvalToggle());
+    expect(updateWorkspacePolicy).not.toHaveBeenCalled();
+    expect(approvalToggle().checked).toBe(true);
+    expect(screen.getByTestId('settings-save')).toBeEnabled();
+    // Switching it back is no change: the Save button is inactive again.
+    fireEvent.click(approvalToggle());
+    await waitFor(() => expect(screen.getByTestId('settings-save')).toBeDisabled());
 
+    fireEvent.click(approvalToggle());
+    fireEvent.click(await screen.findByTestId('settings-save'));
     await waitFor(() => expect(updateWorkspacePolicy).toHaveBeenCalledWith(
       'default', { require_tool_approval: true },
     ));
@@ -102,7 +112,7 @@ describe('Settings tool policy', () => {
 
     const box = policyCard().querySelector('textarea');
     fireEvent.change(box, { target: { value: '{ not json' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save hooks/ }));
+    fireEvent.click(await screen.findByTestId('settings-save'));
 
     await waitFor(() => expect(container.textContent).toMatch(/not valid JSON/));
     expect(updateWorkspacePolicy).not.toHaveBeenCalled();
@@ -115,11 +125,24 @@ describe('Settings tool policy', () => {
 
     const box = policyCard().querySelector('textarea');
     fireEvent.change(box, { target: { value: '{"PostToolUse": []}' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save hooks/ }));
+    fireEvent.click(await screen.findByTestId('settings-save'));
 
     await waitFor(() => expect(updateWorkspacePolicy).toHaveBeenCalledWith(
       'default', { hooks: { PostToolUse: [] } },
     ));
+  });
+});
+
+describe('Settings capability guard', () => {
+  it('makes the Save button active once the mode is switched, and writes it only on Save', async () => {
+    updateSettings.mockClear();
+    const { container } = renderExecution('/settings/execution');
+    await waitFor(() => expect(container.querySelector('input[type="radio"][value="warn"]')).not.toBeNull());
+    expect(screen.getByTestId('settings-save')).toBeDisabled();
+    fireEvent.click(container.querySelector('input[type="radio"][value="warn"]'));
+    expect(updateSettings).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByTestId('settings-save'));
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ capability_guard: 'warn' }));
   });
 });
 

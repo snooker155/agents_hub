@@ -171,14 +171,14 @@ def _environment_fields(workspace: Optional[str], environment_id: Optional[str])
     return fields_for(env, workspace, owner={"kind": "instance"}) if env is not None else {}
 
 
-def _execution_mode(workspace: Optional[str], env_fields: Dict[str, Any]) -> str:
+def _execution_mode(workspace: Optional[str], env_fields: Optional[Dict[str, Any]] = None) -> str:
     """Workspace override, else the live setting; an environment pins it.
     Local where a container must not open the database (Docker Desktop with
     SQLite, common.config.run_execution_mode): an instance process reads and
     writes its records there directly."""
     from common.config import run_execution_mode
     mode = run_execution_mode(workspace)
-    if env_fields.get("execution_mode") in ("local", "docker"):
+    if (env_fields or {}).get("execution_mode") in ("local", "docker"):
         mode = env_fields["execution_mode"]
     from common import isolation
     if isolation.is_isolated(workspace):
