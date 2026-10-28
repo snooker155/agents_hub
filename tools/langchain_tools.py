@@ -815,21 +815,22 @@ def launch_flow_run(flow_id: str, flow: Dict[str, Any], ws_name: Optional[str], 
 
     flow_name = flow.get("name") or flow_id
 
-    # The flow runtime is task-driven (it finalizes a task record on completion),
-    # so a backing task always exists. For a taskless run we mark it
-    # orchestrator-created so it is not presented as a user task; only when the
-    # user explicitly asks do we create a user-facing task.
-    from tasks.service import create_task as svc_create_task
-    task = svc_create_task(
-        title=f"Flow: {flow_name}",
-        description=desc,
-        workspace=ws_name,
-        created_by=CreatedBy.user if create_task else CreatedBy.orchestrator,
-    )
+    # A run is not a task: a task exists only when the user asked to track the
+    # run as one (``create_task``), and then it is theirs.
+    task = None
+    if create_task:
+        from tasks.service import create_task as svc_create_task
+        task = svc_create_task(
+            title=f"Flow: {flow_name}",
+            description=desc,
+            workspace=ws_name,
+            created_by=CreatedBy.user,
+        )
 
-    params = {"workspace": ws_name, "description": desc}
-    run_id, session_id = flow_launcher.start_flow_run(str(task.id), flow_id, params)
-    svc_assign_agent(task.id, "flow-custom-graph", params, run_id=run_id)
+    params = {"workspace": ws_name, "description": desc, "title": f"Flow: {flow_name}"}
+    run_id, session_id = flow_launcher.start_flow_run(str(task.id) if task else None, flow_id, params)
+    if task is not None:
+        svc_assign_agent(task.id, "flow-custom-graph", params, run_id=run_id)
 
     payload: Dict[str, object] = {
         "message": (
@@ -843,9 +844,7 @@ def launch_flow_run(flow_id: str, flow: Dict[str, Any], ws_name: Optional[str], 
         "workspace": ws_name,
         "taskless": not create_task,
     }
-    # Only surface the task id when the user asked to track it; otherwise it is
-    # an internal execution record and not something to report.
-    if create_task:
+    if task is not None:
         payload["task_id"] = str(task.id)
     return payload
 

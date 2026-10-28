@@ -649,10 +649,14 @@ def _check_between_iterations(
 
 def _prepare_context(
     loop: Loop, workspace: Optional[str], task_id: Optional[str], goal: str,
-) -> Tuple[Optional[str], str, str, str]:
-    """Resolve the workspace, ensure a task and open one session for the whole
-    loop. Every iteration runs inside them, so the run history reads as one
-    piece of work rather than N unrelated flow runs."""
+) -> Tuple[Optional[str], str, Optional[str], str]:
+    """Resolve the workspace and open one session for the whole loop. Every
+    iteration runs inside it, so the run history reads as one piece of work
+    rather than N unrelated flow runs.
+
+    A run never makes a task of its own: a loop started from its page or its
+    chat is just a run. Only a task the caller names (a loop hung on a task)
+    is used, and then the loop is recorded as that task's executor."""
     from tasks import service as _ts
     from common.session_service import get_or_create_task_session
     from workspace import create_workspace_folder, resolve_task_workspace, as_param_dict
@@ -661,13 +665,8 @@ def _prepare_context(
     ws_name = (create_workspace_folder(ws_name).name if ws_name
                else create_workspace_folder().name)
 
-    if not task_id:
-        task = _ts.create_task(
-            title=f"Loop: {loop.name or loop.loop_id}",
-            description=goal, workspace=ws_name,
-        )
-        task_id = str(task.id)
-    else:
+    task = None
+    if task_id:
         task = _ts.get_task(task_id)
         if task is None:
             raise ValueError(f"Task not found: {task_id}")
@@ -676,9 +675,11 @@ def _prepare_context(
     _, ws_path = resolve_task_workspace(task, params)
 
     session_id = get_or_create_task_session(
-        title=getattr(task, "title", None) or f"Loop: {loop.name}",
-        workspace=ws_name, is_flow=True, task_id=str(task_id),
+        title=getattr(task, "title", None) or f"Loop: {loop.name or loop.loop_id}",
+        workspace=ws_name, is_flow=True, task_id=str(task_id) if task_id else None,
     )
+    if task is None:
+        return ws_name, str(ws_path), None, session_id
     try:
         _ts.update_task(task_id, session_id=session_id)
     except Exception:  # noqa: BLE001 - linking the session is cosmetic, the run goes on
