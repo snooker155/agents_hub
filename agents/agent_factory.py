@@ -1021,6 +1021,27 @@ class AgentFactory:
             self._resolve_model_config(config, workspace)
         )
         _effort = self._resolve_effort(config, workspace)
+        # The workspace's model policy (workspace/model_policy.py): a model not
+        # on its list (an agent's pin, the header's choice, a run's override)
+        # runs on the policy's default instead, with that provider's own
+        # endpoint and key, and the settings the policy fixes beat the agent's.
+        from workspace.model_policy import for_workspace as _model_policy_for
+        _policy = _model_policy_for(workspace)
+        _policy_replaced = False
+        if _policy is not None:
+            if not _policy.allows(resolved_provider, resolved_model):
+                log.info("agent %s: %s/%s is not allowed in workspace %s, running on %s/%s",
+                         agent_id, resolved_provider, resolved_model, workspace, *_policy.default)
+                resolved_provider, resolved_model, resolved_base_url, _ws_api_key = (
+                    self._resolve_model_config(
+                        {**config, "provider": _policy.default[0], "model": _policy.default[1],
+                         "base_url": None, "api_key": None},
+                        workspace,
+                    )
+                )
+                _policy_replaced = True
+            if _policy.effort:
+                _effort = _policy.effort
         _episodic_write = resolve_episodic_write(
             _spec.episodic_write_enabled if _spec else None, resolved_provider
         )
@@ -1505,9 +1526,11 @@ class AgentFactory:
             tools=tools,
             provider=resolved_provider,
             model=resolved_model,
-            temperature=config.get("temperature", 0.0),
-            max_tokens=config.get("max_tokens"),
-            api_key=config.get("api_key") or _ws_api_key,
+            temperature=(_policy.temperature if _policy is not None and _policy.temperature is not None
+                         else config.get("temperature", 0.0)),
+            max_tokens=(_policy.max_tokens if _policy is not None and _policy.max_tokens
+                        else config.get("max_tokens")),
+            api_key=(None if _policy_replaced else config.get("api_key")) or _ws_api_key,
             base_url=resolved_base_url,
             verbose=config.get("verbose", False),
             workspace=workspace,

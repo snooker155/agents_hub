@@ -1,0 +1,53 @@
+// A workspace's model policy (workspace/model_policy.py): the card on the
+// workspace settings, and the notes the header picker, the agent Model tab
+// and the Models page show when a policy narrows the choice.
+export default {
+  section: 'Model policy',
+  title: 'Model policy',
+  explainer: 'Members can choose only these models. With one model it is the only choice everywhere in this workspace.',
+  noPolicy: 'No model policy: members choose any enabled model.',
+  noPolicyAdmin: 'No model policy yet. Tick the models members may use.',
+  allowedModels: 'Allowed models',
+  noEnabledModels: 'No models are enabled on the Models page yet.',
+  notEnabled: 'not enabled',
+  defaultModel: 'Default model',
+  defaultOnly: 'The only model, so it is the default.',
+  fixedSettings: 'Fixed settings',
+  fixedSettingsHint: 'Leave a field empty to let agents and members choose it.',
+  temperature: 'Temperature',
+  effort: 'Reasoning effort',
+  effortFree: 'Not fixed',
+  maxTokens: 'Max tokens',
+  anyValue: 'not fixed',
+  save: 'Save policy',
+  saving: 'Saving',
+  saved: 'Saved',
+  remove: 'Remove policy',
+  removed: 'Policy removed',
+  inherited: 'This personal workspace follows the policy of the default workspace.',
+  inheritedAdmin: 'This personal workspace follows the policy of the default workspace. Saving gives it a policy of its own.',
+  lockSpecial: 'Special models are set by an administrator',
+  lockSpecialHint: 'Images, video, speech, transcription and the workspace\'s own models: members see them but cannot change them.',
+  specialLocked: 'Special models (images, video, speech, transcription) are set by an administrator.',
+  loading: 'Loading the policy',
+  errors: {
+    load: 'Could not load the model policy.',
+    save: 'Could not save the model policy.',
+    noneSelected: 'Pick at least one model, or remove the policy.',
+  },
+  picker: {
+    fixedEffort: 'The workspace policy fixes the reasoning effort.',
+    policyBadge: 'Policy',
+    onlyModel: 'The only model this workspace allows.',
+  },
+  agent: {
+    note: 'This workspace allows only some models. Pick one of them.',
+    allowedHint: 'Allowed here',
+    fixedNote: 'The workspace policy fixes this setting; the value below is not used.',
+    noneAllowed: 'No allowed model matches this provider.',
+  },
+  models: {
+    readOnly: 'Only an administrator changes the model catalog.',
+    policyNote: 'This workspace has a model policy: only its models can be chosen.',
+  },
+};

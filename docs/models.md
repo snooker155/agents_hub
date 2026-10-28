@@ -20,6 +20,64 @@ Resolution order, most specific first:
 An agent with nothing pinned inherits, which is usually what you want: change
 the workspace default and the whole workspace moves.
 
+A workspace with a [model policy](#model-policy-per-workspace) narrows all of
+this to the models the policy allows.
+
+## Model policy per workspace
+
+An administrator can fix which models a workspace runs, and with what
+settings, so that its members cannot change them. It is set on the
+workspace's page (Settings tab), or with
+`PUT /api/workspaces/{name}/model-policy`:
+
+```json
+{"models": ["openai/gpt-5", "anthropic/claude-sonnet-5-5"],
+ "default": "openai/gpt-5",
+ "temperature": 0.2, "effort": "medium", "max_tokens": 8000}
+```
+
+`models` are enabled catalog models; `default` must be one of them (the first
+when left out). `temperature`, `effort` and `max_tokens` are optional. An
+empty `models` list removes the policy. In `multi` mode only an administrator
+writes it, owner or not; every member reads it (`GET` on the same path, and
+`policy` in `GET /api/workspaces/{name}/model`).
+
+With a policy in place:
+
+- the workspace's default model is the policy's, and the workspace default
+  route refuses to change it;
+- the header's model picker offers only the policy's models; the global
+  default is not one of them;
+- an agent's own model may be set only to an allowed model of its workspace
+  (and of the workspace the page is on);
+- a model switch sent to a running run, an agent's fallback models, the
+  advisor and a delegation with a named model pick only among the allowed
+  models (`tools/delegation.py` `enabled_models`, `resolve_model`);
+- at run time, a model that is not allowed (an agent pinned before the policy,
+  a shared or system agent pinned for another workspace) runs on the policy's
+  default instead, with that provider's own endpoint and key
+  (`agents/agent_factory.py`);
+- `temperature`, `effort` and `max_tokens`, when set, beat the agent's own
+  values and the header's effort.
+
+A policy of one model makes that model the workspace's global model: its
+default, the only choice in the header, and the only model any agent there
+runs on.
+
+The policy also makes the workspace's [special models](special-models.md)
+(images, video, speech, transcription and its own models) the
+administrator's to set: members see them read-only. Send
+`"lock_special_models": false` to leave them to the members.
+
+A member's personal workspace with no policy of its own follows the `default`
+workspace's (`inherited_from: "default"` in the answer), so working in one's
+own workspace does not step around the hub's policy. An administrator can
+give a personal workspace a policy of its own, which then applies instead.
+
+Setting a policy clears the header's choice when the policy does not allow
+it. The model catalog itself (which models are enabled, their prices,
+temperatures and efforts) is the administrator's to change in `multi` mode.
+
 ## A first key switches on a model
 
 Saving a provider key (Settings, the welcome window, or the assistant's

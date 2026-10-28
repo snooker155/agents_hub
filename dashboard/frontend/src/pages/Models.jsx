@@ -6,9 +6,11 @@ import {
   Brain, HardDrive, Waypoints, Sparkles, Plug, Database,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
+import { useAuth, canAdminister } from '../components/auth';
+import { policyAllows } from '../components/workspace/modelPolicy';
 import {
   getModelsCatalog, saveModelsCatalog, discoverProviderModels, getModelsUsage,
-  getWorkspaceModel, updateWorkspaceDefaultModel,
+  getWorkspaceModel, updateWorkspaceDefaultModel, updateWorkspaceModel,
 } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -113,6 +115,8 @@ function ModelEffortSelect({ model, onChange }) {
 
 function CatalogTab() {
   const { t } = useI18n();
+  // Members read the catalog; only an administrator changes it.
+  const admin = canAdminister(useAuth());
   const { selectedWorkspace } = useWorkspace();
   const [catalog, setCatalog] = useState(null);
   // Whether Ollama, LM Studio and the hub runtime answer, for a marker by their names.
@@ -125,6 +129,9 @@ function CatalogTab() {
   const [wsModel, setWsModel] = useState(null);     // raw GET /model response
   const [wsForm, setWsForm] = useState({ provider: '', model: '' });
   const [wsSaving, setWsSaving] = useState(false);
+  const [wsError, setWsError] = useState('');
+  // The workspace's model policy (workspace/model_policy.py), when it has one.
+  const policy = wsModel?.policy?.models?.length ? wsModel.policy : null;
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [discovering, setDiscovering] = useState({});
@@ -150,8 +157,13 @@ function CatalogTab() {
       .then(({ data }) => {
         setWsModel(data);
         const wd = data.workspace_default || {};
-        const p = wd.provider || '';
-        setWsForm({ provider: p, model: p ? (wd.model || '') : '' });
+        const ov = data.override || {};
+        const pol = data.policy?.models?.length ? data.policy : null;
+        // Under a policy the choice is the header's (model_override), kept to
+        // the policy's models; else the workspace default.
+        const cur = pol && ov.provider && policyAllows(pol, ov.provider, ov.model) ? ov : wd;
+        const p = cur.provider || '';
+        setWsForm({ provider: p, model: p ? (cur.model || '') : '' });
       })
       .catch(() => { setWsModel(null); setWsForm({ provider: '', model: '' }); });
   }, [selectedWorkspace]);
@@ -161,10 +173,15 @@ function CatalogTab() {
   const saveWsModel = () => {
     if (!selectedWorkspace) return;
     setWsSaving(true);
+    setWsError('');
     const payload = wsForm.provider ? { provider: wsForm.provider, model: wsForm.model } : { provider: '', model: '' };
-    updateWorkspaceDefaultModel(selectedWorkspace, payload)
+    // A policy sets the default itself, so the choice goes to the header's override.
+    (policy ? updateWorkspaceModel : updateWorkspaceDefaultModel)(selectedWorkspace, payload)
       .then(() => loadWsModel())
-      .catch((e) => console.error('Error saving workspace default model:', e))
+      .catch((e) => {
+        console.error('Error saving workspace default model:', e);
+        setWsError(e?.response?.data?.detail || e?.message || '');
+      })
       .finally(() => setWsSaving(false));
   };
 
@@ -276,13 +293,18 @@ function CatalogTab() {
 
   return (
     <div className="space-y-4">
+      {!admin && (
+        <div className="rounded-lg px-4 py-2 text-sm bg-gray-50 text-gray-600 border border-gray-200" data-testid="models-read-only">
+          {t('modelPolicy.models.readOnly')}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-gray-500">
           {t('models.catalogHint')}
         </p>
         <button
           onClick={save}
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || !admin}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors shrink-0 ${
             dirty ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
           }`}
@@ -294,14 +316,19 @@ function CatalogTab() {
 
       {/* Per-workspace default model (the model this workspace actually uses) */}
       {(() => {
-        const enabledProviders = orderProviders(catalog).filter((p) => (catalog[p]?.models || []).some((m) => m.enabled));
-        const wsEnabledModels = wsForm.provider ? (catalog[wsForm.provider]?.models || []).filter((m) => m.enabled) : [];
+        const allowedHere = (p, m) => policyAllows(policy, p, m.id);
+        const enabledProviders = orderProviders(catalog).filter((p) => (catalog[p]?.models || []).some((m) => m.enabled && allowedHere(p, m)));
+        const wsEnabledModels = wsForm.provider ? (catalog[wsForm.provider]?.models || []).filter((m) => m.enabled && allowedHere(wsForm.provider, m)) : [];
         const gd = wsModel?.global_default || {};
         const wd = wsModel?.workspace_default || {};
-        const savedProvider = wd.provider || '';
+        // Under a policy the saved choice is the header's override when it is
+        // allowed, else the policy default.
+        const ov = wsModel?.override || {};
+        const saved = policy && ov.provider && policyAllows(policy, ov.provider, ov.model) ? ov : wd;
+        const savedProvider = saved.provider || '';
         const wsDirty = (wsForm.provider || '') !== savedProvider
-          || (wsForm.provider && (wsForm.model || '') !== (wd.model || ''));
-        const inheriting = !wsForm.provider;
+          || (wsForm.provider && (wsForm.model || '') !== (saved.model || ''));
+        const inheriting = !wsForm.provider && !policy;
         return (
           <div className="bg-indigo-50/40 border border-indigo-200 rounded-xl px-4 py-3">
             <div className="flex items-center flex-wrap gap-3">
@@ -319,7 +346,7 @@ function CatalogTab() {
                 }}
                 className={`${inputCls} py-1.5`}
               >
-                <option value="">{t('models.inheritGlobalDefault')}</option>
+                {!policy && <option value="">{t('models.inheritGlobalDefault')}</option>}
                 {enabledProviders.map((p) => (
                   <option key={p} value={p}>{providerConfig(p).label}</option>
                 ))}
@@ -345,6 +372,8 @@ function CatalogTab() {
                 {t('models.apply')}
               </button>
             </div>
+            {policy && <p className="text-xs text-gray-500 mt-2">{t('modelPolicy.models.policyNote')}</p>}
+            {wsError && <p className="text-xs text-red-600 mt-2" data-testid="ws-model-error">{wsError}</p>}
             <p className="text-xs text-gray-500 mt-2">
               {inheriting
                 ? <>{t('models.inheritingGlobal')} <span className="font-medium text-gray-600">{providerConfig(gd.provider).label || gd.provider || '—'}{gd.model ? ` · ${gd.model}` : ''}</span>{t('models.pickAModelToSet')}</>
@@ -354,6 +383,8 @@ function CatalogTab() {
         );
       })()}
 
+      {/* The catalog itself is the administrator's: members read it, disabled. */}
+      <fieldset disabled={!admin} className="min-w-0 border-0 p-0 m-0 space-y-4">
       {/* Global default — read-only, sourced from .env (the inherit fallback) */}
       <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center flex-wrap gap-3">
         <span className="text-sm font-medium text-gray-700">{t('models.globalDefault')}</span>
@@ -604,6 +635,7 @@ function CatalogTab() {
           </div>
         );
       })}
+      </fieldset>
     </div>
   );
 }
@@ -756,6 +788,7 @@ function SpecialModelsTab() {
 
 export default function Models() {
   const { t } = useI18n();
+  const admin = canAdminister(useAuth());
   // The tab lives in the address (?tab=local), so other pages can link to it.
   const [params, setParams] = useSearchParams();
   const TABS = [
@@ -793,9 +826,19 @@ export default function Models() {
         })}
       </div>
       {tab === 'catalog' && <CatalogTab />}
-      {tab === 'local' && <LocalTab />}
+      {tab === 'local' && (
+        <fieldset disabled={!admin} className="min-w-0 border-0 p-0 m-0">
+          {!admin && <p className="mb-3 rounded-lg px-4 py-2 text-sm bg-gray-50 text-gray-600 border border-gray-200">{t('modelPolicy.models.readOnly')}</p>}
+          <LocalTab />
+        </fieldset>
+      )}
       {tab === 'special' && <SpecialModelsTab />}
-      {tab === 'cache' && <CacheTab />}
+      {tab === 'cache' && (
+        <fieldset disabled={!admin} className="min-w-0 border-0 p-0 m-0">
+          {!admin && <p className="mb-3 rounded-lg px-4 py-2 text-sm bg-gray-50 text-gray-600 border border-gray-200">{t('modelPolicy.models.readOnly')}</p>}
+          <CacheTab />
+        </fieldset>
+      )}
       {tab === 'endpoint' && <ServingSection />}
       {tab === 'usage' && <UsageTab />}
     </PageContainer>

@@ -9,7 +9,7 @@
  * the agent spec; everything else about it is this tab's business.
  */
 import { useEffect, useState } from 'react';
-import { getAgentModel, getModelReasoning, testLocalModel, updateAgentModel } from '../../api';
+import { getAgentModel, getModelReasoning, getWorkspaceModelPolicy, testLocalModel, updateAgentModel } from '../../api';
 import { EMPTY_MODEL } from './constants';
 
 export function useAgentModel({ id, t, workspace }) {
@@ -26,6 +26,19 @@ export function useAgentModel({ id, t, workspace }) {
   const [effectiveEffort, setEffectiveEffort] = useState(null);
   // A typed-in model's profile (efforts, default) and what inherit gives it.
   const [typedEffortInfo, setTypedEffortInfo] = useState(null);
+
+  // The model policy of the workspace chosen in the header
+  // (workspace/model_policy.py): the models this agent may be set to and the
+  // settings it fixes. null = no policy.
+  const [policy, setPolicy] = useState(null);
+  useEffect(() => {
+    if (!workspace) return undefined;
+    let live = true;
+    getWorkspaceModelPolicy(workspace)
+      .then(({ data }) => { if (live) setPolicy(data?.policy?.models?.length ? data.policy : null); })
+      .catch(() => { if (live) setPolicy(null); });
+    return () => { live = false; };
+  }, [workspace]);
 
   const handleFetchLocalModels = async () => {
     const provider = modelForm.provider; // 'ollama' | 'lmstudio'
@@ -139,7 +152,7 @@ export function useAgentModel({ id, t, workspace }) {
     modelSaving, modelMessage, modelShowKey, setModelShowKey,
     localModels, localModelsFetching, localModelsError,
     handleFetchLocalModels, handleSaveModel,
-    effectiveEffort, effortInfo,
+    effectiveEffort, effortInfo, policy: workspace ? policy : null,
   };
 }
 

@@ -150,12 +150,13 @@ def _require_not_agent(principal: Any) -> None:
                             detail="a model switch is sent by a person, not by an agent or a delegated run")
 
 
-def _catalog_model(text: str) -> str:
-    """The canonical ``provider/model`` id of an enabled catalog model, 400
-    otherwise (the same lookup delegation and fallback models use)."""
+def _catalog_model(text: str, workspace: Optional[str] = None) -> str:
+    """The canonical ``provider/model`` id of an enabled catalog model the
+    run's workspace allows, 400 otherwise (the same lookup delegation and
+    fallback models use)."""
     from tools.delegation import resolve_model
     try:
-        provider, model = resolve_model(text)
+        provider, model = resolve_model(text, workspace=workspace)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return f"{provider}/{model}"
@@ -318,7 +319,7 @@ def _relaunch_task(run: Dict[str, Any], task: Any, message: str,
     return new_run_id
 
 
-def _validated(body: SteerBody):
+def _validated(body: SteerBody, workspace: Optional[str] = None):
     """``(mode, text)`` of a steer request, 400 on a bad one."""
     mode = (body.mode or steering.MODE_INJECT).strip().lower()
     if mode not in steering.MODES:
@@ -330,7 +331,7 @@ def _validated(body: SteerBody):
         raise HTTPException(status_code=400,
                             detail=f"The message is longer than {steering.MAX_BODY_CHARS} characters")
     if mode == steering.MODE_SWITCH_MODEL:
-        text = _catalog_model(text)
+        text = _catalog_model(text, workspace)
     return mode, text
 
 
@@ -342,7 +343,7 @@ def _steer_team(team_run: Any, body: SteerBody, request: Request) -> Dict[str, A
     message as the conversation's next turn."""
     run_id = team_run.team_run_id
     principal = _require_can_steer(request, {"workspace": team_run.workspace})
-    mode, text = _validated(body)
+    mode, text = _validated(body, team_run.workspace or "default")
     if mode in steering.OPERATOR_MODES:
         raise HTTPException(status_code=400, detail=(
             "A system message or a model switch goes to one agent run; "
@@ -391,7 +392,7 @@ async def steer_run(run_id: str, body: SteerBody, request: Request):
     principal = _require_can_steer(request, run)
     if (body.mode or "").strip().lower() == steering.MODE_SWITCH_MODEL:
         _require_not_agent(principal)
-    mode, text = _validated(body)
+    mode, text = _validated(body, str(run.get("workspace") or "") or "default")
     if mode == steering.MODE_SYSTEM:
         _require_operator(principal, run)
 

@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert, Sparkles, Repeat } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert, Sparkles, Repeat, Cpu } from 'lucide-react';
 import { isHtmlFile } from '../lib/fileKind';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
@@ -16,6 +16,7 @@ import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
 import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
 import WorkspaceHubSync from '../components/workspace/WorkspaceHubSync';
 import WorkspaceRoles from '../components/workspace/WorkspaceRoles';
+import ModelPolicyCard from '../components/workspace/ModelPolicyCard';
 import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
 import { useAuth, isAdmin, isMultiUser } from '../components/auth';
 import { useTheme, resolvePalette } from '../components/theme';
@@ -1232,6 +1233,7 @@ const SETTINGS_GROUPS = [
     items: [
       { id: 'roles', icon: Repeat },
       { id: 'specialModels', icon: Sparkles },
+      { id: 'modelPolicy', icon: Cpu, label: 'modelPolicy.section' },
       { id: 'personalMemory', icon: UserRound },
       { id: 'isolation', icon: ShieldAlert },
     ],
@@ -1298,7 +1300,7 @@ function WorkspaceSettingsTab({ workspace, agents, agentRecords }) {
                     aria-current={isActive ? 'page' : undefined}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
-                    {t(`workspaceDetails.settingsTab.sections.${item.id}`)}
+                    {(item.label ? t(item.label) : t(`workspaceDetails.settingsTab.sections.${item.id}`))}
                   </button>
                 );
               })}
@@ -1323,7 +1325,7 @@ function WorkspaceSettingsTab({ workspace, agents, agentRecords }) {
               {groups.map((group) => (
                 <optgroup key={group.key} label={t(`workspaceDetails.settingsTab.groups.${group.key}`)}>
                   {group.items.map((item) => (
-                    <option key={item.id} value={item.id}>{t(`workspaceDetails.settingsTab.sections.${item.id}`)}</option>
+                    <option key={item.id} value={item.id}>{(item.label ? t(item.label) : t(`workspaceDetails.settingsTab.sections.${item.id}`))}</option>
                   ))}
                 </optgroup>
               ))}
@@ -1331,6 +1333,7 @@ function WorkspaceSettingsTab({ workspace, agents, agentRecords }) {
           </div>
 
           {active.id === 'roles' && <WorkspaceRoles key={workspace} workspace={workspace} />}
+          {active.id === 'modelPolicy' && <ModelPolicyCard key={workspace} workspace={workspace} />}
           {active.id === 'specialModels' && <WorkspaceSpecialModels key={workspace} workspace={workspace} />}
           {active.id === 'personalMemory' && <WorkspacePersonalMemory workspace={workspace} agents={agents} />}
           {active.id === 'isolation' && (

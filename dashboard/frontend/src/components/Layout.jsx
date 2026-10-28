@@ -9,6 +9,7 @@ import { buildMenu, visibleGroups, hiddenCount, defaultMenuMode, readMenuMode, w
 import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog, getModelReasoning } from '../api';
 import { EffortSlider } from './EffortSelect';
 import { clampEffort, effortLabel } from './effort';
+import { policyAllows, policyModels } from './workspace/modelPolicy';
 import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
 import { LogOut, Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
@@ -211,7 +212,11 @@ const Layout = ({ children }) => {
   // global default is not a distinct choice — treat it as "global" so the picker
   // doesn't show the same provider twice (once as Global, once as Default).
   const wsDefault = workspaceModel.workspace_default || { provider: '', model: '' };
-  const workspaceDefaultIsGlobal = Boolean(
+  // The administrator's model policy of the workspace (workspace/model_policy.py):
+  // the picker offers its models only, and its default is the workspace default.
+  const policy = workspaceModel.policy?.models?.length ? workspaceModel.policy : null;
+  const pickerModels = policy ? policyModels(policy) : availableModels;
+  const workspaceDefaultIsGlobal = !policy && Boolean(
     wsDefault.provider &&
     wsDefault.provider === globalDefault.provider &&
     (wsDefault.model || '') === (globalDefault.model || '')
@@ -227,12 +232,14 @@ const Layout = ({ children }) => {
 
   const displayModel = (() => {
     const op = workspaceModel.override?.provider || '';
-    if (op && op !== 'workspace_default') {
+    const overrideAllowed = !policy
+      || (op !== 'global' && policyAllows(policy, op, workspaceModel.override?.model));
+    if (op && op !== 'workspace_default' && overrideAllowed) {
       if (op === 'global') return { ...globalDefault, source: 'global' };
       return { provider: op, model: workspaceModel.override.model, source: 'override' };
     }
     const dp = workspaceModel.workspace_default?.provider || '';
-    if (dp && dp !== 'global' && !workspaceDefaultIsGlobal) {
+    if (dp && (dp !== 'global' || policy) && !workspaceDefaultIsGlobal) {
       return { provider: dp, model: workspaceModel.workspace_default.model, source: 'workspace_default' };
     }
     return { ...globalDefault, source: 'global' };
@@ -555,8 +562,9 @@ const Layout = ({ children }) => {
               </button>
               {showModelPicker && (
                 <div className="header-sheet absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-64 py-1">
-                  {/* Global — DEFAULT_PROVIDER from .env, lowest priority fallback */}
-                  <button
+                  {/* Global — DEFAULT_PROVIDER from .env, lowest priority fallback.
+                      Not offered under a model policy: the policy's default replaces it. */}
+                  {!policy && <button
                     onClick={() => handleModelSwitch('global', '')}
                     className={`w-full text-left flex items-center gap-2 px-4 py-2 text-xs hover:bg-gray-50 transition-colors ${
                       displayModel.source === 'global' ? 'bg-indigo-50' : ''
@@ -573,14 +581,19 @@ const Layout = ({ children }) => {
                     {displayModel.source === 'global' && (
                       <span className="ml-auto text-indigo-500 font-bold shrink-0">✓</span>
                     )}
-                  </button>
-                  {availableModels.length > 0 && <div className="border-t border-gray-100 my-1" />}
+                  </button>}
+                  {policy && (
+                    <p className="px-4 pt-1.5 pb-0.5 text-[10px] text-gray-400">
+                      {policy.models.length === 1 ? t('modelPolicy.picker.onlyModel') : t('modelPolicy.models.policyNote')}
+                    </p>
+                  )}
+                  {!policy && pickerModels.length > 0 && <div className="border-t border-gray-100 my-1" />}
                   {/* Every enabled catalog model (grouped by provider), with marks
                       for the global model and this workspace's default model. */}
-                  {availableModels.map(({ provider, model }, idx) => {
-                    const showHeader = idx === 0 || availableModels[idx - 1].provider !== provider;
+                  {pickerModels.map(({ provider, model }, idx) => {
+                    const showHeader = idx === 0 || pickerModels[idx - 1].provider !== provider;
                     const wd = workspaceModel.workspace_default || {};
-                    const isGlobal = provider === globalDefault.provider && model === globalDefault.model;
+                    const isGlobal = !policy && provider === globalDefault.provider && model === globalDefault.model;
                     const isDefault = wd.provider === provider && wd.model === model;
                     const isActive = displayModel.source !== 'global'
                       && displayModel.provider === provider && displayModel.model === model;
@@ -614,6 +627,12 @@ const Layout = ({ children }) => {
                       leftmost stop is the model's own default */}
                   {displayProfile?.profile?.efforts?.length > 0 && (
                     <div className="border-t border-gray-100 mt-1 px-4 pt-2 pb-1.5">
+                      {policy?.effort ? (
+                        <div className="flex items-baseline justify-between gap-2 opacity-60 cursor-not-allowed" title={t('modelPolicy.picker.fixedEffort')} data-testid="policy-fixed-effort">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{t('effort.headerTitle')}</span>
+                          <span className="text-xs font-medium text-gray-600">{effortLabel(t, effortShown || policy.effort)}</span>
+                        </div>
+                      ) : (
                       <EffortSlider
                         efforts={displayProfile.profile.efforts}
                         value={effortShown}
@@ -622,6 +641,7 @@ const Layout = ({ children }) => {
                         hint={t('effort.headerHint')}
                         defaultLabel={t('effort.headerDefault', { value: effortLabel(t, displayProfile.value) || '—' })}
                       />
+                      )}
                     </div>
                   )}
                   <div className="border-t border-gray-100 mt-1 pt-1">

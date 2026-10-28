@@ -675,7 +675,93 @@ def _model_state(name: str, metadata: dict) -> dict:
         # None = each model's own default (the Models page, then the provider).
         "effort": get_workspace_model_effort(metadata),
         "effort_own": normalize_effort(metadata.get("model_effort")),
+        # The administrator's model policy (workspace/model_policy.py): the
+        # models the pickers may offer here and the settings it fixes; None
+        # when the workspace has none.
+        "policy": _model_policy_dict(metadata),
     }
+
+
+def _model_policy_dict(metadata: dict) -> Optional[dict]:
+    from workspace.model_policy import from_metadata
+    policy = from_metadata(metadata)
+    return policy.to_dict() if policy is not None else None
+
+
+@router.get("/{name}/model-policy")
+async def get_workspace_model_policy(name: str):
+    """The workspace's model policy, or ``{"policy": null}``. Any member reads
+    it: the header and the agent's Model tab offer only what it allows."""
+    return {"policy": _model_policy_dict(get_workspace_metadata(name) or {})}
+
+
+@router.put("/{name}/model-policy")
+async def set_workspace_model_policy(request: Request, name: str, payload: dict):
+    """Set (or, with no models, clear) the workspace's model policy. Only an
+    administrator, in ``multi`` mode (common.auth.ADMIN_WRITE_SEGMENTS).
+
+    Body: ``{models: [{provider, model}] | ["provider/model"], default,
+    temperature, effort, max_tokens}``. The header's choice is cleared when the
+    policy does not allow it, so the workspace runs on the policy's default.
+    """
+    from workspace.model_policy import POLICY_KEY, normalize, from_metadata
+    _ensure_writable_workspace(name)
+    try:
+        stored = normalize(payload.get("policy", payload) if isinstance(payload, dict) else None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if stored:
+        catalog = _enabled_model_ids()
+        missing = [f"{m['provider']}/{m['model']}" for m in stored["models"]
+                   if catalog is not None and f"{m['provider']}/{m['model']}" not in catalog]
+        if missing:
+            raise HTTPException(status_code=400,
+                                detail="not enabled on the Models page: " + ", ".join(missing))
+    patch: Dict[str, Any] = {POLICY_KEY: stored}
+    if stored:
+        policy = from_metadata({POLICY_KEY: stored})
+        override = (get_workspace_metadata(name) or {}).get("model_override") or {}
+        if policy is not None and override.get("provider") and not policy.allows(
+                override.get("provider"), override.get("model")):
+            patch["model_override"] = {}
+    update_workspace_metadata(name, patch)
+    _audit_model_policy(request, name, stored)
+    return {"policy": stored}
+
+
+def _enabled_model_ids() -> Optional[set]:
+    """``provider/model`` of every enabled catalog model; None when the
+    catalog cannot be read (then nothing is refused for it)."""
+    try:
+        from tools.delegation import enabled_models
+        return {m["id"] for m in enabled_models()}
+    except Exception:  # noqa: BLE001 - an unreadable catalog does not block the policy
+        log.debug("model policy: catalog unavailable", exc_info=True)
+        return None
+
+
+def _audit_model_policy(request: Request, name: str, stored: Optional[dict]) -> None:
+    try:
+        from common import audit, identity
+        audit.record("workspace.model_policy.changed",
+                     principal=identity.request_principal(request), object_type="workspace",
+                     object_id=name, workspace=name, details={"policy": stored})
+    except Exception:  # noqa: BLE001 - the audit log is best effort here
+        log.debug("model policy: audit failed", exc_info=True)
+
+
+def _has_model_policy(name: str) -> bool:
+    """Whether a model policy applies to ``name``, its own or inherited."""
+    from workspace.model_policy import for_workspace
+    return for_workspace(name) is not None
+
+
+def _policy_refusal(name: str, provider: str, model: str) -> None:
+    """400 when the workspace's model policy does not allow ``provider``/``model``."""
+    from workspace.model_policy import refusal
+    reason = refusal(name, provider, model)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
 
 
 @router.put("/{name}/model")
@@ -693,6 +779,11 @@ async def set_workspace_model(name: str, payload: dict):
         effort = None if word in ("", "inherit") else normalize_effort(word)
         if word not in ("", "inherit") and effort is None:
             raise HTTPException(status_code=400, detail=f"Unknown effort '{payload.get('effort')}'")
+        from workspace.model_policy import for_workspace
+        policy = for_workspace(name)
+        if policy is not None and policy.effort and effort != policy.effort:
+            raise HTTPException(status_code=400,
+                                detail=f"The effort is fixed at '{policy.effort}' by the workspace's model policy")
         update_workspace_metadata(name, {"model_effort": effort})
         if "provider" not in payload and "model" not in payload:
             return {"effort": effort}
@@ -700,7 +791,11 @@ async def set_workspace_model(name: str, payload: dict):
     model = payload.get("model", "")
     if not provider or provider == "workspace_default":
         update_workspace_metadata(name, {"model_override": {}})
+    elif provider == "global" and _has_model_policy(name):
+        raise HTTPException(status_code=400,
+                            detail="The workspace's model policy sets its models; the global default does not apply")
     else:
+        _policy_refusal(name, provider, model)
         update_workspace_metadata(name, {"model_override": {"provider": provider, "model": model}})
     return {"provider": provider, "model": model}
 
@@ -715,6 +810,9 @@ async def set_workspace_default_model(name: str, payload: dict):
     provider clears the workspace default (falls back to the global .env default).
     """
     _ensure_writable_workspace(name)
+    if _has_model_policy(name):
+        raise HTTPException(status_code=400,
+                            detail="The workspace's model policy sets its default model")
     provider = (payload.get("provider") or "").strip()
     model = (payload.get("model") or "").strip()
     if not provider or provider in ("global", "workspace_default"):
@@ -1135,7 +1233,15 @@ def _special_models_payload(name: str) -> dict:
         "own": special.masked(special.stored(name)),
         "effective": special.masked(special.effective(name)),
         "options": special.options_payload(),
+        # Set by the workspace's model policy: only an administrator changes
+        # these (workspace/model_policy.py ``lock_special_models``).
+        "locked": _special_models_locked(name),
     }
+
+
+def _special_models_locked(name: str) -> bool:
+    from workspace.model_policy import special_models_locked
+    return special_models_locked(name)
 
 
 @router.get("/{name}/special-models")
@@ -1218,6 +1324,8 @@ async def update_workspace_special_models(request: Request, name: str, payload: 
     out uses the ``default`` workspace's choice."""
     from providers import special
     _ensure_writable_workspace(name)
+    if _special_models_locked(name):
+        identity.require_role(identity.request_principal(request), admin=True)
     try:
         config = special.save(name, payload.get("special_models", payload))
     except special.SpecialModelError as exc:

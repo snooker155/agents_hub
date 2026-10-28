@@ -964,6 +964,17 @@
             "title": "Clear Temperature",
             "type": "boolean"
           },
+          "effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effort"
+          },
           "max_tokens": {
             "anyOf": [
               {
@@ -15233,6 +15244,11 @@
         "additionalProperties": true,
         "description": "One row of ``GET /api/workspaces``.",
         "properties": {
+          "agents_count": {
+            "default": 0,
+            "title": "Agents Count",
+            "type": "integer"
+          },
           "attached": {
             "default": false,
             "title": "Attached",
@@ -15245,6 +15261,19 @@
           "path": {
             "title": "Path",
             "type": "string"
+          },
+          "projects": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Projects",
+            "type": "array"
+          },
+          "projects_count": {
+            "default": 0,
+            "title": "Projects Count",
+            "type": "integer"
           },
           "target": {
             "anyOf": [
@@ -18764,6 +18793,22 @@
               "title": "Agent Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
           }
         ],
         "responses": {
@@ -18800,6 +18845,22 @@
             "schema": {
               "title": "Agent Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
             }
           }
         ],
@@ -39887,6 +39948,67 @@
         ]
       }
     },
+    "/api/models/reasoning": {
+      "get": {
+        "description": "The efforts ``provider``/``model`` accepts and the one it runs at when\nnothing more specific is set, for pickers that are not on the Models page\n(the agent's Model tab, the header). An empty model is the provider's\ndefault one. With ``workspace``, the header's choice there counts too.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Provider",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "model",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Model",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Workspace",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Model Reasoning",
+        "tags": [
+          "models"
+        ]
+      }
+    },
     "/api/models/serving/info": {
       "get": {
         "responses": {
@@ -50144,6 +50266,64 @@
           }
         },
         "summary": "Remove Custom Backend",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/member-menu": {
+      "get": {
+        "description": "The rows members of a multi-user hub do not see, and the default list.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Member Menu",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "description": "Save the rows hidden from members (an administrator's write in ``multi``\nmode). ``{\"hidden\": null}`` goes back to the default list.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Member Menu",
         "tags": [
           "settings"
         ]
@@ -62423,6 +62603,96 @@
           }
         },
         "summary": "Set Workspace Model",
+        "tags": [
+          "workspaces"
+        ]
+      }
+    },
+    "/api/workspaces/{name}/model-policy": {
+      "get": {
+        "description": "The workspace's model policy, or ``{\"policy\": null}``. Any member reads\nit: the header and the agent's Model tab offer only what it allows.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace Model Policy",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "put": {
+        "description": "Set (or, with no models, clear) the workspace's model policy. Only an\nadministrator, in ``multi`` mode (common.auth.ADMIN_WRITE_SEGMENTS).\n\nBody: ``{models: [{provider, model}] | [\"provider/model\"], default,\ntemperature, effort, max_tokens}``. The header's choice is cleared when the\npolicy does not allow it, so the workspace runs on the policy's default.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Workspace Model Policy",
         "tags": [
           "workspaces"
         ]

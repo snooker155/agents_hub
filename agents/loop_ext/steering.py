@@ -385,7 +385,9 @@ class SteeringExtension(LoopExtension):
             return
         try:
             from tools.delegation import resolve_model
-            provider, model = resolve_model(str(latest.get("to") or latest.get("text") or ""))
+            agent = self._agent_obj()
+            provider, model = resolve_model(str(latest.get("to") or latest.get("text") or ""),
+                                            workspace=getattr(agent, "workspace", None))
             llm = self._build(provider, model)
         except Exception as exc:  # noqa: BLE001 - a bad switch is reported on the run, never fails it
             latest["error"] = str(exc)[:300]

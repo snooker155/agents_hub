@@ -13,6 +13,8 @@ import SpeechLanguagesField from './SpeechLanguagesField';
 import { useToast, errorDetail } from '../toast';
 import { useI18n } from '../../i18n';
 import useVoiceSample from '../useVoiceSample';
+import { canAdminister, useAuth } from '../auth';
+import { AccessNotice, EditLock } from '../access/EditLock';
 
 const ICONS = { image: ImageIcon, video: Film, speech: AudioLines, transcription: Mic };
 
@@ -181,6 +183,7 @@ const priceOrNull = (value) => (value === '' || value === null || value === unde
 export default function WorkspaceSpecialModels({ workspace }) {
   const { t } = useI18n();
   const toast = useToast();
+  const auth = useAuth();
   const [payload, setPayload] = useState(null);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -335,7 +338,10 @@ export default function WorkspaceSpecialModels({ workspace }) {
     }
   };
 
-  return (
+  // The workspace's model policy can make these the administrator's to set
+  // (workspace/model_policy.py lock_special_models): members read them.
+  const locked = Boolean(payload.locked) && !canAdminister(auth);
+  const form = (
     <div className="space-y-5">
       {/* Floats right and stays at the top while the form scrolls; the intro wraps around it. */}
       <button
@@ -656,6 +662,13 @@ export default function WorkspaceSpecialModels({ workspace }) {
           <Plus className="w-4 h-4" /> {t('workspaceDetails.specialModels.addCustom')}
         </button>
       </SectionCard>
+    </div>
+  );
+  if (!locked) return form;
+  return (
+    <div>
+      <AccessNotice testId="special-models-locked">{t('modelPolicy.specialLocked')}</AccessNotice>
+      <EditLock locked>{form}</EditLock>
     </div>
   );
 }

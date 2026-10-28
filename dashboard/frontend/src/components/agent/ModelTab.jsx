@@ -3,17 +3,30 @@ import { AlertCircle, BrainCircuit, Eye, EyeOff, Loader, Save, Trash2, Wifi } fr
 import { useAgentPage } from './context';
 import { EffortSelect } from '../EffortSelect';
 import { clampEffort, effortLabel, inheritText } from '../effort';
+import { policyModels } from '../workspace/modelPolicy';
 
 /** Which model answers, and how much it is allowed to think first. */
 export default function ModelTab() {
   const {
     customBackends, effectiveEffort, effortInfo, handleFetchLocalModels, handleSaveModel, id, localModels,
     localModelsError, localModelsFetching, modelForm, modelHasApiKey, modelMessage,
-    modelSaving, modelShowKey, setLocalModels, setLocalModelsError, setModelForm,
+    modelSaving, modelShowKey, policy, setLocalModels, setLocalModelsError, setModelForm,
     setModelHasApiKey, setModelMessage, setModelShowKey, t,
   } = useAgentPage();
+  // Under the workspace's model policy only its models can be chosen, and
+  // the settings it fixes are not the agent's to set.
+  const allowed = policy ? policyModels(policy) : null;
+  const allowedFor = (provider) => (allowed || []).filter((m) => m.provider === provider).map((m) => m.model);
+  const fixedTemperature = policy?.temperature != null;
+  const fixedMaxTokens = policy?.max_tokens != null;
+  const fixedEffort = Boolean(policy?.effort);
   return (
         <div className="space-y-6">
+          {policy && (
+            <div className="rounded-lg px-4 py-2 text-sm bg-indigo-50 text-indigo-700 border border-indigo-200" data-testid="agent-policy-note">
+              {t('modelPolicy.agent.note')}
+            </div>
+          )}
           {/* Header */}
           <div className="flex items-center justify-between">
             <div>
@@ -52,11 +65,16 @@ export default function ModelTab() {
                 { value: 'ollama',    label: 'Ollama',     sub: t('agentDetails.localSub') },
                 { value: 'lmstudio', label: 'LM Studio',  sub: t('agentDetails.localSub') },
                 ...customBackends.map(b => ({ value: b.id, label: b.label || b.id, sub: t('agentDetails.customSub') })),
-              ].map(opt => (
+              ].filter(opt => !allowed || opt.value === 'inherit' || allowedFor(opt.value).length > 0).map(opt => (
                 <button
                   key={opt.value}
                   type="button"
-                  onClick={() => { setModelForm(f => ({ ...f, provider: opt.value })); setLocalModels([]); setLocalModelsError(''); }}
+                  onClick={() => { setModelForm(f => {
+                    // Under a policy the model is one of the allowed ones.
+                    const list = allowed && opt.value !== 'inherit' ? allowedFor(opt.value) : null;
+                    const keep = list && list.includes(f.model) ? f.model : (list ? list[0] : f.model);
+                    return { ...f, provider: opt.value, model: keep };
+                  }); setLocalModels([]); setLocalModelsError(''); }}
                   className={`flex flex-col items-center gap-0.5 px-3 py-3 rounded-xl border-2 text-sm font-semibold transition-colors ${
                     modelForm.provider === opt.value
                       ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
@@ -84,7 +102,17 @@ export default function ModelTab() {
                 {modelForm.provider === 'lmstudio' && t('agentDetails.lmstudioModelHint')}
                 {customBackends.some(b => b.id === modelForm.provider) && t('agentDetails.customBackendModelHint')}
               </p>
-              {(modelForm.provider === 'ollama' || modelForm.provider === 'lmstudio') && localModels.length > 0 ? (
+              {allowed && modelForm.provider !== 'inherit' ? (
+                <select
+                  value={modelForm.model}
+                  onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  aria-label={t('modelPolicy.agent.allowedHint')}
+                >
+                  {allowedFor(modelForm.provider).length === 0 && <option value="">{t('modelPolicy.agent.noneAllowed')}</option>}
+                  {allowedFor(modelForm.provider).map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              ) : (modelForm.provider === 'ollama' || modelForm.provider === 'lmstudio') && localModels.length > 0 ? (
                 <select
                   value={modelForm.model}
                   onChange={e => setModelForm(f => ({ ...f, model: e.target.value }))}
@@ -155,9 +183,10 @@ export default function ModelTab() {
                   onChange={e => setModelForm(f => ({ ...f, temperature: e.target.value }))}
                   placeholder={t('agentDetails.inheritGlobal')}
                   min="0" max="2" step="0.05"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  disabled={fixedTemperature}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none disabled:opacity-50 disabled:bg-gray-50"
                 />
-                <p className="text-xs text-gray-400 mt-1">{t('agentDetails.clearToInheritFromGlobal')}</p>
+                <p className="text-xs text-gray-400 mt-1">{fixedTemperature ? `${t('modelPolicy.agent.fixedNote')} (${policy.temperature})` : t('agentDetails.clearToInheritFromGlobal')}</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.maxTokensOverride')}</label>
@@ -167,9 +196,10 @@ export default function ModelTab() {
                   onChange={e => setModelForm(f => ({ ...f, max_tokens: e.target.value }))}
                   placeholder={t('agentDetails.inheritGlobal')}
                   min="256" step="256"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  disabled={fixedMaxTokens}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none disabled:opacity-50 disabled:bg-gray-50"
                 />
-                <p className="text-xs text-gray-400 mt-1">{t('agentDetails.clearToInheritFromGlobal')}</p>
+                <p className="text-xs text-gray-400 mt-1">{fixedMaxTokens ? `${t('modelPolicy.agent.fixedNote')} (${policy.max_tokens})` : t('agentDetails.clearToInheritFromGlobal')}</p>
               </div>
             </div>
 
@@ -197,9 +227,13 @@ export default function ModelTab() {
                       onChange={(v) => setModelForm(f => ({ ...f, effort: v || '' }))}
                       inheritLabel={inheritText(t, inherited)}
                       className="w-full sm:w-80"
+                      disabled={fixedEffort}
                     />
                   ) : (
                     <p className="text-xs text-gray-400 italic">{t('effort.unsupported')}</p>
+                  )}
+                  {fixedEffort && (
+                    <p className="text-xs text-gray-500 mt-1">{t('modelPolicy.agent.fixedNote')} ({effortLabel(t, policy.effort)})</p>
                   )}
                   {clampedTo && (
                     <p className="text-xs text-amber-600 mt-1">

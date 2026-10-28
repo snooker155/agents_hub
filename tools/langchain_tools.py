@@ -527,7 +527,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
                 provider_id, model_id = resolve_model(str(model))
             except ValueError as exc:
                 return _json_err(str(exc), code="bad_model",
-                                 extra={"models": [m["id"] for m in enabled_models()]})
+                                 extra={"models": [m["id"] for m in enabled_models(_active_workspace())]})
             model_params = {"provider": provider_id, "model": model_id}
 
         from agents.agent_factory import create_agent

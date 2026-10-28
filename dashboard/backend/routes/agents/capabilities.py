@@ -395,6 +395,15 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate, workspace: O
         if data.base_url is not None:
             new_base_url = data.base_url.strip() or None
 
+    # The model must be one the workspace's model policy allows: the agent's
+    # own workspace, and the one the page is in (workspace/model_policy.py).
+    if new_provider is not None and (data.provider is not None or data.model is not None):
+        from workspace.model_policy import refusal
+        for ws in {spec.owner_workspace or "default", workspace or ""} - {""}:
+            reason = refusal(ws, new_provider, new_model)
+            if reason:
+                raise HTTPException(status_code=400, detail=reason)
+
     # API key override — stored as flat field (sensitive; not exposed in to_dict)
     new_api_key = spec.api_key
     if data.clear_api_key:

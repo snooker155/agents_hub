@@ -149,10 +149,38 @@ def running_delegate_count(parent_run_id: str) -> int:
 
 # ── the catalog, as an agent may pick from it ────────────────────────────────
 
-def enabled_models() -> List[Dict[str, Any]]:
+_RUN_WORKSPACE = object()
+
+
+def _policy_workspace(workspace: Any) -> Optional[str]:
+    """The workspace whose model policy applies: the one named, or (by
+    default) the running agent's."""
+    if workspace is not _RUN_WORKSPACE:
+        return workspace or None
+    try:
+        from tools.langchain_tools import _active_workspace
+        return _active_workspace() or None
+    except Exception:  # noqa: BLE001 - outside a run: no workspace, no policy
+        return None
+
+
+def enabled_models(workspace: Any = None) -> List[Dict[str, Any]]:
     """Every enabled catalog model as ``{id, provider, model, context_window}``,
     in catalog order. ``id`` is ``provider/model``, the form ``/v1`` serves
-    and the form ``delegate_task_tool`` takes."""
+    and the form ``delegate_task_tool`` takes. With ``workspace``, only the
+    models its model policy allows (workspace/model_policy.py)."""
+    return _allowed_in(_enabled_catalog_models(), workspace)
+
+
+def _allowed_in(models: List[Dict[str, Any]], workspace: Any) -> List[Dict[str, Any]]:
+    from workspace.model_policy import for_workspace
+    policy = for_workspace(_policy_workspace(workspace))
+    if policy is None:
+        return models
+    return [m for m in models if policy.allows(m["provider"], m["model"])]
+
+
+def _enabled_catalog_models() -> List[Dict[str, Any]]:
     from providers.catalog import load_catalog_raw
     catalog = load_catalog_raw() or {}
     out: List[Dict[str, Any]] = []
@@ -173,12 +201,14 @@ def enabled_models() -> List[Dict[str, Any]]:
     return out
 
 
-def resolve_model(spec: str, models: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, str]:
+def resolve_model(spec: str, models: Optional[List[Dict[str, Any]]] = None,
+                  workspace: Any = _RUN_WORKSPACE) -> Tuple[str, str]:
     """``(provider, model)`` for a catalog id, or raise ``ValueError`` naming
     what is available. ``provider/model`` first; a bare model id is accepted
-    when exactly one enabled model has it."""
+    when exactly one enabled model has it. Only the models the workspace's
+    model policy allows count: the running agent's workspace by default."""
     wanted = str(spec or "").strip()
-    models = enabled_models() if models is None else models
+    models = _allowed_in(enabled_models(), workspace) if models is None else models
     if not wanted:
         raise ValueError("model is empty")
     for m in models:
@@ -231,7 +261,7 @@ def list_models_tool() -> str:
             if spec:
                 own = {"provider": str(spec.provider or ""), "model": str(spec.model or "")}
         return _json_ok({
-            "models": enabled_models(),
+            "models": enabled_models(ws),
             "workspace_default": _workspace_default_model(ws),
             "self": own,
             "workspace": ws or None,

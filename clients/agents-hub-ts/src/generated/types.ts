@@ -161,6 +161,7 @@ export type AgentModelUpdate = {
   "max_tokens"?: number | null;
   "clear_temperature"?: boolean;
   "clear_max_tokens"?: boolean;
+  "effort"?: string | null;
   "clear_api_key"?: boolean;
 };
 
@@ -2481,6 +2482,9 @@ export type WorkspaceListItem = {
   "name": string;
   "path": string;
   "tasks_count"?: number;
+  "agents_count"?: number;
+  "projects"?: string[];
+  "projects_count"?: number;
   "attached"?: boolean;
   "target"?: string | null;
   [key: string]: unknown;
@@ -4017,6 +4021,9 @@ export interface ApiPaths {
   "/api/models/local/servers": {
     get: { response: Record<string, unknown> };
   };
+  "/api/models/reasoning": {
+    get: { response: unknown };
+  };
   "/api/models/serving/info": {
     get: { response: unknown };
   };
@@ -4603,6 +4610,10 @@ export interface ApiPaths {
   };
   "/api/settings/custom-backends/{backend_id}": {
     delete: { response: unknown };
+  };
+  "/api/settings/member-menu": {
+    get: { response: unknown };
+    put: { body: Record<string, unknown>; response: unknown };
   };
   "/api/settings/test-local-model": {
     post: { body: TestLocalModelRequest; response: unknown };
@@ -5288,6 +5299,10 @@ export interface ApiPaths {
     delete: { response: unknown };
   };
   "/api/workspaces/{name}/model": {
+    get: { response: unknown };
+    put: { body: Record<string, unknown>; response: unknown };
+  };
+  "/api/workspaces/{name}/model-policy": {
     get: { response: unknown };
     put: { body: Record<string, unknown>; response: unknown };
   };
