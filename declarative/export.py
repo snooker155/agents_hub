@@ -88,7 +88,7 @@ def _trim(value: Any, default: Any) -> Any:
 #: A field not listed here (description, domain, capacity, memory, skills,
 #: proactive, ...) is never inherited, so it is always this agent's own.
 _INHERITANCE_FIELD_MAP: Dict[str, Tuple[str, ...]] = {
-    "model": ("provider", "model", "base_url", "temperature", "max_tokens"),
+    "model": ("provider", "model", "base_url", "temperature", "max_tokens", "effort"),
     "reasoning": ("reasoning",),
     "loop": ("fallback_models", "advisor_model", "output_schema",
              "max_concurrent_delegates", "tool_search", "compaction", "data_class"),

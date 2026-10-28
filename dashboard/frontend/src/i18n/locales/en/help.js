@@ -3,7 +3,7 @@ export default {
   open: 'Open help',
   openHint: 'Not sure what to do next? Ask here',
   title: 'Help',
-  subtitle: 'The Support agent: what the hub can do and what to set up next',
+  subtitle: 'The Support agent',
   close: 'Close help',
   widen: 'Wider',
   narrow: 'Narrower',

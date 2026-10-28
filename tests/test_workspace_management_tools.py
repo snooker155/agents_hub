@@ -171,6 +171,15 @@ def test_main_agent_in_another_workspace_does_not(monkeypatch):
     assert "read_file" in names and not (set(ADMIN) & names)
 
 
+def test_the_workspace_guidance_comes_with_the_tools(monkeypatch):
+    """The prompt section that explains the tools is there exactly where they are."""
+    from agents.agent_factory import WORKSPACES_PROMPT
+    here = _build("main-agent", ["read_file", *ADMIN], "default", monkeypatch)
+    assert WORKSPACES_PROMPT in here.system_prompt
+    elsewhere = _build("main-agent", ["read_file", *ADMIN], _name("team"), monkeypatch)
+    assert WORKSPACES_PROMPT not in elsewhere.system_prompt
+
+
 def test_another_agent_in_default_does_not(monkeypatch):
     agent = _build("helper_ws", ["read_file", *ADMIN], "default", monkeypatch)
     names = {t.name for t in agent._tools}
@@ -390,3 +399,13 @@ def test_delete_workspace_is_guarded_even_where_nothing_is_configured():
     wrapped = guard_action_tools([_probe, _other], agent_id="main-agent", workspace="default")
     kinds = {t.name: type(t).__name__ for t in wrapped}
     assert kinds["delete_workspace"] == GuardedTool.__name__
+
+
+def test_the_shell_guidance_comes_with_run_shell(monkeypatch):
+    from agents.agent_factory import SHELL_PROMPT
+    from common.config import settings
+    monkeypatch.setattr(settings, "capability_guard", "off")
+    with_shell = _build("shell_user", ["read_file", "run_shell"], "default", monkeypatch)
+    assert SHELL_PROMPT in with_shell.system_prompt
+    without = _build("no_shell_user", ["read_file"], "default", monkeypatch)
+    assert SHELL_PROMPT not in without.system_prompt

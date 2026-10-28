@@ -136,43 +136,103 @@ def test_put_refused_for_a_system_agent(client):
     assert r.status_code == 403
 
 
-# ── inheritance (tasks/service.py, assign_executor) ─────────────────────────
+# ── no inheritance: the task opts in with use_agent_outcome ─────────────────
 
-def test_task_inherits_default_outcome_on_first_assignment():
-    add_agent(_spec("triage", default_outcome=normalize_outcome({"rubric": RUBRIC, "max_iterations": 2})),
+def _triage(iters=2):
+    add_agent(_spec("triage", default_outcome=normalize_outcome({"rubric": RUBRIC, "max_iterations": iters})),
               user_edit=False)
+
+
+def test_assignment_never_copies_the_default_outcome_onto_the_task():
+    _triage()
     t = tasks_service.create_task(title="a question")
-    assert t.outcome is None
     updated = tasks_service.assign_agent(t.id, "triage")
-    assert updated.outcome is not None
-    assert updated.outcome["max_iterations"] == 2
-
-
-def test_reassignment_does_not_overwrite_an_existing_outcome():
-    add_agent(_spec("triage", default_outcome=normalize_outcome({"rubric": RUBRIC, "max_iterations": 2})),
-              user_edit=False)
-    add_agent(_spec("resolver", default_outcome=normalize_outcome({"rubric": RUBRIC, "max_iterations": 5})),
-              user_edit=False)
-    t = tasks_service.create_task(title="a question")
-    tasks_service.assign_agent(t.id, "triage")
-    updated = tasks_service.assign_agent(t.id, "resolver")
-    assert updated.outcome["max_iterations"] == 2  # kept triage's, not overwritten by resolver's
-
-
-def test_assignment_to_an_agent_with_no_default_outcome_leaves_task_outcome_none():
-    add_agent(_spec("plain"), user_edit=False)
-    t = tasks_service.create_task(title="a question")
-    updated = tasks_service.assign_agent(t.id, "plain")
     assert updated.outcome is None
+    assert updated.use_agent_outcome is False
 
 
-def test_a_tasks_own_outcome_set_at_creation_is_never_overwritten():
-    add_agent(_spec("triage", default_outcome=normalize_outcome({"rubric": RUBRIC, "max_iterations": 2})),
-              user_edit=False)
+def test_effective_outcome_uses_the_agents_rubric_only_when_ticked():
+    from tasks.outcome import effective_outcome
+    _triage()
+    t = tasks_service.create_task(title="a question")
+    t = tasks_service.assign_agent(t.id, "triage")
+    assert effective_outcome(t) is None
+    t = tasks_service.update_task(t.id, use_agent_outcome=True)
+    assert effective_outcome(t)["max_iterations"] == 2
+
+
+def test_a_tasks_own_rubric_wins_over_the_agents():
+    from tasks.outcome import effective_outcome
+    _triage()
     own = normalize_outcome({"rubric": "- A custom bar.\n", "max_iterations": 9})
-    t = tasks_service.create_task(title="a question", outcome=own)
-    updated = tasks_service.assign_agent(t.id, "triage")
-    assert updated.outcome["max_iterations"] == 9
+    t = tasks_service.create_task(title="a question", outcome=own, use_agent_outcome=True)
+    t = tasks_service.assign_agent(t.id, "triage")
+    assert effective_outcome(t)["max_iterations"] == 9
+
+
+def test_ticked_task_without_agent_or_with_plain_agent_has_no_effective_outcome():
+    from tasks.outcome import effective_outcome
+    add_agent(_spec("plain"), user_edit=False)
+    t = tasks_service.create_task(title="q", use_agent_outcome=True)
+    assert effective_outcome(t) is None
+    t = tasks_service.assign_agent(t.id, "plain")
+    assert effective_outcome(t) is None
+
+
+def test_use_agent_route_sets_the_flag_and_returns_the_view():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes import outcomes
+    app = FastAPI()
+    app.include_router(outcomes.router)
+    client = TestClient(app)
+    _triage()
+    t = tasks_service.assign_agent(tasks_service.create_task(title="q").id, "triage")
+    v = client.get(f"/api/tasks/{t.id}/outcome").json()
+    assert v["use_agent_outcome"] is False and v["effective"] is None
+    assert v["agent_outcome"]["max_iterations"] == 2 and v["agent_id"] == "triage"
+    r = client.put(f"/api/tasks/{t.id}/outcome/use-agent", json={"enabled": True})
+    assert r.status_code == 200
+    v = r.json()
+    assert v["use_agent_outcome"] is True and v["effective"]["max_iterations"] == 2
+    assert v["outcome"] is None and len(v["criteria"]) >= 1
+    # deleting the task's own outcome keeps the flag
+    assert client.delete(f"/api/tasks/{t.id}/outcome").json()["use_agent_outcome"] is True
+    assert client.put(f"/api/tasks/{t.id}/outcome/use-agent", json={"enabled": False}).json()["effective"] is None
+
+
+def test_migration_0047_turns_old_copies_into_the_switch():
+    import importlib.util
+    import json
+    import sqlite3
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[1] / "common" / "migrations" / "0047_task_use_agent_outcome.py"
+    spec = importlib.util.spec_from_file_location("m0047", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE documents (store TEXT, key TEXT, seq INTEGER, doc TEXT, created_at TEXT, updated_at TEXT)")
+    conn.execute("CREATE TABLE tasks (id TEXT, doc TEXT, updated_at TEXT)")
+    conn.execute("INSERT INTO documents VALUES ('agents','triage',0,?,NULL,NULL)",
+                 (json.dumps({"default_outcome": {"rubric": RUBRIC}}),))
+    evals = [{"iteration": 1}]
+    rows = {
+        "copy": {"executor": {"kind": "agent", "id": "triage"}, "outcome": {"rubric": RUBRIC + "\n"},
+                 "outcome_evaluations": evals},
+        "own": {"executor": {"kind": "agent", "id": "triage"}, "outcome": {"rubric": "- other"}},
+        "none": {"assigned_agent_type": "triage"},
+        # Blocked since: the agent is off the task, the rubric still says whose it was.
+        "unassigned": {"executor": None, "outcome": {"rubric": RUBRIC}},
+    }
+    for k, d in rows.items():
+        conn.execute("INSERT INTO tasks VALUES (?, ?, NULL)", (k, json.dumps(d)))
+    mod.upgrade(conn, "sqlite")
+    got = {k: json.loads(d) for k, d in conn.execute("SELECT id, doc FROM tasks")}
+    assert got["copy"]["outcome"] is None and got["copy"]["use_agent_outcome"] is True
+    assert got["copy"]["outcome_evaluations"] == evals
+    assert got["own"]["outcome"]["rubric"] == "- other" and not got["own"].get("use_agent_outcome")
+    assert not got["none"].get("use_agent_outcome")
+    assert got["unassigned"]["outcome"] is None and got["unassigned"]["use_agent_outcome"] is True
 
 
 # ── the apply engine's ``outcome:`` field (declarative/kinds.py) ────────────

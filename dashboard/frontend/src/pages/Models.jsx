@@ -6,13 +6,17 @@ import {
   Brain, HardDrive, Waypoints, Sparkles, Plug, Database,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
+import { useAuth, canAdminister } from '../components/auth';
+import { policyAllows } from '../components/workspace/modelPolicy';
 import {
   getModelsCatalog, saveModelsCatalog, discoverProviderModels, getModelsUsage,
-  getWorkspaceModel, updateWorkspaceDefaultModel,
+  getWorkspaceModel, updateWorkspaceDefaultModel, updateWorkspaceModel,
 } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import { EffortSelect } from '../components/EffortSelect';
+import { effortLabel } from '../components/effort';
 import DateInput from '../components/DateInput';
 import LocalTab from '../components/models/LocalTab';
 import CacheTab from '../components/models/CacheTab';
@@ -64,11 +68,6 @@ const fmtCost = (n) => '$' + (n || 0).toFixed(2);
 
 // ── Catalog tab ───────────────────────────────────────────────────────────────
 
-const EFFORT_KEYS = {
-  none: 'models.effortNone', minimal: 'models.effortMinimal', low: 'models.effortLow',
-  medium: 'models.effortMedium', high: 'models.effortHigh', off: 'models.effortOff',
-};
-
 // A model's own temperature; empty = the global default. Where the model
 // rejects a temperature (OpenAI reasoning families) the field is disabled, and
 // where it takes one only with thinking off, the hint says so.
@@ -86,32 +85,38 @@ function TemperatureInput({ model, globalTemperature, onChange }) {
       placeholder={String(globalTemperature)}
       disabled={mode === 'never'}
       onChange={(e) => onChange(e.target.value === '' ? null : Math.min(2, Math.max(0, parseFloat(e.target.value) || 0)))}
-      className={`${inputCls} w-16 disabled:opacity-40`}
+      className={`${inputCls} w-full min-w-0 disabled:opacity-40`}
       title={hint}
       aria-label={t('models.temperature')}
     />
   );
 }
 
-// The effort the provider applies when none is asked for, and what thinking
-// level off sends. Unknown for providers the hub has no table for.
-function ReasoningDefaults({ profile }) {
+// The model's own reasoning effort; empty = the provider's default, named in
+// the empty choice. The choices are the efforts this model accepts.
+function ModelEffortSelect({ model, onChange }) {
   const { t } = useI18n();
-  if (!profile) return <span className="text-xs text-gray-300">—</span>;
-  const effort = (e) => (EFFORT_KEYS[e] ? t(EFFORT_KEYS[e]) : e);
-  let off = '';
-  if (profile.off) off = t('models.reasoningOff', { effort: effort(profile.off) });
-  else if (profile.default !== 'off' && profile.default !== 'none') off = t('models.reasoningOffKeeps', { effort: effort(profile.default) });
+  const profile = model.reasoning;
+  if (!profile) return <span className="text-xs text-gray-300" title={t('effort.unsupported')}>—</span>;
+  const off = profile.off ? effortLabel(t, profile.off) : t('effort.offNothing');
   return (
-    <div className="text-xs leading-tight" title={t('models.reasoningHint')}>
-      <div className="text-gray-700">{effort(profile.default)}</div>
-      {off && profile.off !== profile.default && <div className="text-gray-400">{off}</div>}
-    </div>
+    <span className="block" title={t('effort.modelHint', { off })}>
+      <EffortSelect
+        efforts={profile.efforts || []}
+        value={model.effort || null}
+        onChange={onChange}
+        inheritLabel={t('effort.modelDefault', { value: effortLabel(t, profile.default) })}
+        className="text-xs w-full min-w-0"
+        ariaLabel={t('models.reasoning')}
+      />
+    </span>
   );
 }
 
 function CatalogTab() {
   const { t } = useI18n();
+  // Members read the catalog; only an administrator changes it.
+  const admin = canAdminister(useAuth());
   const { selectedWorkspace } = useWorkspace();
   const [catalog, setCatalog] = useState(null);
   // Whether Ollama, LM Studio and the hub runtime answer, for a marker by their names.
@@ -124,6 +129,9 @@ function CatalogTab() {
   const [wsModel, setWsModel] = useState(null);     // raw GET /model response
   const [wsForm, setWsForm] = useState({ provider: '', model: '' });
   const [wsSaving, setWsSaving] = useState(false);
+  const [wsError, setWsError] = useState('');
+  // The workspace's model policy (workspace/model_policy.py), when it has one.
+  const policy = wsModel?.policy?.models?.length ? wsModel.policy : null;
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [discovering, setDiscovering] = useState({});
@@ -149,8 +157,13 @@ function CatalogTab() {
       .then(({ data }) => {
         setWsModel(data);
         const wd = data.workspace_default || {};
-        const p = wd.provider || '';
-        setWsForm({ provider: p, model: p ? (wd.model || '') : '' });
+        const ov = data.override || {};
+        const pol = data.policy?.models?.length ? data.policy : null;
+        // Under a policy the choice is the header's (model_override), kept to
+        // the policy's models; else the workspace default.
+        const cur = pol && ov.provider && policyAllows(pol, ov.provider, ov.model) ? ov : wd;
+        const p = cur.provider || '';
+        setWsForm({ provider: p, model: p ? (cur.model || '') : '' });
       })
       .catch(() => { setWsModel(null); setWsForm({ provider: '', model: '' }); });
   }, [selectedWorkspace]);
@@ -160,10 +173,15 @@ function CatalogTab() {
   const saveWsModel = () => {
     if (!selectedWorkspace) return;
     setWsSaving(true);
+    setWsError('');
     const payload = wsForm.provider ? { provider: wsForm.provider, model: wsForm.model } : { provider: '', model: '' };
-    updateWorkspaceDefaultModel(selectedWorkspace, payload)
+    // A policy sets the default itself, so the choice goes to the header's override.
+    (policy ? updateWorkspaceModel : updateWorkspaceDefaultModel)(selectedWorkspace, payload)
       .then(() => loadWsModel())
-      .catch((e) => console.error('Error saving workspace default model:', e))
+      .catch((e) => {
+        console.error('Error saving workspace default model:', e);
+        setWsError(e?.response?.data?.detail || e?.message || '');
+      })
       .finally(() => setWsSaving(false));
   };
 
@@ -237,7 +255,7 @@ function CatalogTab() {
       ...c,
       [provider]: {
         ...c[provider],
-        models: [...c[provider].models, { id, enabled: true, input_price: 0, cached_input_price: 0, output_price: 0, context_window: 0, price_source: 'auto', temperature: null }],
+        models: [...c[provider].models, { id, enabled: true, input_price: 0, cached_input_price: 0, output_price: 0, context_window: 0, price_source: 'auto', temperature: null, effort: null }],
       },
     }));
     setNewModel((s) => ({ ...s, [provider]: '' }));
@@ -275,15 +293,18 @@ function CatalogTab() {
 
   return (
     <div className="space-y-4">
+      {!admin && (
+        <div className="rounded-lg px-4 py-2 text-sm bg-gray-50 text-gray-600 border border-gray-200" data-testid="models-read-only">
+          {t('modelPolicy.models.readOnly')}
+        </div>
+      )}
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-gray-500">
-          Curate which models are available per provider, star each provider's default model, and configure pricing (USD per 1M tokens) used to estimate cost.
-          The catalog and pricing are global; the model a workspace actually uses is set per workspace below, falling back to the global default.
-          Common cloud models are pre-priced with indicative list prices — verify and adjust to match your provider.
+          {t('models.catalogHint')}
         </p>
         <button
           onClick={save}
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || !admin}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors shrink-0 ${
             dirty ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
           }`}
@@ -295,14 +316,19 @@ function CatalogTab() {
 
       {/* Per-workspace default model (the model this workspace actually uses) */}
       {(() => {
-        const enabledProviders = orderProviders(catalog).filter((p) => (catalog[p]?.models || []).some((m) => m.enabled));
-        const wsEnabledModels = wsForm.provider ? (catalog[wsForm.provider]?.models || []).filter((m) => m.enabled) : [];
+        const allowedHere = (p, m) => policyAllows(policy, p, m.id);
+        const enabledProviders = orderProviders(catalog).filter((p) => (catalog[p]?.models || []).some((m) => m.enabled && allowedHere(p, m)));
+        const wsEnabledModels = wsForm.provider ? (catalog[wsForm.provider]?.models || []).filter((m) => m.enabled && allowedHere(wsForm.provider, m)) : [];
         const gd = wsModel?.global_default || {};
         const wd = wsModel?.workspace_default || {};
-        const savedProvider = wd.provider || '';
+        // Under a policy the saved choice is the header's override when it is
+        // allowed, else the policy default.
+        const ov = wsModel?.override || {};
+        const saved = policy && ov.provider && policyAllows(policy, ov.provider, ov.model) ? ov : wd;
+        const savedProvider = saved.provider || '';
         const wsDirty = (wsForm.provider || '') !== savedProvider
-          || (wsForm.provider && (wsForm.model || '') !== (wd.model || ''));
-        const inheriting = !wsForm.provider;
+          || (wsForm.provider && (wsForm.model || '') !== (saved.model || ''));
+        const inheriting = !wsForm.provider && !policy;
         return (
           <div className="bg-indigo-50/40 border border-indigo-200 rounded-xl px-4 py-3">
             <div className="flex items-center flex-wrap gap-3">
@@ -320,7 +346,7 @@ function CatalogTab() {
                 }}
                 className={`${inputCls} py-1.5`}
               >
-                <option value="">{t('models.inheritGlobalDefault')}</option>
+                {!policy && <option value="">{t('models.inheritGlobalDefault')}</option>}
                 {enabledProviders.map((p) => (
                   <option key={p} value={p}>{providerConfig(p).label}</option>
                 ))}
@@ -346,6 +372,8 @@ function CatalogTab() {
                 {t('models.apply')}
               </button>
             </div>
+            {policy && <p className="text-xs text-gray-500 mt-2">{t('modelPolicy.models.policyNote')}</p>}
+            {wsError && <p className="text-xs text-red-600 mt-2" data-testid="ws-model-error">{wsError}</p>}
             <p className="text-xs text-gray-500 mt-2">
               {inheriting
                 ? <>{t('models.inheritingGlobal')} <span className="font-medium text-gray-600">{providerConfig(gd.provider).label || gd.provider || '—'}{gd.model ? ` · ${gd.model}` : ''}</span>{t('models.pickAModelToSet')}</>
@@ -355,6 +383,8 @@ function CatalogTab() {
         );
       })()}
 
+      {/* The catalog itself is the administrator's: members read it, disabled. */}
+      <fieldset disabled={!admin} className="min-w-0 border-0 p-0 m-0 space-y-4">
       {/* Global default — read-only, sourced from .env (the inherit fallback) */}
       <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center flex-wrap gap-3">
         <span className="text-sm font-medium text-gray-700">{t('models.globalDefault')}</span>
@@ -385,10 +415,13 @@ function CatalogTab() {
         const Chevron = isCollapsed ? ChevronRight : ChevronDown;
         return (
           <div key={provider} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
+            <div
+              onClick={() => setCollapsed((s) => ({ ...s, [provider]: !s[provider] }))}
+              className={`flex items-center justify-between gap-2 px-4 py-3 bg-gray-50 cursor-pointer select-none hover:bg-gray-100 ${isCollapsed ? '' : 'border-b border-gray-100'}`}
+            >
               <button
-                onClick={() => setCollapsed((s) => ({ ...s, [provider]: !s[provider] }))}
-                className="flex items-center gap-2 min-w-0 text-left"
+                aria-expanded={!isCollapsed}
+                className="flex items-center gap-2 min-w-0 flex-1 text-left"
               >
                 <Chevron className="w-4 h-4 text-gray-400 shrink-0" />
                 <span className={`px-2 py-0.5 rounded border text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
@@ -403,17 +436,17 @@ function CatalogTab() {
                   <span className={`text-xs flex items-center gap-1 ${probe.ok ? 'text-green-600' : 'text-red-500'}`}>
                     {probe.ok
                       ? <><CheckCircle className="w-3.5 h-3.5" /> {
-                          [probe.added > 0 ? `+${probe.added} new` : null,
-                           probe.priced > 0 ? `${probe.priced} priced` : null,
-                           probe.repriced > 0 ? `${probe.repriced} repriced` : null,
-                           probe.kept_manual > 0 ? `${probe.kept_manual} manual kept` : null]
-                            .filter(Boolean).join(', ') || 'up to date'
+                          [probe.added > 0 ? t('models.probe.added', { count: probe.added }) : null,
+                           probe.priced > 0 ? t('models.probe.priced', { count: probe.priced }) : null,
+                           probe.repriced > 0 ? t('models.probe.repriced', { count: probe.repriced }) : null,
+                           probe.kept_manual > 0 ? t('models.probe.keptManual', { count: probe.kept_manual }) : null]
+                            .filter(Boolean).join(', ') || t('models.probe.upToDate')
                         }</>
                       : <><AlertCircle className="w-3.5 h-3.5" /> {probe.error}</>}
                   </span>
                 )}
                 <button
-                  onClick={() => discover(provider)}
+                  onClick={(e) => { e.stopPropagation(); discover(provider); }}
                   disabled={discovering[provider]}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 text-xs font-medium transition-colors"
                 >
@@ -467,19 +500,19 @@ function CatalogTab() {
                     )}
 
                     <div className="max-h-80 overflow-y-auto border border-gray-100 rounded-lg">
-                      <table className="w-full text-sm">
+                      <table className="w-full min-w-[60rem] text-sm table-fixed">
                         <thead className="sticky top-0 bg-white z-10">
                           <tr className="text-left text-xs text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                            <th className="px-2 py-1.5 font-medium w-10">{t('models.on')}</th>
-                            <th className="px-2 py-1.5 font-medium">{t('models.model')}</th>
-                            <th className="px-2 py-1.5 font-medium w-12">{t('models.default2')}</th>
-                            <th className="px-2 py-1.5 font-medium w-28">{t('models.input1m')}</th>
-                            <th className="px-2 py-1.5 font-medium w-28" title={t('models.cached1mHint')}>{t('models.cached1m')}</th>
-                            <th className="px-2 py-1.5 font-medium w-28">{t('models.output1m')}</th>
-                            <th className="px-2 py-1.5 font-medium w-28" title={t('models.contextWindowMaxInputTokens')}>{t('models.context')}</th>
-                            <th className="px-2 py-1.5 font-medium w-20" title={t('models.temperatureHint', { value: globalTemperature })}>{t('models.temperature')}</th>
-                            <th className="px-2 py-1.5 font-medium w-36" title={t('models.reasoningHint')}>{t('models.reasoning')}</th>
-                            <th className="px-2 py-1.5 font-medium w-10"></th>
+                            <th className="px-3 py-1.5 font-medium w-[4%]">{t('models.on')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[22%]">{t('models.model')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[5%]">{t('models.default2')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[10%]">{t('models.input1m')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[10%]" title={t('models.cached1mHint')}>{t('models.cached1m')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[10%]">{t('models.output1m')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[10%]" title={t('models.contextWindowMaxInputTokens')}>{t('models.context')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[8%]" title={t('models.temperatureHint', { value: globalTemperature })}>{t('models.temperature')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[15%]" title={t('models.reasoningHint')}>{t('models.reasoning')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[6%]"></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -487,7 +520,7 @@ function CatalogTab() {
                             <tr><td colSpan={10} className="px-2 py-4 text-center text-gray-400 text-xs">{t('models.noModelsMatch', { query: q })}</td></tr>
                           ) : visible.map((m) => (
                             <tr key={m.id} className="border-t border-gray-50 hover:bg-gray-50">
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <input
                                   type="checkbox"
                                   checked={m.enabled}
@@ -495,23 +528,23 @@ function CatalogTab() {
                                   className="w-4 h-4 accent-indigo-600"
                                 />
                               </td>
-                              <td className="px-2 py-1.5 font-mono text-gray-700">
+                              <td className="px-3 py-1.5 font-mono text-gray-700 break-all">
                                 {m.id}
                                 {provider === globalDefault.provider && m.id === globalDefault.model && (
                                   <span className="ml-2 align-middle px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50 text-gray-500 text-[10px] font-sans uppercase tracking-wider" title={t('models.systemWideDefaultFromEnv')}>{t('models.global')}</span>
                                 )}
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <button onClick={() => setDefault(provider, m.id)} title={t('models.setAsProviderDefault')}>
                                   <Star className={`w-4 h-4 ${entry.default === m.id ? 'fill-amber-400 text-amber-400' : 'text-gray-300 hover:text-amber-400'}`} />
                                 </button>
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <div className="flex items-center gap-1">
                                   <input
                                     type="number" min="0" step="0.01" value={m.input_price}
                                     onChange={(e) => updateModel(provider, m.id, { input_price: parseFloat(e.target.value) || 0 })}
-                                    className={`${inputCls} w-24`}
+                                    className={`${inputCls} w-full min-w-0`}
                                   />
                                   {m.price_source === 'manual' && (
                                     <span className="text-[10px] text-amber-600 font-medium" title={t('models.manualPriceHint')}>
@@ -520,43 +553,46 @@ function CatalogTab() {
                                   )}
                                 </div>
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 {/* Cache reads are billed apart from fresh input, and an
                                     agent loop re-sends its prompt every step, so this is
                                     most of a long run's input bill. */}
                                 <input
                                   type="number" min="0" step="0.01" value={m.cached_input_price ?? 0}
                                   onChange={(e) => updateModel(provider, m.id, { cached_input_price: parseFloat(e.target.value) || 0 })}
-                                  className={`${inputCls} w-24`}
+                                  className={`${inputCls} w-full min-w-0`}
                                   title={t('models.cached1mHint')}
                                 />
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <input
                                   type="number" min="0" step="0.01" value={m.output_price}
                                   onChange={(e) => updateModel(provider, m.id, { output_price: parseFloat(e.target.value) || 0 })}
-                                  className={`${inputCls} w-24`}
+                                  className={`${inputCls} w-full min-w-0`}
                                 />
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <input
                                   type="number" min="0" step="1000" value={m.context_window || 0}
                                   onChange={(e) => updateModel(provider, m.id, { context_window: parseInt(e.target.value, 10) || 0 })}
-                                  className={`${inputCls} w-24`}
+                                  className={`${inputCls} w-full min-w-0`}
                                   title={t('models.contextWindowInTokensMax')}
                                 />
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <TemperatureInput
                                   model={m}
                                   globalTemperature={globalTemperature}
                                   onChange={(temperature) => updateModel(provider, m.id, { temperature })}
                                 />
                               </td>
-                              <td className="px-2 py-1.5">
-                                <ReasoningDefaults profile={m.reasoning} />
+                              <td className="px-3 py-1.5">
+                                <ModelEffortSelect
+                                  model={m}
+                                  onChange={(effort) => updateModel(provider, m.id, { effort })}
+                                />
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <div className="flex items-center gap-2">
                                   <Link
                                     to={`/models/${provider}/${encodeURIComponent(m.id)}`}
@@ -599,6 +635,7 @@ function CatalogTab() {
           </div>
         );
       })}
+      </fieldset>
     </div>
   );
 }
@@ -635,7 +672,7 @@ function UsageTab() {
       <div className="flex flex-wrap items-end gap-4 bg-white border border-gray-200 rounded-xl p-4">
         <label className="flex items-center gap-2 text-sm text-gray-600">
           <input type="checkbox" checked={scopeWorkspace} onChange={(e) => setScopeWorkspace(e.target.checked)} className="w-4 h-4 accent-indigo-600" />
-          Limit to current workspace {selectedWorkspace && selectedWorkspace !== 'default' ? `(${selectedWorkspace})` : '(all)'}
+          {t('models.limitToWorkspace', { scope: selectedWorkspace && selectedWorkspace !== 'default' ? selectedWorkspace : t('models.allWorkspaces') })}
         </label>
         <div className="flex flex-col">
           <span className="text-xs text-gray-400 mb-1">{t('models.from')}</span>
@@ -751,6 +788,7 @@ function SpecialModelsTab() {
 
 export default function Models() {
   const { t } = useI18n();
+  const admin = canAdminister(useAuth());
   // The tab lives in the address (?tab=local), so other pages can link to it.
   const [params, setParams] = useSearchParams();
   const TABS = [
@@ -788,9 +826,19 @@ export default function Models() {
         })}
       </div>
       {tab === 'catalog' && <CatalogTab />}
-      {tab === 'local' && <LocalTab />}
+      {tab === 'local' && (
+        <fieldset disabled={!admin} className="min-w-0 border-0 p-0 m-0">
+          {!admin && <p className="mb-3 rounded-lg px-4 py-2 text-sm bg-gray-50 text-gray-600 border border-gray-200">{t('modelPolicy.models.readOnly')}</p>}
+          <LocalTab />
+        </fieldset>
+      )}
       {tab === 'special' && <SpecialModelsTab />}
-      {tab === 'cache' && <CacheTab />}
+      {tab === 'cache' && (
+        <fieldset disabled={!admin} className="min-w-0 border-0 p-0 m-0">
+          {!admin && <p className="mb-3 rounded-lg px-4 py-2 text-sm bg-gray-50 text-gray-600 border border-gray-200">{t('modelPolicy.models.readOnly')}</p>}
+          <CacheTab />
+        </fieldset>
+      )}
       {tab === 'endpoint' && <ServingSection />}
       {tab === 'usage' && <UsageTab />}
     </PageContainer>

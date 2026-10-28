@@ -159,7 +159,8 @@ def system_prune_branches(older_than_days: int = 14, user_approved: bool = False
     the user has approved it. Only the copy is touched; a branch a human
     already fetched lives on in their clone."""
     from common import system_workspace as sw
-    if not user_approved:
+    from common.auto_mode import approved as _approved
+    if not _approved("system_prune_branches", user_approved, {"older_than_days": older_than_days}):
         from tools.approval import approval_required_text
         return approval_required_text(
             "system_prune_branches", f"older than {older_than_days} days",

@@ -39,12 +39,25 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
+from common.untrusted import FLOW_STEP_NOTE, agent_output_fence
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 # ── DAG helpers (moved here from runtime/flow_run.py so both adapters share them) ───────
+
+#: Why a node was skipped, as a flow log line says it (both drivers).
+SKIP_REASON_TEXT = {
+    "branch_not_selected": "not on the selected branch",
+    "predecessor_failed": "a node it depends on failed",
+    "branch_isolated": "its branch was isolated after a failure",
+    "cancelled_after_failure": "the run stopped at the first failure",
+    "already_done": "already completed before this run resumed",
+    "already_skipped": "already skipped before this run resumed",
+}
+
 
 def _node_value(node: Dict[str, Any], key: str, default: Any = None) -> Any:
     data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
@@ -116,16 +129,29 @@ def build_agent_input(
     node_task: str = "",
 ) -> str:
     """Build a node's prompt: declared input-state slice + predecessor outputs +
-    node task. Moved from ``runtime/flow_run.py`` so both adapters share one builder."""
+    node task. Moved from ``runtime/flow_run.py`` so both adapters share one builder.
+
+    What an earlier step produced, its output and any state key a step writes,
+    is fenced as data (common/untrusted.py): an agent in the middle of a flow
+    may repeat a hostile page it read. The flow's defaults, the run's seed and
+    a person's answer to an interrupt node are passed as they are.
+    """
     pred_ids = predecessors.get(node_id, [])
     pred_outputs = [(pid, node_outputs[pid]) for pid in pred_ids if pid in node_outputs]
+    node_keys = getattr(flow_state, "node_keys", frozenset())
+    human_nodes = getattr(flow_state, "human_nodes", frozenset())
 
     parts: List[str] = []
 
     in_keys = _node_value(node, "input") or _node_value(node, "inputs") or []
     state_slice = flow_state.slice(in_keys) if in_keys else None
     if state_slice:
-        block = "\n".join(f"[{k}]:\n{v}" for k, v in state_slice.items())
+        block = "\n".join(
+            f"[{k}]:\n"
+            + (agent_output_fence(str(v), source=f"flow state [{k}]", note=FLOW_STEP_NOTE)
+               if k in node_keys else f"{v}")
+            for k, v in state_slice.items()
+        )
         parts += ["=" * 60, "FLOW STATE", "=" * 60, block, "=" * 60, ""]
 
     if pred_outputs:
@@ -135,6 +161,9 @@ def build_agent_input(
             "=" * 60,
         ]
         for pred_id, pred_out in pred_outputs:
+            if pred_id not in human_nodes:
+                pred_out = agent_output_fence(
+                    pred_out, source=f"flow node {pred_id}", note=FLOW_STEP_NOTE)
             parts.append(f"\n[{pred_id}]:\n{pred_out}\n")
         parts += ["=" * 60, "\nContinue the work based on the above output."]
     else:
@@ -313,12 +342,16 @@ async def run_flow_engine(
     driver: FlowEngineDriver,
     seed_state: Optional[Dict[str, Any]] = None,
     resume: Optional[Dict[str, Any]] = None,
+    request: Optional[str] = None,
+    workspace: Optional[str] = None,
 ) -> AsyncGenerator[dict, None]:
     """Drive a flow DAG once, yielding neutral lifecycle events.
 
     Preflight (``validate_flow`` + ``resolve_entities``) runs first and raises
     ``flow.validate.FlowValidationError`` on failure — the caller catches it and
-    translates to its own error surface.
+    translates to its own error surface. With ``workspace`` it also refuses an
+    agent that workspace may not run (``workspace_agent_errors``); a caller
+    that does not know the workspace passes none.
 
     **Scheduling.** Nodes are not walked one at a time: a node becomes *ready*
     once every predecessor has finished (done, failed or skipped), and every
@@ -354,8 +387,11 @@ async def run_flow_engine(
     read identity from the (possibly partial) ``flow`` dict.
     """
     # Local imports: keep engine import-light and avoid load-time circulars.
-    from flow.validate import validate_flow, resolve_entities, execution_order
+    from flow.validate import (
+        FlowValidationError, execution_order, resolve_entities, validate_flow, workspace_agent_errors,
+    )
     from flow.state import FlowState, StateMutationError
+    from flow import branching
     from flow import dispatch as flow_dispatch
     from flow.dispatch import DispatchResult
 
@@ -365,11 +401,22 @@ async def run_flow_engine(
     # Preflight (raises FlowValidationError; caller translates).
     validate_flow(flow)
     resolve_entities(nodes)
+    if workspace is not None:
+        refused = workspace_agent_errors(nodes, workspace)
+        if refused:
+            raise FlowValidationError("workspace", refused)
 
     predecessors = _build_predecessors(edges)
     successors = _build_successors(edges)
 
-    seed = {"user_request": shared_context}
+    # ``user_request`` is what was asked, as a person would read it: shown in
+    # the run's state and handed to a node that declares it as an input. The
+    # shared context can carry the run's own working rules on top of it (a
+    # task run's instruction), so a caller that has the bare request passes it.
+    # A run that brings neither keeps the ``user_request`` the flow declares.
+    asked = request if (request or "").strip() else shared_context
+    declared = flow.get("state") if isinstance(flow.get("state"), dict) else {}
+    seed = {} if not (asked or "").strip() and "user_request" in declared else {"user_request": asked}
     if seed_state:
         seed.update(seed_state)
     flow_state = FlowState.from_flow(flow, seed=seed)
@@ -417,6 +464,7 @@ async def run_flow_engine(
     yield flow_start_ev
 
     node_outputs: Dict[str, str] = {}
+    carried_nodes: set = set()       # output is their predecessors', handed on
     done_nodes: set = set()          # finished ok
     failed_nodes: set = set()        # finished not-ok
     skipped_nodes: set = set()       # never executed
@@ -509,6 +557,12 @@ async def run_flow_engine(
                 shared_context, node, node_id, predecessors, node_outputs,
                 flow_state, node_task,
             )
+        # An agent that picks the next step itself (flow/branching.py): its
+        # successors go into the prompt, its ROUTE line becomes its goto.
+        route = (branching.route_targets(node, node_id, successors, nodes_by_id)
+                 if is_agent else [])
+        if route and prompt is not None:
+            prompt = prompt + "\n" + branching.route_instructions(node, route)
 
         start_ev = {
             "type": "node_start",
@@ -525,6 +579,11 @@ async def run_flow_engine(
         dr: Any = None
         node_stopped = False
         for attempt in range(max_retries + 1):
+            if branching.is_map_node(spec):
+                # One agent run per item; retries and the timeout apply to
+                # each item, not to the node as a whole.
+                dr, node_stopped = await _run_map(node, node_id, label)
+                break
             if is_agent:
                 outcome = AgentNodeOutcome()
                 try:
@@ -552,6 +611,23 @@ async def run_flow_engine(
                 except Exception as e:  # noqa: BLE001 - a node body error fails the node
                     outcome.ok = False
                     outcome.error = f"{type(e).__name__}: {e}"
+
+                if route and outcome.ok and not outcome.stopped:
+                    goto, cleaned, route_error = branching.parse_route(outcome.output, node, route)
+                    if goto is None:
+                        outcome.ok = False
+                        outcome.error = route_error
+                    else:
+                        outcome.goto = goto
+                        if cleaned != outcome.output:
+                            outcome.output = cleaned
+                            # A driver that already wrote the output keys wrote
+                            # them with the ROUTE line; the node rewrites its own.
+                            fixed = {k: cleaned for k, v in (outcome.written or {}).items()
+                                     if isinstance(v, str)}
+                            if fixed:
+                                flow_state.merge(fixed)
+                                outcome.written = {**outcome.written, **fixed}
 
                 written: Dict[str, Any] = dict(outcome.written or {})
                 if outcome.ok:
@@ -611,11 +687,135 @@ async def run_flow_engine(
             "duration_ms": dr.duration_ms,
             "stopped": node_stopped,
             "attempts": attempt + 1,
+            # What a switch decided (flow/entities/conditions), for the chat.
+            "detail": getattr(dr, "detail", None),
             # Full shared-state snapshot after this node's writes were applied,
             # so the dashboard can show runtime state values as the run unfolds.
             "state": flow_state.snapshot(),
         }
         await queue.put(("finished", node_id, dr, node_stopped, done_ev))
+
+    async def _run_map(node: Dict[str, Any], node_id: str, label: str) -> tuple:
+        """Run a map node: one agent node run per item (flow/branching.py).
+
+        Each item is announced and finished like a node of its own
+        (``<node>#<n>``, with ``item_of`` naming the map node), through the
+        same driver hooks, so both surfaces record and show every item. The
+        node's ``retry`` and ``timeout_seconds`` apply per item. Returns
+        ``(DispatchResult, stopped)``.
+        """
+        started = asyncio.get_running_loop().time()
+        cfg = branching.map_config(node)
+        out_keys = list(_node_value(node, "output") or _node_value(node, "outputs") or ["results"])
+        agent_id = cfg["agent_id"]
+        if not agent_id:
+            return DispatchResult(ok=False, error="map node has no agent (config.agent_id)"), False
+        if cfg["over"]:
+            if cfg["over"] not in flow_state:
+                return DispatchResult(
+                    ok=False, error=f"map node reads state key '{cfg['over']}', which is not set"), False
+            source: Any = flow_state.get(cfg["over"])
+        else:
+            source = "\n\n".join(
+                node_outputs[p] for p in predecessors.get(node_id, []) if node_outputs.get(p))
+        items = branching.items_from(source)
+        if len(items) > cfg["max_items"]:
+            return DispatchResult(ok=False, error=(
+                f"map node got {len(items)} items, more than its max_items ({cfg['max_items']})")), False
+        count = len(items)
+        sem = asyncio.Semaphore(max(1, cfg["max_parallel"] or max_parallel))
+        retries, backoff = node_retry(node)
+        timeout = node_timeout(node)
+        task_template = cfg["task"] or (_node_value(node, "nodeTask") or "")
+        stopped_flag = {"value": False}
+
+        async def _one(index: int, item: str) -> Dict[str, Any]:
+            iid = branching.item_node_id(node_id, index)
+            ilabel = f"{label} #{index}"
+            task = branching.item_task(task_template, index, count)
+            synth = {"id": iid, "data": {"agent_id": agent_id, "label": ilabel, "nodeTask": task}}
+            async with sem:
+                if stopped_flag["value"] or driver.should_stop():
+                    stopped_flag["value"] = True
+                    return {"index": index, "ok": False, "error": "stopped", "output": ""}
+                preds = {iid: list(predecessors.get(node_id, []))} if cfg["include_context"] else {}
+                prompt = driver.build_agent_prompt(
+                    shared_context, synth, iid, preds, node_outputs, flow_state, task)
+                prompt += f"\n\n## Item {index} of {count}\n" + branching.fence_item(
+                    item, source=f"map item {index} of flow node {node_id}")
+                start_ev = {
+                    "type": "node_start", "node_id": iid, "entity_id": agent_id,
+                    "label": ilabel, "category": "agent", "is_agent": True,
+                    "prompt": prompt, "item_of": node_id, "item_index": index, "node": synth,
+                }
+                driver.on_node_start(start_ev)
+                await queue.put(("event", start_ev))
+                outcome = AgentNodeOutcome()
+                attempts = 0
+                for attempt in range(retries + 1):
+                    attempts = attempt + 1
+                    outcome = AgentNodeOutcome()
+                    try:
+                        coro = _run_agent_attempt(synth, iid, ilabel, prompt, outcome)
+                        await (asyncio.wait_for(coro, timeout) if timeout else coro)
+                    except asyncio.TimeoutError:
+                        try:
+                            driver.stop_agent_node(synth, iid, outcome)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[flow_engine] stop_agent_node failed for {iid}: {e}")
+                        outcome.ok = False
+                        outcome.error = f"item timed out after {timeout:g}s"
+                    except Exception as e:  # noqa: BLE001 - an item error fails the item
+                        outcome.ok = False
+                        outcome.error = f"{type(e).__name__}: {e}"
+                    if outcome.ok or outcome.stopped or attempt >= retries:
+                        break
+                    if backoff:
+                        await asyncio.sleep(backoff)
+                    await queue.put(("event", {
+                        "type": "node_retry", "node_id": iid, "label": ilabel,
+                        "attempt": attempt + 2, "of": retries + 1, "error": outcome.error,
+                    }))
+                if outcome.stopped:
+                    stopped_flag["value"] = True
+                done_ev = {
+                    "type": "node_done", "node_id": iid, "entity_id": agent_id,
+                    "label": ilabel, "category": "agent", "is_agent": True,
+                    "ok": outcome.ok, "output": outcome.output, "text": outcome.text,
+                    "written": [], "goto": None, "error": outcome.error,
+                    "run_id": outcome.run_id, "duration_ms": outcome.duration_ms,
+                    "stopped": outcome.stopped, "attempts": attempts,
+                    "item_of": node_id, "item_index": index,
+                    "state": flow_state.snapshot(),
+                }
+                driver.on_node_done(done_ev)
+                await queue.put(("event", done_ev))
+                return {"index": index, "ok": outcome.ok, "output": outcome.output or "",
+                        "error": outcome.error}
+
+        results = list(await asyncio.gather(*(_one(i + 1, it) for i, it in enumerate(items))))
+        duration_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+        failed = [r for r in results if not r["ok"]]
+        if stopped_flag["value"]:
+            return DispatchResult(ok=False, error="stopped", duration_ms=duration_ms), True
+        ok = not failed or (cfg["allow_failures"] and len(failed) < count)
+        values = [r["output"] if r["ok"] else None for r in results]
+        written: Dict[str, Any] = {}
+        if ok:
+            try:
+                written = flow_state.apply(out_keys, {out_keys[0]: values} if out_keys else values)
+            except StateMutationError as sme:
+                return DispatchResult(ok=False, error=str(sme), duration_ms=duration_ms), False
+        error = ""
+        if failed and not ok:
+            error = (f"{len(failed)} of {count} items failed; first: item {failed[0]['index']}: "
+                     f"{failed[0]['error'] or 'unknown error'}")
+        text = (f"{count - len(failed)} of {count} items done"
+                + (f", {len(failed)} failed" if failed else "") if count else "no items")
+        return DispatchResult(
+            ok=ok, text=text, output=branching.combined_output(results), written=written,
+            error=error, duration_ms=duration_ms,
+        ), False
 
     async def _guarded_worker(node_id: str, node: Dict[str, Any]) -> None:
         """Run a node's worker, and make sure it always reports back.
@@ -723,7 +923,22 @@ async def run_flow_engine(
                 aborting = True
             elif dr.ok:
                 done_nodes.add(node_id)
-                node_outputs[node_id] = dr.output or dr.text
+                carried = ([node_outputs[p] for p in predecessors.get(node_id, []) if node_outputs.get(p)]
+                           if not dr.output and not done_ev.get("is_agent") else [])
+                if carried:
+                    # A node with no answer of its own (a switch, a transform)
+                    # hands on what it was given: the step after a switch works
+                    # on the writer's text, not on the switch's one line summary.
+                    node_outputs[node_id] = "\n\n".join(carried)
+                    carried_nodes.add(node_id)
+                elif not dr.output and not done_ev.get("is_agent") and not any(
+                        p in node_outputs for p in predecessors.get(node_id, [])):
+                    # Nothing reached it either: a turn that starts at a switch.
+                    # Its summary line is no input, so the next step is a root
+                    # and gets the turn's message.
+                    node_outputs.pop(node_id, None)
+                else:
+                    node_outputs[node_id] = dr.output or dr.text
                 if dr.goto is not None:
                     # Pruning decides which nodes are dead, but a node is only
                     # *announced* as skipped when the scheduler reaches it, so
@@ -782,8 +997,19 @@ async def run_flow_engine(
         for task in running.values():
             task.cancel()
 
+    # Each node's part under the name the flow shows for it, not its id
+    # (agent-1792784954866): a loop stores this as the pass's output and
+    # hands it to its judge and the next pass. Two nodes of the same name are
+    # told apart by a number.
+    names: Dict[str, str] = {}
+    seen_names: Dict[str, int] = {}
+    for m in meta_nodes:
+        base = str(m.get("label") or m["node_id"])
+        seen_names[base] = seen_names.get(base, 0) + 1
+        names[m["node_id"]] = base if seen_names[base] == 1 else f"{base} ({seen_names[base]})"
     combined_output = "\n\n".join(
-        f"### [{nid}]\n{out}" for nid, out in node_outputs.items() if out
+        f"### {names.get(nid, nid)}\n{out}" for nid, out in node_outputs.items()
+        if out and nid not in carried_nodes
     )
     finish_ev = {
         "type": "flow_finish",

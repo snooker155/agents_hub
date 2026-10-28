@@ -44,6 +44,8 @@ vi.mock('../../api', () => ({
   getAgents: (...args) => getAgents(...args),
   getTelegramConfig: (...args) => getTelegramConfig(...args),
   listFlows: (...args) => listFlows(...args),
+  // The loops API answers { loops: [...] } and names a loop by loop_id.
+  getLoops: vi.fn(() => Promise.resolve({ data: { loops: [{ loop_id: 'loop-1', name: 'Weekly polish loop' }] } })),
   getSharedMemories: (...args) => getSharedMemories(...args),
   previewCron: (...args) => previewCron(...args),
 }));
@@ -106,7 +108,32 @@ describe('Plan — scheduling a memory consolidation job', () => {
   });
 });
 
+describe('Plan — scheduling a loop', () => {
+  it('offers Loop as a kind of its own, with a loop picker and an optional goal', async () => {
+    show();
+    fireEvent.click(screen.getByRole('button', { name: /^schedule$/i }));
+    await waitFor(() => expect(screen.getByText('Start a loop on a schedule')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Start a loop on a schedule'));
+    expect(await screen.findByText('Select a loop…')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Weekly polish loop' })).toHaveValue('loop-1');
+    expect(screen.getByText('Run goal (optional)')).toBeInTheDocument();
+  });
+});
+
 describe('Plan — the job list', () => {
+  it('shows a loop job as a loop, with the loop name as the target', async () => {
+    getPlanJobs.mockImplementation(() => Promise.resolve({ data: [{
+      id: 'job-loop', kind: 'loop', title: 'Polish the launch post', message: '', status: 'scheduled',
+      run_at: '2026-11-02T09:00:00Z', recurrence: 'cron', cron: '0 10 * * 1', timezone: 'Europe/Berlin',
+      loop_id: 'loop-1', agent_id: null, flow_id: null, created_task_ids: [], upcoming_runs_at: [],
+    }] }));
+    show();
+    await waitFor(() => expect(screen.getByText('Weekly polish loop')).toBeInTheDocument());
+    expect(screen.getByText('Loop')).toBeInTheDocument();
+    expect(screen.queryByText('notification')).not.toBeInTheDocument();
+  });
+
   it('shows the memory consolidation badge and the pool name as the target', async () => {
     getPlanJobs.mockImplementation(() => ok([CONSOLIDATE_JOB]));
     show();

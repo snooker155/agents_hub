@@ -54,6 +54,8 @@ const clip = (text) => (text.length > MAX_LIVE_TEXT ? text.slice(-MAX_LIVE_TEXT)
 const blank = (fields = {}) => ({
   runId: null,
   user: '',
+  // What started a turn the hub began by itself (a background run ended).
+  notice: null,
   text: '',
   thinking: [],
   thinkingLive: '',
@@ -74,6 +76,7 @@ export function fromSnapshot(snapshot) {
   return blank({
     runId: snapshot.run_id || null,
     user: snapshot.user_message || '',
+    notice: snapshot.notice || null,
     text: snapshot.text || '',
     thinking: snapshot.thinking || [],
     thinkingLive: snapshot.thinking_live || '',
@@ -98,6 +101,7 @@ export function reduceLiveTurn(turn, event) {
   if (type === 'turn_start') {
     return blank({
       user: event.message || '',
+      notice: event.notice || null,
       source: event.source || 'chat',
       agentId: event.agent_id || null,
     });
@@ -237,6 +241,11 @@ export function useLiveChatTurn(conversationId, { muted = false, resolvedRunIds 
     getChatLive(conversationId)
       .then(({ data }) => {
         if (cancelled || !data?.turn) return;
+        // This tab's own turn, the way its echoes are: a turn the person just
+        // stopped is still running on the server for a moment, and its end
+        // arrives as an echo that is dropped, so a snapshot of it would stay
+        // "working" for good.
+        if (isOwnEcho(data.turn, clientIdRef.current)) return;
         // Only as a starting point: events that arrived while this was in
         // flight are ahead of the snapshot and must not be rolled back.
         setState((prev) => (prev.key === key && prev.turn

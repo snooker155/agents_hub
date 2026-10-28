@@ -226,6 +226,35 @@ def test_one_conversation_keeps_one_live_turn():
     assert live_runs.by_run("r1") is None
 
 
+def test_a_delegated_run_does_not_take_over_the_turns_run_id():
+    """A delegated worker's events carry its own run id; the live turn stays
+    the parent's run, which is the one the stored reply names, so a tab that
+    holds that reply knows the snapshot for it."""
+    from common import live_runs
+
+    turn = live_runs.start_turn(conversation_id="c-d", user_message="go",
+                                origin_client="tab-1", client_turn_id="k1")
+    live_runs.record(turn, {"type": "meta", "run_id": "parent"})
+    live_runs.record(turn, {"type": "delegation_start", "run_id": "child", "agent_id": "w"})
+    live_runs.record(turn, {"type": "tool_start", "tool": "read", "run_id": "child", "delegation": True})
+    live_runs.record(turn, {"type": "delegation_end", "run_id": "child", "ok": False})
+
+    snapshot = live_runs.by_conversation("c-d")
+    assert snapshot["run_id"] == "parent"
+    assert (snapshot["origin_client"], snapshot["client_turn_id"]) == ("tab-1", "k1")
+    assert live_runs.by_run("child") is None
+
+
+def test_a_replicas_turn_keeps_the_tab_that_sent_it():
+    from common import live_runs
+
+    live_runs.record_conversation_event("conv-t", {
+        "type": "turn_start", "message": "hi", "origin_client": "tab-2", "client_turn_id": "k2",
+    })
+    turn = live_runs.by_conversation("conv-t")
+    assert (turn["origin_client"], turn["client_turn_id"]) == ("tab-2", "k2")
+
+
 # ── the turn survives the browser ────────────────────────────────────────────
 
 async def _body_test_a_finished_turn_is_written_to_the_chat():
@@ -393,6 +422,32 @@ async def _body_test_a_half_written_bubble_gets_the_final_answer(broker):
     assert saved and saved[0]["chat_id"] == "conv-1" and saved[0]["origin_client"] is None
 
 
+async def _body_test_a_turn_stopped_elsewhere_is_marked_in_the_stored_reply(broker):
+    """Stopped from a page that did not send it: no page marks the bubble, so
+    the server does, and the mark outlives the live mirror."""
+    from chat.broadcast import broadcast_turn
+    from common import chat_store
+
+    chat_store.save_chat({"id": "conv-1", "messages": [
+        {"id": "m1", "role": "user", "content": "how do I ship this?"},
+        {"id": "m2", "role": "agent", "content": "ship", "run_id": "run-1",
+         "duration_ms": None, "total_tokens": None},
+    ]})
+    client_id, queue = broker.open_client(["chat:conv-1"])
+    async for _ in broadcast_turn(FakeRequest(), _pipeline([
+        {"type": "done", "ok": False, "stopped": True, "response": "Stopped by user",
+         "error": "stopped by user", "run_id": "run-1"},
+    ])):
+        pass
+    await asyncio.sleep(0)
+    broker.close_client(client_id)
+
+    messages = chat_store.get_chat("conv-1")["messages"]
+    assert [m["id"] for m in messages] == ["m1", "m2"]
+    assert messages[1]["stopped"] is True and messages[1]["content"] == "ship"
+    assert any(e["type"] == "chat_saved" for e in _drain(queue))
+
+
 # ── running the async bodies above ──────────────────────────────────────────
 # The suite has no pytest-asyncio; async work is driven with asyncio.run, and
 # the broker's queues are created and read inside that same loop.
@@ -523,3 +578,6 @@ def test_the_running_endpoint_lists_only_chats_the_caller_can_see(client, monkey
     monkeypatch.setattr(chats, "_chat_visible", lambda principal, chat: chat["id"] != "conv-hidden")
 
     assert client.get("/api/chats/running").json() == {"conversations": ["conv-mine"]}
+
+def test_a_turn_stopped_elsewhere_is_marked_in_the_stored_reply(broker):
+    asyncio.run(_body_test_a_turn_stopped_elsewhere_is_marked_in_the_stored_reply(broker))

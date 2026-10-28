@@ -139,10 +139,14 @@ def _fresh_database(db, path: Path) -> None:
 # inherit: dashboard/backend/main.py exports the file into os.environ on
 # import (load_dotenv), and common.config.live_setting reads the file first
 # and the environment second, so without this a guard test would see the
-# operator's "warn" instead of the default "block".
+# operator's "warn" instead of the default "block". The container
+# requirement is pinned to its shipped default too, off: the shipped exceptions
+# (the SWE agent's run_shell, the orchestrator's delegation) are built on the
+# hub in tests, where a requirement that is on would refuse them. A test of
+# the strict mode switches the setting on itself.
 _PINNED_ENV = {
     "CAPABILITY_GUARD": ("capability_guard", "block"),
-    "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", True),
+    "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", False),
     # A developer's own browser service would answer the "not configured" tests.
     "AGENTS_HUB_BROWSER_URL": ("browser_url", ""),
     "AGENTS_HUB_BROWSER_TOKEN": ("browser_token", ""),
@@ -153,8 +157,12 @@ _PINNED_ENV = {
 # fallback. Hidden from ``read_dot_env`` so a test that monkeypatches
 # ``settings.agent_mode`` or ``settings.agent_docker_network`` is answered by
 # its patch, not by the developer's AGENT_EXECUTION_MODE=docker, and dropped
-# from os.environ even when the shell exported them before the session.
-_SETTINGS_BACKED_ENV = frozenset({"AGENT_EXECUTION_MODE", "AGENT_DOCKER_NETWORK"})
+# from os.environ even when the shell exported them before the session. The
+# web domain policy is read the same way (tools/web.py _live_list): a
+# developer's WEB_DENY_DOMAINS="[]" would answer over a patched deny list.
+_SETTINGS_BACKED_ENV = frozenset({"AGENT_EXECUTION_MODE", "AGENT_DOCKER_NETWORK",
+                                  "WEB_DENY_DOMAINS", "WEB_ALLOW_DOMAINS",
+                                  "WEB_DOMAIN_POLICY_ENABLED"})
 
 
 # The environment as the session started, before any test imported
@@ -164,6 +172,15 @@ _SETTINGS_BACKED_ENV = frozenset({"AGENT_EXECUTION_MODE", "AGENT_DOCKER_NETWORK"
 # from the operator's file in a test that monkeypatched ``settings``.
 _BASE_ENV_KEYS = frozenset(os.environ)
 
+# The export itself is switched off for the session. The fixture below drops
+# what it added before each test, but the test whose client fixture imports
+# dashboard/backend/main.py first runs that import after its own fixtures,
+# so the file's values were live for that one test (a developer's
+# WEB_DENY_DOMAINS="[]" let a denied host through). Nothing in the suite
+# needs the export; CI has no .env.
+import dotenv as _dotenv  # noqa: E402
+_dotenv.load_dotenv = lambda *args, **kwargs: False
+
 
 def _dot_env_keys() -> set:
     try:
@@ -171,6 +188,21 @@ def _dot_env_keys() -> set:
         return set(read_env())
     except Exception:  # noqa: BLE001 - no readable .env, nothing to strip
         return set()
+
+
+@pytest.fixture(autouse=True)
+def cli_selection_isolated(tmp_path, monkeypatch):
+    """The CLI's selection (``cli.main._state_file``, under XDG_CONFIG_HOME)
+    is the developer's own: a workspace chosen with ``ah workspace use`` must
+    not scope ``ah flow list`` and the like in a test. Every test gets an
+    empty config home and no selection from the environment, and the cached
+    cwd detection is dropped so it is recomputed from the test's own state."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+    for var in ("AGENTS_HUB_WORKSPACE", "AGENTS_HUB_PROJECT", "AGENTS_HUB_AUTO_WORKSPACE"):
+        monkeypatch.delenv(var, raising=False)
+    cli = _sys.modules.get("cli.main")
+    if cli is not None:
+        monkeypatch.setattr(cli, "_detected", None, raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -184,6 +216,10 @@ def guard_defaults(monkeypatch):
     import common.config as _cfg
     for key in _dot_env_keys() - _BASE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    # The setup wizard (cli/onboard) writes its plan's database URL straight
+    # into os.environ, so a test of it left "" behind: on Postgres every later
+    # connection a new thread or a subprocess opened went to SQLite.
+    monkeypatch.setenv("AGENTS_HUB_DATABASE_URL", TEST_DATABASE_URL)
     real = _cfg.read_dot_env
     for key, (field, default) in _PINNED_ENV.items():
         monkeypatch.delenv(key, raising=False)

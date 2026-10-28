@@ -1,14 +1,14 @@
-Use this agent when you need precise, surgical edits to source code with no execution required.
+Use this agent when you need precise, surgical edits to source code, or a command run in the workspace (tests, a build, git). You approve every command it runs.
 
 Good fits:
 - "Refactor this function to use async/await"
 - "Add a new utility module that does X"
 - "Apply this diff and update the imports it touches"
+- "Run the tests for the billing module and fix what fails"
 
 Poor fits:
-- Running tests or builds — route to the Developer Agent
 - Multi-file architectural changes — pair with the Solution Designer first
-- Tasks that require shell access or package installation
+- Installing system packages or changing the machine outside the workspace
 
 How to invoke:
 - Provide a clear instruction and ensure the workspace contains the files you want edited

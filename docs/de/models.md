@@ -17,6 +17,37 @@ Reihenfolge der Auflösung, das Spezifischste zuerst:
 
 Ein Agent ohne festgelegtes Modell erbt es. Meistens ist das genau, was Sie wollen: Ändern Sie das Standardmodell des Workspace, und der ganze Workspace zieht mit.
 
+Hat ein Workspace eine [Modellrichtlinie](#modellrichtlinie-pro-workspace), beschränkt sie all das auf die Modelle, die sie erlaubt.
+
+## Modellrichtlinie pro Workspace
+
+Ein Administrator kann festlegen, mit welchen Modellen und Einstellungen ein Workspace arbeitet, sodass seine Mitglieder sie nicht ändern können. Die Richtlinie wird auf der Seite des Workspace gesetzt (Reiter Einstellungen) oder mit `PUT /api/workspaces/{name}/model-policy`:
+
+```json
+{"models": ["openai/gpt-5", "anthropic/claude-sonnet-5-5"],
+ "default": "openai/gpt-5",
+ "temperature": 0.2, "effort": "medium", "max_tokens": 8000}
+```
+
+`models` sind aktivierte Katalogmodelle; `default` muss eines davon sein (ohne Angabe das erste). `temperature`, `effort` und `max_tokens` sind optional. Eine leere Liste `models` entfernt die Richtlinie. Im Modus `multi` schreibt sie nur ein Administrator, auch der Eigentümer des Workspace nicht; lesen dürfen alle Mitglieder (`GET` auf demselben Pfad und `policy` in `GET /api/workspaces/{name}/model`).
+
+Solange eine Richtlinie gilt:
+
+- ist das Standardmodell des Workspace das der Richtlinie, und die Route für das Standardmodell lehnt Änderungen ab;
+- bietet die Modellauswahl in der Kopfzeile nur die Modelle der Richtlinie an, das globale Standardmodell gehört nicht dazu;
+- lässt sich das eigene Modell eines Agenten nur auf ein erlaubtes Modell seines Workspace setzen (und des Workspace, in dem die Seite offen ist);
+- wählen ein Modellwechsel in einem laufenden Lauf, die Ersatzmodelle eines Agenten, der Berater und eine Delegation mit benanntem Modell nur unter den erlaubten Modellen (`tools/delegation.py`, `enabled_models`, `resolve_model`);
+- läuft ein nicht erlaubtes Modell (ein Agent, der vor der Richtlinie festgelegt wurde, ein geteilter oder System-Agent mit einem Modell für einen anderen Workspace) stattdessen auf dem Standardmodell der Richtlinie, mit Endpunkt und Schlüssel von dessen Anbieter (`agents/agent_factory.py`);
+- schlagen `temperature`, `effort` und `max_tokens`, wenn gesetzt, die Werte des Agenten und den Aufwand aus der Kopfzeile.
+
+Eine Richtlinie mit einem einzigen Modell macht dieses Modell zum globalen Modell des Workspace: Standardmodell, einzige Wahl in der Kopfzeile und einziges Modell, auf dem dort jeder Agent läuft.
+
+Die Richtlinie legt auch die [Spezialmodelle](special-models.md) des Workspace (Bilder, Video, Sprache, Transkription und eigene Modelle) in die Hand des Administrators: Mitglieder sehen sie nur lesend. Mit `"lock_special_models": false` bleiben sie den Mitgliedern überlassen.
+
+Ein persönlicher Workspace eines Mitglieds ohne eigene Richtlinie folgt der des Workspace `default` (`inherited_from: "default"` in der Antwort), sodass die Arbeit im eigenen Workspace die Richtlinie des Hubs nicht umgeht. Ein Administrator kann einem persönlichen Workspace eine eigene Richtlinie geben, die dann stattdessen gilt.
+
+Beim Speichern einer Richtlinie wird die Wahl in der Kopfzeile verworfen, wenn die Richtlinie sie nicht erlaubt. Den Modellkatalog selbst (welche Modelle aktiviert sind, ihre Preise, Temperaturen und Aufwände) ändert im Modus `multi` nur ein Administrator.
+
 ## Ein erster Schlüssel schaltet ein Modell frei
 
 Früher blieb nach dem Speichern eines Anbieterschlüssels (in den Einstellungen, im Willkommensfenster oder auf der Verbindungskarte des Assistenten) vor dem ersten Run noch ein Gang zu dieser Seite übrig: ein Modell aktivieren und seinen Preis eintragen. Jetzt aktiviert der Hub ein Standardmodell für den Anbieter, wenn dieser noch kein aktiviertes Modell hat (`common/default_model.py`, eine Tabelle: `gpt-5.4-mini` für OpenAI, `claude-sonnet-5-5` für Anthropic, `gemini-2.5-flash` für Google). Er trägt dessen Katalogpreis ein und markiert es mit einem Stern als Standardmodell des Anbieters. Hat der Hub noch keinen globalen Standardanbieter oder hat der aktuelle keinen Schlüssel, macht er diesen Anbieter zum globalen Standard und schreibt `DEFAULT_PROVIDER` sowie das `*_MODEL` des Anbieters in die `.env`. Eine bestehende Wahl überschreibt er nie: Ein Anbieter mit einem aktivierten Modell bleibt unangetastet, und ein globaler Standard mit Schlüssel bleibt bestehen. Ein Schlüssel, der in einem anderen Workspace gespeichert wird, aktiviert das Modell, rührt aber den globalen Standard nicht an. Die Einstellungen zeigen, was freigeschaltet wurde, mit dem Preis und einem Link hierher. Ändern können Sie es wie gewohnt auf dieser Seite.

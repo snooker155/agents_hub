@@ -24,8 +24,10 @@ What a sync does, per skill folder found:
 
 - a new folder becomes a catalog entry (``source="repo"``, not attached to any
   agent) at version 1;
-- a changed ``SKILL.md`` or file list becomes a new version of that entry
-  (``memory.skill_versions``, op ``sync``). Copies of the entry already
+- a changed ``SKILL.md``, file list or file content becomes a new version of
+  that entry (``memory.skill_versions``, op ``sync``): the hash of every file
+  is part of the version, so a changed script shows in the history like a
+  changed instruction. Copies of the entry already
   attached to agents in the same workspace follow it when nobody edited the
   copy since it was taken; an edited copy keeps its own text and shows that
   an update is available, and a pinned copy keeps serving its pinned version
@@ -171,6 +173,10 @@ class FoundSkill:
     safety: Optional[Dict[str, Any]] = None
     # memory/skill_sources.py: the connected source it came from.
     source_id: Optional[str] = None
+    # sha256 of each file next to SKILL.md, by its path in the folder. Kept in
+    # the entry's ``repo`` so a version covers what the scripts say, not only
+    # their names.
+    file_hashes: Dict[str, str] = field(default_factory=dict)
 
 
 def _list_resources(skill_dir: Path) -> List[str]:
@@ -191,6 +197,17 @@ def _list_resources(skill_dir: Path) -> List[str]:
         except ValueError:
             continue
         out.append(rel)
+    return out
+
+
+def _file_hashes(resources: List[str], skill_dir: Path) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for rel in resources:
+        try:
+            with open(skill_dir / rel, "rb") as fh:
+                out[rel] = hashlib.sha256(fh.read(4 * 1024 * 1024)).hexdigest()
+        except OSError:
+            continue
     return out
 
 
@@ -285,7 +302,8 @@ def discover(root: Path, ws_folder: Path, *, label: str = "",
         resources = _list_resources(skill_dir)
         entry = FoundSkill(skill_dir=skill_dir, rel_dir=rel_dir, root_label=label,
                            project_id=project_id, source_id=source_id, parsed=None,
-                           resources=resources, sha256=_folder_hash(raw, resources, skill_dir))
+                           resources=resources, sha256=_folder_hash(raw, resources, skill_dir),
+                           file_hashes=_file_hashes(resources, skill_dir))
         if len(raw) > MAX_SKILL_MD_BYTES:
             entry.error = f"SKILL.md is larger than {MAX_SKILL_MD_BYTES // 1024} KB"
         else:
@@ -437,7 +455,7 @@ def sync_workspace(workspace: str, *, project_id: Optional[str] = None,
         repo_meta = {
             "dir": rel_dir, "project_id": entry.project_id, "source_id": entry.source_id,
             "root": entry.root_label, "sha256": entry.sha256, "synced_at": _now(),
-            "missing": False,
+            "missing": False, "files": entry.file_hashes,
         }
         current = by_dir.get(rel_dir)
         if current is None:

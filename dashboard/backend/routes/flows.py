@@ -3,11 +3,14 @@ User-defined Agent Flows (visual pipelines) API routes.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import os
+import re
 import signal
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union, cast
+from urllib.parse import quote
 from uuid import uuid4
 import json
 
@@ -17,13 +20,15 @@ from pydantic import BaseModel
 
 from tasks import service as tasks_service
 from managers import run_manager
-from agents import agent_launcher
 from flow import launcher as flow_launcher
 from flow import store as flow_store
 from flow import templates as flow_templates
 from flow.engine import ON_ERROR_POLICIES
-from flow.estimate import estimate_flow_cost
 from models import FlowListItem, FlowDetail, FlowPage
+from flow.estimate import estimate_flow_cost
+from common.marketplace_names import agent_name_taken, flow_name_taken, name_key
+from common.workspace_scope import same_workspace
+from common import record_access
 from workspace import (
     create_workspace_folder,
     get_workspace_metadata,
@@ -42,12 +47,14 @@ router = APIRouter(prefix="/api/flows", tags=["flows"])
 # These thin wrappers keep the existing list-oriented CRUD logic unchanged.
 
 def _load() -> List[Dict]:
-    return flow_store.list_flows()
+    # Temporary flows too (flow_store.is_ephemeral): a run page edits, keeps
+    # and runs one by id, and _save below must not read them as vanished.
+    return flow_store.list_flows(include_ephemeral=True)
 
 
 def _save(flows: List[Dict]) -> None:
     """Persist a full flow list: upsert each flow, delete any that vanished."""
-    existing_ids = {f["id"] for f in flow_store.list_flows() if f.get("id")}
+    existing_ids = {f["id"] for f in flow_store.list_flows(include_ephemeral=True) if f.get("id")}
     new_ids = {f["id"] for f in flows if f.get("id")}
     for flow in flows:
         if flow.get("id"):
@@ -60,9 +67,21 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _flow_workspace(requested: Optional[str]) -> str:
+    """The workspace a new flow is bound to: the one it is created in, the
+    default workspace when the request names none."""
+    return (requested or "").strip() or "default"
+
+
 def _authorize_flow_in_workspace(workspace: str, flow_id: str) -> None:
-    """Add ``flow_id`` to the workspace's ``allowed_flows`` allowlist (idempotent)."""
+    """Add ``flow_id`` to the workspace's ``allowed_flows`` allowlist (idempotent).
+
+    Only a workspace that keeps such a list gets the id: one without lists its
+    own flows anyway, and starting a list there would hide every other flow.
+    """
     metadata = get_workspace_metadata(workspace)
+    if metadata.get("allowed_flows") is None:
+        return
     allowed = list(metadata.get("allowed_flows") or [])
     if flow_id not in allowed:
         allowed.append(flow_id)
@@ -74,6 +93,8 @@ def _authorize_flow_in_workspace(workspace: str, flow_id: str) -> None:
 class FlowCreate(BaseModel):
     name: str
     description: str = ""
+    # The workspace the flow is created in (default when none).
+    workspace: Optional[str] = None
 
 
 class FlowUpdate(BaseModel):
@@ -101,11 +122,16 @@ class FlowUpdate(BaseModel):
     # Example requests shown in the flow's empty chat: {lang: [text, ...]},
     # or a plain list for every language (flow.templates.normalize_examples).
     examples: Optional[Union[List[str], Dict[str, List[str]]]] = None
+    # False keeps a temporary flow an agent built for one run (run_new_flow_tool):
+    # it joins the flow list and is no longer swept after a week.
+    ephemeral: Optional[bool] = None
 
 
 class FlowImport(BaseModel):
     yaml: str
     name: Optional[str] = None
+    # The workspace the flow is imported into (default when none).
+    workspace: Optional[str] = None
 
 
 class FlowSharingUpdate(BaseModel):
@@ -118,10 +144,11 @@ class FlowRun(BaseModel):
     task_id: Optional[str] = None
 
 
-class FlowRunNode(BaseModel):
+class FlowRerun(BaseModel):
+    """Body of POST /{flow_id}/runs/{run_group}/rerun: the node to start
+    from, and ``single`` (that node only) or ``rest`` (it and all after it)."""
     node_id: str
-    workspace: Optional[str] = None
-    description: Optional[str] = None
+    mode: str = "rest"
 
 
 class FlowResume(BaseModel):
@@ -170,7 +197,7 @@ def _paginate(items: list, limit: Optional[int], offset: Optional[int]) -> list:
 
 @router.get("", response_model=Union[List[FlowListItem], FlowPage])
 async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = None,
-                     offset: Optional[int] = None):
+                     offset: Optional[int] = None, request: Request = cast(Request, None)):
     """The flow list. With no ``limit``/``offset`` this is the full list, exactly
     as before; with either, it is one page: ``{items, total, limit, offset}``.
 
@@ -181,8 +208,8 @@ async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = Non
 
     - An explicit ``allowed_flows`` allowlist *is* the filter, metadata already
       in hand, so only the ids that land on the requested page get read.
-    - Otherwise, ownership ("global flows + flows owned by this workspace") is
-      a property of each flow's own record, so every flow still has to be
+    - Otherwise, ownership (the flows this workspace owns, a flow that names
+      no workspace being the default one's) is a property of each flow's own record, so every flow still has to be
       parsed once to know it: flow_store keeps no index for that.
     - With no workspace at all, ``flow_store`` pages the file list itself and
       parses only those files.
@@ -193,13 +220,22 @@ async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = Non
         flow_ids = sorted(str(fid) for fid in allowed)
         total = len(flow_ids)
         page_ids = _paginate(flow_ids, limit, offset)
-        flows = [f for f in (flow_store.get_flow(fid) for fid in page_ids) if f]
+        flows = [f for f in (flow_store.get_flow(fid) for fid in page_ids)
+                 if f and not flow_store.is_ephemeral(f)]
     elif workspace:
         # Keeps the flow picker in sync with the run_flow authorization check.
-        visible = [f for f in _load()
-                  if not f.get("workspace") or f.get("workspace") == workspace]
+        visible = [f for f in flow_store.list_flows()
+                   if same_workspace(f.get("workspace"), workspace)]
         total = len(visible)
         flows = _paginate(visible, limit, offset)
+    elif record_access.visible_names(request) is not None:
+        # A member asking for no workspace in particular sees the flows of
+        # the workspaces they belong to (and shared ones), not every flow.
+        names = record_access.visible_names(request)
+        mine = [f for f in flow_store.list_flows()
+                if f.get("shared") or record_access.visible(names, f.get("workspace"))]
+        total = len(mine)
+        flows = _paginate(mine, limit, offset)
     else:
         total = flow_store.count_flows()
         flows = flow_store.list_flows(limit=limit, offset=offset)
@@ -211,7 +247,11 @@ async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = Non
 
 
 @router.post("")
-async def create_flow(data: FlowCreate):
+async def create_flow(data: FlowCreate, request: Request = cast(Request, None)):
+    # A new flow belongs to the workspace it is created in until it is
+    # published; then other workspaces take a copy from the marketplace.
+    workspace = _flow_workspace(data.workspace)
+    record_access.require_in_workspace(request, workspace)
     flows = _load()
     flow = {
         "id": str(uuid4()),
@@ -219,13 +259,14 @@ async def create_flow(data: FlowCreate):
         "description": data.description,
         "nodes": [],
         "edges": [],
-        "workspace": None,
+        "workspace": workspace,
         "task_id": None,
         "created_at": _now(),
         "updated_at": _now(),
     }
     flows.append(flow)
     _save(flows)
+    _authorize_flow_in_workspace(workspace, flow["id"])
     return flow
 
 
@@ -242,7 +283,11 @@ async def get_flow(flow_id: str):
 
 
 @router.put("/{flow_id}")
-async def update_flow(flow_id: str, data: FlowUpdate):
+async def update_flow(flow_id: str, data: FlowUpdate, request: Request = cast(Request, None)):
+    if data.workspace:
+        # Moving a flow needs the same right in the workspace it moves to as
+        # in the one it leaves (checked by the middleware).
+        record_access.require_in_workspace(request, data.workspace)
     flows = _load()
     for i, f in enumerate(flows):
         if f["id"] == flow_id:
@@ -265,6 +310,10 @@ async def update_flow(flow_id: str, data: FlowUpdate):
                     f = {k: v for k, v in f.items() if k != "webhook_secret"}
             if "examples" in patch:
                 patch["examples"] = flow_templates.normalize_examples(patch["examples"])
+            if f.get("shared") and "name" in patch:
+                taken = flow_name_taken(patch["name"], exclude=[flow_id])
+                if taken:
+                    raise HTTPException(status_code=409, detail=taken)
             patch["updated_at"] = _now()
             flows[i] = {**f, **patch}
             _save(flows)
@@ -352,8 +401,14 @@ async def update_flow_sharing(flow_id: str, data: FlowSharingUpdate):
 
     published_agents: List[str] = []
     if data.shared:
+        taken = flow_name_taken(flow.get("name"), exclude=[flow_id])
+        if taken:
+            raise HTTPException(status_code=409, detail=taken)
         agent_ids = flow_store.flow_agent_ids(flow)
         blockers: List[str] = []
+        # The agents this publishing publishes take their names on the
+        # marketplace too, so neither one already there nor each other's.
+        newly_named: Dict[str, str] = {}
         for agent_id in agent_ids:
             spec = registry.get_agent(agent_id)
             if not spec:
@@ -362,6 +417,16 @@ async def update_flow_sharing(flow_id: str, data: FlowSharingUpdate):
                 blockers.append(
                     f"agent '{agent_id}' is restricted to the default workspace"
                 )
+            elif not spec.shared and not is_system_agent(agent_id):
+                taken = agent_name_taken(spec.name, exclude=[agent_id])
+                twin = newly_named.get(name_key(spec.name))
+                if taken:
+                    blockers.append(f"agent '{agent_id}': {taken}")
+                elif twin:
+                    blockers.append(
+                        f"agents '{twin}' and '{agent_id}' are both named '{spec.name}'"
+                    )
+                newly_named.setdefault(name_key(spec.name), agent_id)
         if blockers:
             raise HTTPException(
                 status_code=400,
@@ -395,16 +460,20 @@ async def export_flow(flow_id: str):
     # Slugify the flow name for the download filename.
     name = (flow.get("name") if flow else None) or flow_id
     slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in name).strip("-") or "flow"
+    # Headers are latin-1, so a non-ASCII name goes in filename* only.
+    ascii_slug = "".join(c if c.isascii() else "_" for c in slug)
+    disposition = f"attachment; filename=\"{ascii_slug}.yaml\"; filename*=UTF-8''{quote(slug)}.yaml"
     return Response(
         content=yaml_text,
         media_type="application/x-yaml",
-        headers={"Content-Disposition": f'attachment; filename="{slug}.yaml"'},
+        headers={"Content-Disposition": disposition},
     )
 
 
 @router.post("/import")
-async def import_flow(data: FlowImport):
+async def import_flow(data: FlowImport, request: Request = cast(Request, None)):
     """Validate an uploaded flow YAML and, if valid, store it as a new flow."""
+    record_access.require_in_workspace(request, data.workspace)
     if not (data.yaml or "").strip():
         raise HTTPException(status_code=400, detail="No YAML content provided")
 
@@ -417,16 +486,23 @@ async def import_flow(data: FlowImport):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # A fresh import is a new flow: override name when provided, reset workspace
-    # and timestamps so it isn't bound to the source flow's context.
+    # A fresh import is a new flow: override name when provided, bind it to
+    # the workspace it is imported into and reset the timestamps.
     if data.name and data.name.strip():
         flow["name"] = data.name.strip()
     flow.setdefault("name", "Imported flow")
-    flow["workspace"] = None
+    workspace = _flow_workspace(data.workspace)
+    # An agent that workspace may not run is refused here, not at the first run.
+    from flow.validate import workspace_agent_errors
+    refused = workspace_agent_errors(flow.get("nodes", []), workspace)
+    if refused:
+        raise HTTPException(status_code=422, detail="; ".join(refused))
+    flow["workspace"] = workspace
     flow["shared"] = False
     flow["created_at"] = _now()
     flow["updated_at"] = _now()
     flow_store.save_flow(flow)
+    _authorize_flow_in_workspace(workspace, flow_id)
     return flow
 
 
@@ -484,9 +560,10 @@ async def list_n8n_workflows(workspace: Optional[str] = None):
 
 
 @router.post("/import/n8n")
-async def import_n8n_flow(data: N8nImport):
+async def import_n8n_flow(data: N8nImport, request: Request = cast(Request, None)):
     """Create a hub flow from an n8n workflow. Returns ``{flow, report}``; the
     report says what each n8n step became and what did not carry over."""
+    record_access.require_in_workspace(request, data.workspace)
     from connectors.n8n.client import N8nError
     from flow import n8n_import
 
@@ -547,14 +624,11 @@ async def run_flow(flow_id: str, req: FlowRun):
         if not ws_name:
             ws_name = create_workspace_folder().name
     else:
+        # No task named: the run is a run, not a task.
+        t = None
         ws_name = req.workspace or flow.get("workspace")
         if not ws_name:
             ws_name = create_workspace_folder().name
-        t = tasks_service.create_task(
-            title=f"Flow: {flow['name']}",
-            description=req.description or flow.get("description", ""),
-            workspace=ws_name,
-        )
 
     # Authorization: a workspace may restrict which flows can run in it.
     # ``allowed_flows`` absent (None) means unrestricted, mirroring allowed_agents.
@@ -572,11 +646,12 @@ async def run_flow(flow_id: str, req: FlowRun):
     }
 
     try:
-        run_id, session_id = flow_launcher.start_flow_run(str(t.id), flow_id, params)
-        tasks_service.assign_agent(t.id, flow.get("name") or flow_id, params, run_id=run_id)
+        run_id, session_id = flow_launcher.start_flow_run(str(t.id) if t else None, flow_id, params)
+        if t is not None:
+            tasks_service.assign_agent(t.id, flow.get("name") or flow_id, params, run_id=run_id)
         return {
             "status": "started",
-            "task_id": str(t.id),
+            "task_id": str(t.id) if t else None,
             "run_id": run_id,
             "session_id": session_id,
             "workspace": ws_name,
@@ -683,51 +758,18 @@ async def trigger_flow_webhook(flow_id: str, request: Request, req: Optional[Flo
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{flow_id}/run-node")
-async def run_flow_node(flow_id: str, req: FlowRunNode):
+@router.post("/{flow_id}/runs/{run_group}/rerun")
+async def rerun_flow_run(flow_id: str, run_group: str, req: FlowRerun):
+    """Run a past task run of the flow again from one node, as a new run
+    (flow/launcher.rerun_flow_run). A chat record runs again as a turn of
+    its own conversation instead (chat/pipelines.py, ``flow_rerun``)."""
     flow = next((f for f in _load() if f["id"] == flow_id), None)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
-
-    node = next((n for n in flow.get("nodes", []) if n["id"] == req.node_id), None)
-    if not node:
-        raise HTTPException(status_code=404, detail="Node not found")
-
-    node_data = node.get("data") if isinstance(node.get("data"), dict) else {}
-    agent_id = node.get("agent_id") or node_data.get("agent_id") or ""
-    if not agent_id:
-        raise HTTPException(status_code=400, detail="Node has no agent_id")
-
-    ws_name = req.workspace or flow.get("workspace")
-    if not ws_name:
-        ws_name = create_workspace_folder().name
-
-    label = node.get("label") or node_data.get("label") or agent_id
-    flow_task_id = flow.get("task_id")
-    t = (tasks_service.get_task(flow_task_id) if flow_task_id else None) or tasks_service.create_task(
-        title=f"Run {label} · {flow['name']}",
-        description=req.description or f"Running {label} from flow {flow['name']}",
-        workspace=ws_name,
-    )
-
-    params = {
-        "description": req.description or flow.get("description", ""),
-        "workspace": ws_name,
-        "flow_id": flow_id,
-        "node_id": req.node_id,
-        "task_id": flow.get("task_id"),
-    }
-
     try:
-        run_id, session_id = agent_launcher.start_run(str(t.id), agent_id, params)
-        tasks_service.assign_agent(t.id, agent_id, params, run_id=run_id)
-        return {
-            "status": "started",
-            "task_id": str(t.id),
-            "run_id": run_id,
-            "session_id": session_id,
-            "workspace": ws_name,
-        }
+        return flow_launcher.rerun_flow_run(flow_id, run_group, req.node_id, req.mode)
+    except flow_launcher.FlowResumeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -778,6 +820,16 @@ async def stop_flow(flow_id: str, flow_run_id: Optional[str] = None):
                 pass
             except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
                 log.debug("now: best-effort step failed", exc_info=True)
+        # A flow run in docker mode has a container instead of a pid; its
+        # nodes and any nested run it started live in there too.
+        container = fr.get("container_name")
+        if container:
+            try:
+                from managers.container_manager import stop_container
+                if await asyncio.to_thread(stop_container, str(container), 5):
+                    stopped = True
+            except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
+                log.debug("flow container stop failed", exc_info=True)
 
         # 3) Stop this instance's in-flight node runs (they carry flow_run_id).
         for r in all_runs:
@@ -829,15 +881,145 @@ async def get_flow_instances(flow_id: str, active_only: bool = False):
     return [r for r in run_store.load_flow_runs() if r.get("flow_id") == flow_id]
 
 
+#: The log lines that end an agent node, which carry the node's run.
+_NODE_END_TYPES = ("agent_finish", "agent_error", "agent_stopped")
+
+
+_BRANCH_TAIL = re.compile(r"→ branch (\[.*\])\s*$")
+
+
+def _attach_routes(flow_id: str, events: List[Dict]) -> List[Dict]:
+    """Give the line of a switch or condition written before it carried its
+    ``route`` the one it implies: the steps it chose, by name (the line only
+    names their ids, in its ``content``)."""
+    wanted = [i for i, ev in enumerate(events)
+              if ev.get("type") == "agent_finish" and not ev.get("route")
+              and _BRANCH_TAIL.search(str(ev.get("content") or ""))]
+    if not wanted:
+        return events
+    from flow.branching import node_route
+    flow = flow_store.get_flow(flow_id) or {}
+    out = list(events)
+    for i in wanted:
+        ev = out[i]
+        tail = _BRANCH_TAIL.search(str(ev["content"]))
+        if tail is None:
+            continue
+        try:
+            goto = ast.literal_eval(tail.group(1))
+        except (ValueError, SyntaxError):
+            continue
+        if not isinstance(goto, list):
+            continue
+        route = node_route({"goto": [str(g) for g in goto], "text": ev.get("output") or ""}, flow)
+        if route:
+            out[i] = {**ev, "route": route}
+    return out
+
+
+def _attach_node_runs(events: List[Dict]) -> List[Dict]:
+    """Give the node lines written before they carried ``run_id`` their run.
+
+    The dashboard folds a node's steps (tool calls, thoughts) into its log line
+    from that run (``GET /messages/{run_id}/trail``). A flow chat's node run is
+    registered under the conversation as ``task_id``, with the node in its
+    ``extra``, and finishes at the very timestamp its log line carries, so the
+    line finds its run exactly. Lines that already name a run are left alone.
+    """
+    wanted = [ev for ev in events
+              if ev.get("type") in _NODE_END_TYPES and not ev.get("run_id")
+              and ev.get("kind") == "chat" and ev.get("run_group") and ev.get("node_id")]
+    if not wanted:
+        return events
+    groups = sorted({str(ev["run_group"]) for ev in wanted})
+    by_node: Dict[tuple, List[tuple]] = {}
+    try:
+        from common import db
+        conn = db.get_conn()
+        for i in range(0, len(groups), 400):
+            chunk = groups[i:i + 400]
+            marks = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT run_id, task_id, finished_at, extra FROM runs WHERE task_id IN ({marks})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                r = dict(row)
+                extra = r.get("extra") or {}
+                if isinstance(extra, str):
+                    try:
+                        extra = json.loads(extra)
+                    except ValueError:
+                        extra = {}
+                node = (extra or {}).get("flow_node_id")
+                if node:
+                    by_node.setdefault((str(r["task_id"]), str(node)), []).append(
+                        (str(r.get("finished_at") or ""), str(r["run_id"])))
+    except Exception:  # noqa: BLE001 - the log reads fine without the links
+        log.debug("flow log: could not link node runs", exc_info=True)
+        return events
+    for ev in wanted:
+        runs = by_node.get((str(ev["run_group"]), str(ev["node_id"]))) or []
+        ts = str(ev.get("timestamp") or "")
+        exact = next((rid for fin, rid in runs if fin == ts), None)
+        if exact:
+            ev["run_id"] = exact
+        elif len(runs) == 1:
+            ev["run_id"] = runs[0][1]
+    return events
+
+
 @router.get("/{flow_id}/logs")
 async def get_flow_logs(flow_id: str, workspace: Optional[str] = None):
-    from flow import run_store
-    return run_store.read_flow_logs(flow_id)
+    return _read_flow_log(flow_id)
 
 
 def _read_flow_log(flow_id: str) -> List[Dict]:
     from flow import run_store
-    return run_store.read_flow_logs(flow_id)
+    return _close_ended_runs(_attach_routes(flow_id, _attach_node_runs(run_store.read_flow_logs(flow_id))))
+
+
+def _close_ended_runs(events: List[Dict]) -> List[Dict]:
+    """Give a task run that ended without a last line in its log (a loop pass
+    before the loop wrote one, a process that died) the line its execution
+    record implies, so neither the History nor the live view takes it for a
+    run still going."""
+    from flow import run_store
+    last: Dict[str, int] = {}
+    ended: set = set()
+    for i, ev in enumerate(events):
+        group = ev.get("run_group")
+        if not group or (ev.get("kind") or "task") != "task":
+            continue
+        last[group] = i
+        if ev.get("type") in ("flow_finish", "flow_stopped"):
+            ended.add(group)
+        elif ev.get("type") == "flow_start":
+            ended.discard(group)
+    closing: Dict[int, Dict] = {}
+    for group, i in last.items():
+        if group in ended:
+            continue
+        record = run_store.get_flow_run(group) or {}
+        status = str(record.get("status") or "")
+        if status not in ("completed", "failed", "stopped"):
+            continue
+        stopped = status == "stopped"
+        closing[i] = {
+            "type": "flow_stopped" if stopped else "flow_finish",
+            "timestamp": record.get("finished_at") or events[i].get("timestamp"),
+            "run_group": group, "kind": "task",
+            "status": "stopped" if stopped else "completed",
+            "content": "Flow stopped" if stopped else "Flow finished",
+        }
+    if not closing:
+        return events
+    out: List[Dict] = []
+    for i, ev in enumerate(events):
+        out.append(ev)
+        if i in closing:
+            out.append(closing[i])
+    return out
 
 
 @router.get("/{flow_id}/runs")
@@ -909,6 +1091,84 @@ async def get_flow_runs(flow_id: str, workspace: Optional[str] = None):
     return records
 
 
+@router.get("/{flow_id}/runs/{run_group}")
+async def get_flow_run_record(flow_id: str, run_group: str):
+    """One History entry with its log events: what a chat that started the
+    run shows of it once the run has ended and the page was reloaded."""
+    from flow import run_store
+    events = run_store.read_run_group_events(flow_id, run_group)
+    if not events:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return {"run_group": run_group, "kind": events[0].get("kind") or "task",
+            "events": _attach_routes(flow_id, _attach_node_runs(events))}
+
+
+@router.delete("/{flow_id}/runs/{run_group}")
+async def delete_flow_chat(flow_id: str, run_group: str):
+    """Drop one entry from the History tab: a chat, with its conversation, or a
+    task run, with its execution record (it can no longer be resumed).
+
+    The task a run worked on stays on the board, and the run ledger keeps the
+    node runs, as when a chat is deleted on the Chat page. Anything still
+    running is refused: its next event would write the log back.
+    """
+    from common import chat_store, live_runs
+    from flow import run_store
+    kind = run_store.flow_history_kind(flow_id, run_group)
+    if kind is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if kind == "chat":
+        if run_group in live_runs.running_conversations():
+            raise HTTPException(status_code=409, detail="The chat is still answering; stop it first")
+    else:
+        record = run_store.get_flow_run(run_group) or {}
+        if str(record.get("status") or "") in ("running", "pending", "stopping"):
+            raise HTTPException(status_code=409, detail="The run is still going; stop it first")
+    if run_store.delete_flow_history(flow_id, run_group) == "not_found":
+        raise HTTPException(status_code=404, detail="Run not found")
+    if kind == "chat":
+        chat_store.delete_chat(run_group)
+    return {"deleted": True, "kind": kind}
+
+
+class TurnSummaryRequest(BaseModel):
+    """A flow chat turn that ended without a summary: its id (the turn_id of
+    its flow_start line, or that line's timestamp for an older record), the
+    message it answered and what each node answered."""
+    turn_id: str
+    user_message: str = ""
+    responses: List[Dict[str, Any]] = []
+
+
+@router.post("/{flow_id}/runs/{run_group}/summary")
+async def summarize_flow_chat_turn(flow_id: str, run_group: str, body: TurnSummaryRequest):
+    """Write the summary of one turn of a flow chat after the fact: the turn
+    was sent in the Chat view, and the person switched to the Summary view and
+    asked for one. Kept in the chat's log, naming its turn, so a reopened
+    chat shows it under that turn (chat/flow_summary.py)."""
+    from chat import flow_summary
+    from chat.runs import utc_iso
+    from flow import run_store
+    if run_store.flow_history_kind(flow_id, run_group) != "chat":
+        raise HTTPException(status_code=404, detail="Chat not found")
+    responses = [
+        {"agent_label": str(r.get("agent_label") or ""), "agent_id": r.get("agent_id"),
+         "response": str(r.get("response") or ""), "error": r.get("error") or None,
+         "is_agent": r.get("is_agent", True) is not False}
+        for r in body.responses if isinstance(r, dict)
+    ]
+    last_agent = next((r.get("agent_id") for r in reversed(responses) if r.get("is_agent")), None)
+    summary = await flow_summary.write_summary(
+        body.user_message, responses, **flow_summary.agent_model(last_agent))
+    if not summary:
+        raise HTTPException(status_code=502, detail="The summary could not be written")
+    run_store.log_flow_event(flow_id, run_group, {
+        "timestamp": utc_iso(), "type": "flow_summary", "turn_id": body.turn_id,
+        "content": "Summary of the turn", "output": summary,
+    }, kind="chat")
+    return {"turn_id": body.turn_id, "summary": summary}
+
+
 # ── AI flow generation ─────────────────────────────────────────────────────────
 
 class FlowGenerateRequest(BaseModel):
@@ -957,8 +1217,9 @@ def _ensure_flow_creator_registered() -> None:
 
 
 @router.post("/generate")
-async def generate_flow(data: FlowGenerateRequest):
+async def generate_flow(data: FlowGenerateRequest, request: Request = cast(Request, None)):
     """Run the flow_creator agent to design, validate, and create a flow for the requirement."""
+    record_access.require_in_workspace(request, data.workspace)
     from agents import registry
     from common.workspace_context import _workspace_ctx, filter_agents_for_workspace
 

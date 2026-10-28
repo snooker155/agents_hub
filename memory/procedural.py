@@ -412,21 +412,35 @@ def inject_skills_catalog(agent_id: str, workspace: str, system_prompt: str) -> 
         procedures = _visible_procedures(store, agent_id)
         if not procedures:
             return system_prompt
-        from memory.skill_versions import effective_content
-
-        lines = ["\n\n## Available Skills\n",
-                 "The following skills are available to you. "
-                 "When the task matches a skill, its full steps will be provided automatically. "
-                 "Use `get_skill` with the skill's name to fetch its steps.\n"]
-        for p in procedures:
-            # A pinned skill is listed as its pinned version says, so the line
-            # the agent matches on is the one it was tested with.
-            content = effective_content(p)
-            lines.append(f"- **{p.name}**: {content['description']}")
-        return system_prompt + "\n".join(lines) + "\n"
+        return system_prompt + skills_catalog_block(procedures)
     except Exception:  # noqa: BLE001 - the skills listing is optional and must not break the prompt
         log.debug("skills prompt listing skipped", exc_info=True)
         return system_prompt
+
+
+def skills_catalog_block(procedures: Sequence[Procedure]) -> str:
+    """The "Available Skills" section of a system prompt.
+
+    Only names and descriptions are listed; the steps are never put in the
+    prompt, so the text tells the model to fetch them with ``get_skill``
+    before it answers. Telling it the steps arrive on their own made models
+    answer a matching request from general knowledge without the skill.
+    """
+    from memory.skill_versions import effective_content
+
+    lines = ["\n\n## Available Skills\n",
+             "These skills are yours: tested procedures for this workspace. Only their "
+             "names and descriptions are listed here, not their steps. When a request "
+             "matches a skill's description, call `get_skill` with that skill's name "
+             "before you answer, then follow the steps it returns instead of answering "
+             "from general knowledge. A matching skill comes before every other rule "
+             "about how to handle that request, delegating it to another agent included: "
+             "fetch the skill first, and delegate only if its steps say so.\n"]
+    for p in procedures:
+        # A pinned skill is listed as its pinned version says, so the line
+        # the agent matches on is the one it was tested with.
+        lines.append(f"- **{p.name}**: {effective_content(p)['description']}")
+    return "\n".join(lines) + "\n"
 
 
 # ── Scoped tool factory ───────────────────────────────────────────────────────

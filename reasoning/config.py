@@ -7,26 +7,18 @@ the agent should use them. Shape::
     {
         "think_enabled":  bool,  # add the think tool
         "think_mode":     str,   # standard | deep | analytical (think-tool prompt)
-        "thinking_level": str,   # off | low | medium | high (native model reasoning)
         "plan_enabled":   bool,  # add the plan tool
         "plan_format":    str,   # structured | bullet | numbered | freeform
     }
 
-``think_enabled`` toggles the ``think`` scratchpad *tool*; ``thinking_level`` is
-a separate **model parameter** that turns on the provider's native reasoning
-(Anthropic thinking budget, OpenAI/LM Studio ``reasoning_effort``, Ollama think
-mode; for OpenAI reasoning models the Responses API ``reasoning`` parameter with
-a summary requested, the only reasoning text OpenAI returns). ``off`` is passed
-on as off: OpenAI reasoning models are held to their lowest effort then, since
-they reason at their own default when no effort is sent
-(``providers/reasoning_profile.py``). The two are independent — an agent can use native model thinking without
-the scratchpad tool, or vice-versa.
+How much the model itself reasons is not here: that is the agent's ``effort``,
+a model setting next to temperature (``AgentSpec.effort``,
+``providers/reasoning_profile.py``). It used to be ``thinking_level`` in this
+dict; the registry carries an old positive level over as the effort on read.
 
 Older configs only carried ``think_mode`` / ``plan_format`` and relied on the
-tools list to enable the tools, with native reasoning riding on ``think_mode``
-gated by ``think_enabled``. :func:`resolve_reasoning` normalises every shape,
-inferring the ``*_enabled`` flags from a legacy tools list and deriving
-``thinking_level`` from the legacy ``think_mode`` when it is absent.
+tools list to enable the tools. :func:`resolve_reasoning` normalises every
+shape, inferring the ``*_enabled`` flags from a legacy tools list.
 """
 from __future__ import annotations
 
@@ -35,10 +27,6 @@ from typing import Any, Dict, List, Optional
 
 DEFAULT_THINK_MODE = "standard"
 DEFAULT_PLAN_FORMAT = "structured"
-DEFAULT_THINKING_LEVEL = "off"
-
-# Valid native-reasoning levels (a model parameter, decoupled from the think tool).
-THINKING_LEVELS = ("off", "low", "medium", "high")
 
 
 def resolve_reasoning(
@@ -62,23 +50,9 @@ def resolve_reasoning(
 
     think_mode = r.get("think_mode") or DEFAULT_THINK_MODE
 
-    # Native model reasoning level. Decoupled from the think tool, but for legacy
-    # configs (no explicit ``thinking_level``) reproduce the old behavior where
-    # native reasoning rode on ``think_mode`` and was gated by ``think_enabled``.
-    thinking_level = r.get("thinking_level")
-    if thinking_level is None:
-        if think_enabled:
-            thinking_level = "high" if think_mode == "deep" else "medium"
-        else:
-            thinking_level = DEFAULT_THINKING_LEVEL
-    thinking_level = str(thinking_level).lower()
-    if thinking_level not in THINKING_LEVELS:
-        thinking_level = DEFAULT_THINKING_LEVEL
-
     return {
         "think_enabled": bool(think_enabled),
         "think_mode": think_mode,
-        "thinking_level": thinking_level,
         "plan_enabled": bool(plan_enabled),
         "plan_format": r.get("plan_format") or DEFAULT_PLAN_FORMAT,
     }
@@ -239,6 +213,4 @@ __all__ = [
     "build_reasoning_prompt",
     "DEFAULT_THINK_MODE",
     "DEFAULT_PLAN_FORMAT",
-    "DEFAULT_THINKING_LEVEL",
-    "THINKING_LEVELS",
 ]

@@ -46,6 +46,14 @@ log = logging.getLogger(__name__)
 
 # -------------------- Data models --------------------
 
+def normalize_effort(value: Any) -> Optional[str]:
+    """An effort as stored: a word of providers.reasoning_profile.EFFORT_ORDER,
+    or None (inherit) for anything else."""
+    from providers.reasoning_profile import EFFORT_ORDER
+    word = str(value or "").strip().lower()
+    return word if word in EFFORT_ORDER else None
+
+
 def _pool_entry_id(entry: Any) -> str:
     """A binding entry's pool id: entries are normally a plain id, or
     ``{"id": pool_id, "read_only": true}`` to mark that one binding read
@@ -135,6 +143,10 @@ class AgentSpec:
     # agents/prompt_assembly.py for the two folders.
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    # Reasoning effort (providers/reasoning_profile.EFFORT_ORDER); None means
+    # inherit: the header's choice when the model is inherited too, then the
+    # model's own default on the Models page, then the provider's.
+    effort: Optional[str] = None
     api_key: Optional[str] = None
     verbose: bool = False
     streaming: bool = False
@@ -216,6 +228,17 @@ class AgentSpec:
     # settings.capability_override_requires_container the override is only
     # honoured at build time for container-isolated, no-network runs.
     capability_override: bool = False
+    # The stored version (agents/versions.py) every run of this agent builds
+    # from instead of the live definition, until it is cleared. A run's own
+    # pin (a task, a deployment, a chat request) still wins. Not part of the
+    # version fingerprint, so setting it never writes a version, and never
+    # inherited: a child follows its own pin, or its parent's extends_version.
+    pinned_version: Optional[int] = None
+    # Agents this one was not linked to (delegates / handoffs) because the
+    # link would close a blocked capability combination, ``{agent_id: reason}``
+    # (agents/main_links.py). Read at build time so the agent can tell the
+    # user it knows such an agent but may not pass work or the chat to it.
+    link_refusals: Dict[str, str] = field(default_factory=dict)
     # Per-agent tweaks to the tool-approval gate (tools/approval.py). Both are
     # empty by default, so the agent follows the shared NEEDS_APPROVAL list:
     # ``approval_tools`` adds tool ids that this agent may not call unapproved,
@@ -382,6 +405,8 @@ class AgentSpec:
             overrides["temperature"] = self.temperature
         if self.max_tokens is not None:
             overrides["max_tokens"] = self.max_tokens
+        if self.effort:
+            overrides["effort"] = self.effort
         return overrides
 
     def to_dict(self) -> Dict[str, Any]:
@@ -421,6 +446,8 @@ class AgentSpec:
             d["temperature"] = self.temperature
         if self.max_tokens is not None:
             d["max_tokens"] = self.max_tokens
+        if self.effort:
+            d["effort"] = self.effort
         if self.verbose:
             d["verbose"] = self.verbose
         if self.streaming:
@@ -476,6 +503,10 @@ class AgentSpec:
         # Only write when the operator has accepted a blocked combination.
         if self.capability_override:
             d["capability_override"] = self.capability_override
+        if self.pinned_version is not None:
+            d["pinned_version"] = int(self.pinned_version)
+        if self.link_refusals:
+            d["link_refusals"] = dict(self.link_refusals)
         # Loop policies: only written when set, so default records stay clean.
         if self.tool_policy:
             d["tool_policy"] = dict(self.tool_policy)
@@ -803,9 +834,14 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     skills_enabled = bool(ad.get("skills_enabled", False))
     _raw_epi = ad.get("episodic_write_enabled")
     episodic_write_enabled = bool(_raw_epi) if _raw_epi is not None else None
-    reasoning = ad.get("reasoning") or {}
-    if not isinstance(reasoning, dict):
-        reasoning = {}
+    reasoning = dict(ad.get("reasoning") or {}) if isinstance(ad.get("reasoning"), dict) else {}
+    # The effort used to live in reasoning as thinking_level, set on the
+    # Behavior tab. A positive level carries over as the agent's own effort;
+    # off (the switch left off) becomes inherit.
+    effort = normalize_effort(ad.get("effort"))
+    legacy_level = reasoning.pop("thinking_level", None)
+    if effort is None and str(legacy_level or "").lower() not in ("", "off"):
+        effort = normalize_effort(legacy_level)
 
     response_format = ad.get("response_format") or "none"
     if response_format not in ("none", "buttons", "telegram"):
@@ -814,6 +850,12 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     clarify_gate = bool(ad.get("clarify_gate", False))
     allow_self_delegation = bool(ad.get("allow_self_delegation", False))
     capability_override = bool(ad.get("capability_override", False))
+    try:
+        pinned_version = int(ad["pinned_version"]) if ad.get("pinned_version") is not None else None
+    except (TypeError, ValueError):
+        pinned_version = None
+    link_refusals = {str(k): str(v) for k, v in (ad.get("link_refusals") or {}).items()} \
+        if isinstance(ad.get("link_refusals"), dict) else {}
 
     remote = ad.get("remote") or {}
     if not isinstance(remote, dict):
@@ -948,6 +990,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         base_url=base_url,
         temperature=temperature,
         max_tokens=max_tokens,
+        effort=effort,
         api_key=api_key,
         verbose=verbose,
         streaming=streaming,
@@ -965,6 +1008,8 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         clarify_gate=clarify_gate,
         allow_self_delegation=allow_self_delegation,
         capability_override=capability_override,
+        pinned_version=pinned_version,
+        link_refusals=link_refusals,
         delegates=delegates,
         max_concurrent_delegates=max_concurrent_delegates,
         data_class=data_class,

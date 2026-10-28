@@ -12,7 +12,7 @@ import { connectFirstModel } from '../../../api/setupGuide';
 import { getReadySet, startReadySet } from '../../../api/localModels';
 import { firstRunOp } from '../../../api/firstRun';
 import {
-  ChoiceCard, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
+  ChoiceCard, ConfiguredFrame, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
 } from '../ui';
 import {
   ACTIVE_JOB as ACTIVE, CLOUD, PROVIDER_LABELS, SERVERS, TIERED, errorText, fieldCls, localSetStarted,
@@ -269,8 +269,9 @@ const TIERS = [
   { id: 'strong', icon: Sparkles },
 ];
 
-export function ChooseModelStep({ ctx, options, optionsError, refreshCtx, next }) {
+export function ChooseModelStep({ ctx, options, optionsError, refreshCtx, next, configured }) {
   const { t } = useI18n();
+  const [changing, setChanging] = useState(false);
   const offered = (ctx?.providers || []).filter((p) => TIERED.includes(p));
   const dm = ctx?.default_model || {};
   const [provider, setProvider] = useState(offered.includes(dm.provider) ? dm.provider : offered[0]);
@@ -304,6 +305,16 @@ export function ChooseModelStep({ ctx, options, optionsError, refreshCtx, next }
       setBusy(false);
     }
   };
+
+  const was = configured?.model;
+  if (was && !changing) {
+    const label = `${PROVIDER_LABELS[was.provider] || was.provider} · ${was.model}`;
+    return (
+      <ConfiguredFrame icon={Gauge} title={t('firstRun.choose.title')} subtitle={t('firstRun.choose.subtitle')}
+        summary={label} onContinue={() => next()} onChange={() => setChanging(true)}
+        testId="first-run-choose" t={t} />
+    );
+  }
 
   return (
     <StepFrame

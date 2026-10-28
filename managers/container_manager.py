@@ -69,6 +69,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import shlex
 import socket
 import subprocess
@@ -91,9 +92,15 @@ IMAGE_PREFIX = "agents-hub"
 LABEL_MANAGED = "agents-hub.managed=true"
 
 # Mount points inside every agent container (nodes and runs alike).
-CONTAINER_STATE_DIR = "/app/.agents_hub"
+from common.paths import CONTAINER_STATE_DIR  # noqa: E402 - one definition, shared with host_state_path
 CONTAINER_TASKS_DIR = "/app/tasks"
 CONTAINER_WORKSPACE_DIR = "/workspace"
+
+# Stamped into every agent container's environment: the docker network it was
+# started on. The process inside reads it to know how it is really fenced
+# (agents/capability_guard.py _running_isolated), since a setting read from
+# the host's .env says what was asked for, not what this container got.
+RUN_NETWORK_ENV = "AGENTS_HUB_RUN_NETWORK"
 
 # Resource limits for one-shot *run* containers only (nodes are unaffected —
 # they keep calling start_container with hardened=False, the default).
@@ -138,6 +145,61 @@ def _host_path(path: str | Path) -> str:
         return str(resolved)
     # PurePosixPath: the daemon we talk to runs Linux even when we do not.
     return str(PurePosixPath(host_root) / relative) if str(relative) != "." else host_root
+
+
+# ── State on a Docker volume ─────────────────────────────────────────────────
+# A hub in a container on Docker Desktop cannot hand its state to agent
+# containers as a host folder: macOS folders reach the VM through a shared
+# folder filesystem that breaks SQLite (db_shared_with_containers). With
+# AGENTS_HUB_STATE_VOLUME naming the Docker volume mounted at AGENTS_HUB_ROOT,
+# every path under the state dir is mounted into agent containers from that
+# volume instead (docker-compose.volume.yml, docs/containers.md).
+
+STATE_VOLUME_ENV = "AGENTS_HUB_STATE_VOLUME"
+
+
+def state_volume() -> str:
+    """The Docker volume that holds AGENTS_HUB_ROOT, or "" when the state is a
+    plain folder. Read per call, like HOST_PROJECT_ROOT."""
+    return os.environ.get(STATE_VOLUME_ENV, "").strip()
+
+
+def _state_subpath(path: str | Path) -> Optional[str]:
+    """``path`` relative to AGENTS_HUB_ROOT, as a volume subpath ("" for the
+    root itself), or None when it lies outside the state dir."""
+    try:
+        rel = Path(path).resolve().relative_to(Path(AGENTS_HUB_ROOT).resolve())
+    except ValueError:
+        return None
+    return "" if str(rel) == "." else rel.as_posix()
+
+
+def mount_flags(path: str | Path, target: str, *, readonly: bool = False) -> List[str]:
+    """The ``docker run`` flags that put ``path`` (as this process sees it) at
+    ``target`` in a container: a ``--mount`` of the state volume (with a
+    ``volume-subpath``) for a path under the state dir when the state lives on
+    a volume, otherwise a bind mount of the path as the daemon sees it."""
+    volume = state_volume()
+    if volume:
+        sub = _state_subpath(path)
+        if sub is not None:
+            spec = f"type=volume,src={volume},dst={target}"
+            if sub:
+                spec += f",volume-subpath={sub}"
+            if readonly:
+                spec += ",readonly"
+            return ["--mount", spec]
+    return ["-v", f"{_host_path(path)}:{target}" + (":ro" if readonly else "")]
+
+
+def user_flags() -> List[str]:
+    """Run an agent container as this process's user when the state is on a
+    volume: a volume keeps real ownership (a macOS folder fakes it), so an
+    agent image's own user could not write the database or the workspace the
+    hub created. Nothing otherwise."""
+    if not state_volume() or not hasattr(os, "getuid"):
+        return []
+    return ["--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp"]
 
 
 # What a local model server is called on the host, before the container sees it.
@@ -235,7 +297,10 @@ def _env_flags(env: Optional[Dict[str, str]] = None) -> List[str]:
 # PATH). AGENTS_HUB_RUN_TOKEN is deliberately kept: the run's relay calls
 # back over HTTP and need it to authenticate. It reaches only the relay routes
 # (common/run_tokens.py); the hub-wide tokens never reach a run's environment.
-_HOST_ONLY_EXACT = {"HOST_PROJECT_ROOT", "SSH_AUTH_SOCK", "HOME", "PATH"}
+# AGENTS_HUB_ROOT and AGENTS_HUB_STATE_VOLUME name where the *hub* keeps its
+# state; a container finds it at CONTAINER_STATE_DIR, its own default.
+_HOST_ONLY_EXACT = {"HOST_PROJECT_ROOT", "SSH_AUTH_SOCK", "HOME", "PATH",
+                    "AGENTS_HUB_ROOT", "AGENTS_HUB_STATE_VOLUME"}
 _HOST_ONLY_PREFIXES = ("DOCKER_", "npm_", "VIRTUAL_ENV", "CONDA_")
 #: The hub's secret encryption key (common/config.py ``secret_key``).
 _SECRET_KEY_VARS = frozenset({"AGENTS_HUB_SECRET_KEY", "secret_key"})
@@ -285,6 +350,78 @@ def _state_path_in_container(value: str) -> str:
 
 
 # ── Network management ────────────────────────────────────────────────────────
+
+#: Filesystems that carry a host folder into Docker Desktop's VM (or over a
+#: network). SQLite's locks and shared memory do not hold across them, even
+#: between two containers in the same VM.
+_SHARED_FOLDER_FS = ("fakeowner", "virtiofs", "osxfs", "grpcfuse", "fuse", "9p",
+                     "nfs", "cifs", "smb", "vboxsf", "prl_fs")
+
+
+def _fs_type(path: Path) -> str:
+    """The filesystem type /proc/mounts reports for ``path`` (its longest
+    matching mount point), or "" when there is no /proc/mounts to read."""
+    try:
+        lines = Path("/proc/mounts").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    target = str(path.resolve())
+    best, fstype = "", ""
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        mount = parts[1].replace("\\040", " ")
+        inside = target == mount or target.startswith(mount.rstrip("/") + "/")
+        if inside and len(mount) > len(best):
+            best, fstype = mount, parts[2]
+    return fstype
+
+
+def db_shared_with_containers() -> bool:
+    """Whether an agent container may open the hub's SQLite database through
+    the state mount: only on a Linux host whose state directory sits on a
+    local filesystem (ext4, xfs, btrfs and the like), for a hub on the host or
+    in a container alike.
+
+    Docker Desktop (macOS, Windows) reaches a host folder through a shared
+    folder filesystem (virtiofs, seen as ``fakeowner`` in a container) that
+    carries neither SQLite's locks nor its shared memory. A container that
+    closes the database then believes it was the last user, folds the WAL into
+    the file and deletes it under every other user: their later writes go to a
+    deleted file and are lost. Measured: a host process and a container, and
+    two containers on the same macOS folder, both lose the WAL; two containers
+    on a Docker volume do not. A hub in Docker on a Mac keeps its state in such
+    a folder (docker-compose.yml explains why it cannot be a volume), so it
+    gets no containers either.
+    """
+    if not sys.platform.startswith("linux"):
+        return False
+    from common.paths import AGENTS_HUB_ROOT
+    fstype = _fs_type(Path(AGENTS_HUB_ROOT)).lower()
+    return not fstype.startswith(_SHARED_FOLDER_FS)
+
+
+def container_state_transport() -> str:
+    """How a run container reaches its run and task records: the configured
+    ``AGENT_RUN_STATE_TRANSPORT``, or ``http`` (state dir mounted read-only,
+    records relayed through the backend) wherever the container must not open
+    the database itself (``db_shared_with_containers``)."""
+    from common.config import run_state_transport
+    return run_state_transport() if db_shared_with_containers() else "http"
+
+
+def agent_network() -> str:
+    """The network agent containers join: ``AGENT_DOCKER_NETWORK`` when the
+    Settings page names one ("none" for no network at all, "host", or a
+    bridge of the operator's own), else the agents-hub bridge. Read live, like
+    the image, so a change applies to the next container."""
+    from common.config import live_setting
+    configured = live_setting("AGENT_DOCKER_NETWORK").strip()
+    if configured and configured != NETWORK_NAME:
+        return configured
+    return get_or_create_network()
+
 
 def get_or_create_network() -> str:
     """Ensure the agents-hub bridge network exists. Returns network name."""
@@ -743,6 +880,52 @@ def options_to_kwargs(agent_id: str, options: Optional[Dict[str, Any]]) -> Dict[
     return kwargs
 
 
+def build_shell_command(
+    *,
+    container_name: str,
+    agent_id: str,
+    image: str,
+    network: str,
+    workspace: str,
+    command: str,
+) -> List[str]:
+    """The ``docker run`` argv for one ``run_shell`` command made outside an
+    agent container (a chat turn, a flow run on the hub) while the execution
+    mode is docker. Pure: the caller resolves the image and network.
+
+    The same fence a run container gets: the agent's image, its network, the
+    run limits, no capabilities, a read-only root with /tmp, and only the
+    command's working directory mounted read-write at /workspace. No host
+    environment and no state directory: the command sees its files and
+    nothing of the hub.
+    """
+    from common.config import live_setting
+    cmd = [
+        "docker", "run", "--rm",
+        "--name", container_name,
+        "--network", network,
+        "--label", LABEL_MANAGED,
+        "--label", f"agents-hub.agent-id={agent_id or 'unknown'}",
+        "--label", "agents-hub.container-type=shell",
+        "--memory", str(live_setting("AGENT_DOCKER_MEMORY", DEFAULT_RUN_MEMORY)),
+        "--cpus", str(live_setting("AGENT_DOCKER_CPUS", DEFAULT_RUN_CPUS)),
+        "--pids-limit", str(DEFAULT_RUN_PIDS_LIMIT),
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--read-only",
+        "--tmpfs", "/tmp",
+        "-e", "HOME=/tmp",
+        "-e", f"{RUN_NETWORK_ENV}={network}",
+        *user_flags(),
+        *mount_flags(workspace, CONTAINER_WORKSPACE_DIR),
+        "-w", CONTAINER_WORKSPACE_DIR,
+    ]
+    if network != "none":
+        cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
+    cmd += [image, "sh", "-c", command]
+    return cmd
+
+
 # ── Container management ──────────────────────────────────────────────────────
 
 def build_run_command(
@@ -823,8 +1006,9 @@ def build_run_command(
         "--security-opt", "no-new-privileges",
         "--read-only",
         "--tmpfs", "/tmp",
-        "-v", f"{_host_path(state_dir)}:{CONTAINER_STATE_DIR}" + (":ro" if http_transport else ""),
-        "-v", f"{_host_path(tasks_dir)}:{CONTAINER_TASKS_DIR}",
+        *user_flags(),
+        *mount_flags(state_dir, CONTAINER_STATE_DIR, readonly=http_transport),
+        *mount_flags(tasks_dir, CONTAINER_TASKS_DIR),
     ]
 
     if http_transport:
@@ -833,17 +1017,17 @@ def build_run_command(
         # runtime/agent_run.py has no HTTP equivalent), everything else about
         # its state goes through /api/run-state.
         run_logs_dir = str(Path(state_dir) / "run_logs")
-        docker_cmd += ["-v", f"{_host_path(run_logs_dir)}:{CONTAINER_STATE_DIR}/run_logs"]
+        docker_cmd += mount_flags(run_logs_dir, f"{CONTAINER_STATE_DIR}/run_logs")
 
     snapshot_in_container: Optional[str] = None
     if snapshot_dir:
         snapshot_in_container = f"{CONTAINER_STATE_DIR}/run_snapshots/{Path(snapshot_dir).name}"
-        docker_cmd += ["-v", f"{_host_path(snapshot_dir)}:{snapshot_in_container}:ro"]
+        docker_cmd += mount_flags(snapshot_dir, snapshot_in_container, readonly=True)
 
     docker_cmd += ["-w", "/app"]
 
     if workspace:
-        docker_cmd.extend(["-v", f"{_host_path(workspace)}:{CONTAINER_WORKSPACE_DIR}"])
+        docker_cmd.extend(mount_flags(workspace, CONTAINER_WORKSPACE_DIR))
 
     # Same host-service reachability as a node container (Ollama, LM Studio).
     # Pointless without a network (network "none"), so
@@ -855,6 +1039,7 @@ def build_run_command(
     if snapshot_in_container:
         merged_env[SNAPSHOT_DIR_ENV] = snapshot_in_container
     merged_env["AGENT_EXECUTION_MODE"] = "local"
+    merged_env[RUN_NETWORK_ENV] = network
     merged_env = _point_local_models_at_the_host(merged_env)
     for key, value in merged_env.items():
         if value:
@@ -978,7 +1163,7 @@ def start_container(
     Returns: {success, container_id, container_name, image, error,
               http_url (if http_expose)}
     """
-    network = get_or_create_network()
+    network = agent_network()
     image = image or image_tag_for_agent(agent_id)
 
     # Build path mapping: our path → container path. These are the paths the
@@ -1028,8 +1213,9 @@ def start_container(
             "--label", LABEL_MANAGED,
             "--label", f"agents-hub.agent-id={agent_id}",
             # Mount only what the agent needs
-            "-v", f"{_host_path(state_dir)}:{CONTAINER_STATE_DIR}",
-            "-v", f"{_host_path(tasks_dir)}:{CONTAINER_TASKS_DIR}",
+            *user_flags(),
+            *mount_flags(state_dir, CONTAINER_STATE_DIR),
+            *mount_flags(tasks_dir, CONTAINER_TASKS_DIR),
             "-w", "/app",
         ]
         # Limits only when an environment asks for them: a node container has
@@ -1043,7 +1229,7 @@ def start_container(
 
         # Mount workspace if provided
         if workspace:
-            docker_cmd.extend(["-v", f"{_host_path(workspace)}:{CONTAINER_WORKSPACE_DIR}"])
+            docker_cmd.extend(mount_flags(workspace, CONTAINER_WORKSPACE_DIR))
 
         # Publish HTTP port when the agent exposes an HTTP server
         if http_expose:
@@ -1053,11 +1239,13 @@ def start_container(
         # Allow containers to reach host services (e.g. Ollama, LM Studio) via
         # host.docker.internal.  On Linux the gateway alias must be added explicitly;
         # on macOS/Windows it is provided by Docker Desktop automatically.
-        docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
+        if network != "none":
+            docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
 
         # Forward env vars; force local execution mode inside container
         merged_env = dict(os.environ if env is None else env)
         merged_env["AGENT_EXECUTION_MODE"] = "local"
+        merged_env[RUN_NETWORK_ENV] = network
         merged_env = _point_local_models_at_the_host(merged_env)
         if snapshot_dir:
             # Inside the state dir mount already; only the pointer is needed.

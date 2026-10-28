@@ -262,7 +262,8 @@ def extension_for(agent: Any) -> Optional[LoopExtension]:
     built: List[Tuple[Dict[str, str], Any]] = []
     for catalog_id in catalog_ids:
         try:
-            provider, model = resolve_model(catalog_id)
+            # Only the models the agent's workspace allows (workspace/model_policy.py).
+            provider, model = resolve_model(catalog_id, workspace=getattr(agent, "workspace", None))
         except ValueError:
             log.warning("fallback: '%s' is not an enabled catalog model for agent '%s'",
                         catalog_id, getattr(agent, "agent_id", "?"))

@@ -131,3 +131,29 @@ export function ErrorLine({ children }) {
   if (!children) return null;
   return <p className="mt-3 text-sm text-red-600 text-center" role="alert">{children}</p>;
 }
+
+/**
+ * A screen whose setting is already in force (set by `ah setup` or earlier):
+ * what it is, a Continue that changes nothing and a Change that opens the
+ * screen's normal form.
+ */
+export function ConfiguredFrame({
+  icon, title, subtitle, summary, detail, onContinue, onChange, changeLabel, testId, t,
+}) {
+  return (
+    <StepFrame
+      icon={icon}
+      title={title}
+      subtitle={subtitle}
+      testId={testId}
+      footer={(
+        <>
+          <PrimaryButton onClick={onContinue} testId="first-run-continue">{t('firstRun.continue')}</PrimaryButton>
+          <LaterButton onClick={onChange} testId="first-run-change">{changeLabel || t('firstRun.change')}</LaterButton>
+        </>
+      )}
+    >
+      <DoneNote testId={`${testId}-configured`} title={`${t('firstRun.configured')}: ${summary}`} detail={detail} />
+    </StepFrame>
+  );
+}

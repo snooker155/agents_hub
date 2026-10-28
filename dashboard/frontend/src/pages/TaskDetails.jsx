@@ -1,13 +1,13 @@
 import {
-  AlertCircle, CheckSquare, Clock, FileText, Folder, History, Layers, Loader, Pause, Play,
+  AlertCircle, CheckSquare, Clock, FileText, Folder, History, Layers, Loader, Pause, Play, Radio,
   Split, Square, Terminal, ThumbsDown, ThumbsUp, Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api, {
-  answerTask, approveAssignment, approveTaskCall, assignAgent, deleteTask, getAgents, getLoops,
-  getMessageInsights, getMessageLogs, getProjects, getSettings, getTask, getTaskActivityLog,
-  getTaskExecutionLog, getTaskFileContent, getTaskResult, getTeams, listFlows,
+  answerTask, approveAssignment, approveTaskCall, deleteTask, getAgents,
+  getMessageInsights, getMessageLogs, getProjects, getTask, getTaskActivityLog,
+  getTaskExecutionLog, getTaskFileContent, getTaskResult, getTasks,
   pauseTaskContainer, rejectAssignment, resumeTaskContainer, runDecomposer, stopAgent,
   updateTask,
 } from '../api';
@@ -15,34 +15,43 @@ import InlineEdit from '../components/InlineEdit';
 import LiveRunStream from '../components/LiveRunStream';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import PageLoader from '../components/PageLoader';
-import TaskFilesCard from '../components/files/TaskFilesCard';
-import { useLiveRefetch } from '../components/stream';
+import { useLiveRefetch, useStream } from '../components/stream';
+import { DecomposeModal } from '../components/task/DecomposeProgress';
+import DependsEditor from '../components/task/DependsEditor';
+import { newDecomposeChannel } from '../components/task/decomposeChannel';
+import { forwardBack } from '../components/task/taskBack';
 import { AddSubtaskModal } from '../components/task/SubtaskParts';
-import TaskAgentVersionPin from '../components/task/TaskAgentVersionPin';
-import { TaskAssignModal } from '../components/task/TaskAssignModal';
+import AssignExecutorModal from '../components/task/AssignExecutorModal';
 import {
   DueDateField, PriorityDropdown, ProjectSelector, StatusDropdown, WorkspaceBadge,
 } from '../components/task/TaskFields';
 import { TaskFilesTab } from '../components/task/TaskFilesTab';
-import { TaskMetaRow } from '../components/task/TaskMetaRow';
+import { TaskKeyRow, TaskLinksRow } from '../components/task/TaskMetaRow';
 import TaskOutcomeCard from '../components/task/TaskOutcomeCard';
 import { AwaitingInputCard, BudgetPauseCard, ToolApprovalCard } from '../components/task/TaskPendingCards';
 import {
   ActivityTab, ExecutionTab, LogsTab, ResultsTab, SubtasksTab,
 } from '../components/task/TaskTabPanels';
-import { buildFileTree, parentDirPaths } from '../components/task/taskUtils';
+import { buildFileTree, confirmStatusChange, parentDirPaths } from '../components/task/taskUtils';
 import { errorDetail, useToast } from '../components/toast';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
 
 // A stable empty list, so memoised children do not see a new array per render.
 const EMPTY_FLOW_RUNS = [];
+// The outcome grader's runs (tasks/outcome.py GRADER_AGENT_ID).
+const GRADER_AGENT_ID = 'outcome_grader';
 
 const TaskDetails = () => {
   const { t } = useI18n();
   const toast = useToast();
   const { id } = useParams();
   const navigate = useNavigate();
+  // Opened from a project's task board: the back link returns there, and the
+  // tasks this page links to keep that way back (task/taskBack.js).
+  const backState = forwardBack(useLocation());
+  const backTo = backState?.backTo;
+  const { clientId } = useStream();
   const { liveUpdates, selectedWorkspace } = useWorkspace();
   // The task's workspace is redundant when a specific workspace is selected in
   // the header — only surface it in the default (all-workspaces) view.
@@ -55,6 +64,7 @@ const TaskDetails = () => {
   const [logs, setLogs] = useState('');
   const [executionLog, setExecutionLog] = useState([]);
   const [activeRunId, setActiveRunId] = useState(null);
+  const [decomposeChannel, setDecomposeChannel] = useState(null);
   const [workspaceFiles, setWorkspaceFiles] = useState([]);
 
   // ── Files tab: preview state (mirrors WorkspaceDetails) ──────────────────
@@ -84,22 +94,9 @@ const TaskDetails = () => {
     : '';
   // Leaving the budget pause forgets an edit, so the next pause seeds again.
   if (!budgetPending && budgetCapEdit !== null) setBudgetCapDraft(null);
-  const [activeTab, setActiveTab] = useState('execution');
+  const [activeTab, setActiveTab] = useState('live');
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null); // null = parent task, subtask obj otherwise
-  const [selectedAgent, setSelectedAgent] = useState('');
-  // Besides an agent, a task may be assigned a flow, a team or a loop
-  // (tasks.models.Executor). 'agent' keeps the original single-list picker;
-  // the other three each pick from their own catalog, fetched lazily when
-  // the modal opens.
-  const [executorKind, setExecutorKind] = useState('agent');
-  const [flows, setFlows] = useState([]);
-  const [teams, setTeams] = useState([]);
-  const [loops, setLoops] = useState([]);
-  const [selectedFlow, setSelectedFlow] = useState('');
-  const [selectedTeam, setSelectedTeam] = useState('');
-  const [selectedLoop, setSelectedLoop] = useState('');
-  const [catalogsLoaded, setCatalogsLoaded] = useState(false);
 
 
   const [deletingTask, setDeletingTask] = useState(false);
@@ -109,26 +106,39 @@ const TaskDetails = () => {
   const [saving, setSaving] = useState(false);
   const [projects, setProjects] = useState([]);
   const [depTasks, setDepTasks] = useState([]);
+  // The workspace's tasks: what waits for this one, the dependencies' names
+  // on the subtask rows, and the choice in the dependency editor.
+  const [workspaceTasks, setWorkspaceTasks] = useState([]);
+  const [editingDepends, setEditingDepends] = useState(false);
   const [activityLog, setActivityLog] = useState([]);
   const [taskResults, setTaskResults] = useState([]);
-  const [taskAssignmentMode, setTaskAssignmentMode] = useState('any');
 
-  useEffect(() => {
-    getSettings().then(r => setTaskAssignmentMode(r.data.task_assignment_mode || 'any')).catch(() => {});
-  }, []);
-
+  // The run the Logs tab shows when the reader picked one there; otherwise
+  // the task's current or latest work run. Kept in a ref so a live refetch
+  // refreshes the picked run's log instead of switching back.
+  const [logRunId, setLogRunId] = useState(null);
+  const logRunRef = useRef(null);
   const fetchLogs = useCallback(async (runId) => {
-    try { const r = await getMessageLogs(runId); setLogs(r.data.logs); } catch (e) { toast.error(t('taskDetails.errors.loadLogs'), errorDetail(e)); }
+    const target = logRunRef.current || runId;
+    try { const r = await getMessageLogs(target); setLogs(r.data.logs); } catch (e) { toast.error(t('taskDetails.errors.loadLogs'), errorDetail(e)); }
   }, [t, toast]);
+  const pickLogRun = useCallback((runId) => {
+    logRunRef.current = runId || null;
+    setLogRunId(runId || null);
+    fetchLogs(runId);
+  }, [fetchLogs]);
 
   const fetchExecutionLog = useCallback(async (assignedRunId) => {
     try {
       const r = await getTaskExecutionLog(id);
       const entries = r.data.entries || [];
       setExecutionLog(entries);
-      // No live assignment but past runs exist → show the latest run's logs.
-      if (!assignedRunId && entries.length > 0) {
-        const latest = entries[entries.length - 1];
+      // No live assignment but past runs exist → show the latest work run's
+      // logs. A grading is a model call inside the hub, with no process log
+      // of its own (its input and answer are on the Execution tab).
+      const workRuns = entries.filter((e) => e.run_id && e.agent_id !== GRADER_AGENT_ID);
+      if (!assignedRunId && workRuns.length > 0) {
+        const latest = workRuns[workRuns.length - 1];
         if (latest?.run_id) {
           setActiveRunId(latest.run_id);
           fetchLogs(latest.run_id);
@@ -159,6 +169,10 @@ const TaskDetails = () => {
             } else {
               setParentTask(null);
             }
+
+            getTasks(taskResp.data.workspace || undefined)
+              .then(r => setWorkspaceTasks(Array.isArray(r.data) ? r.data : (r.data?.items || [])))
+              .catch(() => setWorkspaceTasks([]));
 
             // Load the tasks this one depends on (for the "Depends on" section)
             const depIds = taskResp.data.depends || [];
@@ -248,6 +262,7 @@ const TaskDetails = () => {
           timestamp: mr.timestamp || entry.started_at,
           status: entry.status,
           channel: entry.channel,
+          subtask: entry.subtask || null,
           error: mr.error || entry.error,
         }));
       });
@@ -263,38 +278,6 @@ const TaskDetails = () => {
   const flowRuns = hasFlowEntries ? flowRunsLoaded : EMPTY_FLOW_RUNS;
   const flowLoading = hasFlowEntries && flowLoadingRaw;
 
-  // Size the flow so the page content fits the viewport exactly — the flow
-  // takes all the height left below the header card and the page itself never
-  // scrolls (the run timeline scrolls inside the flow instead). Shrink by the
-  // page's overflow; grow only to close a visible gap below the pane. Never
-  // grow in response to scrolling, which would extend the page and re-create
-  // the scrollbar.
-  const flowScrollRef = useRef(null);
-  const [flowHeight, setFlowHeight] = useState(null);
-
-  useEffect(() => {
-    if (activeTab !== 'execution') return undefined;
-    const compute = () => {
-      const node = flowScrollRef.current;
-      const pane = node?.parentElement; // the card wrapping the flow
-      if (!node || !pane) return;
-      const main = node.closest('main') || document.scrollingElement;
-      const padBottom = parseFloat(getComputedStyle(main).paddingBottom) || 0;
-      const overflow = main.scrollHeight - main.clientHeight;
-      const gap = main.getBoundingClientRect().bottom - padBottom - pane.getBoundingClientRect().bottom;
-      const h = node.getBoundingClientRect().height - overflow + Math.max(0, gap);
-      setFlowHeight(Math.max(240, Math.floor(h)));
-    };
-    compute();
-    // Capture-phase listener sees the layout <main> scrolling (e.g. the flow's
-    // own scroll-to-latest on mount), so any overflow is corrected right away.
-    window.addEventListener('scroll', compute, true);
-    window.addEventListener('resize', compute);
-    return () => {
-      window.removeEventListener('scroll', compute, true);
-      window.removeEventListener('resize', compute);
-    };
-  }, [activeTab, flowLoading, flowRuns.length]);
 
   // ── Files tab: load/preview ────────────────────────────────────────────────
   // Promise chain rather than try/await: the lint rule cannot tell that no
@@ -302,9 +285,15 @@ const TaskDetails = () => {
   // `fetchFileContent` sets nothing before the response, so the auto-select
   // effect below can call it; a click goes through `loadFileContent`, which
   // raises the loading flag first.
-  const fetchFileContent = useCallback((path) => (
-    getTaskFileContent(id, path)
+  // The file asked for last: a slower answer for one clicked before it is
+  // dropped, or quick clicks through the list would end on the wrong file.
+  const latestFileRef = useRef(null);
+  const fetchFileContent = useCallback((path) => {
+    latestFileRef.current = path;
+    const current = () => latestFileRef.current === path;
+    return getTaskFileContent(id, path)
       .then((resp) => {
+        if (!current()) return;
         setSelectedFileContent(resp.data?.content || '');
         setSelectedFileSize(Number(resp.data?.size || 0));
         setSelectedFileIsPdf(!!resp.data?.is_pdf);
@@ -312,14 +301,15 @@ const TaskDetails = () => {
         setMdViewMode('rendered');
       })
       .catch((e) => {
+        if (!current()) return;
         const detail = e?.response?.data?.detail || t('taskDetails.errors.fileContent');
         setFileContentError(detail);
         setSelectedFileContent('');
         setSelectedFileSize(0);
         setSelectedFileIsPdf(false);
       })
-      .finally(() => setFileContentLoading(false))
-  ), [id, t]);
+      .finally(() => { if (current()) setFileContentLoading(false); });
+  }, [id, t]);
 
   const loadFileContent = useCallback((path) => {
     if (!path) return undefined;
@@ -387,49 +377,17 @@ const TaskDetails = () => {
   };
 
   // ── Handlers ──────────────────────────────────────────────────────────────
-  const handleAssignAgent = async () => {
-    const selection = { agent: selectedAgent, flow: selectedFlow, team: selectedTeam, loop: selectedLoop }[executorKind];
-    if (!selection) return;
-    try {
-      const targetId = assignTarget ? assignTarget.id : id;
-      const body = executorKind === 'agent'
-        ? { agent_id: selectedAgent }
-        : { executor: { kind: executorKind, id: selection } };
-      const resp = await assignAgent(targetId, body);
-      setActiveRunId(resp.data.run_id);
-      setShowAssignModal(false);
-      setAssignTarget(null);
-      setSelectedAgent('');
-      setSelectedFlow('');
-      setSelectedTeam('');
-      setSelectedLoop('');
-      fetchData();
-    } catch (err) {
-      alert(`${t('taskDetails.errors.assignAgent')}: ` + (err.response?.data?.detail || err.message));
-    }
-  };
-
+  // The task itself (subtask null) or one of its subtasks; the modal loads
+  // what can be assigned and does the assigning (task/AssignExecutorModal.jsx).
   const openAssign = (subtask = null) => {
     setAssignTarget(subtask);
-    setSelectedAgent('');
-    setSelectedFlow('');
-    setSelectedTeam('');
-    setSelectedLoop('');
-    setExecutorKind('agent');
     setShowAssignModal(true);
-    if (!catalogsLoaded) {
-      const ws = task?.workspace || undefined;
-      Promise.all([
-        listFlows(ws).catch(() => ({ data: [] })),
-        getTeams(ws).catch(() => ({ data: { teams: [] } })),
-        getLoops(ws).catch(() => ({ data: { loops: [] } })),
-      ]).then(([flowsResp, teamsResp, loopsResp]) => {
-        setFlows(flowsResp.data || []);
-        setTeams(teamsResp.data?.teams || []);
-        setLoops(loopsResp.data?.loops || []);
-        setCatalogsLoaded(true);
-      });
-    }
+  };
+
+  const onAssigned = (data) => {
+    if (!assignTarget && data.run_id) setActiveRunId(data.run_id);
+    setAssignTarget(null);
+    fetchData();
   };
 
   const handleStopAgent = async () => {
@@ -508,11 +466,16 @@ const TaskDetails = () => {
     catch (err) { alert(`${t('taskDetails.errors.reject')}: ` + (err.response?.data?.detail || err.message)); }
   };
 
+  // The decomposer is followed live in a modal (DecomposeProgress), on a
+  // channel this tab is subscribed to before the run starts.
   const handleRunDecomposer = async () => {
+    const channel = newDecomposeChannel();
+    setDecomposeChannel(channel);
     try {
-      const resp = await runDecomposer(id, {});
+      const resp = await runDecomposer(id, { client_id: clientId, channel });
       if (resp.data?.run_id) { setActiveRunId(resp.data.run_id); fetchData(); }
     } catch (err) {
+      setDecomposeChannel(null);
       alert(`${t('common.error')}: ` + (err.response?.data?.detail || err.message));
     }
   };
@@ -521,7 +484,7 @@ const TaskDetails = () => {
     if (!task) return;
     const count = (task.subtasks || []).length;
     if (!window.confirm(count > 0
-      ? `Delete this task and its ${count} subtask(s)? This cannot be undone.`
+      ? t('taskDetails.confirmDeleteWithSubtasks', { count })
       : t('taskDetails.confirmDeleteTask'))
     ) return;
     setDeletingTask(true);
@@ -543,15 +506,22 @@ const TaskDetails = () => {
   if (!task) return <div className="text-center py-10 text-gray-500">{t('taskDetails.taskNotFound')}</div>;
 
   const subtasks = (task.subtasks || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+  const tasksById = new Map(workspaceTasks.map(x => [x.id, x]));
+  for (const st of subtasks) tasksById.set(st.id, st);
+  const dependents = workspaceTasks.filter(x => (x.depends || []).includes(task.id));
+  const runningSubtask = subtasks.find(st => st.session_id && st.assigned_agent_run_id && st.status === 'in_progress');
+  const liveSession = runningSubtask?.session_id || task.session_id || null;
+  const liveWorking = !!runningSubtask || (task.status === 'in_progress' && !!task.assigned_agent_run_id);
   const doneCount = subtasks.filter(s => s.status === 'done').length;
   const progress = subtasks.length > 0 ? Math.round((doneCount / subtasks.length) * 100) : (task.status === 'done' ? 100 : 0);
   const TABS = [
-    { id: 'execution', label: 'Execution', Icon: Clock },
-    { id: 'subtasks',  label: `Subtasks (${subtasks.length})`, Icon: Layers },
-    { id: 'activity',  label: 'Activity', Icon: History },
-    { id: 'results',   label: 'Results',  Icon: FileText },
-    { id: 'logs',      label: 'Logs',      Icon: Terminal },
-    { id: 'files',     label: 'Files',     Icon: Folder },
+    { id: 'live',      label: t('taskDetails.tabs.live'), Icon: Radio },
+    { id: 'results',   label: t('taskDetails.tabs.results'), Icon: FileText },
+    { id: 'subtasks',  label: t('taskDetails.tabs.subtasks', { count: subtasks.length }), Icon: Layers },
+    { id: 'activity',  label: t('taskDetails.tabs.activity'), Icon: History },
+    { id: 'execution', label: t('taskDetails.tabs.execution'), Icon: Clock },
+    { id: 'logs',      label: t('taskDetails.tabs.logs'), Icon: Terminal },
+    { id: 'files',     label: t('taskDetails.tabs.files'), Icon: Folder },
   ];
   const activityItems = activityLog.slice().sort((a, b) => {
     const ta = new Date(a?.timestamp || 0).getTime();
@@ -562,11 +532,13 @@ const TaskDetails = () => {
   const hasResults = taskResults.length > 0;
 
   return (
+    // The page scrolls as a whole: the cards, the tab bar and the open tab
+    // run one under another, none with a scroll of its own.
     <PageContainer>
       <PageHeader
         icon={CheckSquare}
-        backTo="/tasks"
-        backLabel={t('taskDetails.tasks')}
+        backTo={backTo?.path || '/tasks'}
+        backLabel={backTo ? t('taskDetails.projectTasks') : t('taskDetails.tasks')}
         title={
           <InlineEdit
             value={task.title}
@@ -606,19 +578,26 @@ const TaskDetails = () => {
                 <Play className="w-4 h-4" /> {t('taskDetails.assignAgent2')}
               </button>
             )}
+            {/* Only a task nobody has started is split: once it moved on from
+                todo, the button stays but is inactive, and says why. */}
             {task.created_by === 'user' && (
-              <button onClick={handleRunDecomposer} className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700">
+              <button
+                onClick={handleRunDecomposer}
+                disabled={task.status !== 'todo'}
+                title={task.status !== 'todo' ? t('taskDetails.decomposeOnlyTodo') : undefined}
+                className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-emerald-600"
+              >
                 <Split className="w-4 h-4" /> {t('taskDetails.decompose')}
               </button>
             )}
             <button onClick={handleDeleteTask} disabled={deletingTask} className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-700 rounded-lg text-sm hover:bg-red-100 disabled:opacity-50">
               <Trash2 className="w-4 h-4" />
-              {deletingTask ? 'Deleting…' : 'Delete'}
+              {deletingTask ? t('common.deleting') : t('common.delete')}
             </button>
         </>}
       >
         <div className="flex items-center flex-wrap gap-2 mt-3">
-          <StatusDropdown current={task.status} onChange={v => patch({ status: v })} />
+          <StatusDropdown current={task.status} onChange={v => { if (confirmStatusChange(t, task, v)) patch({ status: v }); }} />
           <PriorityDropdown current={task.priority} onChange={v => patch({ priority: v })} />
           <DueDateField current={task.due_at} overdue={task.overdue} onChange={v => patch({ due_at: v })} />
           <ProjectSelector
@@ -633,36 +612,44 @@ const TaskDetails = () => {
             </span>
           )}
           {saving && <Loader className="w-3.5 h-3.5 text-gray-400 animate-spin" />}
+          {/* Subtask progress, on the line with status, priority and due date. */}
+          {subtasks.length > 0 && (
+            <div className="ml-auto flex items-center gap-2 text-xs text-gray-500" title={t('taskDetails.progress')}>
+              <span className="whitespace-nowrap">{t('taskDetails.subtasksDone', { done: doneCount, total: subtasks.length, pct: progress })}</span>
+              <div className="w-32 sm:w-48 bg-gray-200 rounded-full h-2">
+                <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
+              </div>
+            </div>
+          )}
         </div>
       </PageHeader>
 
+      {/* The cards' own bottom margins are dropped for an even gap. */}
+      <div className="flex flex-col gap-4 [&>*]:mb-0">
       {/* Main task card */}
       <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 mb-6">
-        {/* Description */}
-        <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
-          <InlineEdit
-            value={task.description || ''}
-            onSave={v => patch({ description: v })}
-            multiline
-            className="text-sm text-gray-700"
-          />
+        {/* Key, id, creation time and executor */}
+        <TaskKeyRow task={task} />
+
+        {/* Description, under the key and id: labelled, so it reads as a
+            field; its pencil shows on hover */}
+        <div className="mt-4">
+          <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1.5">
+            {t('taskDetails.description')}
+          </div>
+          <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+            <InlineEdit
+              value={task.description || ''}
+              onSave={v => patch({ description: v })}
+              multiline
+              className="text-sm text-gray-700"
+            />
+          </div>
         </div>
 
-        {/* Meta row */}
-        <TaskMetaRow depTasks={depTasks} parentTask={parentTask} task={task} />
-
-        {/* Subtask progress bar */}
-        {subtasks.length > 0 && (
-          <div className="mt-4">
-            <div className="flex justify-between text-xs text-gray-500 mb-1">
-              <span>{t('taskDetails.progress')}</span>
-              <span>{t('taskDetails.subtasksDone', { done: doneCount, total: subtasks.length, pct: progress })}</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
-            </div>
-          </div>
-        )}
+        {/* Parent task and dependencies, after the description */}
+        <TaskLinksRow depTasks={depTasks} dependents={dependents} parentTask={parentTask} linkState={backState}
+          onEditDepends={() => setEditingDepends(true)} className="mt-4" />
 
         {/* Blocked reason */}
         {task.blocked_reason && (
@@ -709,20 +696,14 @@ const TaskDetails = () => {
         )}
       </div>
 
-      {/* The run's pinned agent version and the task's outcome rubric with
-          its gradings (components/task/). Each renders nothing it has no
-          data for beyond its own compact header. */}
-      <TaskAgentVersionPin task={task} onChanged={fetchData} />
+      {/* The task's outcome rubric with its gradings (components/task/);
+          nothing beyond its compact header when there is none. */}
       <TaskOutcomeCard task={task} onChanged={fetchData} />
-      <TaskFilesCard task={task} onChanged={fetchData} />
 
-      {/* Live agent output for this task's session. Renders nothing until the
-          session channel produces events, so a task with nothing running keeps
-          its previous layout. */}
-      <LiveRunStream sessionId={task.session_id} title={t('taskDetails.liveAgentOutput')} className="mb-6" />
+      </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
+      <div className="shrink-0 mt-2 border-b border-gray-200">
         <nav className="flex flex-wrap gap-2 -mb-px">
           {TABS.map(({ id: tid, label, Icon }) => (
             <button
@@ -763,6 +744,28 @@ const TaskDetails = () => {
         </nav>
       </div>
 
+      {/* The open tab's area: as tall as the tab, the page scrolls past it. */}
+      <div className="min-h-[14rem] flex flex-col">
+      {/* ── Live output tab: always there. An agent working through the
+          subtasks runs on each subtask's own session, so the panel follows
+          the subtask being worked on, else the task's own session. ── */}
+      {activeTab === 'live' && (
+        <div className="h-[34rem] flex flex-col bg-white shadow-sm border border-gray-200 rounded-xl p-6">
+          <LiveRunStream
+            key={liveSession || 'none'}
+            sessionId={liveSession}
+            docked
+            working={liveWorking}
+            title={runningSubtask
+              ? `${t('taskDetails.liveAgentOutput')} · ${runningSubtask.key || runningSubtask.title}`
+              : t('taskDetails.liveAgentOutput')}
+            emptyText={t('taskDetails.liveIdle')}
+            waitingText={t('taskDetails.liveWaiting')}
+            className="flex-1"
+          />
+        </div>
+      )}
+
       {/* ── Subtasks tab ── */}
       {activeTab === 'subtasks' && (
         <SubtasksTab
@@ -773,37 +776,41 @@ const TaskDetails = () => {
           patch={patch}
           setShowAddSubtask={setShowAddSubtask}
           subtasks={subtasks}
+          tasksById={tasksById}
         />
       )}
 
       {/* ── Execution tab ── */}
       {activeTab === 'execution' && (
-        <ExecutionTab
-          flowHeight={flowHeight}
-          flowLoading={flowLoading}
-          flowRuns={flowRuns}
-          flowScrollRef={flowScrollRef}
-        />
+        <ExecutionTab flowLoading={flowLoading} flowRuns={flowRuns} />
       )}
 
       {/* ── Activity tab ── */}
       {activeTab === 'activity' && (
-        <ActivityTab activityItems={activityItems} />
+        <ActivityTab activityItems={activityItems} runs={executionLog} />
       )}
 
       {/* ── Results tab ── */}
       {activeTab === 'results' && (
-        <ResultsTab activeRunId={activeRunId} hasResults={hasResults} taskResults={taskResults} />
+        <ResultsTab hasResults={hasResults} taskResults={taskResults}
+          onOpenFile={(path) => { setActiveTab('files'); loadFileContent(path); }} />
       )}
 
       {/* ── Logs tab ── */}
       {activeTab === 'logs' && (
-        <LogsTab activeRunId={activeRunId} logs={logs} />
+        <LogsTab
+          activeRunId={logRunId || activeRunId}
+          logs={logs}
+          runs={executionLog.filter((e) => e.run_id && e.agent_id !== GRADER_AGENT_ID).reverse()}
+          onSelectRun={pickLogRun}
+        />
       )}
 
       {/* ── Files tab ── */}
       {activeTab === 'files' && (
         <TaskFilesTab
+          task={task}
+          onTaskChanged={fetchData}
           expandedFolders={expandedFolders}
           fileContentError={fileContentError}
           fileContentLoading={fileContentLoading}
@@ -823,6 +830,25 @@ const TaskDetails = () => {
           workspaceFiles={workspaceFiles}
         />
       )}
+      </div>
+
+      {decomposeChannel && (
+        <DecomposeModal
+          task={task}
+          channel={decomposeChannel}
+          showOpenTask={false}
+          onClose={() => { setDecomposeChannel(null); fetchData(); }}
+        />
+      )}
+
+      {editingDepends && (
+        <DependsEditor
+          task={task}
+          candidates={workspaceTasks}
+          onSaved={fetchData}
+          onClose={() => setEditingDepends(false)}
+        />
+      )}
 
       {/* ── Add Subtask Modal ── */}
       {showAddSubtask && (
@@ -836,27 +862,10 @@ const TaskDetails = () => {
 
       {/* ── Assign Agent Modal ── */}
       {showAssignModal && (
-        <TaskAssignModal
-          agents={agents}
-          assignTarget={assignTarget}
-          catalogsLoaded={catalogsLoaded}
-          executorKind={executorKind}
-          flows={flows}
-          handleAssignAgent={handleAssignAgent}
-          loops={loops}
-          selectedAgent={selectedAgent}
-          selectedFlow={selectedFlow}
-          selectedLoop={selectedLoop}
-          selectedTeam={selectedTeam}
-          setAssignTarget={setAssignTarget}
-          setExecutorKind={setExecutorKind}
-          setSelectedAgent={setSelectedAgent}
-          setSelectedFlow={setSelectedFlow}
-          setSelectedLoop={setSelectedLoop}
-          setSelectedTeam={setSelectedTeam}
-          setShowAssignModal={setShowAssignModal}
-          taskAssignmentMode={taskAssignmentMode}
-          teams={teams}
+        <AssignExecutorModal
+          task={assignTarget || task}
+          onClose={() => { setShowAssignModal(false); setAssignTarget(null); }}
+          onAssigned={onAssigned}
         />
       )}
     </PageContainer>

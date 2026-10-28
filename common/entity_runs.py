@@ -265,6 +265,29 @@ def update(run_id: str, updates: Mapping[str, Any], *, notify: bool = True,
     return rec
 
 
+def update_where(run_id: str, change: Callable[[Dict[str, Any]], Optional[Mapping[str, Any]]],
+                 *, notify: bool = False) -> Optional[Dict[str, Any]]:
+    """Read a record and write what ``change`` makes of it, in one
+    transaction: ``change`` gets the stored record and returns the fields to
+    merge, or None to leave it. The merged record, or None when nothing was
+    written. For a write that must happen once however many processes try
+    (a claim): the check and the write cannot be split by another writer."""
+    with db.transaction() as conn:
+        existing = _read(conn, run_id)
+        if existing is None:
+            return None
+        updates = change(dict(existing))
+        if not updates:
+            return None
+        _check_status(existing, updates, str(run_id))
+        rec = _normalise({**existing, **updates}, str(existing["kind"]))
+        rec["run_id"] = str(run_id)
+        _write(conn, rec)
+    if notify:
+        _notify_record(rec)
+    return rec
+
+
 def _evaluate_rules_on_finish(old: Mapping[str, Any], new: Mapping[str, Any]) -> None:
     """Run the workspace's alert rules once a container run reaches a
     terminal status, the way managers/runs/notifications.py does for a leaf
@@ -631,7 +654,7 @@ def convert(rec: Dict[str, Any]) -> Any:
 __all__ = [
     "TABLE", "KINDS", "KIND_FIELDS", "RESOURCES", "COLUMNS", "DEFAULT_ORDER",
     "EntityRunStore", "record_from_row", "utc_now_iso",
-    "upsert", "update", "set_status", "mark_running", "close", "request_stop",
+    "upsert", "update", "update_where", "set_status", "mark_running", "close", "request_stop",
     "stop_requested", "touch_heartbeat", "save_checkpoint", "load_checkpoint",
     "clear_checkpoint", "delete", "delete_where",
     "get", "list_runs", "active_runs", "children", "leaf_children", "counts_by_kind",

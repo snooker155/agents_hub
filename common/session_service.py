@@ -48,6 +48,25 @@ def _write_ctx(conn, ctx: Dict[str, Any]) -> None:
     )
 
 
+def detach_task_sessions(task_id: str) -> int:
+    """Unlink the sessions bound to a task (a reset to todo), so its next run
+    opens a fresh one. The sessions and their runs are kept. Returns how many
+    were unlinked."""
+    count = 0
+    with db.transaction() as conn:
+        rows = conn.execute("SELECT doc FROM sessions WHERE task_id = ?", (str(task_id),)).fetchall()
+        for row in rows:
+            ctx = _row_to_ctx(row)
+            if ctx is None:
+                continue
+            ctx["task_id"] = None
+            _write_ctx(conn, ctx)
+            count += 1
+    if count:
+        _notify()
+    return count
+
+
 def _notify() -> None:
     try:
         from common.session_broker import notify_change

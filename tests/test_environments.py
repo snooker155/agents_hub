@@ -641,9 +641,12 @@ def test_instance_local_environment_reaches_the_subprocess(dot_env, launched):
     assert child_env["AGENTS_HUB_ENVIRONMENT_ID"] == env.id
 
 
-def test_instance_without_environment_is_unchanged(dot_env, launched):
+def test_instance_without_environment_is_unchanged(dot_env, launched, monkeypatch):
     from instances import carrier
     dot_env["AGENT_EXECUTION_MODE"] = "docker"
+    # Where containers share the hub's database; on Docker Desktop with SQLite
+    # the run stays local instead (common.config.run_execution_mode).
+    monkeypatch.setattr("managers.container_manager.db_shared_with_containers", lambda: True)
     instance = carrier.start("code_reviewer")
     assert "options" not in launched["container"][0] and "extra_env" not in launched["container"][0]
     assert instance.get("environment_id") is None

@@ -101,6 +101,9 @@ def validate_flow(flow: Dict[str, Any]) -> None:
     # Execution policy: concurrency, error handling, per-node retry/timeout.
     errors.extend(_policy_errors(flow, nodes))
 
+    # Branches picked at run time must name a step the node leads to.
+    errors.extend(_branching_errors(nodes, edges))
+
     # Acyclicity (the engine executes in topological order).
     if not errors and _has_cycle(ids, edges):
         errors.append("flow graph contains a cycle (must be a DAG)")
@@ -119,6 +122,51 @@ def _node_field(node: Dict[str, Any], key: str) -> Any:
     logic fields into ``data``, hand-authored YAML writes them top level)."""
     data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
     return node[key] if key in node else data.get(key)
+
+
+def _branching_errors(nodes: List[Dict], edges: List[Dict]) -> List[str]:
+    """Check the branches a node picks while the run goes (flow/branching.py).
+
+    A routing agent's ``route_default`` and a switch's case targets must be
+    direct successors: the engine prunes the successors a node did not pick,
+    so a target that is not one silently prunes every branch. A routing agent
+    needs two successors to choose between, and a map node an agent.
+    """
+    from flow import branching
+
+    succ: Dict[str, List[str]] = {}
+    for e in edges:
+        if isinstance(e, dict) and e.get("source") and e.get("target"):
+            succ.setdefault(str(e["source"]), []).append(str(e["target"]))
+    errors: List[str] = []
+    for node in nodes:
+        if not isinstance(node, dict) or not node.get("id"):
+            continue
+        nid = str(node["id"])
+        label = _node_field(node, "label") or nid
+        nexts = succ.get(nid, [])
+        if branching.route_mode(node):
+            if len(nexts) < 2:
+                errors.append(f"node '{label}' picks its next step (route) but leads to "
+                              f"{len(nexts)} step(s); it needs at least two")
+            default = str(_node_field(node, "route_default") or "").strip()
+            if default and default not in nexts:
+                errors.append(f"node '{label}': route_default '{default}' is not a step it leads to")
+        elif _node_field(node, "route") not in (None, "", False):
+            errors.append(f"node '{label}': route must be one or many")
+        ref = str(_node_field(node, "entity_id") or "")
+        config = _node_field(node, "config") or {}
+        if not isinstance(config, dict):
+            config = {}
+        if ref == "state_switch":
+            from flow.entities.conditions.state_switch import case_targets, config_errors
+            for target in case_targets(config):
+                if target not in nexts:
+                    errors.append(f"switch '{label}': target '{target}' is not a step it leads to")
+            errors.extend(config_errors(config, label))
+        if ref == branching.MAP_ENTITY_ID and not str(config.get("agent_id") or "").strip():
+            errors.append(f"map node '{label}' has no agent (config.agent_id)")
+    return errors
 
 
 def _policy_errors(flow: Dict[str, Any], nodes: List[Dict]) -> List[str]:
@@ -371,9 +419,46 @@ def resolve_entities(nodes: List[Dict[str, Any]]) -> Dict[str, flow_registry.Flo
             errors.append(f"node '{label}' references unknown entity '{ref}'")
         else:
             resolved[nid] = spec
+            if getattr(spec, "category", "") == "map":
+                config = flow_dispatch.node_field(node, "config") or {}
+                agent_ref = str((config or {}).get("agent_id") or "").strip() \
+                    if isinstance(config, dict) else ""
+                agent_spec = flow_registry.get_entity(agent_ref) if agent_ref else None
+                if agent_ref and (agent_spec is None or agent_spec.category != "agent"):
+                    label = flow_dispatch.node_field(node, "label") or nid
+                    errors.append(f"map node '{label}' runs unknown agent '{agent_ref}'")
     if errors:
         raise FlowValidationError("entity resolution", errors)
     return resolved
+
+
+def workspace_agent_errors(nodes: List[Dict[str, Any]], workspace: Optional[str]) -> List[str]:
+    """Agents a flow names that the workspace may not run.
+
+    The same rule as the flow palette (flow.registry._agent_visible_in_workspace):
+    system and shared agents run everywhere, an agent a workspace owns only
+    there, and a workspace's ``allowed_agents`` list narrows the rest. Covers
+    agent nodes and the agent of a map node; nodes that name no agent, or an
+    agent the registry does not know (resolve_entities reports that), pass.
+    """
+    errors: List[str] = []
+    for node in nodes:
+        nid = node.get("id")
+        label = flow_dispatch.node_field(node, "label") or nid
+        spec = flow_dispatch.resolve_entity(node)
+        refs: List[str] = []
+        if spec is not None and spec.category == "agent":
+            refs.append(spec.id)
+        elif spec is not None and spec.category == "map":
+            config = flow_dispatch.node_field(node, "config") or {}
+            agent_ref = str(config.get("agent_id") or "").strip() if isinstance(config, dict) else ""
+            if agent_ref:
+                refs.append(agent_ref)
+        for ref in refs:
+            if not flow_registry._agent_visible_in_workspace(ref, workspace):
+                errors.append(f"node '{label}': agent '{ref}' is not available in workspace "
+                              f"'{workspace or 'default'}'")
+    return errors
 
 
 # ── stage 4: execution order from entry_point ─────────────────────────────────

@@ -12,6 +12,20 @@ from tools.web import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_live_web_settings(monkeypatch):
+    """The domain lists are read live from .env and the active workspace; a
+    developer's own values there must not leak into these tests."""
+    from common import config
+    live = config.live_setting
+    monkeypatch.setattr("common.config.live_setting", lambda key, default="": (
+        default if key in _DOMAIN_KEYS else live(key, default)))
+    monkeypatch.setattr(web, "_workspace_web_settings", lambda workspace=None: {})
+
+
+_DOMAIN_KEYS = ("WEB_DENY_DOMAINS", "WEB_ALLOW_DOMAINS", "WEB_DOMAIN_POLICY_ENABLED")
+
+
 # -- SSRF guard ---------------------------------------------------------------
 
 @pytest.mark.parametrize("url", [
@@ -436,6 +450,31 @@ def test_openai_search_uses_the_configured_base_url(monkeypatch):
     monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     assert web._search_openai("q", 3, "sk-oai", 20.0) == []
     assert got["base_url"] == "https://api.openai.com/v1" and got["api_key"] == "sk-oai"
+
+
+@pytest.mark.parametrize("provider,var,default", [
+    ("openai", "OPENAI_BASE_URL", "https://api.openai.com/v1"),
+    ("anthropic", "ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+])
+def test_an_empty_base_url_in_the_environment_falls_back_to_the_vendor(monkeypatch, provider, var, default):
+    # The backend loads .env into its environment, so `OPENAI_BASE_URL=""`
+    # there is an empty variable; left to the SDK it became an empty address
+    # and every search a connection error.
+    import anthropic
+    import openai
+    got = {}
+
+    def _client(**kw):
+        got.update(kw)
+        empty = _Obj(create=lambda **k: _Obj(output=[], content=[]))
+        return _Obj(responses=empty, messages=empty)
+
+    monkeypatch.setattr(openai, "OpenAI", _client)
+    monkeypatch.setattr(anthropic, "Anthropic", _client)
+    monkeypatch.setenv(var, "")
+    search = web._search_openai if provider == "openai" else web._search_anthropic
+    assert search("q", 3, "sk", 20.0) == []
+    assert got["base_url"] == default
 
 
 def test_search_model_can_be_overridden(monkeypatch):

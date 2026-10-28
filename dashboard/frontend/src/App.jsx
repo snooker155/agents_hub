@@ -9,6 +9,7 @@ import { useFeatures } from './components/features';
 import { AuthProvider } from './components/AuthContext';
 import FirstRunGate from './components/firstRun/FirstRunGate';
 import { isAdmin, isMultiUser, needsLogin, useAuth } from './components/auth';
+import HiddenMenuGuard from './components/HiddenMenuGuard';
 import { getInstances } from './api';
 
 // ---------------------------------------------------------------------------
@@ -55,6 +56,8 @@ const Assistant = lazy(() => import('./pages/Assistant'));
 const Containers = lazy(() => import('./pages/Containers'));
 const Health = lazy(() => import('./pages/Health'));
 const Cluster = lazy(() => import('./pages/Cluster'));
+const Vault = lazy(() => import('./pages/Vault'));
+const Catalog = lazy(() => import('./pages/Catalog'));
 const Environments = lazy(() => import('./pages/Environments'));
 const Watchers = lazy(() => import('./pages/Watchers'));
 const Nodes = lazy(() => import('./pages/Nodes'));
@@ -75,6 +78,7 @@ const PlaygroundRuns = lazy(() => import('./pages/PlaygroundRuns'));
 const PlaygroundWorlds = lazy(() => import('./pages/PlaygroundWorlds'));
 const PlaygroundWorld = lazy(() => import('./pages/PlaygroundWorld'));
 const Loops = lazy(() => import('./pages/Loops'));
+const LoopDetail = lazy(() => import('./pages/LoopDetail'));
 const Teams = lazy(() => import('./pages/Teams'));
 const TeamDetails = lazy(() => import('./pages/TeamDetails'));
 const ProjectManager = lazy(() => import('./pages/ProjectManager'));
@@ -155,6 +159,7 @@ function AppRoutes() {
   const auth = useAuth();
   return (
     <Suspense fallback={<RouteFallback />}>
+      <HiddenMenuGuard>
       <Routes>
         <Route path="/" element={guard(<Chat />)} />
         <Route path="/chat" element={guard(<Chat />)} />
@@ -183,8 +188,14 @@ function AppRoutes() {
         <Route path="/memory" element={guard(<MemoryManager />)} />
         <Route path="/flows" element={guard(<AgentFlows />)} />
         <Route path="/flows/:flowId" element={guard(<FlowRun />)} />
+        {/* One conversation or run of the flow, its own address: the same
+            page (kept mounted when the address changes), that record open. */}
+        <Route path="/flows/:flowId/runs/:runGroup" element={guard(<FlowRun />)} />
         <Route path="/flows/:flowId/edit" element={guard(<FlowEditor />)} />
         <Route path="/loops" element={guard(<Loops />)} />
+        <Route path="/loops/:loopId" element={guard(<LoopDetail />)} />
+        {/* One run of the loop: the same page, that run open. */}
+        <Route path="/loops/:loopId/runs/:runId" element={guard(<LoopDetail />)} />
         <Route path="/teams" element={guard(<Teams />)} />
         <Route path="/teams/:teamId" element={guard(<TeamDetails />)} />
         <Route path="/registry" element={guard(<Registry />)} />
@@ -211,6 +222,8 @@ function AppRoutes() {
         <Route path="/browser" element={guard(<Browser />)} />
         <Route path="/health" element={guard(<Health />)} />
         <Route path="/cluster" element={guard(<Cluster />)} />
+        <Route path="/vault" element={guard(<Vault />)} />
+        <Route path="/catalog" element={guard(<Catalog />)} />
         <Route path="/deployment" element={<Navigate to="/cluster" replace />} />
         <Route path="/projects" element={guard(<ProjectManager />)} />
         <Route path="/projects/:id" element={guard(<ProjectDetails />)} />
@@ -273,6 +286,7 @@ function AppRoutes() {
         {/* Where the OIDC callback lands the browser with its new session. */}
         <Route path="/login/oidc" element={<OidcCallback />} />
       </Routes>
+      </HiddenMenuGuard>
     </Suspense>
   );
 }

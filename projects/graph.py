@@ -8,8 +8,11 @@ Two views are produced, both in a React-Flow–compatible shape
   - **architecture** — the technical structure inferred from the project's
     config (frontend/backend/repo) and a shallow scan of its source tree:
     client → service → data-store / external dependencies.
-  - **process** — the business/process structure derived from the project's
-    tasks: hierarchy (parent → subtask) and ordering (sequence) as a flow.
+  - **process** — the business/process flow. It has no deterministic
+    source: it is built by the Architect Agent (or by hand) from the project's
+    description and documentation. Project tasks are never an input: the
+    Planner derives tasks FROM the process and architecture views, so reading
+    tasks back here would close a loop.
 
 These are intentionally deterministic (no LLM): they read what is already
 known about the project so the graph is exact, cheap, and reproducible. The
@@ -382,15 +385,6 @@ def build_architecture_graph(project, root: Optional[Path]) -> Dict[str, Any]:
 
 # ─────────────────────────── PROCESS ────────────────────────────
 
-def _task_label(task) -> str:
-    return getattr(task, "title", None) or "Untitled"
-
-
-def _status_value(task) -> str:
-    st = getattr(task, "status", None)
-    return str(getattr(st, "value", st) or "todo")
-
-
 def strip_placeholder_nodes(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]):
     """Drop legacy empty-state placeholder nodes (kind 'empty'/'project') and
     any edges touching them — so a graph saved before they were removed doesn't
@@ -404,61 +398,18 @@ def strip_placeholder_nodes(nodes: List[Dict[str, Any]], edges: List[Dict[str, A
     return nodes, edges
 
 
-def build_process_graph(project, tasks: List[Any]) -> Dict[str, Any]:
-    """Business/process view derived from the project's task hierarchy + order."""
-    nodes: List[Dict[str, Any]] = []
-    edges: List[Dict[str, Any]] = []
+def build_process_graph(project) -> Dict[str, Any]:
+    """Process view seed: empty (the UI shows its own empty state).
 
-    if not tasks:
-        # No tasks → leave the graph empty (the UI shows its own empty state).
-        return {"view": "process", "nodes": nodes, "edges": edges}
-
-    by_id = {str(getattr(t, "id")): t for t in tasks}
-
-    def _parent(t) -> Optional[str]:
-        pid = getattr(t, "parent_id", None)
-        return str(pid) if pid else None
-
-    # Roots = top-level tasks; children grouped under their parent.
-    roots = [t for t in tasks if not _parent(t) or _parent(t) not in by_id]
-    children: Dict[str, List[Any]] = {}
-    for t in tasks:
-        p = _parent(t)
-        if p and p in by_id:
-            children.setdefault(p, []).append(t)
-
-    def _order_key(t):
-        return (getattr(t, "order", None) if getattr(t, "order", None) is not None else 1_000,
-                _task_label(t))
-
-    roots.sort(key=_order_key)
-
-    # Lay roots down column 0 as a sequence; subtasks fan out to the right.
-    row = 0
-    for r in roots:
-        rid = str(getattr(r, "id"))
-        nodes.append(_node(rid, _task_label(r), kind="task", col=0, row=row,
-                          subtitle=_status_value(r)))
-        kids = sorted(children.get(rid, []), key=_order_key)
-        for j, k in enumerate(kids):
-            kid = str(getattr(k, "id"))
-            nodes.append(_node(kid, _task_label(k), kind="subtask", col=1,
-                              row=row + j, subtitle=_status_value(k)))
-            edges.append(_edge(rid, kid, "subtask"))
-        row += max(1, len(kids)) + 1
-
-    # Sequence edges between consecutive roots ("then").
-    for a, b in zip(roots, roots[1:]):
-        edges.append(_edge(str(getattr(a, "id")), str(getattr(b, "id")), "then"))
-
-    return {"view": "process", "nodes": nodes, "edges": edges}
+    Nothing deterministic describes a business flow, and the project's tasks
+    are the Planner's output from this view, not its input."""
+    return {"view": "process", "nodes": [], "edges": []}
 
 
-def build_project_graph(project, view: str, root: Optional[Path],
-                        tasks: Optional[List[Any]] = None) -> Dict[str, Any]:
+def build_project_graph(project, view: str, root: Optional[Path]) -> Dict[str, Any]:
     """Dispatch to the requested view builder."""
     if view == "process":
-        return build_process_graph(project, tasks or [])
+        return build_process_graph(project)
     return build_architecture_graph(project, root)
 
 
@@ -716,8 +667,8 @@ _READ_BUDGET = (
 
 # Read budget for the process view: ground the flow in what's actually given.
 _PROCESS_READ_BUDGET = (
-    "Base the process flow on the project description, the documentation shown "
-    "below, and any tasks — not on assumptions. If the project carries more "
+    "Base the process flow on the project description and the documentation shown "
+    "below, not on assumptions. If the project carries more "
     "documentation than is shown, you may read up to 5 doc files (README, docs/) "
     "to fill gaps. Do not invent steps the inputs don't support. Output the JSON "
     "as soon as the flow is clear."
@@ -772,8 +723,7 @@ def _sibling_view_context(project, view: str) -> str:
     return render_graph_summary(saved, f"Existing {other.upper()} view")
 
 
-def _generation_context(project, view: str, root: Optional[Path],
-                        tasks: Optional[List[Any]]) -> str:
+def _generation_context(project, view: str, root: Optional[Path]) -> str:
     """Compact, factual context about the project for the generation prompt."""
     lines: List[str] = []
     lines.append(f"Project name: {project.name}")
@@ -801,23 +751,18 @@ def _generation_context(project, view: str, root: Optional[Path],
             lines.append(project_map)
 
     if view == "process":
-        # The process flow is derived from tasks when present, and otherwise
-        # from the description + documentation — so an empty project (just a
-        # brief/spec, no code or tasks) can still be mapped.
-        if tasks:
-            lines.append("Tasks:")
-            for t in tasks[:40]:
-                parent = " (subtask)" if getattr(t, "parent_id", None) else ""
-                lines.append(f"  - {_task_label(t)} [{_status_value(t)}]{parent}")
+        # The process flow comes from the description + documentation. The
+        # project's tasks are left out on purpose: the Planner makes them from
+        # this view, so they follow the process, never the other way round.
         docs = _docs_context(root)
         if docs:
             lines.append("")
             lines.append("Documentation (basis for the process flow):\n" + docs)
-        elif not tasks and not desc:
+        elif not desc:
             # Nothing to go on — make that explicit so the agent asks/builds from
             # the user's chat instructions rather than inventing a generic flow.
             lines.append("")
-            lines.append("No documentation, README, or tasks found — build the "
+            lines.append("No documentation or README found — build the "
                         "flow from the user's instructions in chat.")
 
     # Cross-view: if the project's other view already exists, hand it over as a
@@ -836,7 +781,7 @@ def _generation_context(project, view: str, root: Optional[Path],
 
 
 def build_chat_turn_prompt(project, view: str, root: Optional[Path],
-                           tasks: Optional[List[Any]], graph: Dict[str, Any],
+                           graph: Dict[str, Any],
                            history: List[Dict[str, Any]], user_message: str) -> str:
     """Prompt for one interactive build turn.
 
@@ -856,7 +801,7 @@ def build_chat_turn_prompt(project, view: str, root: Optional[Path],
     else:
         state = "(empty — nothing built yet)"
     convo = "\n".join(f"{m.get('role')}: {m.get('content')}" for m in (history or [])[-12:])
-    ctx = _generation_context(project, view, root, tasks)
+    ctx = _generation_context(project, view, root)
 
     return (
         f"VIEW: {view}\n\n{guidance}\n\n"
@@ -978,18 +923,15 @@ def _ensure_architect_agent() -> bool:
                  "delete_graph_edge", "clear_graph", "read_graph_view"]
         existing = get_agent(_ARCHITECT_AGENT_ID)
         tools_ok = existing is not None and all(t in (existing.tools or []) for t in tools)
-        # Native model reasoning so the user can follow the agent's thinking as it
-        # builds the graph (streamed as think events to the chat).
-        reasoning_ok = existing is not None and (existing.reasoning or {}).get("thinking_level") not in (None, "", "off")
-        if existing is not None and tools_ok and reasoning_ok:
+        # The effort is the record's own (the seed ships none, the operator
+        # may raise it on the Model tab); this only makes sure of the tools.
+        if existing is not None and tools_ok:
             return True
         if existing is not None:
             # Update via replace() (AgentSpec is frozen) so user-set fields
             # (model/provider/temperature) survive — a full re-create would reset them.
             import dataclasses
-            new_reasoning = (existing.reasoning if reasoning_ok
-                             else {**(existing.reasoning or {}), "thinking_level": "medium"})
-            add_agent(dataclasses.replace(existing, tools=tools, reasoning=new_reasoning))
+            add_agent(dataclasses.replace(existing, tools=tools))
             return True
         # Missing entirely → register the full default spec.
         add_agent(AgentSpec(
@@ -1006,7 +948,7 @@ def _ensure_architect_agent() -> bool:
             domain="System",
             tools=tools,
             temperature=0.0,
-            reasoning={"thinking_level": "medium"},
+            effort="none",
         ))
         return True
     except Exception:  # noqa: BLE001 - an unavailable registry means generation reports the agent as missing
@@ -1014,8 +956,7 @@ def _ensure_architect_agent() -> bool:
         return False
 
 
-def build_generation_prompt(project, view: str, root: Optional[Path],
-                            tasks: Optional[List[Any]]) -> str:
+def build_generation_prompt(project, view: str, root: Optional[Path]) -> str:
     """The task message handed to the Architect Agent for a given view."""
     guidance = _VIEW_GUIDANCE.get(view, _VIEW_GUIDANCE["architecture"])
     if view == "process":
@@ -1026,13 +967,12 @@ def build_generation_prompt(project, view: str, root: Optional[Path],
         budget = ""
     return (
         f"VIEW: {view}\n\n{guidance}\n\n{_GEN_SCHEMA_HINT}{budget}\n\n"
-        f"--- PROJECT CONTEXT ---\n{_generation_context(project, view, root, tasks)}"
+        f"--- PROJECT CONTEXT ---\n{_generation_context(project, view, root)}"
     )
 
 
 def finalize_generated_output(text: Optional[str], project, view: str,
-                              root: Optional[Path],
-                              tasks: Optional[List[Any]] = None) -> Dict[str, Any]:
+                              root: Optional[Path]) -> Dict[str, Any]:
     """Turn raw agent output into a graph: parse → normalize → fallback.
 
     Shared by the blocking and streaming generation paths. Falls back to the
@@ -1043,7 +983,7 @@ def finalize_generated_output(text: Optional[str], project, view: str,
 
     parsed = extract_json_object(text) if text else None
     if not parsed or not parsed.get("nodes"):
-        fallback = build_project_graph(project, view, root, tasks)
+        fallback = build_project_graph(project, view, root)
         fallback["source"] = "auto"
         return fallback
 
@@ -1053,8 +993,7 @@ def finalize_generated_output(text: Optional[str], project, view: str,
     return result
 
 
-def generate_graph_via_llm(project, view: str, root: Optional[Path],
-                           tasks: Optional[List[Any]] = None) -> Dict[str, Any]:
+def generate_graph_via_llm(project, view: str, root: Optional[Path]) -> Dict[str, Any]:
     """Generate a graph for ``view`` using the Architect Agent, normalized to
     our schema.
 
@@ -1065,7 +1004,7 @@ def generate_graph_via_llm(project, view: str, root: Optional[Path],
     deterministic builder if the agent is unavailable or returns nothing
     parseable, so the caller always gets a usable graph.
     """
-    prompt = build_generation_prompt(project, view, root, tasks)
+    prompt = build_generation_prompt(project, view, root)
     text = None
     if _ensure_architect_agent():
         try:
@@ -1080,7 +1019,7 @@ def generate_graph_via_llm(project, view: str, root: Optional[Path],
                     "build": {"max_tool_repeats": 0}, "prompt": prompt,
                 }))
                 return finalize_generated_output(res.agent_output if res.ok else None,
-                                                 project, view, root, tasks)
+                                                 project, view, root)
             from agents.agent_factory import create_agent
             from agents.agent_invoke import invoke_agent
 
@@ -1103,4 +1042,4 @@ def generate_graph_via_llm(project, view: str, root: Optional[Path],
             log.debug("architect agent run failed", exc_info=True)
             text = None
 
-    return finalize_generated_output(text, project, view, root, tasks)
+    return finalize_generated_output(text, project, view, root)

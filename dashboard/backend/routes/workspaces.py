@@ -22,6 +22,7 @@ from workspace import (
     get_workspace_metadata,
     get_workspace_folder,
     get_workspace_default_model_config,
+    get_workspace_model_effort,
     is_system_agent,
     update_workspace_metadata,
     delete_workspace_folder,
@@ -29,6 +30,7 @@ from workspace import (
     set_workspace_instructions,
 )
 from workspace import storage as _workspace_storage
+from agents.registry import normalize_effort
 from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem, WorkspacePersonalMemoryUpdate, WorkspaceRoleUpdate
 import logging
 
@@ -177,10 +179,29 @@ async def list_workspaces(request: Request):
     roots = _visible_to_caller(request, roots)
 
     all_tasks = tasks_service.list_tasks()
+    # The agents the Agents page would list there (routes/agents/listing.py)
+    # and the projects of the workspace (routes/projects), for the list's
+    # columns. Each is a best-effort count: a registry that cannot be read
+    # leaves a zero rather than hiding the workspaces.
+    from routes.agents.listing import visible_agents
+    try:
+        from routes.projects import _common as _projects
+        projects_by_ws: Dict[str, List[str]] = {}
+        for project in _projects.store().list():
+            projects_by_ws.setdefault(project.workspace or "", []).append(project.name)
+    except Exception:  # noqa: BLE001 - the list still answers without its project column
+        log.debug("list_workspaces: projects unavailable", exc_info=True)
+        projects_by_ws = {}
     items = []
     for p in roots:
         name = p.name
         ws_tasks = [t for t in all_tasks if (t.workspace or "").strip() == name]
+        try:
+            agents_count = len(visible_agents(name))
+        except Exception:  # noqa: BLE001 - see above
+            log.debug("list_workspaces: agents unavailable for %s", name, exc_info=True)
+            agents_count = 0
+        ws_projects = projects_by_ws.get(name, [])
         # `path` stays the entry under the workspaces root so it keeps naming the
         # workspace; `target` is where an attached one actually lives.
         attached = p.is_symlink()
@@ -189,6 +210,9 @@ async def list_workspaces(request: Request):
             "name": name,
             "path": str(p),
             "tasks_count": len(ws_tasks),
+            "agents_count": agents_count,
+            "projects": ws_projects,
+            "projects_count": len(ws_projects),
             "attached": attached,
             "target": str(p.resolve()) if attached else None,
             "personal": bool(personal_of),
@@ -588,6 +612,8 @@ async def get_workspace_summary(name: str):
         "name": root.name,
         "allowed_agents": metadata.get("allowed_agents") or [],
         "personal_memory_enabled": personal.workspace_enabled(root.name),
+        # Whether the chat's Auto toggle may be switched on here (common/auto_mode.py).
+        "auto_approve_allowed": settings.get("allow_auto_approve") is not False,
         "isolated": bool(settings.get("isolated")),
         "data_class": _data_class(settings),
         "palette": palette if isinstance(palette, dict) else None,
@@ -645,7 +671,97 @@ def _model_state(name: str, metadata: dict) -> dict:
             "provider": override.get("provider", ""),
             "model": override.get("model", ""),
         },
+        # The effort chosen in the header for agents that inherit the model;
+        # None = each model's own default (the Models page, then the provider).
+        "effort": get_workspace_model_effort(metadata),
+        "effort_own": normalize_effort(metadata.get("model_effort")),
+        # The administrator's model policy (workspace/model_policy.py): the
+        # models the pickers may offer here and the settings it fixes; None
+        # when the workspace has none.
+        "policy": _model_policy_dict(metadata),
     }
+
+
+def _model_policy_dict(metadata: dict) -> Optional[dict]:
+    from workspace.model_policy import from_metadata
+    policy = from_metadata(metadata)
+    return policy.to_dict() if policy is not None else None
+
+
+@router.get("/{name}/model-policy")
+async def get_workspace_model_policy(name: str):
+    """The workspace's model policy, or ``{"policy": null}``. Any member reads
+    it: the header and the agent's Model tab offer only what it allows."""
+    return {"policy": _model_policy_dict(get_workspace_metadata(name) or {})}
+
+
+@router.put("/{name}/model-policy")
+async def set_workspace_model_policy(request: Request, name: str, payload: dict):
+    """Set (or, with no models, clear) the workspace's model policy. Only an
+    administrator, in ``multi`` mode (common.auth.ADMIN_WRITE_SEGMENTS).
+
+    Body: ``{models: [{provider, model}] | ["provider/model"], default,
+    temperature, effort, max_tokens}``. The header's choice is cleared when the
+    policy does not allow it, so the workspace runs on the policy's default.
+    """
+    from workspace.model_policy import POLICY_KEY, normalize, from_metadata
+    _ensure_writable_workspace(name)
+    try:
+        stored = normalize(payload.get("policy", payload) if isinstance(payload, dict) else None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if stored:
+        catalog = _enabled_model_ids()
+        missing = [f"{m['provider']}/{m['model']}" for m in stored["models"]
+                   if catalog is not None and f"{m['provider']}/{m['model']}" not in catalog]
+        if missing:
+            raise HTTPException(status_code=400,
+                                detail="not enabled on the Models page: " + ", ".join(missing))
+    patch: Dict[str, Any] = {POLICY_KEY: stored}
+    if stored:
+        policy = from_metadata({POLICY_KEY: stored})
+        override = (get_workspace_metadata(name) or {}).get("model_override") or {}
+        if policy is not None and override.get("provider") and not policy.allows(
+                override.get("provider"), override.get("model")):
+            patch["model_override"] = {}
+    update_workspace_metadata(name, patch)
+    _audit_model_policy(request, name, stored)
+    return {"policy": stored}
+
+
+def _enabled_model_ids() -> Optional[set]:
+    """``provider/model`` of every enabled catalog model; None when the
+    catalog cannot be read (then nothing is refused for it)."""
+    try:
+        from tools.delegation import enabled_models
+        return {m["id"] for m in enabled_models()}
+    except Exception:  # noqa: BLE001 - an unreadable catalog does not block the policy
+        log.debug("model policy: catalog unavailable", exc_info=True)
+        return None
+
+
+def _audit_model_policy(request: Request, name: str, stored: Optional[dict]) -> None:
+    try:
+        from common import audit, identity
+        audit.record("workspace.model_policy.changed",
+                     principal=identity.request_principal(request), object_type="workspace",
+                     object_id=name, workspace=name, details={"policy": stored})
+    except Exception:  # noqa: BLE001 - the audit log is best effort here
+        log.debug("model policy: audit failed", exc_info=True)
+
+
+def _has_model_policy(name: str) -> bool:
+    """Whether a model policy applies to ``name``, its own or inherited."""
+    from workspace.model_policy import for_workspace
+    return for_workspace(name) is not None
+
+
+def _policy_refusal(name: str, provider: str, model: str) -> None:
+    """400 when the workspace's model policy does not allow ``provider``/``model``."""
+    from workspace.model_policy import refusal
+    reason = refusal(name, provider, model)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
 
 
 @router.put("/{name}/model")
@@ -655,11 +771,31 @@ async def set_workspace_model(name: str, payload: dict):
     provider='' or 'workspace_default' clears the override (falls back to workspace settings then global).
     """
     _ensure_writable_workspace(name)
+    if "effort" in payload:
+        # The header's effort, for agents that inherit the model: "" or
+        # "inherit" goes back to each model's own default. Kept apart from the
+        # model, so it outlives a model switch (clamped to each model's range).
+        word = str(payload.get("effort") or "").strip().lower()
+        effort = None if word in ("", "inherit") else normalize_effort(word)
+        if word not in ("", "inherit") and effort is None:
+            raise HTTPException(status_code=400, detail=f"Unknown effort '{payload.get('effort')}'")
+        from workspace.model_policy import for_workspace
+        policy = for_workspace(name)
+        if policy is not None and policy.effort and effort != policy.effort:
+            raise HTTPException(status_code=400,
+                                detail=f"The effort is fixed at '{policy.effort}' by the workspace's model policy")
+        update_workspace_metadata(name, {"model_effort": effort})
+        if "provider" not in payload and "model" not in payload:
+            return {"effort": effort}
     provider = payload.get("provider", "")
     model = payload.get("model", "")
     if not provider or provider == "workspace_default":
         update_workspace_metadata(name, {"model_override": {}})
+    elif provider == "global" and _has_model_policy(name):
+        raise HTTPException(status_code=400,
+                            detail="The workspace's model policy sets its models; the global default does not apply")
     else:
+        _policy_refusal(name, provider, model)
         update_workspace_metadata(name, {"model_override": {"provider": provider, "model": model}})
     return {"provider": provider, "model": model}
 
@@ -674,6 +810,9 @@ async def set_workspace_default_model(name: str, payload: dict):
     provider clears the workspace default (falls back to the global .env default).
     """
     _ensure_writable_workspace(name)
+    if _has_model_policy(name):
+        raise HTTPException(status_code=400,
+                            detail="The workspace's model policy sets its default model")
     provider = (payload.get("provider") or "").strip()
     model = (payload.get("model") or "").strip()
     if not provider or provider in ("global", "workspace_default"):
@@ -690,7 +829,7 @@ async def set_workspace_default_model(name: str, payload: dict):
 # with a null value.
 _SETTINGS_OWNED_ELSEWHERE = (
     "require_tool_approval", "tool_policy", "tool_policy_model", "agent_mode", "loop",
-    "palette", "web_domain_policy_enabled", "web_allow_domains", "web_deny_domains",
+    "allow_auto_approve", "palette", "web_domain_policy_enabled", "web_allow_domains", "web_deny_domains",
 )
 
 
@@ -835,9 +974,14 @@ def _policy_payload(name: str) -> dict:
         "ignored_hooks_file": ignored_hooks_file(name) is not None,
         "tool_policy": clean_policy(settings.get("tool_policy")),
         "tool_policy_model": str(settings.get("tool_policy_model") or "").strip() or None,
+        # Whether a person may switch on auto mode in this workspace's chats
+        # (common/auto_mode.py). On unless an admin turned it off.
+        "allow_auto_approve": settings.get("allow_auto_approve") is not False,
         # Only when set: absent means the default (common/tool_approvals.py).
         **({"tool_approval_timeout": settings["tool_approval_timeout"]}
            if settings.get("tool_approval_timeout") is not None else {}),
+        **({"tool_approval_background_timeout": settings["tool_approval_background_timeout"]}
+           if settings.get("tool_approval_background_timeout") is not None else {}),
     }
 
 
@@ -944,31 +1088,41 @@ async def update_workspace_policy(request: Request, name: str, payload: dict):
         raise HTTPException(status_code=400, detail="policy must be a key-value object")
 
     updates: dict = {}
-    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model", "tool_approval_timeout")
+    settings_keys = ("require_tool_approval", "tool_policy", "tool_policy_model", "tool_approval_timeout",
+                     "tool_approval_background_timeout", "allow_auto_approve")
     if any(key in payload for key in settings_keys):
         from tools.permission_policy import modes as _policy_modes, split_model_id
         settings = dict(get_workspace_metadata(name).get("settings") or {})
         if "require_tool_approval" in payload:
             settings["require_tool_approval"] = bool(payload.get("require_tool_approval"))
-        if "tool_approval_timeout" in payload:
-            # How long a call held in a dashboard chat turn waits for a person
-            # (common/tool_approvals.py); empty means the default.
-            raw_timeout = payload.get("tool_approval_timeout")
-            if raw_timeout in (None, ""):
-                settings.pop("tool_approval_timeout", None)
+        if "allow_auto_approve" in payload:
+            # Stored only as an explicit off: absent means allowed.
+            if bool(payload.get("allow_auto_approve")):
+                settings.pop("allow_auto_approve", None)
             else:
-                from common.tool_approvals import MAX_TIMEOUT_SECONDS, MIN_TIMEOUT_SECONDS
-                try:
-                    seconds = int(float(raw_timeout))
-                except (TypeError, ValueError):
-                    seconds = -1
-                if not MIN_TIMEOUT_SECONDS <= seconds <= MAX_TIMEOUT_SECONDS:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(f"tool_approval_timeout must be a number of seconds from "
-                                f"{int(MIN_TIMEOUT_SECONDS)} to {int(MAX_TIMEOUT_SECONDS)}"),
-                    )
-                settings["tool_approval_timeout"] = seconds
+                settings["allow_auto_approve"] = False
+        # How long a call held in a dashboard chat turn, or in a background
+        # flow node, waits for a person (common/tool_approvals.py); empty
+        # means the default.
+        for timeout_key in ("tool_approval_timeout", "tool_approval_background_timeout"):
+            if timeout_key not in payload:
+                continue
+            raw_timeout = payload.get(timeout_key)
+            if raw_timeout in (None, ""):
+                settings.pop(timeout_key, None)
+                continue
+            from common.tool_approvals import MAX_TIMEOUT_SECONDS, MIN_TIMEOUT_SECONDS
+            try:
+                seconds = int(float(raw_timeout))
+            except (TypeError, ValueError):
+                seconds = -1
+            if not MIN_TIMEOUT_SECONDS <= seconds <= MAX_TIMEOUT_SECONDS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"{timeout_key} must be a number of seconds from "
+                            f"{int(MIN_TIMEOUT_SECONDS)} to {int(MAX_TIMEOUT_SECONDS)}"),
+                )
+            settings[timeout_key] = seconds
         if "tool_policy" in payload:
             # Per-tool modes: tool id (or "*" for every other tool) to a mode.
             # A bad entry is refused rather than dropped, so what the page saved
@@ -1079,7 +1233,15 @@ def _special_models_payload(name: str) -> dict:
         "own": special.masked(special.stored(name)),
         "effective": special.masked(special.effective(name)),
         "options": special.options_payload(),
+        # Set by the workspace's model policy: only an administrator changes
+        # these (workspace/model_policy.py ``lock_special_models``).
+        "locked": _special_models_locked(name),
     }
+
+
+def _special_models_locked(name: str) -> bool:
+    from workspace.model_policy import special_models_locked
+    return special_models_locked(name)
 
 
 @router.get("/{name}/special-models")
@@ -1162,6 +1324,8 @@ async def update_workspace_special_models(request: Request, name: str, payload: 
     out uses the ``default`` workspace's choice."""
     from providers import special
     _ensure_writable_workspace(name)
+    if _special_models_locked(name):
+        identity.require_role(identity.request_principal(request), admin=True)
     try:
         config = special.save(name, payload.get("special_models", payload))
     except special.SpecialModelError as exc:

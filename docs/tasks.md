@@ -97,6 +97,7 @@ small set of moves marked **bold** below. Anything else raises
 | resolved | stopped | system, user |
 | resolved | reviewing | system, agent (the reviewer) |
 | resolved | done | system, user |
+| resolved | todo | system, user |
 | reviewing | ready | system, user |
 | reviewing | in_progress | system, user, agent (the reviewer) |
 | reviewing | blocked | system, user |
@@ -109,6 +110,7 @@ small set of moves marked **bold** below. Anything else raises
 | reviewed | stopped | system, user |
 | reviewed | reviewing | system |
 | reviewed | done | system, user, agent (the orchestrator) |
+| reviewed | todo | system, user |
 | done | todo | system, user |
 | done | ready | system, user |
 | done | in_progress | system, user |
@@ -124,8 +126,10 @@ or `reviewing`. The assignment is one of four executor kinds:
 - **team** — a team id
 - **loop** — a loop id
 
-A person assigns a flow, team or loop directly; the orchestrator assigns only
-agents. The task page offers a picker for any kind. `POST /api/tasks/{id}/assign`
+A person assigns a flow, team or loop directly; the orchestrator assigns an
+agent (`assign_agent_tool`) or, after the user confirms the flow, a saved flow
+(`assign_flow_tool`, which starts the flow's run on the task at once). The
+task page offers a picker for any kind. `POST /api/tasks/{id}/assign`
 accepts `{"executor": {"kind": "agent"|"flow"|"team"|"loop", "id": "..."}, "params": {...}}`
 as well as `{"agent_id": "..."}` for compatibility.
 

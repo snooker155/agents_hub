@@ -45,6 +45,12 @@ const api = vi.hoisted(() => ({
   updateUser: vi.fn(),
 }));
 
+// The member menu section has its own client and its own test.
+vi.mock('../../api/memberMenu', () => ({
+  getMemberMenu: () => Promise.resolve({ data: { hidden: [], default: [], is_default: true } }),
+  setMemberMenu: () => Promise.resolve({ data: { hidden: [], default: [], is_default: true } }),
+}));
+
 vi.mock('../../api', () => ({
   ...Object.fromEntries(Object.keys(api).map((k) => [k, (...a) => api[k](...a)])),
   createUser: vi.fn(),

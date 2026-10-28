@@ -1,16 +1,18 @@
 /**
  * The Model tab's form: which provider and model answer for this agent, the
- * key and base URL behind them, and the two knobs that decide how long and how
- * freely it writes.
+ * key and base URL behind them, and the knobs that decide how long and how
+ * freely it writes and how much it reasons first (effort). The efforts on
+ * offer are the model's own (providers/reasoning_profile.py), so they are
+ * looked up again whenever the form's provider or model changes.
  *
  * The setters come back out because the page's own load fills this form from
  * the agent spec; everything else about it is this tab's business.
  */
 import { useEffect, useState } from 'react';
-import { getAgentModel, testLocalModel, updateAgentModel } from '../../api';
+import { getAgentModel, getModelReasoning, getWorkspaceModelPolicy, testLocalModel, updateAgentModel } from '../../api';
 import { EMPTY_MODEL } from './constants';
 
-export function useAgentModel({ id, t }) {
+export function useAgentModel({ id, t, workspace }) {
   // Model config tab state
   const [modelForm, setModelForm] = useState(EMPTY_MODEL);
   const [modelHasApiKey, setModelHasApiKey] = useState(false);
@@ -20,6 +22,23 @@ export function useAgentModel({ id, t }) {
   const [localModels, setLocalModels] = useState([]);   // fetched model list
   const [localModelsFetching, setLocalModelsFetching] = useState(false);
   const [localModelsError, setLocalModelsError] = useState('');
+  // What the saved agent runs at and why (source), from the server.
+  const [effectiveEffort, setEffectiveEffort] = useState(null);
+  // A typed-in model's profile (efforts, default) and what inherit gives it.
+  const [typedEffortInfo, setTypedEffortInfo] = useState(null);
+
+  // The model policy of the workspace chosen in the header
+  // (workspace/model_policy.py): the models this agent may be set to and the
+  // settings it fixes. null = no policy.
+  const [policy, setPolicy] = useState(null);
+  useEffect(() => {
+    if (!workspace) return undefined;
+    let live = true;
+    getWorkspaceModelPolicy(workspace)
+      .then(({ data }) => { if (live) setPolicy(data?.policy?.models?.length ? data.policy : null); })
+      .catch(() => { if (live) setPolicy(null); });
+    return () => { live = false; };
+  }, [workspace]);
 
   const handleFetchLocalModels = async () => {
     const provider = modelForm.provider; // 'ollama' | 'lmstudio'
@@ -61,14 +80,16 @@ export function useAgentModel({ id, t }) {
       } else if (!isNaN(tempVal)) {
         payload.temperature = tempVal;
       }
+      payload.effort = modelForm.effort || '';
       const tokVal = parseInt(modelForm.max_tokens, 10);
       if (modelForm.max_tokens.trim() === '') {
         payload.clear_max_tokens = true;
       } else if (!isNaN(tokVal)) {
         payload.max_tokens = tokVal;
       }
-      const resp = await updateAgentModel(id, payload);
+      const resp = await updateAgentModel(id, payload, workspace);
       setModelHasApiKey(!!resp.data.has_api_key);
+      setEffectiveEffort(resp.data.effective_effort || null);
       setModelForm(f => ({ ...f, api_key: '' }));
       setModelMessage(t('agentDetails.modelSettingsSaved'));
       setTimeout(() => setModelMessage(''), 3000);
@@ -87,13 +108,15 @@ export function useAgentModel({ id, t }) {
     setFormFor(id);
     setModelForm(EMPTY_MODEL);
     setModelMessage('');
+    setEffectiveEffort(null);
   }
 
   useEffect(() => {
-    getAgentModel(id)
+    getAgentModel(id, workspace)
       .then(r => {
         const d = r.data;
         setModelHasApiKey(!!d.has_api_key);
+        setEffectiveEffort(d.effective_effort || null);
         setModelForm({
           provider: d.provider || 'inherit',
           model: d.model || '',
@@ -101,16 +124,35 @@ export function useAgentModel({ id, t }) {
           base_url: d.base_url || '',
           temperature: d.temperature != null ? String(d.temperature) : '',
           max_tokens: d.max_tokens != null ? String(d.max_tokens) : '',
+          effort: d.effort || '',
         });
       })
       .catch(() => {});
-  }, [id]);
+  }, [id, workspace]);
+
+  // The efforts the form's model takes. An inherited model is the saved
+  // answer's (it already knows which one the agent inherits); a model typed
+  // here is asked about, a moment after the typing stops.
+  const formProvider = modelForm.provider;
+  const formModel = modelForm.model;
+  useEffect(() => {
+    if (formProvider === 'inherit') return undefined;
+    let live = true;
+    const timer = setTimeout(() => {
+      getModelReasoning({ provider: formProvider, model: formModel })
+        .then(r => { if (live) setTypedEffortInfo(r.data); })
+        .catch(() => { if (live) setTypedEffortInfo(null); });
+    }, 300);
+    return () => { live = false; clearTimeout(timer); };
+  }, [formProvider, formModel]);
+  const effortInfo = formProvider === 'inherit' ? effectiveEffort : typedEffortInfo;
 
   return {
     modelForm, setModelForm, modelHasApiKey, setModelHasApiKey,
     modelSaving, modelMessage, modelShowKey, setModelShowKey,
     localModels, localModelsFetching, localModelsError,
     handleFetchLocalModels, handleSaveModel,
+    effectiveEffort, effortInfo, policy: workspace ? policy : null,
   };
 }
 

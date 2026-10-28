@@ -29,6 +29,7 @@ from agents import registry
 from agents import templates
 from common import access, identity
 from common.auth import WS_EDITOR
+from agents.agent_ids import new_agent_id
 from models import AgentCreateCustom
 
 log = logging.getLogger(__name__)
@@ -91,9 +92,10 @@ async def create_from_template(template_id: str, data: CreateFromTemplate, reque
         access.require_visible(principal, workspace)
     identity.require_role(principal, workspace=workspace or "default", role=WS_EDITOR)
 
-    # The wizard's own id style: lowercase, no spaces.
+    # An id given by the caller is kept (lowercase, no spaces); otherwise it is
+    # made from the name the person chose, the template's id when that is empty.
     agent_id = re.sub(r"\s+", "_", (data.id or "").strip()).lower() \
-        or templates.free_agent_id(template.id, _taken)
+        or new_agent_id(data.name or "", _taken, fallback=template.id)
     prompt = data.system_prompt if (data.system_prompt or "").strip() else template.system_prompt
     body = AgentCreateCustom(
         id=agent_id,
@@ -115,7 +117,8 @@ async def create_from_template(template_id: str, data: CreateFromTemplate, reque
             if spec is not None:
                 registry.add_agent(dataclasses.replace(
                     spec, default_outcome=normalize_outcome(dict(template.outcome))))
-                created = (registry.get_agent(agent_id) or spec).to_dict()
+                created = {**(registry.get_agent(agent_id) or spec).to_dict(),
+                           "main_agent_link": created.get("main_agent_link")}
         except (OutcomeError, ValueError):
             # The agent exists either way; its rubric can be set on its Outcome card.
             log.warning("agent templates: could not set the outcome of %s", agent_id, exc_info=True)

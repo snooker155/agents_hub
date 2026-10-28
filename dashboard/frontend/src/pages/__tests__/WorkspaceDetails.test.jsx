@@ -1,4 +1,4 @@
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -57,6 +57,8 @@ vi.mock('../../components/theme', () => ({
 }));
 vi.mock('../../components/workspace/WorkspaceMembers', () => ({ default: () => null }));
 vi.mock('../../components/workspace/WorkspaceSecrets', () => ({ default: () => <section>SECRETS CARD</section> }));
+vi.mock('../../components/workspace/WorkspaceRoles', () => ({ default: () => <section>ROLES CARD</section> }));
+vi.mock('../../components/workspace/WorkspacePersonalMemory', () => ({ default: () => <section>PERSONAL MEMORY CARD</section> }));
 vi.mock('../../components/settings/ToolPolicySettings', () => ({ default: () => null }));
 vi.mock('../../components/settings/LoopSettingsWorkspace', () => ({ default: () => null }));
 vi.mock('../../components/TaskBoard', () => ({ default: () => null }));
@@ -112,30 +114,22 @@ describe('WorkspaceDetails settings tab', () => {
 
   it('offers only what is per workspace, one section at a time', async () => {
     show('en', 'settings');
-    await screen.findAllByText('Agent Execution Mode');
+    expect(await screen.findByText('ROLES CARD')).toBeTruthy();
     const menu = document.querySelector('nav.md\\:block');
-    for (const label of ['Execution', 'Tool policy', 'Task assignment', 'Secrets', 'Palette']) {
+    for (const label of ['Agent roles', 'Personal memory', 'Secrets', 'Palette']) {
       expect(within(menu).getByText(label)).toBeTruthy();
     }
-    // Provider keys, RAG, observability and logging are not per workspace.
-    for (const heading of ['OpenAI', 'Ollama', 'Vector Database', 'Langfuse', 'Live Streaming']) {
-      expect(screen.queryByText(heading)).toBeNull();
+    // Overrides with a global value sit beside it on the Settings page.
+    for (const label of ['Execution', 'Tool policy', 'Web access', 'Task assignment']) {
+      expect(within(menu).queryByText(label)).toBeNull();
     }
+    expect(screen.queryByText('Agent Execution Mode')).toBeNull();
+    fireEvent.click(within(menu).getByText('Personal memory'));
+    expect(await screen.findByText('PERSONAL MEMORY CARD')).toBeTruthy();
     fireEvent.click(within(menu).getByText('Secrets'));
     expect(await screen.findByText('SECRETS CARD')).toBeTruthy();
-    expect(screen.queryByText('Agent Execution Mode')).toBeNull();
     fireEvent.click(within(menu).getByText('Palette'));
     expect(await screen.findByText('Default palette')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/(workspaceDetails|settings)\.[a-zA-Z]/);
-  });
-
-  it('saves the form for this workspace and keeps the fields it does not show', async () => {
-    show('en', 'settings');
-    await screen.findAllByText('Agent Execution Mode');
-    fireEvent.click(screen.getByText('Save "jobs" settings'));
-    await waitFor(() => expect(updateOverrides).toHaveBeenCalled());
-    const [workspace, payload] = updateOverrides.mock.calls[0];
-    expect(workspace).toBe('jobs');
-    expect(payload).toEqual({ orch_log_level: 'DEBUG' });
   });
 });

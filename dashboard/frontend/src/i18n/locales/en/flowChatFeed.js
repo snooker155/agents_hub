@@ -2,6 +2,8 @@ export default {
   added: 'added',
   // The fold-away label on a finished thought in a chat feed.
   thought: 'Thought',
+  changesCount_one: '{{count}} change',
+  changesCount_other: '{{count}} changes',
   // "and 4 more changes" — the tail of a change list too long to list in full.
   moreChanges: 'and {{count}} more changes',
   // What the agent did to the thing under edit, as the chat reports it.
@@ -13,6 +15,8 @@ export default {
   },
   // What it did it to. Singular: each line names one thing.
   kinds: {
+    node: 'node',
+    edge: 'edge',
     locations: 'location',
     items: 'item',
     entities: 'entity',

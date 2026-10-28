@@ -47,7 +47,12 @@ That is the escape hatch, and it is one-way.
   **World Builder**, **Project Manager** — each owns one entity kind, and each
   has its own chat on that entity's page.
 - **Architect Agent** — builds a project's structure graph from real source.
-- **Planner** — turns that graph into a task tree.
+- **Task Manager** — turns that graph into a task tree and keeps the tracker:
+  splits work into subtasks, orders it with dependencies. It is the panel
+  beside the board on the Tasks page and on a project's Tasks tab.
+- **Planner** — owns the workspace's Plan and deployments: the main agent hands
+  it every request to do something later or on a schedule (see
+  [scheduling](scheduling.md)). It does not touch tracker tasks.
 - **Visualizer** — builds and edits views, and is the entry point for every
   "show me" request; 3D and web requests go on to the two below.
 - **3D Modeler** — models objects and scenes with the geometry engine, in
@@ -66,9 +71,12 @@ That is the escape hatch, and it is one-way.
 - **Verifier**: checks non-code work, reports, figures, texts, plans, against
   its sources and against a task's rubric, then passes or blocks the task.
   The non-code counterpart of the Code Reviewer.
-- **Web Search Agent** — reaches the open web. Holds nothing private.
-- **Researcher** — combines workspace, memory and the web into a
-  conclusion. Holds no outbound channel. Its id is `researcher`; the old id
+- **Web Search Agent** — searches the open web and opens the pages it finds.
+  Holds nothing private. In a flow, put it before the Researcher when the
+  answer needs whole pages, not only snippets.
+- **Researcher** — combines workspace, memory and web search results into a
+  conclusion. Holds no outbound channel: it searches but cannot open pages.
+  Its id is `researcher`; the old id
   `researcher_agent` still works everywhere an agent id is accepted, and an
   existing install has its stored references renamed once at startup, with a
   backup written first.
@@ -87,8 +95,10 @@ That is the escape hatch, and it is one-way.
 
 One agent that could both read your files and fetch arbitrary URLs would be the
 blocked capability combination. So the role is split: one reaches out and holds
-nothing private, the other holds private data and cannot reach out, and they are
-connected by delegation. See [tools-and-capabilities](tools-and-capabilities.md).
+nothing private, the other holds private data and cannot reach out. Search
+counts as ingesting untrusted text only, since the query goes to one fixed
+endpoint, so the Researcher searches itself and passes the guard without an
+override; for whole pages, put the Web Search Agent before it in a flow. See [tools-and-capabilities](tools-and-capabilities.md).
 
 The Sourcer mirrors this split for its own purpose: it reaches the web only by
 delegating to the Web Search Agent, and holds no access to files or memory, so

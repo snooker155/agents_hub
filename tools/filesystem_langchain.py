@@ -229,11 +229,23 @@ def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Di
         A deleted file gets no entity record: its page in the workspace browser
         is gone, and the change is already visible in the diff panel.
         """
-        _record_artifact(op, rel, before, after)
+        _register(op, rel)
+        _record_artifact(op, rel, before, after, url=_file_url(op, rel))
         if op != "delete":
             record_entity("file", f"{ws_prefix}{rel}", "created" if op == "add" else "updated",
                           rel, workspace=ws_name)
-        _register(op, rel)
+
+    def _file_url(op: str, rel: str) -> Optional[str]:
+        """The file's page in the dashboard, the same one its entity link
+        opens (common/entity_links.py). A deleted file has none."""
+        if op == "delete" or not ws_name:
+            return None
+        try:
+            from common.entity_links import file_url
+            return file_url(f"{ws_prefix}{rel}", ws_name)
+        except Exception:  # noqa: BLE001 - a link is a nicety, the write is done
+            log.debug("workspace files: no link for %s", rel, exc_info=True)
+            return None
     
     c = config or {}
     cfg = SweAgentConfig(

@@ -810,7 +810,10 @@ class ToolGuard:
     def evaluate(self, tool_id: str, tool_input: Any, description: str = "") -> "_Verdict":
         """What should happen to one call, without acting on it.
 
-        Order: a ``PreToolUse`` hook that denies or asks wins outright (it is the
+        Order: a URL the domain policy rules out is refused first
+        (tools/web.py, :func:`~tools.web.precheck_call`), so no hook, classifier
+        or person is asked about a call the tool would refuse anyway; then a
+        ``PreToolUse`` hook that denies or asks wins outright (it is the
         workspace's rule about this very call); then the tool policy mode
         (tools/permission_policy.py): ``always_allow`` runs, ``always_ask``
         waits for a person, ``auto`` asks the classifier. With no policy set
@@ -822,15 +825,19 @@ class ToolGuard:
 
         task_id = self._task_id()
         run_id = self._run_id()
+        mode, source = self.resolve(tool_id)
+        call = _Call(tool=tool_id, input=tool_input, fingerprint=call_fingerprint(tool_id, tool_input),
+                     mode=mode, source=source, task_id=task_id, run_id=run_id)
+
+        refused = self._domain_refusal(call)
+        if refused is not None:
+            return refused
+
         outcome = run_pre_tool_use(
             tool_id, tool_input,
             agent_id=self.agent_id, run_id=run_id, task_id=task_id,
             workspace=self.workspace, config=self.hooks(),
         )
-        mode, source = self.resolve(tool_id)
-        call = _Call(tool=tool_id, input=tool_input, fingerprint=call_fingerprint(tool_id, tool_input),
-                     mode=mode, source=source, task_id=task_id, run_id=run_id)
-
         if outcome.denied:
             # The hook's own words go back as the tool's output, so the agent
             # learns why and can choose a different route instead of retrying.
@@ -903,8 +910,9 @@ class ToolGuard:
 
     def _hold(self, call: "_Call", reason: str, *, by: str, hook: str = "",
               record: bool = True, check_approved: bool = True) -> "_Verdict":
-        """A call that needs a person: park it in a task, wait for an answer in
-        a dashboard chat turn, refuse it in any other chat."""
+        """A call that needs a person: wait for an answer in a dashboard chat
+        turn, a background flow node or a team member's turn, park it in a
+        task, refuse it anywhere else."""
         from tools import permission_policy as policy
         from tools.approval import gate_refusal_text
 
@@ -912,6 +920,8 @@ class ToolGuard:
             if record:
                 self._record(call, policy.ASK, reason, by=by)
             held = self._hold_in_chat(call, reason, by=by, hook=hook)
+            if held is None:
+                held = self._hold_in_background(call, reason, by=by, hook=hook)
             if held is not None:
                 return held
             # Nobody in front of a card (Telegram, the widget, a channel,
@@ -928,6 +938,12 @@ class ToolGuard:
 
         if record:
             self._record(call, policy.ASK, reason, by=by)
+        # A flow node's or a team member's agent on a task: the flow driver
+        # would take a parked run for a finished node (a team, for the
+        # member's reply), so the call waits where it was made instead.
+        held = self._hold_in_background(call, reason, by=by, hook=hook)
+        if held is not None:
+            return held
         return _Verdict(pending={
             "tool": call.tool,
             "input": call.input,
@@ -952,12 +968,25 @@ class ToolGuard:
         for a no, a timeout or a stop.
         """
         from tools import permission_policy as policy
-        from tools.approval import chat_answer_text
         try:
             from common import tool_approvals
             ctx = tool_approvals.chat_context(call.run_id)
             if ctx is None:
                 return None
+            from common import auto_mode
+            if call.tool not in auto_mode.NEVER_AUTO and auto_mode.is_on(call.run_id):
+                # The person said yes in advance (common/auto_mode.py): the
+                # card is recorded and shown already approved, nobody waits.
+                auto_mode.settle(
+                    run_id=call.run_id, tool=call.tool, tool_input=call.input, reason=reason,
+                    fingerprint=call.fingerprint, agent_id=self.agent_id,
+                    workspace=self.workspace, conversation_id=ctx.get("conversation_id"),
+                    owner=ctx.get("owner"), emitter=ctx["emitter"])
+                self._record(call, policy.RUN, "Auto mode is on in the chat, so the call "
+                             "was approved without a card.", by=auto_mode.BY, approved=True,
+                             code="auto_mode_approved", trail=False)
+                _revise_trail(call, policy.PERMISSION_ALLOW, "auto_mode_approved")
+                return _Verdict()
             timeout = tool_approvals.timeout_seconds(self.settings())
             answer = tool_approvals.hold(
                 ctx, tool=call.tool, tool_input=call.input, reason=reason,
@@ -968,20 +997,61 @@ class ToolGuard:
             return None
         if answer is None:
             return None
+        return self._answered(call, answer, by=by, timeout=timeout, where="in the chat")
+
+    def _hold_in_background(self, call: "_Call", reason: str, *, by: str,
+                            hook: str = "") -> Optional["_Verdict"]:
+        """Wait in a background flow node (a flow on a task, from a chat or a
+        schedule, a loop's pass) or a team member's turn for a person to
+        answer this call: the card on the run's page, a notification in the
+        bell, this thread waiting until an answer, a stop of the run, or the
+        background timeout. None when this run is neither
+        (common/tool_approvals.py ``background_scope``)."""
+        from tools.approval import gate_refusal_text
+        try:
+            from common import tool_approvals
+            ctx = tool_approvals.background_context(call.run_id)
+        except Exception:  # noqa: BLE001 - no context means the caller's own rule applies
+            logger.debug("tool approvals: no background context for %s", call.tool, exc_info=True)
+            return None
+        if ctx is None:
+            return None
+        try:
+            timeout = tool_approvals.background_timeout_seconds(self.settings())
+            answer = tool_approvals.hold(
+                ctx, tool=call.tool, tool_input=call.input, reason=reason,
+                fingerprint=call.fingerprint, by=by, hook=hook, agent_id=self.agent_id,
+                workspace=self.workspace, timeout_s=timeout)
+        except Exception:  # noqa: BLE001 - a broken wait refuses the call, never runs it
+            logger.warning("tool approvals: could not hold %s in a background run", call.tool,
+                           exc_info=True)
+            answer = None
+        if answer is None:
+            return _Verdict(refusal=gate_refusal_text(call.tool, call.input, reason))
+        return self._answered(call, answer, by=by, timeout=timeout, where="on the run page",
+                              background=True)
+
+    def _answered(self, call: "_Call", answer: Dict[str, Any], *, by: str, timeout: float,
+                  where: str, background: bool = False) -> "_Verdict":
+        """What a person's answer (or its absence) makes of a held call."""
+        from common import tool_approvals
+        from tools import permission_policy as policy
+        from tools.approval import chat_answer_text
         note = str(answer.get("note") or "").strip()
         if answer.get("status") == tool_approvals.STATUS_APPROVED:
-            self._record(call, policy.RUN, "A person approved this call in the chat."
+            self._record(call, policy.RUN, f"A person approved this call {where}."
                          + (f" Note: {note}" if note else ""), by=by, approved=True, trail=False)
             _revise_trail(call, policy.PERMISSION_ALLOW, "human_approved")
             return _Verdict()
         why = {
-            tool_approvals.STATUS_DENIED: "A person denied this call in the chat.",
+            tool_approvals.STATUS_DENIED: f"A person denied this call {where}.",
             tool_approvals.STATUS_CANCELLED: "The run was stopped while the call waited for a person.",
         }.get(str(answer.get("status")), f"Nobody answered within {int(timeout)} seconds.")
         self._record(call, policy.DENY, why + (f" Note: {note}" if note else ""), by=by,
                      code="human_denied", trail=False)
         _revise_trail(call, policy.PERMISSION_DENY, "human_denied")
-        return _Verdict(refusal=chat_answer_text(call.tool, call.input, answer, timeout))
+        return _Verdict(refusal=chat_answer_text(call.tool, call.input, answer, timeout,
+                                                 background=background))
 
     @staticmethod
     def _consume(call: "_Call") -> bool:
@@ -1013,6 +1083,20 @@ class ToolGuard:
             policy.audit_decision(entry, agent_id=self.agent_id, run_id=call.run_id,
                                   task_id=call.task_id, workspace=self.workspace, code=code)
         return entry
+
+    def _domain_refusal(self, call: "_Call") -> Optional["_Verdict"]:
+        """The domain policy's refusal of a URL this call would fetch, or None."""
+        from tools import permission_policy as policy
+        from tools.web import precheck_call
+        try:
+            text = precheck_call(call.tool, call.input, self.spec, self.workspace)
+        except Exception:  # noqa: BLE001 - the tool checks every hop itself, so the gate may skip this
+            logger.warning("domain precheck failed for %s", call.tool, exc_info=True)
+            return None
+        if text is None:
+            return None
+        self._record(call, policy.DENY, text, by="domain")
+        return _Verdict(refusal=text)
 
     def _sequence(self, call: "_Call") -> Optional["_Verdict"]:
         """The workspace's sequence guardrails on this call (guardrails/sequence.py):

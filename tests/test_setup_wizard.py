@@ -187,6 +187,18 @@ def test_without_a_cloud_provider_the_voice_defaults_to_the_browser():
         W.step_voice(_asker({"voice": {"mode": "cloud"}}), W.Plan(fresh=True))
 
 
+def test_egress_proxy_is_offered_on_for_docker_runs_and_kept_when_set():
+    plan = W.Plan(quick=False)
+    W.step_features(_asker({"execution": "docker", "rag": False}), plan)
+    assert plan.env["AGENTS_HUB_EGRESS_PROXY"] == "1"
+    plan = W.Plan(quick=False)
+    W.step_features(_asker({"execution": "local", "rag": False}), plan)
+    assert plan.env["AGENTS_HUB_EGRESS_PROXY"] == "0"
+    plan = W.Plan(quick=False, current={"AGENTS_HUB_EGRESS_PROXY": "1"})
+    W.step_features(_asker({"execution": "local", "rag": False}), plan)
+    assert plan.env["AGENTS_HUB_EGRESS_PROXY"] == "1"
+
+
 def test_quickstart_leaves_the_voice_and_the_demo_to_the_assistant():
     plan = W.Plan(fresh=True)
     W.step_voice(_asker({}), plan)
@@ -268,3 +280,76 @@ def test_a_stack_in_docker_gets_the_runtime_work_and_the_models_over_its_api(mon
     assert put["image"]["model"] == "gpt-image-1"
     assert put["speech"]["model"] == "kokoro-v1.0" and put["transcription"]["provider"] == "hub-local"
     assert all(h == {"Authorization": "Bearer tok"} for *_, h in calls)
+
+
+# ---- review and apply ------------------------------------------------------
+
+
+def test_review_masks_a_password_in_any_url():
+    assert W._shown("AGENTS_HUB_BROKER_URL", "redis://:secretpw@redis:6379/0") == "redis://:****@redis:6379/0"
+    assert W._shown("AGENTS_HUB_DATABASE_URL", "postgresql://hub:pw@pg:5432/hub") == "postgresql://hub:****@pg:5432/hub"
+    assert W._shown("AUTH_PUBLIC_URL", "https://hub.example.com") == "https://hub.example.com"
+
+
+def test_redis_for_one_backend_uses_the_password_the_redis_service_asks_for():
+    plan = W.Plan(shape="compose", quick=False, current={"REDIS_PASSWORD": "pw"})
+    W.step_features(_asker({"execution": "local", "rag": False, "services": ["scale"]}), plan)
+    assert plan.env["AGENTS_HUB_BROKER_URL"] == "redis://:pw@redis:6379/0"
+    plan = W.Plan(shape="compose", quick=False, fresh=True)
+    W.step_features(_asker({"execution": "local", "rag": False, "services": ["scale"]}), plan)
+    assert plan.env["AGENTS_HUB_BROKER_URL"] == "redis://redis:6379/0"
+
+
+def test_compose_up_runs_with_pwd_at_the_target(tmp_path, monkeypatch):
+    """docker-compose.yml takes HOST_PROJECT_ROOT from $PWD, which the setup
+    container's launcher leaves at /app."""
+    runs = []
+    monkeypatch.setenv("PWD", "/app")
+    monkeypatch.setattr(W, "_run", lambda a, cmd, cwd=None, env=None: runs.append((cmd, cwd, env)))
+    monkeypatch.setattr(W, "_wait_healthy", lambda a, base, seconds=300: True)
+    plan = W.Plan(shape="compose", target=tmp_path, env_file=tmp_path / ".env", template=None)
+    assert W.apply_docker(_asker({}), plan, start=True) is True
+    [(cmd, cwd, env)] = runs
+    assert cmd[:3] == ["docker", "compose", "up"] and cwd == tmp_path
+    assert env["PWD"] == str(tmp_path)
+
+
+def test_start_over_keeps_the_secret_key(tmp_path, fake_probe):
+    target = tmp_path / "hub"
+    base = {"shape": "docker", "dir": str(target), "database": "sqlite", "auth": "single", "providers": []}
+    W.run(_asker(base), no_start=True)
+    first = W.read_env(target / ".env")
+    W.run(_asker({**base, "existing": "fresh"}), no_start=True)
+    assert W.read_env(target / ".env")["AGENTS_HUB_SECRET_KEY"] == first["AGENTS_HUB_SECRET_KEY"]
+
+
+def test_a_quickstart_rerun_keeps_the_extra_services_in_force(tmp_path, fake_probe):
+    """QuickStart returns from the Features step before the services
+    question, and the review writes COMPOSE_PROFILES whole: the browser and
+    HTTPS a first Advanced run turned on dropped out of it."""
+    target = tmp_path / "hub"
+    base = {"shape": "docker", "dir": str(target), "database": "postgres-bundled", "auth": "single",
+            "providers": [], "voice": {"mode": "skip"}}
+    W.run(_asker({**base, "flow": "advanced", "demo": False, "https": True, "domain": "hub.example.com",
+                  "rag": False, "services": ["browser"], "egress_proxy": False}), no_start=True)
+    first = W.read_env(target / ".env")
+    assert set(first["COMPOSE_PROFILES"].split(",")) == {"postgres", "https", "browser"}
+    W.run(_asker({**base, "existing": "update", "flow": "quick"}), no_start=True)
+    env = W.read_env(target / ".env")
+    assert set(env["COMPOSE_PROFILES"].split(",")) == {"postgres", "https", "browser"}
+    for key in ("AGENTS_HUB_BROWSER_URL", "AGENTS_HUB_BROWSER_TOKEN", "HUB_DOMAIN"):
+        assert env[key] == first[key], key
+
+
+def test_a_quickstart_compose_rerun_keeps_redis_and_its_url():
+    plan = W.Plan(shape="compose", quick=True, current={
+        "COMPOSE_PROFILES": "scale,browser", "AGENTS_HUB_BROKER_URL": "redis://:own@redis:6379/0",
+        "AGENTS_HUB_BROWSER_TOKEN": "tok"})
+    W.step_features(_asker({}), plan)
+    assert plan.profiles == ["browser", "scale"]
+    assert plan.env["AGENTS_HUB_BROKER_URL"] == "redis://:own@redis:6379/0"
+    assert plan.env["AGENTS_HUB_BROWSER_TOKEN"] == "tok"
+    # Start over keeps nothing of the file, services included.
+    fresh = W.Plan(shape="compose", quick=True, fresh=True, current=dict(plan.current))
+    W.step_features(_asker({}), fresh)
+    assert fresh.profiles == []

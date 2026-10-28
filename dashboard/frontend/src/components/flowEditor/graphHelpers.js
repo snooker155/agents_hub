@@ -46,6 +46,11 @@ export function normalizeNode(node, onRunNode) {
       timeout_seconds: d.timeout_seconds ?? node.timeout_seconds ?? '',
       domain: d.domain || node.domain || 'general',
       nodeTask: d.nodeTask || node.nodeTask || '',
+      // An agent node that picks its next step (flow/branching.py). Carried
+      // through, or a save from the editor would drop the node's routing.
+      route: d.route ?? node.route ?? null,
+      route_default: d.route_default ?? node.route_default ?? null,
+      route_hint: d.route_hint ?? node.route_hint ?? '',
       onRunNode,
     },
   };
@@ -81,6 +86,12 @@ export function serializeNode(node) {
   }
   const timeout = Number(d.timeout_seconds);
   if (Number.isFinite(timeout) && timeout > 0) out.data.timeout_seconds = timeout;
+  // An agent node that picks its next step (flow/branching.py), only when set.
+  if (d.route) {
+    out.data.route = d.route === true ? 'one' : d.route;
+    if (d.route_default) out.data.route_default = d.route_default;
+    if (d.route_hint) out.data.route_hint = d.route_hint;
+  }
   return out;
 }
 
@@ -119,3 +130,73 @@ export const AGENT_SLOT_ID = '__agent__';
 // (flow/validate.py resolve_entities).
 export const isUnchosenAgent = (data) =>
   data?.category === 'agent' && !data?.agent_id && !data?.entity_id;
+
+// The state keys a node can read as a run reaches it: the output keys of every
+// node upstream of it, each with the labels of the nodes that write it.
+export function upstreamOutputKeys(nodeId, nodes, edges) {
+  const preds = {};
+  for (const e of edges || []) (preds[e.target] ||= []).push(e.source);
+  const seen = new Set();
+  const stack = [...(preds[nodeId] || [])];
+  while (stack.length) {
+    const id = stack.pop();
+    if (id === nodeId || seen.has(id)) continue;
+    seen.add(id);
+    stack.push(...(preds[id] || []));
+  }
+  const writers = new Map();
+  for (const node of nodes || []) {
+    if (!seen.has(node.id)) continue;
+    for (const key of node.data?.output || []) {
+      if (!key) continue;
+      if (!writers.has(key)) writers.set(key, []);
+      writers.get(key).push(node.data?.label || node.id);
+    }
+  }
+  return [...writers].map(([key, labels]) => ({ key, writers: labels }));
+}
+
+const keySlug = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+// A switch's routes as {target, match, conditions: [{key, op, value}]}: its
+// `routes`, or the first shape (one `key`, `cases` of {op, value, target}) as
+// one route per case on that key (flow/entities/conditions/state_switch.py).
+export function switchRoutes(config = {}) {
+  if (Array.isArray(config.routes) && config.routes.length) return config.routes;
+  if (!Array.isArray(config.cases) || !config.cases.length) return [];
+  return config.cases.map((c) => ({
+    target: c.target || '',
+    match: 'all',
+    conditions: [{ key: config.key || '', op: c.op || 'equals', value: c.value ?? '' }],
+  }));
+}
+
+// An agent node joined to a switch: the switch can only test what the agent
+// writes, so an agent that writes nothing to state gets an output key, the
+// first one the switch's conditions test or one named after the agent, and
+// the conditions that test no key yet test it. Returns `nodes` itself when
+// there is nothing to do.
+export function wireAgentToSwitch(nodes, sourceId, targetId) {
+  const source = nodes.find((n) => n.id === sourceId);
+  const target = nodes.find((n) => n.id === targetId);
+  if (!source || !target) return nodes;
+  if (source.data?.category !== 'agent' || target.data?.entity_id !== 'state_switch') return nodes;
+  if ((source.data.output || []).some(Boolean)) return nodes;
+  const config = target.data.config || {};
+  const routes = switchRoutes(config);
+  const tested = routes.flatMap((r) => r.conditions || []).map((c) => c.key).find(Boolean);
+  const slug = keySlug(source.data.agent_id) || keySlug(source.data.label);
+  const key = tested || (slug ? `${slug}_result` : 'result');
+  const blank = routes.some((r) => (r.conditions || []).some((c) => !c.key));
+  return nodes.map((n) => {
+    if (n.id === sourceId) return { ...n, data: { ...n.data, output: [key] } };
+    if (n.id === targetId && blank) {
+      const { key: _key, cases: _cases, ...rest } = config;
+      const filled = routes.map((r) => ({
+        ...r, conditions: (r.conditions || []).map((c) => (c.key ? c : { ...c, key })),
+      }));
+      return { ...n, data: { ...n.data, config: { ...rest, routes: filled } } };
+    }
+    return n;
+  });
+}

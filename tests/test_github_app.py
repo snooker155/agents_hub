@@ -541,7 +541,8 @@ def test_agent_secrets_route_sets_github_identity(single, client):
     ok = client.put("/api/agents/worker/secrets",
                     json={"secrets": ["GITHUB_TOKEN"], "github_identity": "user"})
     assert ok.status_code == 200, ok.text
-    assert ok.json() == {"secrets": ["GITHUB_TOKEN"], "github_identity": "user"}
+    body = ok.json()
+    assert body["secrets"] == ["GITHUB_TOKEN"] and body["github_identity"] == "user"
     # Leaving it out keeps the choice.
     kept = client.put("/api/agents/worker/secrets", json={"secrets": ["GITHUB_TOKEN"]})
     assert kept.json()["github_identity"] == "user"

@@ -2,13 +2,14 @@
 // overrides, the global values they fall back to, its tool policy, and the
 // provider connection tests. Used by the Settings page and by the Settings tab
 // of a workspace.
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   getSettings, updateSettings, testProvider as postTestProvider, testLocalModel,
   getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides,
   getWorkspacePolicy, updateWorkspacePolicy, importWorkspaceHooksFile,
 } from '../../api';
 import { useI18n } from '../../i18n';
+import { patchWorkspaceSummary } from '../../api/workspaceSummary';
 
 // The override fields the workspace Save writes. Anything else in the bag
 // (palette, web domains) has its own editor and is left as it is.
@@ -37,6 +38,20 @@ export function useWorkspaceSettings(workspace) {
   const [envDefinedFields, setEnvDefinedFields] = useState([]);
   const [masked, setMasked] = useState({});
   const [wsOverrides, setWsOverrides] = useState({});
+  // The overrides as last loaded, so the Save button shows only once a field
+  // differs from what is stored.
+  const [savedOverrides, setSavedOverrides] = useState({});
+  // Every other change on the page waits for the same Save button too: the
+  // machine-wide .env settings (guard, code runner, streaming) and the
+  // workspace policy (approval, auto mode, timeouts, hooks) as patches over
+  // what is stored, and the blocks with a form of their own as registered
+  // savers (settingsDraft.js). Nothing is written until Save.
+  const [globalPatch, setGlobalPatch] = useState({});
+  const [policyPatch, setPolicyPatch] = useState({});
+  const [drafts, setDrafts] = useState({});
+  const draftsRef = useRef({});
+  // Which kind of change the last Save wrote, for the message above the page.
+  const [savedScope, setSavedScope] = useState('workspace');
 
   // The workspace's tool policy lives outside the override bag: the approval
   // gate and the hooks are read live by the agent process, so they get their
@@ -51,9 +66,7 @@ export function useWorkspaceSettings(workspace) {
   const [providerStatus, setProviderStatus] = useState({});
   const [providerTesting, setProviderTesting] = useState({});
   // Token streaming is a global (.env) switch, not a workspace override: it
-  // changes how every agent process on this machine builds its LLM. Saved on
-  // toggle rather than via the workspace Save button, which writes elsewhere.
-  const [streamingSaving, setStreamingSaving] = useState(false);
+  // changes how every agent process on this machine builds its LLM.
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,7 +92,9 @@ export function useWorkspaceSettings(workspace) {
         rag_embedding_api_key_masked: data.rag_embedding_api_key_masked,
       });
 
-      setWsOverrides(overridesResp?.data?.overrides || {});
+      const overrides = overridesResp?.data?.overrides || {};
+      setWsOverrides(overrides);
+      setSavedOverrides(overrides);
 
       const loadedPolicy = policyResp?.data || { require_tool_approval: false, hooks: {} };
       setPolicy(loadedPolicy);
@@ -99,19 +114,87 @@ export function useWorkspaceSettings(workspace) {
     hasOverrideField(field) ? (wsOverrides[field] ?? '') : (globalSettings[field] ?? fallback)
   );
   const setG = (field, value) => setWsOverrides(prev => ({ ...prev, [field]: value }));
+  // Compared the way Save writes them: an empty field is no override.
+  const overridesDirty = OVERRIDE_FIELDS.some((k) => (wsOverrides[k] || '') !== (savedOverrides[k] || ''));
+  const hooksDirty = hooksText.trim() !== JSON.stringify(policy.hooks || {}, null, 2).trim();
+  const hasOtherChanges = hooksDirty || Object.keys(globalPatch).length > 0
+    || Object.keys(policyPatch).length > 0 || Object.keys(drafts).length > 0;
+  const dirty = overridesDirty || hasOtherChanges;
+
+  // A staged value equal to the stored one is no change, so switching a
+  // toggle back hides the Save button again.
+  const stageGlobal = (patch) => setGlobalPatch((prev) => {
+    const next = { ...prev };
+    Object.entries(patch).forEach(([k, v]) => {
+      if (v === globalSettings[k]) delete next[k]; else next[k] = v;
+    });
+    return next;
+  });
+  const stagePolicy = (patch) => setPolicyPatch((prev) => {
+    const next = { ...prev };
+    Object.entries(patch).forEach(([k, v]) => {
+      if (v === policy[k]) delete next[k]; else next[k] = v;
+    });
+    return next;
+  });
+  const setDraft = useCallback((key, save) => {
+    if (save) draftsRef.current[key] = save; else delete draftsRef.current[key];
+    setDrafts((prev) => {
+      if (Boolean(prev[key]) === Boolean(save)) return prev;
+      const next = { ...prev };
+      if (save) next[key] = true; else delete next[key];
+      return next;
+    });
+  }, []);
 
   const save = async () => {
+    let hooks;
+    if (hooksDirty) {
+      try {
+        hooks = hooksText.trim() ? JSON.parse(hooksText) : {};
+      } catch {
+        setHooksError(t('settings.hooksInvalidJson'));
+        return;
+      }
+      if (typeof hooks !== 'object' || Array.isArray(hooks) || hooks === null) {
+        setHooksError(t('settings.hooksMustBeObject'));
+        return;
+      }
+    }
     setSaving(true);
     setError('');
     setSaved(false);
     try {
-      const payload = {};
-      OVERRIDE_FIELDS.forEach((k) => { if (wsOverrides[k]) payload[k] = wsOverrides[k]; });
-      const { data: savedData } = await updateWorkspaceSettingsOverrides(workspace, payload);
-      setDefaultModels(savedData?.default_models || []);
+      if (overridesDirty) {
+        const payload = {};
+        OVERRIDE_FIELDS.forEach((k) => { if (wsOverrides[k]) payload[k] = wsOverrides[k]; });
+        const { data: savedData } = await updateWorkspaceSettingsOverrides(workspace, payload);
+        setDefaultModels(savedData?.default_models || []);
+      }
+      if (Object.keys(globalPatch).length) {
+        await updateSettings(globalPatch);
+      }
+      const policyBody = hooksDirty ? { ...policyPatch, hooks } : policyPatch;
+      if (Object.keys(policyBody).length) {
+        await updateWorkspacePolicy(workspace, policyBody);
+        if ('allow_auto_approve' in policyBody) {
+          patchWorkspaceSummary(workspace, { auto_approve_allowed: policyBody.allow_auto_approve });
+        }
+      }
+      let allStored = true;
+      for (const saveDraft of Object.values({ ...draftsRef.current })) {
+        // Each block shows its own error and keeps its edits when it fails.
+        if (!(await saveDraft())) allStored = false;
+      }
+      setSavedScope(overridesDirty && !Object.keys(globalPatch).length && !Object.keys(policyBody).length
+        && !Object.keys(drafts).length ? 'workspace' : 'page');
+      setGlobalPatch({});
+      setPolicyPatch({});
       await load();
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      if (allStored) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 3000);
+      }
     } catch (e) {
       setError(`${t('settings.errors.save')}: ` + (e.response?.data?.detail || e.message));
     } finally {
@@ -135,49 +218,41 @@ export function useWorkspaceSettings(workspace) {
     }
   };
 
+  // The egress proxy (environments/egress.py): a machine-wide .env setting
+  // saved on change; the backend starts or stops its listener at once.
+  const [egressSaving, setEgressSaving] = useState(false);
+  const setEgressProxy = async (next) => {
+    setEgressSaving(true);
+    setError('');
+    try {
+      const { data } = await updateSettings({ egress_proxy: next });
+      setGlobalSettings(s => ({ ...s, egress_proxy: next, egress_proxy_running: !!data?.egress_proxy_running }));
+      if (data?.egress_proxy_error) setError(`${t('settings.egressProxyError')}: ${data.egress_proxy_error}`);
+    } catch (e) {
+      setError(`${t('settings.errors.save')}: ` + (e.response?.data?.detail || e.message));
+    } finally {
+      setEgressSaving(false);
+    }
+  };
+
   // Tool capability guard (agents/capability_guard.py): block | warn | off,
   // and whether a per-agent override needs a no-network container to count.
   // Machine-wide .env settings, applied live on the next save or build.
-  const [capabilityGuardSaving, setCapabilityGuardSaving] = useState(false);
-  const saveCapabilityGuard = async (patch) => {
-    setCapabilityGuardSaving(true);
-    setError('');
-    try {
-      await updateSettings(patch);
-      setGlobalSettings(s => ({ ...s, ...patch }));
-    } catch (e) {
-      setError(`${t('settings.errors.capabilityGuardSave')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setCapabilityGuardSaving(false);
-    }
-  };
-  const setCapabilityGuardMode = (mode) => saveCapabilityGuard({ capability_guard: mode });
-  const toggleOverrideRequiresContainer = (next) => saveCapabilityGuard({ capability_override_requires_container: next });
+  const setCapabilityGuardMode = (mode) => stageGlobal({ capability_guard: mode });
+  const toggleOverrideRequiresContainer = (next) => stageGlobal({ capability_override_requires_container: next });
 
   // Code execution (tools/run_code.py): the sandbox provider and what to do
   // when docker is down. Machine-wide .env settings that the backend also
   // changes in its running process, so the next run uses them at once.
-  const [codeRunnerSaving, setCodeRunnerSaving] = useState(false);
-  const saveCodeRunner = async (patch) => {
-    setCodeRunnerSaving(true);
-    setError('');
-    try {
-      await updateSettings(patch);
-      setGlobalSettings(s => ({ ...s, ...patch }));
-    } catch (e) {
-      setError(`${t('settings.errors.codeRunnerSave')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setCodeRunnerSaving(false);
-    }
-  };
-  const setCodeRunnerProvider = (provider) => saveCodeRunner({ code_runner_provider: provider });
-  const toggleCodeRunnerFallback = (next) => saveCodeRunner({ code_runner_fallback: next ? 'local' : 'none' });
+  const setCodeRunnerProvider = (provider) => stageGlobal({ code_runner_provider: provider });
+  const toggleCodeRunnerFallback = (next) => stageGlobal({ code_runner_fallback: next ? 'local' : 'none' });
 
-  // Web search (tools/web.py): provider, key and result count behind the
-  // web_search tool. Machine-wide .env settings, read live by every process.
-  const [webSearchSaving, setWebSearchSaving] = useState(false);
-  const saveWebSearch = async (patch) => {
-    setWebSearchSaving(true);
+  // Web access (tools/web.py): the search provider, key and result count
+  // behind web_search, the fetch limits and the domain policy. Machine-wide
+  // .env settings, read live by every process.
+  const [webAccessSaving, setWebAccessSaving] = useState(false);
+  const saveWebAccess = async (patch) => {
+    setWebAccessSaving(true);
     setError('');
     try {
       await updateSettings(patch);
@@ -185,10 +260,10 @@ export function useWorkspaceSettings(workspace) {
       setGlobalSettings(data);
       return true;
     } catch (e) {
-      setError(`${t('settings.errors.webSearchSave')}: ` + (e.response?.data?.detail || e.message));
+      setError(`${t('settings.errors.webAccessSave')}: ` + (e.response?.data?.detail || e.message));
       return false;
     } finally {
-      setWebSearchSaving(false);
+      setWebAccessSaving(false);
     }
   };
 
@@ -211,18 +286,7 @@ export function useWorkspaceSettings(workspace) {
     }
   };
 
-  const toggleStreaming = async (next) => {
-    setStreamingSaving(true);
-    setError('');
-    try {
-      await updateSettings({ agent_streaming: next });
-      setGlobalSettings(s => ({ ...s, agent_streaming: next }));
-    } catch (e) {
-      setError(`${t('settings.errors.streamingSave')}: ` + (e.response?.data?.detail || e.message));
-    } finally {
-      setStreamingSaving(false);
-    }
-  };
+  const toggleStreaming = (next) => stageGlobal({ agent_streaming: next });
 
   const savePolicy = async (patch) => {
     setPolicySaving(true);
@@ -243,7 +307,10 @@ export function useWorkspaceSettings(workspace) {
     }
   };
 
-  const toggleApproval = (next) => savePolicy({ require_tool_approval: next });
+  const toggleApproval = (next) => stagePolicy({ require_tool_approval: next });
+  // Whether a person may switch on auto mode in this workspace's chats; the
+  // chat reads it from the workspace summary, which Save updates with it.
+  const toggleAutoApprove = (next) => stagePolicy({ allow_auto_approve: next });
 
   const saveHooks = async () => {
     let parsed;
@@ -325,8 +392,9 @@ export function useWorkspaceSettings(workspace) {
     }
   };
 
+  const shownGlobal = { ...globalSettings, ...globalPatch };
   const g = {
-    ...globalSettings,
+    ...shownGlobal,
     ...wsOverrides,
     openai_api_key: getFieldValue('openai_api_key'),
     anthropic_api_key: getFieldValue('anthropic_api_key'),
@@ -338,17 +406,19 @@ export function useWorkspaceSettings(workspace) {
   };
 
   return {
-    workspace, loading, saving, saved, error, save, defaultModels,
-    g, setG, masked, globalSettings,
+    workspace, loading, saving, saved, savedScope, error, save, dirty, overridesDirty, hasOtherChanges, defaultModels,
+    g, setG, masked, globalSettings: shownGlobal, stageGlobal, stagePolicy, setDraft,
     badgeProps: { wsOverrides, envDefinedFields },
     chatExecutionSaving, setChatExecution,
-    policy, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval, saveHooks, importHooksFile,
+    egressSaving, setEgressProxy,
+    policy: { ...policy, ...policyPatch }, hooksText, setHooksText, hooksError, setHooksError, policySaving, policySaved, toggleApproval,
+    toggleAutoApprove, saveHooks, importHooksFile,
     savePolicy,
-    streamingSaving, toggleStreaming,
+    streamingSaving: saving, toggleStreaming,
     temperatureSaving, saveGlobalTemperature,
-    capabilityGuardSaving, setCapabilityGuardMode, toggleOverrideRequiresContainer,
-    codeRunnerSaving, setCodeRunnerProvider, toggleCodeRunnerFallback,
-    webSearchSaving, saveWebSearch,
+    capabilityGuardSaving: saving, setCapabilityGuardMode, toggleOverrideRequiresContainer,
+    codeRunnerSaving: saving, setCodeRunnerProvider, toggleCodeRunnerFallback,
+    webAccessSaving, saveWebAccess,
     fetchErrors, providerStatus, providerTesting, testProvider,
   };
 }

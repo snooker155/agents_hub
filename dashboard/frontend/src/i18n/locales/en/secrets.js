@@ -7,7 +7,7 @@ export default {
   saveFailed: 'Could not save the secret.',
   deleteFailed: 'Could not delete the secret.',
   empty: 'No secrets in this workspace yet.',
-  noKey: 'Storing a secret needs an encryption key. Set AGENTS_HUB_SECRET_KEY in .env (generate one with ah secrets keygen) and restart the backend.',
+  noKey: 'Storing a secret needs an encryption key. Run ah secrets keygen --write (it saves the key to .env) and restart the backend.',
   columns: {
     name: 'Name',
     scope: 'Scope',
@@ -28,6 +28,7 @@ export default {
   },
   add: 'Save secret',
   delete: 'Delete secret',
+  confirmDelete: 'Delete the secret {{name}} ({{scope}})? Runs that use it lose it, and the value cannot be read back or restored.',
   hostsColumn: 'Hosts',
   anyHost: 'any host',
   hostsField: 'Allowed hosts, e.g. api.github.com',

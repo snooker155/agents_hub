@@ -28,11 +28,13 @@ exported as one.
 """
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 
 from agents import registry
+from common.marketplace_names import skill_name_taken
 from memory import skill_versions
 from memory.procedural import Procedure, ProcedureStore, find_procedure
 from memory.skill_review import is_publishable, review_skill
@@ -212,7 +214,8 @@ async def list_skills(
 @router.get("/agents")
 async def list_skill_targets(workspace: str = Query(...)):
     """Agents a skill can be installed onto in this workspace, with how many
-    skills each already has — the target picker for the Skills page."""
+    skills each already has and what it does, for the Skills page's agent
+    picker."""
     procedures = ProcedureStore(workspace).load()
     counts: Dict[str, int] = {}
     for p in procedures:
@@ -238,6 +241,7 @@ async def list_skill_targets(workspace: str = Query(...)):
         targets.append({
             "id": spec.id,
             "name": spec.name,
+            "description": spec.description or "",
             "domain": spec.domain,
             "skills_enabled": spec.skills_enabled,
             "skills_count": counts.get(spec.id, 0),
@@ -425,6 +429,10 @@ async def update_skill(skill_id: str, data: SkillUpdate):
                 raise HTTPException(
                     status_code=400, detail=f"A skill named {new_name!r} already exists here."
                 )
+        if procedure.shared:
+            taken = skill_name_taken(new_name, exclude=[skill_id])
+            if taken:
+                raise HTTPException(status_code=409, detail=taken)
         procedure.name = new_name
     if data.description is not None:
         procedure.description = data.description
@@ -541,9 +549,14 @@ async def export_skill(skill_id: str):
     if not procedure:
         raise HTTPException(status_code=404, detail="Skill not found")
     folder = "".join(c if c.isalnum() or c in "-_" else "-" for c in procedure.name.lower()).strip("-")
+    folder = folder or "skill"
+    # Headers are latin-1, so a non-ASCII name goes in filename* only.
+    ascii_folder = "".join(c if c.isascii() else "_" for c in folder)
+    disposition = (f"attachment; filename=\"{ascii_folder}-SKILL.md\"; "
+                   f"filename*=UTF-8''{quote(folder)}-SKILL.md")
     return PlainTextResponse(
         render_skill_md(procedure), media_type="text/markdown; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{folder or "skill"}-SKILL.md"'})
+        headers={"Content-Disposition": disposition})
 
 
 @router.post("/{skill_id}/sharing")
@@ -558,6 +571,9 @@ async def update_skill_sharing(skill_id: str, data: SkillSharingUpdate):
         raise HTTPException(status_code=404, detail="Skill not found")
     if data.shared:
         refuse_unpublishable(procedure)
+        taken = skill_name_taken(procedure.name, exclude=[skill_id])
+        if taken:
+            raise HTTPException(status_code=409, detail=taken)
     procedure.shared = bool(data.shared)
     procedure.touch()
     ProcedureStore(procedure.workspace).update(procedure)

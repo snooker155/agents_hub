@@ -41,8 +41,8 @@ export default function SkillsTab() {
               <BookOpen className="w-5 h-5 text-purple-500" /> {t('agentDetails.skillsConfiguration')}
             </h3>
             <p className="text-sm text-gray-500 mb-5">
-              When enabled, relevant skills are automatically matched to the task description and injected before the agent starts.
-              Agents can also discover and save new skills using the <code className="bg-gray-100 px-1 py-0.5 rounded text-xs">{t('agentDetails.saveSkill')}</code> tool.
+              {t('agentDetails.skillsConfigHint')}{' '}
+              {t('agentDetails.skillsConfigToolBefore')} <code className="bg-gray-100 px-1 py-0.5 rounded text-xs">{t('agentDetails.saveSkill')}</code>{t('agentDetails.skillsConfigToolAfter')}
             </p>
             <div className="flex items-center justify-between">
               <div>
@@ -74,7 +74,7 @@ export default function SkillsTab() {
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                 <div>
                   <h3 className="text-sm font-bold text-gray-900 flex items-center gap-2">
-                    <BookOpen className="w-4 h-4 text-purple-500" /> Skills
+                    <BookOpen className="w-4 h-4 text-purple-500" /> {t('agentDetails.skillsList')}
                     <span className="text-xs font-normal text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{selectedWorkspace}</span>
                   </h3>
                   {skillsMessage && (
@@ -168,7 +168,7 @@ export default function SkillsTab() {
                           <div className="flex items-center gap-2 flex-wrap mb-1">
                             <span className="font-semibold text-sm text-gray-900">{skill.name}</span>
                             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${skill.source === 'user' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                              {skill.source}
+                              {t(`agentDetails.skillSource.${skill.source}`, { defaultValue: skill.source })}
                             </span>
                             {skill.use_count > 0 && (
                               <span className="text-[10px] text-gray-400">{t('agentDetails.usedCount', { count: skill.use_count })}</span>

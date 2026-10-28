@@ -4,6 +4,9 @@ import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { API_ORIGIN } from '../../api';
 import { useAgentPage } from './context';
+import AgentVersionBadge from './AgentVersionBadge';
+import { toolLabel } from '../../lib/toolText';
+import { poolName } from '../memoryManager/helpers';
 
 /**
  * The agent's own A2A card, for pointing an outside client at it.
@@ -79,8 +82,8 @@ export default function OverviewTab() {
     activeRun, agent, availableTools, defaultChatMessage, defaultChatSaving, descDraft,
     descSaving, fetchData, handleSaveDescription, handleSaveWsCapacity,
     handleToggleDefaultChat, handleToggleShared, isDefaultChat, memoryData, memoryPools,
-    memoryType, personalMemory, selectedTools, selectedWorkspace, setActiveTab, setDescDraft,
-    setWsCapacityEdits, shared, sharingMessage, sharingSaving, t, wsCapacities,
+    memoryType, personalMemory, selectedTools, sharedMemories, selectedWorkspace, setActiveTab, setDescDraft,
+    setWsCapacityEdits, shared, sharingMessage, sharingSaving, t, toolsMeta, wsCapacities,
     wsCapacityEdits, wsCapacitySaving,
   } = useAgentPage();
   const personalOn = personalActive(personalMemory);
@@ -166,6 +169,16 @@ export default function OverviewTab() {
                   })()}
                 </div>
               )}
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">{t('agentVersionPin.title')}</span>
+                <span className="flex items-center gap-2">
+                  {agent.pinned_version != null || agent.current_version != null
+                    ? <AgentVersionBadge agent={agent} />
+                    : <span className="text-xs text-gray-500">{t('agentVersionPin.badgeUnsaved')}</span>}
+                  <button type="button" onClick={() => setActiveTab('versions')}
+                    className="text-xs text-indigo-600 hover:text-indigo-800">{t('agentDetails.versions.openVersions')}</button>
+                </span>
+              </div>
             </div>
             <A2ACardLink agentId={agent.id} t={t} />
           </div>
@@ -240,12 +253,12 @@ export default function OverviewTab() {
               {selectedTools.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
                   {selectedTools.slice(0, 8).map(tool => (
-                    <span key={tool} className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full">{tool}</span>
+                    <span key={tool} className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full max-w-full break-words" title={tool}>{toolLabel(t, tool, toolsMeta?.[tool]?.label)}</span>
                   ))}
                   {selectedTools.length > 8 && (
                     <button type="button" onClick={() => setActiveTab('tools')}
                       className="text-xs text-gray-400 hover:text-indigo-600 px-1 py-0.5">
-                      +{selectedTools.length - 8} more
+                      {t('agentDetails.moreTools', { count: selectedTools.length - 8 })}
                     </button>
                   )}
                 </div>
@@ -266,26 +279,33 @@ export default function OverviewTab() {
                 </button>
               </div>
               <div className="space-y-3">
-                {!(memoryType === 'none' && personalOn) && (
-                  <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
-                    memoryType === 'none'   ? 'bg-gray-100 text-gray-500' :
-                    memoryType === 'local'  ? 'bg-blue-100 text-blue-700' :
-                                              'bg-amber-100 text-amber-700'
-                  }`}>
-                    <span className={`w-2 h-2 rounded-full ${
-                      memoryType === 'none'  ? 'bg-gray-400' :
-                      memoryType === 'local' ? 'bg-blue-500' : 'bg-amber-500 animate-pulse'
-                    }`} />
-                    {memoryType === 'none' ? t('agentDetails.noMemory') : memoryType === 'local' ? t('agentDetails.localAgentSpecific') : t('agentDetails.sharedPool')}
-                  </span>
-                )}
-                {memoryType === 'shared' && memoryPools.length > 0 && (
-                  <div className="text-xs text-gray-500 truncate">
-                    {memoryPools.length === 1
-                      ? t('agentDetails.poolSingle', { pool: memoryPools[0] })
-                      : t('agentDetails.poolMulti', { count: memoryPools.length, pool: memoryPools[0] })}
-                  </div>
-                )}
+                {/* The kind of memory, and for a shared pool its name, in one badge.
+                    The pool's name once the list is in; its id until then, or
+                    when the pool is gone. */}
+                {!(memoryType === 'none' && personalOn) && (() => {
+                  const shared = memoryType === 'shared' && memoryPools.length > 0;
+                  const primary = shared && sharedMemories.find(m => m.id === memoryPools[0]);
+                  const pool = (primary && poolName(primary, t)) || memoryPools[0];
+                  const label = memoryType === 'none' ? t('agentDetails.noMemory')
+                    : memoryType === 'local' ? t('agentDetails.localAgentSpecific')
+                    : !shared ? t('agentDetails.sharedPool')
+                    : memoryPools.length === 1 ? t('agentDetails.poolSingle', { pool })
+                    : t('agentDetails.poolMulti', { pool, more: memoryPools.length - 1 });
+                  return (
+                    <span title={shared ? memoryPools.join(', ') : undefined}
+                      className={`inline-flex max-w-full items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
+                        memoryType === 'none'   ? 'bg-gray-100 text-gray-500' :
+                        memoryType === 'local'  ? 'bg-blue-100 text-blue-700' :
+                                                  'bg-amber-100 text-amber-700'
+                      }`}>
+                      <span className={`w-2 h-2 shrink-0 rounded-full ${
+                        memoryType === 'none'  ? 'bg-gray-400' :
+                        memoryType === 'local' ? 'bg-blue-500' : 'bg-amber-500 animate-pulse'
+                      }`} />
+                      <span className="truncate">{label}</span>
+                    </span>
+                  );
+                })()}
                 {memoryType === 'local' && memoryData && (
                   <div className="text-xs text-gray-500 italic line-clamp-2">{memoryData.slice(0, 120)}{memoryData.length > 120 ? '…' : ''}</div>
                 )}

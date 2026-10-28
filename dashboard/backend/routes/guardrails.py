@@ -130,14 +130,20 @@ async def create_guardrail(request: Request, payload: GuardrailCreate):
 @router.get("/api/guardrails/events")
 async def list_guardrail_events(request: Request, workspace: Optional[str] = None,
                                 run_id: Optional[str] = None, guardrail_id: Optional[str] = None,
-                                limit: int = 200):
-    """Recent findings (blocks and warns; passes are not recorded), newest
-    first, narrowed to the workspaces the caller can see."""
+                                action: Optional[str] = None, stage: Optional[str] = None,
+                                limit: int = 20, offset: int = 0, sort: str = "at",
+                                order: str = "desc"):
+    """Findings (blocks and warns; passes are not recorded) as ``{items,
+    total}``: one window of the matching rows, newest first unless ``sort`` /
+    ``order`` say otherwise (store.EVENT_SORTS), narrowed to the workspaces
+    the caller can see."""
+    principal = _principal(request)
     if workspace:
-        access.require_visible(_principal(request), workspace)
-    rows = store.list_events(workspace=workspace, run_id=run_id, guardrail_id=guardrail_id,
-                             limit=limit)
-    return access.filter_by_workspace(_principal(request), rows)
+        access.require_visible(principal, workspace)
+    page = store.page_events(workspace=workspace, run_id=run_id, guardrail_id=guardrail_id,
+                             action=action, stage=stage, limit=limit, offset=offset,
+                             sort=sort, order=order)
+    return {**page, "items": access.filter_by_workspace(principal, page.get("items") or [])}
 
 
 @router.get("/api/guardrails/{guardrail_id}")

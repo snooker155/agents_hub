@@ -54,6 +54,11 @@ class DispatchResult:
     # A node that parks the run until a human answers (see InterruptEntity):
     # {"question", "choices", "output_key"}. None for every other node.
     interrupt: Optional[Dict[str, Any]] = None
+    #: NodeResult.detail, passed along to the node_done event.
+    detail: Optional[Dict[str, Any]] = None
+    #: An agent node's steps and files ({"stats", "files"}), for its line in
+    #: the flow log (flow/task_driver.py).
+    extras: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         if self.written is None:
@@ -205,6 +210,17 @@ class AgentEntity(FlowEntity):
         )
 
 
+@register_category("map")
+class MapEntity(FlowEntity):
+    """A fan-out node: one agent run per item of a list (flow/branching.py).
+
+    The engine runs it (``flow.engine``), because every item is an agent node
+    run of its own through the surface's driver; it is not inline work."""
+
+    def run(self, node: Dict[str, Any], state: FlowState, ctx: RunContext) -> DispatchResult:
+        return DispatchResult(ok=False, error=f"map node '{self.id}' must be run by the flow engine")
+
+
 class EntityNode(FlowEntity):
     """Default handler for inline (callable) entities: processor / condition /
     transform / any future category whose entrypoint is a ``run(state, config,
@@ -251,11 +267,13 @@ class EntityNode(FlowEntity):
 
         goto: Optional[List[str]] = None
         text = ""
+        detail: Optional[Dict[str, Any]] = None
         payload: Any = result
         if isinstance(result, NodeResult):
             payload = result.outputs
             goto = result.goto
             text = result.text
+            detail = result.detail
 
         try:
             if not outputs and isinstance(payload, dict):
@@ -276,7 +294,7 @@ class EntityNode(FlowEntity):
                 text = "; ".join(f"{k}={_preview(v)}" for k, v in written.items())
             else:
                 text = _preview(payload)
-        return DispatchResult(ok=True, text=text, written=written, goto=goto)
+        return DispatchResult(ok=True, text=text, written=written, goto=goto, detail=detail)
 
 
 

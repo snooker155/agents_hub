@@ -1,4 +1,6 @@
 export default {
+  change: 'Ändern',
+  configured: 'Bereits eingerichtet',
   continue: 'Weiter',
   back: 'Zurück',
   notNow: 'Nicht jetzt',
@@ -63,6 +65,7 @@ export default {
     later: 'Arbeitsbereiche und Agenten können auf der Seite Modelle ein eigenes Modell bekommen.',
   },
   voice: {
+    configuredNames: 'Sprache {{speech}}, Erkennung {{heard}}',
     title: 'Dem Assistenten eine Stimme geben',
     subtitle: 'Damit Sie mit ihm sprechen und seine Antworten hören können.',
     cloud: 'Stimme von {{provider}}',
@@ -128,6 +131,8 @@ export default {
     later: 'Das lässt sich jederzeit pro Arbeitsbereich und pro Agent ändern.',
   },
   demo: {
+    on: 'Demo-Workspace hinzugefügt',
+    off: 'Ohne Demo, Sie starten leer',
     title: 'Einen Demo-Arbeitsbereich hinzufügen?',
     subtitle: 'Ein Arbeitsbereich mit fertigen Agenten, Chats und Ansichten zeigt, was der Hub kann, bevor Sie etwas bauen.',
     add: 'Demo hinzufügen',

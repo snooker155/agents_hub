@@ -54,6 +54,10 @@ class AgentResult(BaseModel):
     # structured-output validation. Empty on a plain run; stored on the run
     # record as ``loop`` by managers.runs.lifecycle.close_run_from_result.
     loop: Dict[str, Any] = Field(default_factory=dict)
+    # Set when ``status == "guardrail_tripped"``: the trip guardrails.runtime
+    # returned (name, stage, kind, detail, reason). chat/refusals.py turns it
+    # into the card the chat shows in the person's language.
+    guardrail: Optional[Dict[str, Any]] = None
 
 
 class AgentBase(ABC):

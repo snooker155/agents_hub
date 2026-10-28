@@ -142,6 +142,60 @@ def list_chats(workspace: Optional[str] = None, limit: int = 200,
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
+#: How much text a search hit shows around the words it found.
+_SNIPPET_CHARS = 140
+
+
+def _snippet(text: str, at: int, length: int) -> str:
+    start = max(0, at - _SNIPPET_CHARS // 3)
+    end = min(len(text), at + length + _SNIPPET_CHARS)
+    piece = " ".join(text[start:end].split())
+    return ("…" if start else "") + piece + ("…" if end < len(text) else "")
+
+
+def search_chats(q: str, workspace: Optional[str] = None, limit: int = 50) -> Dict[str, Any]:
+    """The conversations whose title or messages hold ``q`` (any case), newest
+    activity first, without transcripts; a hit in a message carries the text
+    around it as ``match``.
+
+    Read in Python, not by SQL: the transcript is a JSON document, and
+    matching its text case-blind in any script (Cyrillic too) the same way on
+    SQLite and Postgres is simplest where the document is decoded."""
+    needle = " ".join(str(q or "").split()).casefold()
+    if not needle:
+        return {"items": [], "total": 0, "q": q}
+    where, params = "", []
+    if workspace:
+        where = "WHERE workspace = ?"
+        params.append(workspace)
+    rows = db.get_conn().execute(
+        f"SELECT doc FROM chats {where} ORDER BY COALESCE(updated_at, created_at) DESC, chat_id DESC",
+        params,
+    ).fetchall()
+    cap = max(1, min(int(limit), 200))
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        chat = _row_to_chat(row)
+        if chat is None:
+            continue
+        title = str(chat.get("title") or "")
+        if needle in " ".join(title.split()).casefold():
+            items.append(_summary(chat))
+        else:
+            for m in reversed(_messages(chat)):
+                if m.get("role") not in ("user", "agent"):
+                    continue
+                text = str(m.get("content") or "")
+                at = text.casefold().find(needle)
+                if at < 0:
+                    continue
+                items.append({**_summary(chat), "match": _snippet(text, at, len(needle))})
+                break
+        if len(items) >= cap:
+            break
+    return {"items": items, "total": len(items), "q": q}
+
+
 def get_chat(chat_id: str) -> Optional[Dict[str, Any]]:
     """One conversation with its full transcript."""
     row = db.get_conn().execute(
@@ -208,11 +262,19 @@ def _mirror(chat_id: str, origin: Any) -> None:
         log.debug("chat store: mirror hook failed", exc_info=True)
 
 
+def _notice_text(notice: Dict[str, Any]) -> str:
+    """A notice in words, for a reader that does not word it itself."""
+    if notice.get("type") == "background_run_finished":
+        return f"{notice.get('kind') or 'run'} '{notice.get('name') or ''}' finished: {notice.get('status') or ''}"
+    return str(notice.get("text") or "")
+
+
 def append_turn(chat_id: str, *, run_id: str, user_message: str,
                 agent_message: str, agent_id: Optional[str] = None,
                 usage: Optional[Dict[str, Any]] = None,
                 duration_ms: Optional[int] = None,
-                extra: Optional[Dict[str, Any]] = None) -> bool:
+                extra: Optional[Dict[str, Any]] = None,
+                notice: Optional[Dict[str, Any]] = None) -> bool:
     """Add one completed exchange to a stored chat. Returns whether it was added.
 
     This is the safety net under the browser, not the normal path: the page that
@@ -235,6 +297,9 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
     ``extra`` is merged into the agent bubble: a reply that took the
     conversation over by handoff carries its ``handoff`` there, which is what
     the chat draws the "handed over" divider from (chat/handoff.py).
+
+    ``notice`` is what started a turn the hub began by itself (a background
+    run that ended, chat/background_runs.py): a system line above the reply.
     """
     if not chat_id or not run_id:
         return False
@@ -272,7 +337,15 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
             _mirror(chat_id, chat.get("origin"))
             return True
         turn = []
-        if (user_message or "").strip():
+        if notice:
+            turn.append({"id": f"srv-n-{run_id}", "role": "system", "notice": notice,
+                         "content": _notice_text(notice)})
+        # A conversation opened with its message already in it (a scheduled
+        # run, plans/service.py) keeps that one bubble.
+        last = messages[-1] if messages else {}
+        asked_already = (last.get("role") == "user"
+                         and str(last.get("content") or "").strip() == (user_message or "").strip())
+        if (user_message or "").strip() and not asked_already:
             turn.append({"id": f"srv-u-{run_id}", "role": "user",
                          "content": user_message})
         turn.append({
@@ -290,6 +363,66 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
             (len(_messages(doc)), doc["updated_at"], db.dumps(doc), str(chat_id)),
         )
     _mirror(chat_id, chat.get("origin"))
+    return True
+
+
+def mark_stopped(chat_id: str, *, run_id: str, user_message: str,
+                 agent_id: Optional[str] = None) -> bool:
+    """Record in a stored chat that the person stopped a turn. Returns whether
+    anything changed.
+
+    The page that ran the turn marks its own bubble when its Stop button ends
+    it. A turn stopped from anywhere else (another tab, the page opened again
+    after it was left, the run's own page) has no page to write that, so the
+    mark is made here, the same safety net as :func:`append_turn`:
+
+    * the bubble already holding the run gets ``stopped`` and keeps the text
+      it was saved with;
+    * a turn the transcript holds without its run (stopped before the server
+      named it) is found by its message, the last one the person sent, and
+      its reply is marked, or added empty when the page saved none;
+    * a turn the transcript does not hold at all is added: the message and an
+      empty reply marked stopped.
+    """
+    if not chat_id or not run_id:
+        return False
+    with db.transaction() as conn:
+        row = conn.execute("SELECT doc FROM chats WHERE chat_id = ?",
+                           (str(chat_id),)).fetchone()
+        chat = _row_to_chat(row) if row else None
+        if chat is None:
+            return False
+        messages = list(_messages(chat))
+        reply = {"id": f"srv-a-{run_id}", "role": "agent", "agent_id": agent_id,
+                 "content": "", "error": False, "run_id": str(run_id), "stopped": True}
+        same_run = [i for i, m in enumerate(messages)
+                    if str(m.get("run_id") or "") == str(run_id)]
+        if same_run:
+            i = same_run[-1]
+            if messages[i].get("stopped"):
+                return False
+            messages[i] = {**messages[i], "stopped": True, "thinking_live": "", "running_tool": None}
+        else:
+            users = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+            asked = (user_message or "").strip()
+            if asked and users and str(messages[users[-1]].get("content") or "").strip() == asked:
+                after = [i for i in range(users[-1] + 1, len(messages))
+                         if messages[i].get("role") == "agent" and not messages[i].get("run_id")]
+                if after:
+                    i = after[-1]
+                    messages[i] = {**messages[i], "stopped": True, "run_id": str(run_id),
+                                   "thinking_live": "", "running_tool": None}
+                else:
+                    messages.insert(users[-1] + 1, reply)
+            else:
+                if asked:
+                    messages.append({"id": f"srv-u-{run_id}", "role": "user", "content": user_message})
+                messages.append(reply)
+        doc = _fit({**chat, "messages": messages, "updated_at": _now()})
+        conn.execute(
+            "UPDATE chats SET message_count = ?, updated_at = ?, doc = ? WHERE chat_id = ?",
+            (len(_messages(doc)), doc["updated_at"], db.dumps(doc), str(chat_id)),
+        )
     return True
 
 
@@ -347,6 +480,6 @@ def import_chats(items: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"imported": imported, "skipped": skipped}
 
 
-__all__ = ["list_chats", "get_chat", "save_chat", "delete_chat", "append_turn",
+__all__ = ["list_chats", "get_chat", "save_chat", "delete_chat", "append_turn", "mark_stopped",
            "import_chats",
            "chat_ids", "MAX_MESSAGES", "MAX_DOC_BYTES"]

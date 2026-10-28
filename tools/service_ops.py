@@ -35,6 +35,7 @@ from typing import Any, Dict, Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from common.auto_mode import approved as _approved
 from tools._json import json_err, json_ok
 
 
@@ -524,7 +525,7 @@ def stop_run(run_id: str, user_approved: bool = False) -> str:
     Whatever the run was producing is lost. Prefer this over stopping a node
     when a single run is the problem: it is the smallest thing you can stop.
     """
-    if not user_approved:
+    if not _approved("stop_run", user_approved, {"run_id": run_id}):
         return _approval_required("stop_run", run_id,
                                   f"terminate run {run_id}, losing whatever it was producing")
     try:
@@ -555,7 +556,7 @@ def stop_instance(instance_id: str, user_approved: bool = False) -> str:
     say how many there are before asking — instance_timeline shows what it is
     doing.
     """
-    if not user_approved:
+    if not _approved("stop_instance", user_approved, {"instance_id": instance_id}):
         return _approval_required(
             "stop_instance", instance_id,
             f"stop instance {instance_id} and fail every run currently in progress on it")
@@ -577,7 +578,7 @@ def restart_instance(instance_id: str, user_approved: bool = False) -> str:
     record still says active or standby. It fails the instance's in-progress
     runs on the way through.
     """
-    if not user_approved:
+    if not _approved("restart_instance", user_approved, {"instance_id": instance_id}):
         return _approval_required(
             "restart_instance", instance_id,
             f"restart instance {instance_id}, failing every run currently in progress on it")
@@ -603,7 +604,7 @@ def stop_container(name: str, user_approved: bool = False) -> str:
     The agent run inside it dies with it. Read its logs first: a container that
     is already looping on a fatal error tells you more before it is stopped.
     """
-    if not user_approved:
+    if not _approved("stop_container", user_approved, {"name": name}):
         return _approval_required(
             "stop_container", name,
             f"stop container {name} and kill the agent run inside it")
@@ -629,7 +630,7 @@ def prune_run_logs(older_than_days: int = 30, user_approved: bool = False) -> st
     shows for run_logs before proposing this: it is only worth doing when that
     number is actually large.
     """
-    if not user_approved:
+    if not _approved("prune_run_logs", user_approved, {"older_than_days": older_than_days}):
         return _approval_required(
             "prune_run_logs", f"older than {older_than_days} days",
             f"permanently delete every run log older than {older_than_days} days, "

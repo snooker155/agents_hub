@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Box, Cpu, Layers, RefreshCw, Repeat, ScrollText, Server, Trash2, Waypoints, X,
+  AlertTriangle, Box, Cpu, Layers, RefreshCw, Repeat, ScrollText, Search, Server, Trash2, Waypoints, X,
 } from 'lucide-react';
 import { forgetMember, getCluster, getMemberLogs } from '../api';
 import { useChannel } from '../components/stream';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import ServiceMap from '../components/cluster/ServiceMap';
+import { ListLoadMore, ListPagingControls } from '../components/ListPaging';
+import { useListPaging } from '../components/listPagingState';
 
 /**
  * Cluster — the map of every process and everything they carry.
@@ -40,6 +43,32 @@ function uptimeLabel(seconds) {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+}
+
+// Members accumulate: every replica and worker that ever started keeps its row
+// until it is forgotten. The table filters, sorts and shows them in batches on
+// this side, since the whole list arrives in the one cluster document.
+const STATUS_ORDER = { live: 0, stale: 1, stopped: 2 };
+const MEMBER_SORTS = ['status', 'member', 'role', 'host', 'beat', 'uptime'];
+
+const MEMBER_SORT_VALUE = {
+  status: (m) => STATUS_ORDER[m.status] ?? 3,
+  member: (m) => m.member_id || '',
+  role: (m) => m.role || '',
+  host: (m) => m.host || '',
+  beat: (m) => m.heartbeat_age_seconds ?? Infinity,
+  uptime: (m) => m.uptime_seconds ?? -1,
+};
+
+function compareMembers(sort, order) {
+  const value = MEMBER_SORT_VALUE[sort] || MEMBER_SORT_VALUE.status;
+  const sign = order === 'asc' ? 1 : -1;
+  return (a, b) => {
+    const x = value(a);
+    const y = value(b);
+    const c = typeof x === 'string' ? x.localeCompare(y) : (x > y) - (x < y);
+    return c * sign || String(a.member_id).localeCompare(String(b.member_id));
+  };
 }
 
 const STATUS_STYLE = {
@@ -178,7 +207,28 @@ export default function Cluster() {
     }
   }, [load]);
 
-  const members = map?.members || [];
+  const members = useMemo(() => map?.members || [], [map]);
+  const [memberQuery, setMemberQuery] = useState('');
+  const [memberRole, setMemberRole] = useState('');
+  const [memberStatus, setMemberStatus] = useState('');
+  const memberPaging = useListPaging('cluster-members', {
+    sorts: MEMBER_SORTS, defaultSort: 'status', defaultOrder: 'asc',
+    resetOn: [memberQuery, memberRole, memberStatus],
+  });
+  const memberRoles = useMemo(
+    () => [...new Set(members.map((m) => m.role).filter(Boolean))].sort(),
+    [members],
+  );
+  const filteredMembers = useMemo(() => {
+    const q = memberQuery.trim().toLowerCase();
+    return members
+      .filter((m) => !memberRole || m.role === memberRole)
+      .filter((m) => !memberStatus || m.status === memberStatus)
+      .filter((m) => !q || [m.member_id, m.host, m.version, ...(m.leases || [])]
+        .some((v) => String(v || '').toLowerCase().includes(q)))
+      .sort(compareMembers(memberPaging.sort, memberPaging.order));
+  }, [members, memberQuery, memberRole, memberStatus, memberPaging.sort, memberPaging.order]);
+  const shownMembers = filteredMembers.slice(0, memberPaging.limit);
   const queue = map?.queue || {};
   const outbox = map?.outbox || {};
   const hosts = map?.hosts || [];
@@ -217,10 +267,46 @@ export default function Cluster() {
         <PageLoader label={t('cluster.loading')} />
       ) : (
         <div className="grid grid-cols-1 gap-4">
+          <ServiceMap map={map} />
           <Card icon={Server} title={t('cluster.members')} hint={t('cluster.membersHint')}>
+            {members.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    value={memberQuery}
+                    onChange={(e) => setMemberQuery(e.target.value)}
+                    placeholder={t('cluster.memberSearch')}
+                    aria-label={t('cluster.memberSearch')}
+                    className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg w-64 max-w-full bg-white focus:outline-none"
+                  />
+                </div>
+                <select value={memberRole} onChange={(e) => setMemberRole(e.target.value)}
+                        aria-label={t('cluster.role')}
+                        className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none">
+                  <option value="">{t('cluster.allRoles')}</option>
+                  {memberRoles.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <select value={memberStatus} onChange={(e) => setMemberStatus(e.target.value)}
+                        aria-label={t('cluster.status')}
+                        className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none">
+                  <option value="">{t('cluster.allStatuses')}</option>
+                  {Object.keys(STATUS_ORDER).map((s) => <option key={s} value={s}>{t(`cluster.${s}`)}</option>)}
+                </select>
+                <ListPagingControls
+                  paging={memberPaging}
+                  options={MEMBER_SORTS}
+                  labels={{
+                    status: t('cluster.status'), member: t('cluster.member'), role: t('cluster.role'),
+                    host: t('cluster.host'), beat: t('cluster.beat'), uptime: t('cluster.uptime'),
+                  }}
+                  compact
+                />
+              </div>
+            )}
             <Table
-              empty={t('cluster.noMembers')}
-              rows={members.map((m) => ({ ...m, key: m.member_id }))}
+              empty={members.length ? t('cluster.noMembersMatch') : t('cluster.noMembers')}
+              rows={shownMembers.map((m) => ({ ...m, key: m.member_id }))}
               columns={[
                 { key: 'member_id', label: t('cluster.member'), render: (m) => (
                   <span className="font-mono text-xs">
@@ -234,6 +320,12 @@ export default function Cluster() {
                 { key: 'uptime', label: t('cluster.uptime'), render: (m) => uptimeLabel(m.uptime_seconds) },
                 { key: 'leases', label: t('cluster.leases'), render: (m) => (m.leases || []).join(', ') || '—' },
                 { key: 'load', label: t('cluster.load'), render: (m) => <span className="text-xs text-gray-600">{loadText(m) || '—'}</span> },
+                { key: 'capacity', label: t('cluster.capacity'), render: (m) => (
+                  <span className="text-xs text-gray-600">
+                    {m.capabilities?.concurrency !== undefined && m.capabilities?.concurrency !== null
+                      ? `${m.load?.tracked ?? 0}/${m.capabilities.concurrency}` : '—'}
+                  </span>
+                ) },
                 { key: 'version', label: t('cluster.version'), render: (m) => <span className="font-mono text-xs">{m.version || '—'}</span> },
                 { key: 'actions', label: '', render: (m) => (
                   <span className="inline-flex gap-1">
@@ -250,6 +342,11 @@ export default function Cluster() {
                 ) },
               ]}
             />
+            {filteredMembers.length > memberPaging.pageSize && (
+              <div className="mt-3">
+                <ListLoadMore paging={memberPaging} shown={shownMembers.length} total={filteredMembers.length} />
+              </div>
+            )}
           </Card>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -392,7 +489,7 @@ export default function Cluster() {
                   { key: 'workspace', label: t('cluster.workspace') },
                   { key: 'state', label: t('cluster.status'), render: (n) => n.state || n.status },
                   { key: 'carrier_mode', label: t('cluster.carrierMode'), render: (n) => n.carrier_mode || '—' },
-                  { key: 'host', label: t('cluster.host'), render: (n) => <span className="font-mono text-xs">{n.host || t('cluster.unknownHost')}</span> },
+                  { key: 'host', label: t('cluster.host'), render: (n) => <span className="font-mono text-xs">{n.carrier_host || n.host || t('cluster.unknownHost')}</span> },
                 ]}
               />
             </Card>

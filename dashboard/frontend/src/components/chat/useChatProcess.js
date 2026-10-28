@@ -1,6 +1,23 @@
 import { getMessageInsights } from '../../api';
 import { useCallback, useEffect } from 'react';
 
+// Runs (and their tools) in the order of the turns that made them. All the
+// conversation's runs are fetched at once and each answer is merged as it
+// lands, so without this the run whose request answered last would be drawn
+// last, however old it is. A run the transcript does not hold yet (a live
+// turn) keeps its place at the end; the sort is stable.
+export function inTranscriptOrder(list, runIds) {
+  const pos = new Map(Array.from(runIds || []).map((id, i) => [id, i]));
+  const at = (item) => {
+    const i = pos.get(String(item?.run_id || ''));
+    return i === undefined ? Infinity : i;
+  };
+  return [...list].sort((a, b) => {
+    const d = at(a) - at(b);
+    return Number.isNaN(d) ? 0 : d;
+  });
+}
+
 /**
  * What the Process panel shows: the runs behind the open conversation, fetched
  * only while the panel is open and only for runs not already held.
@@ -64,7 +81,7 @@ export function useChatProcess(deps) {
           const id = String(mr?.run_id || mr?.message_id || '');
           return id && !newRunIds.has(id);
         });
-        const mergedRuns = [...preserved, ...filteredRuns];
+        const mergedRuns = inTranscriptOrder([...preserved, ...filteredRuns], allowed);
         const newToolRunIds = new Set(filteredTools.map((t) => String(t?.run_id || '')));
         const preservedTools = (prev.tools || []).filter((t) => {
           const id = String(t?.run_id || '');
@@ -80,7 +97,7 @@ export function useChatProcess(deps) {
           ...prev,
           session_id: raw.session_id || prev.session_id,
           message_runs: mergedRuns,
-          tools: [...preservedTools, ...filteredTools],
+          tools: inTranscriptOrder([...preservedTools, ...filteredTools], allowed),
           token_usage: { inbound_tokens: inTok, outbound_tokens: outTok, total_tokens: totalTok },
           // Runs load one at a time, so the session's peak is the running max.
           context_peak: Math.max(prev.context_peak || 0, raw.context_window?.input_tokens_used || 0),

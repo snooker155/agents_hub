@@ -38,6 +38,7 @@ from tools.human_input import ask_user
 from tools.langchain_tools import (
     list_agents_tool,
     assign_agent_tool,
+    assign_flow_tool,
     start_agent_tool,
     run_agent_tool,
     list_flows_tool,
@@ -53,6 +54,7 @@ from tools.langchain_tools import (
 )
 from tools.delegation import delegate_task_tool, list_models_tool
 from tools.flow_management import (
+    run_new_flow_tool,
     create_flow_tool,
     get_flow_tool,
     modify_flow_tool,
@@ -73,11 +75,19 @@ from tools.eval_ops import EVAL_TOOLS
 from tools.schedule_management import (
     schedule_notification,
     schedule_task,
+    schedule_agent_run,
+    schedule_flow,
+    schedule_loop,
+    schedule_memory_consolidation,
     notify_user,
     list_scheduled,
+    get_scheduled,
     cancel_scheduled,
     update_scheduled,
     wake_agent,
+    pause_scheduled,
+    resume_scheduled,
+    run_scheduled_now,
 )
 
 
@@ -143,6 +153,36 @@ HELP_PROMPT = (
     "them to catch."
 )
 
+# Injected whenever the agent holds run_shell, for the same reason as
+# HELP_PROMPT: the guidance is about the tool, so it goes where the tool is.
+SHELL_PROMPT = (
+    "## Shell\n"
+    "When a command has to run (tests, a build, a linter, git, a script), run it "
+    "yourself with `run_shell`: it runs in the workspace folder, and the user approves "
+    "each call on a card in the chat. Show the output you got, or say plainly that the "
+    "user declined the call. Never fold a command you were not asked for into the one "
+    "you need.\n"
+    "A declined call is a no to that one call, not to the tool. When another command "
+    "is needed, call `run_shell` again, even when an earlier call was declined or "
+    "failed: the user answers a new card every time. Never answer from an earlier "
+    "refusal, and never say you have no shell access."
+)
+
+# Injected whenever the agent holds the workspace management tools
+# (tools/workspace_management.py; only the main agent in the default workspace).
+WORKSPACES_PROMPT = (
+    "## Managing workspaces\n"
+    "From the default workspace you can add and manage workspaces for the user: "
+    "`list_workspaces` and `get_workspace` to see what exists, `create_workspace` for a "
+    "new one (a name, what it is for, its instructions and the agents it needs), "
+    "`update_workspace` for its description, instructions or default model, and "
+    "`add_workspace_agent` or `remove_workspace_agent` for its agents. Before "
+    "`delete_workspace`, say which workspace will go and what is in it, and ask the "
+    "user; the call then waits for their yes on a card. Isolation, secrets, hooks, the "
+    "tool policy, members, environment variables and connectors are changed by a person "
+    "on the workspace's settings page: tell the user where."
+)
+
 # Injected whenever the agent can delegate (run_agent_tool present). instructions.md
 # cannot carry this because run_agent_tool is granted per-registry, not per-prompt —
 # without this an agent sees the tool but is never told it may look for and hand off
@@ -154,7 +194,11 @@ DELEGATION_PROMPT = (
     "tools you happen to have and do NOT silently drop it or merely record it as a "
     "note or task. Instead: call `list_agents_tool` to see who is available, choose "
     "the agent whose role best fits the request, delegate to it with `run_agent_tool`, "
-    "and use its result to answer. Handle the request yourself only when no other "
+    "and use its result to answer. Its `model` argument runs that agent on another "
+    "model for this call only: `list_models_tool` shows the ids you may pass "
+    "(`provider/model`); pick a cheaper one for a simple or mechanical piece, a "
+    "stronger one for a hard one, or leave it empty to keep the agent's own. "
+    "Handle the request yourself only when no other "
     "agent is a better fit; ask the user to clarify when you genuinely cannot tell "
     "which agent should help.\n"
     "If none of the available agents is a genuine fit for the request, do NOT pick "
@@ -298,6 +342,7 @@ class AgentFactory:
             # then the global one from Settings, apply in that order.
             "temperature": spec.temperature,
             "max_tokens": spec.max_tokens,
+            "effort": spec.effort,
             "api_key": spec.api_key,
             "verbose": spec.verbose,
             "streaming": spec.streaming,
@@ -419,6 +464,29 @@ class AgentFactory:
 
         return resolved_provider, resolved_model, resolved_base_url, ws_api_key
 
+    @staticmethod
+    def _resolve_effort(config: Dict[str, Any], workspace: Optional[str]) -> str:
+        """The effort the agent is built with: its own, else (when it inherits
+        the model too) the one chosen in the header's model picker, else
+        ``"inherit"``, which build_chat_model turns into the model's own
+        default on the Models page, then the provider's."""
+        from agents.registry import normalize_effort
+        own = normalize_effort(config.get("effort"))
+        if own:
+            return own
+        if (config.get("provider") or "inherit") == "inherit":
+            from common.workspace_context import workspace_name_from_path
+            ws_name = workspace_name_from_path(workspace)
+            if ws_name:
+                try:
+                    from workspace import get_workspace_metadata, get_workspace_model_effort
+                    picked = get_workspace_model_effort(get_workspace_metadata(ws_name))
+                    if picked:
+                        return picked
+                except Exception:  # noqa: BLE001 - optional build step: the model's default applies
+                    log.debug("_resolve_effort: ignored error", exc_info=True)
+        return "inherit"
+
     def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None, agent_id: Optional[str] = None, episodic_write: bool = True, pool_override: Optional[str] = None, personal_pool: Optional[str] = None) -> List[Any]:
         """Create tool instances based on tool ids.
 
@@ -450,10 +518,12 @@ class AgentFactory:
         coordination_tools = [
             list_agents_tool,
             assign_agent_tool,
+            assign_flow_tool,
             start_agent_tool,
             run_agent_tool,
             list_flows_tool,
             run_flow_tool,
+            run_new_flow_tool,
             reject_assignment_tool,
             stop_agent_tool,
             get_agent_status_tool,
@@ -513,11 +583,19 @@ class AgentFactory:
         schedule_tools = [
             schedule_notification,
             schedule_task,
+            schedule_agent_run,
+            schedule_flow,
+            schedule_loop,
+            schedule_memory_consolidation,
             notify_user,
             list_scheduled,
+            get_scheduled,
             cancel_scheduled,
             update_scheduled,
             wake_agent,
+            pause_scheduled,
+            resume_scheduled,
+            run_scheduled_now,
         ]
 
         alias_groups: Dict[str, List[str]] = {
@@ -721,6 +799,15 @@ class AgentFactory:
                 override_params = {**override_params, "definition_version": int(pin["version"])}
                 _record_experiment_assignment(pin)
 
+        # The agent's own version pin (AgentSpec.pinned_version) when the run
+        # brings none: added to the overrides so the cache key carries it like
+        # any other pin and _build_agent loads that stored version.
+        if override_params.get("definition_version") is None:
+            from agents.versions import agent_pin
+            _pin = agent_pin(agent_id)
+            if _pin is not None:
+                override_params = {**override_params, "definition_version": _pin}
+
         # Per-run overrides (agents/run_overrides.py): the old separate
         # ``tool_policy``/``output_schema`` keywords fold into the one object,
         # normalised so the cache key below is the same for two requests that
@@ -786,6 +873,7 @@ class AgentFactory:
             # then the global one from Settings, apply in that order.
             "temperature": spec.temperature,
             "max_tokens": spec.max_tokens,
+            "effort": spec.effort,
             "api_key": spec.api_key,
             "verbose": spec.verbose,
             "streaming": spec.streaming,
@@ -853,6 +941,16 @@ class AgentFactory:
         )
         _spec = _ro.apply_to_spec(_spec, _run_overrides)
         override_params.update(_ro.model_params(_run_overrides))
+
+        # Built as a step of a flow (flow/task_driver.py, chat/flow_driver.py):
+        # the reply goes to the next node, not to a person, and a person is
+        # asked only by a human_interrupt node. So no clarification gate and
+        # no buttons or views block. Popped like memory_pool; it reached the
+        # cache key already.
+        _flow_step = bool(override_params.pop("flow_step", False))
+        if _flow_step and _spec is not None:
+            import dataclasses as _dc
+            _spec = _dc.replace(_spec, clarify_gate=False, response_format="none")
 
         # Pinning the memory pool for this build. Taken out of the overrides
         # before they are merged into the config, because it is not a definition
@@ -922,9 +1020,40 @@ class AgentFactory:
         resolved_provider, resolved_model, resolved_base_url, _ws_api_key = (
             self._resolve_model_config(config, workspace)
         )
+        _effort = self._resolve_effort(config, workspace)
+        # The workspace's model policy (workspace/model_policy.py): a model not
+        # on its list (an agent's pin, the header's choice, a run's override)
+        # runs on the policy's default instead, with that provider's own
+        # endpoint and key, and the settings the policy fixes beat the agent's.
+        from workspace.model_policy import for_workspace as _model_policy_for
+        _policy = _model_policy_for(workspace)
+        _policy_replaced = False
+        if _policy is not None:
+            if not _policy.allows(resolved_provider, resolved_model):
+                log.info("agent %s: %s/%s is not allowed in workspace %s, running on %s/%s",
+                         agent_id, resolved_provider, resolved_model, workspace, *_policy.default)
+                resolved_provider, resolved_model, resolved_base_url, _ws_api_key = (
+                    self._resolve_model_config(
+                        {**config, "provider": _policy.default[0], "model": _policy.default[1],
+                         "base_url": None, "api_key": None},
+                        workspace,
+                    )
+                )
+                _policy_replaced = True
+            if _policy.effort:
+                _effort = _policy.effort
         _episodic_write = resolve_episodic_write(
             _spec.episodic_write_enabled if _spec else None, resolved_provider
         )
+
+        # The tool ids the record (or this run's override) picked, before any
+        # setting adds its own: what is added from here on, by a memory pool,
+        # skills, the clarification gate, a project, reasoning, handoff
+        # targets or an advisor, is named in ``runtime_tool_names`` on the
+        # agent, and tool search (agents/loop_ext/tool_search.py) always shows
+        # those, since the prompt sections that explain them come last.
+        _picked_tool_ids = {str(t) for t in (definition.get("tools") or [])}
+        _runtime_tool_names: set = set()
 
         # Inject shared memory pool into system prompt and tool list
         # (resolved per workspace — each workspace has its own assignment)
@@ -996,6 +1125,7 @@ class AgentFactory:
 
         # Create tools
         tool_list = config.get("tools", [])
+        _runtime_tool_names.update(str(t) for t in tool_list if str(t) not in _picked_tool_ids)
         tools = self._create_tools(tool_list, workspace=workspace, agent_id=agent_id,
                                    episodic_write=_episodic_write,
                                    pool_override=_pool_override,
@@ -1008,6 +1138,11 @@ class AgentFactory:
         if _spec and _spec.clarify_gate:
             if not any(getattr(t, "name", None) == "ask_user" for t in tools):
                 tools.append(ask_user)
+                _runtime_tool_names.add("ask_user")
+        # A flow step cannot park on a question, even when its tool list
+        # names ask_user.
+        if _flow_step:
+            tools = [t for t in tools if getattr(t, "name", None) != "ask_user"]
 
         # Project-scoped runs (chat with a project selected, or a task tied to a
         # project) get a read tool for the project's structure graph plus a usage
@@ -1018,11 +1153,19 @@ class AgentFactory:
             from tools.project_graph import get_project_graph
             if not any(getattr(t, "name", None) == "get_project_graph" for t in tools):
                 tools.append(get_project_graph)
+                _runtime_tool_names.add("get_project_graph")
                 config["system_prompt"] = (
                     config.get("system_prompt", "")
                     + "\n\n---\n\n"
                     + PROJECT_GRAPH_PROMPT
                 )
+
+        # Both delegation tools take a `model`, and list_models_tool is how the
+        # agent learns which ids it may pass, so a delegator always gets it.
+        _names = {getattr(t, "name", None) for t in tools}
+        if _names & {"run_agent_tool", "delegate_task_tool"} and "list_models_tool" not in _names:
+            tools.append(list_models_tool)
+            _runtime_tool_names.add("list_models_tool")
 
         # Delegation guidance, tiered by what the agent can actually do. Checked
         # against the resolved tool instances so group aliases (agent_coordination/
@@ -1038,6 +1181,10 @@ class AgentFactory:
                 config.get("system_prompt", "")
                 + "\n\n---\n\n"
                 + HELP_PROMPT
+            )
+        if "run_shell" in _tool_names:
+            config["system_prompt"] = (
+                config.get("system_prompt", "") + "\n\n---\n\n" + SHELL_PROMPT
             )
         if "run_agent_tool" in _tool_names:
             # Base: any delegator learns it may look for and hand off to another agent.
@@ -1127,13 +1274,19 @@ class AgentFactory:
         # missing requirements (ask + stop) before executing, instead of acting on
         # assumptions. Toggled per registry record, so it lives here rather than in
         # instructions.md — same as the response-format snippet above.
-        from agents.clarification import build_clarification_prompt
+        from agents.clarification import build_clarification_prompt, build_flow_step_prompt
         _clarify_prompt = build_clarification_prompt(bool(_spec.clarify_gate) if _spec else False)
         if _clarify_prompt:
             config["system_prompt"] = (
                 config.get("system_prompt", "")
                 + "\n\n---\n\n"
                 + _clarify_prompt
+            )
+        if _flow_step:
+            config["system_prompt"] = (
+                config.get("system_prompt", "")
+                + "\n\n---\n\n"
+                + build_flow_step_prompt()
             )
 
         # Tools from the external MCP servers this record asks for, by group
@@ -1195,6 +1348,7 @@ class AgentFactory:
         # gated or guarded themselves (gate_tools skips _REASONING_TOOL_NAMES
         # regardless, but they are not even offered to it here).
         tools = [*tools, *reasoning_tools]
+        _runtime_tool_names.update(getattr(t, "name", "") for t in reasoning_tools)
 
         # Conversation handoff (tools/handoff.py), only for an agent with
         # targets. Appended after the approval guard and the think gate on
@@ -1208,10 +1362,25 @@ class AgentFactory:
             _handoff_tools = create_handoff_tools(_spec, _ws_from_path(workspace))
             if _handoff_tools:
                 tools = [*tools, *_handoff_tools]
+                _runtime_tool_names.update(getattr(t, "name", "") for t in _handoff_tools)
                 config["system_prompt"] = (
                     config.get("system_prompt", "")
                     + "\n\n---\n\n"
                     + HANDOFF_PROMPT
+                )
+
+        # Agents this one knows but was not linked to for security
+        # (agents/main_links.py): named in the prompt, so asked for one it
+        # says why it cannot pass the chat or a task there instead of
+        # guessing. Read from the live record, also for a pinned build.
+        if _spec is not None:
+            from agents.main_links import refusal_prompt
+            from agents.registry import get_agent as _reg_live
+            from common.workspace_context import workspace_name_from_path as _ws_name
+            _refusal_text = refusal_prompt(_reg_live(_spec.id) or _spec, _ws_name(workspace))
+            if _refusal_text:
+                config["system_prompt"] = (
+                    config.get("system_prompt", "") + "\n\n---\n\n" + _refusal_text
                 )
 
         # Advisor (tools/advisor.py), only for an agent that names an advisor
@@ -1223,6 +1392,7 @@ class AgentFactory:
             if _advisor_tools:
                 from agents.loop_ext.settings import workspace_loop_setting
                 tools = [*tools, *_advisor_tools]
+                _runtime_tool_names.update(getattr(t, "name", "") for t in _advisor_tools)
                 config["system_prompt"] = (
                     config.get("system_prompt", "")
                     + "\n\n---\n\n"
@@ -1264,7 +1434,10 @@ class AgentFactory:
         # `@coder` and the like is told which agent holds each role here.
         if _spec is not None:
             from agents.roles import prompt_section as _roles_prompt
-            _roles_text = _roles_prompt(_spec, _ws_name_of(workspace) if workspace else None)
+            _roles_text = _roles_prompt(
+                _spec, _ws_name_of(workspace) if workspace else None,
+                [getattr(t, "name", getattr(t, "__name__", "")) for t in tools],
+            )
             if _roles_text:
                 config["system_prompt"] = (
                     config.get("system_prompt", "") + "\n\n---\n\n" + _roles_text
@@ -1318,6 +1491,11 @@ class AgentFactory:
         if _out_of_scope:
             tools = [t for t, n in zip(tools, _names) if n not in _out_of_scope]
             log.info("workspace scope: %s runs without %s", agent_id, ", ".join(sorted(_out_of_scope)))
+        # Told about workspace management only where the scope rule left it.
+        if "list_workspaces" in _names and "list_workspaces" not in _out_of_scope:
+            config["system_prompt"] = (
+                config.get("system_prompt", "") + "\n\n---\n\n" + WORKSPACES_PROMPT
+            )
         if _run_ws and not _scope.is_service_wide(agent_id):
             from agents.isolation_guard import pin_workspace
             tools = pin_workspace(tools, _run_ws)
@@ -1348,9 +1526,11 @@ class AgentFactory:
             tools=tools,
             provider=resolved_provider,
             model=resolved_model,
-            temperature=config.get("temperature", 0.0),
-            max_tokens=config.get("max_tokens"),
-            api_key=config.get("api_key") or _ws_api_key,
+            temperature=(_policy.temperature if _policy is not None and _policy.temperature is not None
+                         else config.get("temperature", 0.0)),
+            max_tokens=(_policy.max_tokens if _policy is not None and _policy.max_tokens
+                        else config.get("max_tokens")),
+            api_key=(None if _policy_replaced else config.get("api_key")) or _ws_api_key,
             base_url=resolved_base_url,
             verbose=config.get("verbose", False),
             workspace=workspace,
@@ -1358,19 +1538,22 @@ class AgentFactory:
             max_tool_repeats=int(config.get("max_tool_repeats", 10)),
             max_iterations=int(config.get("max_iterations", 60)),
             think_gate=think_gate,
-            # Native model reasoning is a model parameter (``thinking_level``),
-            # independent of the ``think`` scratchpad tool: when it is a positive
-            # level, capable models reason natively in the API, and that
-            # reasoning is shown in the chat bubble and stripped from the final
-            # answer text. Off is passed on as off, not dropped: a model that
-            # reasons by default is held to its lowest effort then
-            # (providers/reasoning_profile.py).
-            thinking_level=reasoning.get("thinking_level") or "off",
-            native_reasoning=reasoning.get("thinking_level") not in (None, "", "off"),
+            # The reasoning effort is a model setting (the Model tab, the
+            # header's picker, the Models page), independent of the ``think``
+            # scratchpad tool: capable models reason natively in the API at
+            # it, and that reasoning is shown in the chat bubble and stripped
+            # from the final answer text. Each provider gets it clamped to
+            # what its model accepts (providers/reasoning_profile.py).
+            thinking_level=_effort,
+            native_reasoning=_effort not in ("off", "none"),
             # The record this build came from (a stored version when pinned),
             # for the loop extensions and guardrails (agents/agent_loop.py).
             spec=_spec,
         )
+        # Only the ones the agent still holds: a flow step drops ask_user, the
+        # workspace scope and read-only memory drop others.
+        _held = {getattr(t, "name", "") for t in tools}
+        agent.runtime_tool_names = frozenset(n for n in _runtime_tool_names if n and n in _held)
 
         return agent
     

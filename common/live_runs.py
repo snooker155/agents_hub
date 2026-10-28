@@ -96,9 +96,15 @@ def _blank(turn_id: str, **fields) -> Dict[str, Any]:
         "run_id": None,
         "session_id": None,
         "conversation_id": None,
+        # Which browser tab sent the turn, and its own id for it there
+        # (chat/broadcast.py stamps both): the tab that sent and then stopped
+        # a turn tells its snapshot from someone else's (components/chatLiveTurn.js).
+        "origin_client": None,
+        "client_turn_id": None,
         "agent_id": None,
         "source": None,
         "user_message": "",
+        "notice": None,
         "text": "",
         "thinking": [],
         "thinking_live": "",
@@ -148,7 +154,10 @@ def _clip(text: str) -> str:
 # ── the chat feed ────────────────────────────────────────────────────────────
 
 def start_turn(*, conversation_id: Optional[str], user_message: str = "",
-               source: Optional[str] = None) -> str:
+               source: Optional[str] = None,
+               notice: Optional[Dict[str, Any]] = None,
+               origin_client: Optional[str] = None,
+               client_turn_id: Optional[str] = None) -> str:
     """Open a turn and return its id. One conversation has one live turn: a new
     one replaces whatever was left of the last, which is what the conversation
     itself does."""
@@ -157,7 +166,9 @@ def start_turn(*, conversation_id: Optional[str], user_message: str = "",
         if conversation_id and conversation_id in _by_conversation:
             _drop(_by_conversation[conversation_id])
         _turns[turn_id] = _blank(turn_id, conversation_id=conversation_id,
-                                 user_message=user_message or "", source=source)
+                                 user_message=user_message or "", source=source,
+                                 notice=notice, origin_client=origin_client,
+                                 client_turn_id=client_turn_id)
         if conversation_id:
             _by_conversation[conversation_id] = turn_id
         _sweep()
@@ -236,7 +247,8 @@ def record_conversation_event(conversation_id: str, event: Dict[str, Any]) -> Op
     kind = event.get("type")
     if kind == "turn_start":
         start_turn(conversation_id=conversation_id, user_message=str(event.get("message") or ""),
-                   source=event.get("source"))
+                   source=event.get("source"), origin_client=event.get("origin_client"),
+                   client_turn_id=event.get("client_turn_id"))
         return "started"
     if kind in ("chat_saved", "heartbeat"):
         return None
@@ -283,8 +295,15 @@ def _bind_run(turn: Dict[str, Any], run_id: str) -> None:
 def _apply(turn: Dict[str, Any], event: Dict[str, Any]) -> None:
     turn["updated_at"] = _now()
     kind = event.get("type")
-    if event.get("run_id"):
+    # A delegated run's events carry the child's run id (tools/langchain_tools.py,
+    # DelegationStreamCallback): the turn is still the parent's run, which is
+    # the one the stored transcript names.
+    delegated = bool(event.get("delegation")) or kind in ("delegation_start", "delegation_end")
+    if event.get("run_id") and not delegated:
         _bind_run(turn, str(event["run_id"]))
+    for key in ("origin_client", "client_turn_id"):
+        if event.get(key) and not turn.get(key):
+            turn[key] = str(event[key])
     if event.get("session_id") and not turn.get("session_id"):
         turn["session_id"] = str(event["session_id"])
     if event.get("agent_id") and not turn.get("agent_id"):

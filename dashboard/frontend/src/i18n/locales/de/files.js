@@ -92,6 +92,8 @@ export default {
     cancel: 'Abbrechen',
     uploadNew: 'Neue Datei hochladen',
     alreadyAdded: 'Bereits hinzugefügt',
+    pickFolder: 'Alle Dateien des Ordners auswählen',
+    pickFolderNamed: 'Alle Dateien in {{name}} auswählen',
   },
   field: {
     label: 'Dateien',
@@ -103,6 +105,8 @@ export default {
   task: {
     title: 'Dateien',
     hint: 'Werden in das Arbeitsverzeichnis jeder Ausführung kopiert (task_files/) und im Prompt genannt. Unteraufgaben erhalten sie ebenfalls.',
+    add: 'Dateien hinzufügen',
+    about: 'Über die Dateien der Aufgabe',
     saveFailed: 'Die Dateien der Aufgabe konnten nicht gespeichert werden',
   },
   evalCase: {

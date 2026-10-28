@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from agents import registry
 from agents import prompt_assembly
+from common.marketplace_names import agent_name_taken, is_marketplace_agent
 from agents import versions as agent_versions
 from agents.capability_guard import (
     CapabilityViolation,
@@ -226,7 +227,34 @@ async def list_agent_versions(agent_id: str):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return {"agent_id": agent_id, "versions": agent_versions.list_versions(agent_id)}
+    return {"agent_id": agent_id, "versions": agent_versions.list_versions(agent_id),
+            **agent_versions.version_state(agent_id)}
+
+
+class AgentVersionPin(BaseModel):
+    # A stored version number, "current" to store the live state as a
+    # version and pin that, or None to follow the live definition again.
+    version: Optional[Union[int, str]] = None
+
+
+@router.put("/{agent_id}/version-pin")
+async def pin_agent_version(agent_id: str, data: AgentVersionPin):
+    """Pin every run of the agent to one stored version (a run's own pin,
+    from a task, a deployment or a chat request, still wins), or clear it."""
+    if registry.get_agent(agent_id) is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    version = data.version
+    if version == "current":
+        version = agent_versions.ensure_current_version(agent_id, actor="dashboard")
+        if version is None:
+            raise HTTPException(status_code=500, detail="Could not store the current state as a version")
+    elif isinstance(version, str):
+        raise HTTPException(status_code=400, detail="version must be a number, 'current' or null")
+    try:
+        pinned = agent_versions.set_agent_pin(agent_id, version, actor="dashboard")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"agent_id": agent_id, "pinned_version": pinned}
 
 
 @router.get("/{agent_id}/versions/{version}/diff")
@@ -421,6 +449,10 @@ async def update_agent_identity(agent_id: str, data: AgentIdentityUpdate):
     if data.name is not None:
         if not data.name.strip():
             raise HTTPException(status_code=400, detail="name cannot be empty")
+        if is_marketplace_agent(spec):
+            taken = agent_name_taken(data.name, exclude=[spec.id])
+            if taken:
+                raise HTTPException(status_code=409, detail=taken)
         changes["name"] = data.name.strip()
     if data.domain is not None:
         changes["domain"] = data.domain.strip() or "general"

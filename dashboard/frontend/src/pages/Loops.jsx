@@ -1,493 +1,76 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import {
-  Repeat, Plus, Play, Square, Trash2, Loader, Save, AlertTriangle, X,
-  ChevronDown, ChevronRight, Target, Gauge, DollarSign, ExternalLink, FlaskConical,
-} from 'lucide-react';
-import { Link, useSearchParams } from 'react-router-dom';
-import {
-  getLoops, createLoop, getLoop, updateLoop, deleteLoop, estimateLoop,
-  startLoop, getLoopRuns, getLoopRun, getLoopIterations, stopLoopRun, resumeLoopRun,
-  listFlows, getAgents,
-  getLoopChat, clearLoopChat, stopLoopChat, loopChatUrl,
-} from '../api';
-import EntityChat from '../components/EntityChat';
-import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
-import InPanelNote from '../components/pageChat/InPanelNote';
-import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ArrowRight, Loader2, Plus, Repeat, Trash2, X } from 'lucide-react';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { getLoops, createLoop, deleteLoop, listFlows } from '../api';
 import { useWorkspace } from '../components/workspace';
-import { useChannel, useLiveRefetch, useStream } from '../components/stream';
-
+import { useStream } from '../components/stream';
+import { errorDetail, useToast } from '../components/toast';
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { StatusBadge } from '../components/loops/loopUi';
+import { emptyLoop, hasScore, isLive, scoreColor } from '../components/loops/loopFormat';
 import { useI18n } from '../i18n';
+
 /**
- * Loops — a flow that repeats until an agent says the work is good enough.
+ * Loops: a flow that repeats until an agent says the work is good enough.
  *
- * The page is built around the one thing a flow run cannot show you: the
- * trajectory. Every iteration is its own row with its own score, verdict and
- * feedback, so "is this converging or just spending?" is answerable at a glance
- * rather than by reading four transcripts.
+ * This page is the list; each loop has a page of its own (pages/LoopDetail.jsx)
+ * with the flow's graph, its runs pass by pass and the Loop Creator beside
+ * them. Older links (`?loop=<id>&run=<run>`) are sent on to that page.
  */
-
-const STATUS_STYLES = {
-  running: 'bg-blue-100 text-blue-700',
-  stopping: 'bg-amber-100 text-amber-700',
-  completed: 'bg-green-100 text-green-700',
-  stopped: 'bg-amber-100 text-amber-700',
-  failed: 'bg-red-100 text-red-700',
-};
-
-// Reason and evaluator wording lives in the i18n namespace; these lists keep
-// the order the selects render in.
-const STOP_REASONS = [
-  'criterion_met', 'target_score', 'max_iterations', 'no_improvement',
-  'cost_ceiling', 'wall_clock', 'stopped', 'flow_failed', 'error',
-];
-
-const EVALUATOR_KINDS = ['final_agent', 'agent', 'model'];
-
-const stopReasonLabel = (reason, t) =>
-  (STOP_REASONS.includes(reason) ? t(`loops.stopReasons.${reason}`) : reason);
-
-const scoreColor = (score) => {
-  if (score === null || score === undefined) return 'bg-gray-300';
-  if (score >= 80) return 'bg-green-500';
-  if (score >= 55) return 'bg-amber-500';
-  return 'bg-red-500';
-};
-
-const emptyLoop = (workspace) => ({
-  name: '', description: '', workspace: workspace || null, flow_id: '',
-  exit_criterion: '', max_iterations: 5, min_iterations: 1, target_score: 80,
-  patience: 2, cost_ceiling: null, max_wall_seconds: 3600,
-  evaluator_mode: 'final_agent', evaluator_agent_id: null,
-  rubric: '', grader: null,
-});
-
-// A loop's rubric grader as the one-line "provider/model" the form edits.
-const graderText = (g) => {
-  if (!g) return '';
-  if (typeof g === 'string') return g;
-  return g.model ? `${g.provider ? `${g.provider}/` : ''}${g.model}` : '';
-};
-
-// An iteration graded against a rubric keeps the whole grading as JSON in
-// evaluator_raw (loops/evaluator.evaluate_with_rubric); null for any other judge.
-const rubricGrading = (raw) => {
-  if (!raw || raw[0] !== '{') return null;
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && parsed.kind === 'rubric' ? parsed : null;
-  } catch {
-    return null;
-  }
-};
-
-/** The score bar chart. Deliberately the first thing on the run panel. */
-function Trajectory({ iterations }) {
-  const { t } = useI18n();
-  const scored = iterations.filter((i) => i.score !== null && i.score !== undefined);
-  if (!scored.length) {
-    return (
-      <p className="text-xs text-gray-500 italic">
-        {t('loops.noScoresYetTheFirst')}
-      </p>
-    );
-  }
-  const best = Math.max(...scored.map((i) => i.score));
-  return (
-    <div className="flex items-end gap-2 h-28">
-      {iterations.map((it) => {
-        const score = it.score ?? 0;
-        return (
-          <div key={it.iteration} className="flex-1 flex flex-col items-center justify-end gap-1 min-w-[28px]">
-            <span className="text-[11px] font-semibold text-gray-700">
-              {it.score === null || it.score === undefined ? '—' : Math.round(it.score)}
-            </span>
-            <div
-              className={`w-full rounded-t ${scoreColor(it.score)} ${it.score === best ? 'ring-2 ring-indigo-400' : ''}`}
-              style={{ height: `${Math.max(4, score)}%` }}
-              title={it.reason || ''}
-            />
-            <span className="text-[11px] text-gray-500">{it.iteration}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function IterationRow({ iteration, flowId }) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const grading = useMemo(() => rubricGrading(iteration.evaluator_raw), [iteration.evaluator_raw]);
-  const Chevron = open ? ChevronDown : ChevronRight;
-  return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-gray-50"
-      >
-        <Chevron className="w-4 h-4 text-gray-400 shrink-0" />
-        <span className="text-sm font-semibold text-gray-900 shrink-0">
-          Iteration {iteration.iteration}
-        </span>
-        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLES[iteration.status] || 'bg-gray-100 text-gray-600'}`}>
-          {iteration.status}
-        </span>
-        {iteration.score !== null && iteration.score !== undefined && (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-700">
-            <span className={`w-2 h-2 rounded-full ${scoreColor(iteration.score)}`} />
-            {Math.round(iteration.score)}/100
-          </span>
-        )}
-        {iteration.verdict && (
-          <span className={`text-xs font-semibold ${iteration.verdict === 'stop' ? 'text-green-700' : 'text-gray-500'}`}>
-            {iteration.verdict === 'stop' ? t('loops.accepted') : t('loops.anotherPass')}
-          </span>
-        )}
-        <span className="ml-auto text-xs text-gray-400 truncate max-w-[45%]">
-          {iteration.reason}
-        </span>
-      </button>
-      {open && (
-        <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 space-y-3">
-          {iteration.reason && (
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">{t('loops.verdict')}</h4>
-              <p className="text-sm text-gray-800 whitespace-pre-wrap">{iteration.reason}</p>
-            </div>
-          )}
-          {(grading?.criteria || []).length > 0 && (
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">
-                {t('outcomes.criteriaHeading')}
-              </h4>
-              <ul className="space-y-1">
-                {grading.criteria.map((c) => (
-                  <li key={c.name} className="flex items-start gap-2 text-sm">
-                    <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${c.passed ? 'bg-green-500' : 'bg-red-500'}`} />
-                    <span className="min-w-0">
-                      <span className="font-medium text-gray-900">{c.name}</span>
-                      <span className="ml-2 text-xs text-gray-500">{Math.round((Number(c.score) || 0) * 100)}/100</span>
-                      {c.feedback && <span className="block text-gray-700 whitespace-pre-wrap">{c.feedback}</span>}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {iteration.feedback && (
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">
-                {t('loops.fedIntoTheNextIteration')}
-              </h4>
-              <p className="text-sm text-gray-800 whitespace-pre-wrap">{iteration.feedback}</p>
-            </div>
-          )}
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">{t('loops.output')}</h4>
-            <pre className="text-xs text-gray-700 whitespace-pre-wrap max-h-72 overflow-auto bg-white border border-gray-200 rounded p-2">
-              {iteration.output || t('loops.noOutput')}
-            </pre>
-          </div>
-          <div className="flex items-center gap-4 text-xs text-gray-500 flex-wrap">
-            {iteration.evaluator_agent && <span>{t('loops.judgedBy', { agent: iteration.evaluator_agent })}</span>}
-            <span>{(iteration.duration_ms / 1000).toFixed(1)}s</span>
-            <span>${iteration.cost.toFixed(4)}</span>
-            {flowId && (
-              <Link
-                to={`/flows/${encodeURIComponent(flowId)}`}
-                className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800"
-              >
-                <ExternalLink className="w-3 h-3" /> {t('loops.openTheFlowRun')}
-              </Link>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function Loops() {
   const { t } = useI18n();
+  const toast = useToast();
+  const navigate = useNavigate();
   const { selectedWorkspace } = useWorkspace();
+  const [params] = useSearchParams();
   const [loops, setLoops] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [flows, setFlows] = useState([]);
-  const [agents, setAgents] = useState([]);
-  // ?loop=<loop_id>&run=<loop_run_id> opens one run in particular: the owner
-  // chip on a view, a run group, a link someone pasted. Written back when the
-  // user picks a loop or a run here, so the address stays shareable.
-  const [params, setParams] = useSearchParams();
-  const [selected, setSelected] = useState(null);
-  const [draft, setDraft] = useState(null);
-  const [mode, setMode] = useState('watch');        // 'setup' | 'watch'
-  const [runs, setRuns] = useState([]);
-  const [run, setRun] = useState(null);
-  const [iterations, setIterations] = useState([]);
-  const [goal, setGoal] = useState('');
-  const [estimate, setEstimate] = useState(null);
-  const [starting, setStarting] = useState(false);
-  const [resuming, setResuming] = useState(null);
-  const [saving, setSaving] = useState(false);
   const [showNew, setShowNew] = useState(false);
-  const [message, setMessage] = useState('');
-  const [caseDialogOpen, setCaseDialogOpen] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const [f, a] = await Promise.all([listFlows(selectedWorkspace), getAgents(selectedWorkspace)]);
-        setFlows(f.data.flows || f.data || []);
-        setAgents(a.data.agents || a.data || []);
-      } catch { /* catalogs are optional */ }
-    })();
-  }, [selectedWorkspace]);
-
-  // What the form was last synced to, so "has the user edited this?" is a
-  // comparison against that version rather than against whatever the chat just
-  // wrote.
-  const selectedRef = useRef(null);
-  useEffect(() => { selectedRef.current = selected; }, [selected]);
-
-  // The open loop goes with the catalogue: after a workspace switch (or a
-  // deletion elsewhere) a loop that is no longer listed is closed, form, run
-  // and address included, rather than left open over the new list.
-  const closeMissing = (listed) => {
-    const current = selectedRef.current;
-    if (!current || listed.some((l) => l.loop_id === current.loop_id)) return;
-    setSelected(null); setDraft(null); setRun(null); setIterations([]); setRuns([]);
-    setGoal(''); setEstimate(null); setMessage(''); setMode('watch');
-    setParams({}, { replace: true });
-  };
-
-  // Promise chains, not async functions: the React Compiler lint treats an
-  // async function called from an effect as a synchronous setState.
   const loadLoops = useCallback(() => getLoops(selectedWorkspace)
-    .then(({ data }) => {
-      setLoops(data.loops || []);
-      closeMissing(data.loops || []);
-    })
-    .catch(() => {
-      setLoops([]);
-      closeMissing([]);
-    }),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  [selectedWorkspace]);
+    .then(({ data }) => setLoops(data.loops || []))
+    .catch(() => setLoops([]))
+    .finally(() => setLoaded(true)), [selectedWorkspace]);
 
   useEffect(() => { loadLoops(); }, [loadLoops]);
 
-  const loadRun = async (loopRunId, loopId) => {
-    try {
-      const { data } = await getLoopRun(loopRunId);
-      setRun(data);
-      setIterations(data.iterations || []);
-      const next = { loop: loopId || data.loop_id || selectedRef.current?.loop_id, run: loopRunId };
-      setParams(Object.fromEntries(Object.entries(next).filter(([, v]) => v)), { replace: true });
-    } catch {
-      setMessage(t('loops.loadRunFailed'));
-    }
-  };
-
-  // Fetches a loop and its history and shows them; sets nothing before the
-  // answer arrives (a promise chain, see loadLoops).
-  const openLoop = (id, preferredRunId) => Promise.all([getLoop(id), getLoopRuns(id)])
-    .then(([{ data: loop }, { data: hist }]) => {
-      setSelected(loop);
-      setDraft(loop);
-      setGoal(loop.description || '');
-      setRuns(hist.runs || []);
-      setMode(loop.flow_id ? 'watch' : 'setup');
-      const history = hist.runs || [];
-      const wanted = preferredRunId && history.some((r) => r.loop_run_id === preferredRunId)
-        ? preferredRunId : history[0]?.loop_run_id;
-      if (wanted) loadRun(wanted, id);
-      else setParams({ loop: id }, { replace: true });
-    })
-    .catch(() => {
-      setMessage(t('loops.loadLoopFailed'));
-    });
-
-  const selectLoop = (id, preferredRunId) => {
-    setMessage(''); setEstimate(null); setRun(null); setIterations([]);
-    return openLoop(id, preferredRunId);
-  };
-
-  // Deleting a loop takes its runs with it, so it asks first. loadLoops
-  // closes the loop if it was the open one.
-  const removeLoop = async (loop) => {
-    if (!window.confirm(t('loops.confirmDelete', { name: loop.name }))) return;
-    try {
-      await deleteLoop(loop.loop_id);
-    } catch {
-      setMessage(t('loops.deleteFailed'));
-    }
-    loadLoops();
-  };
-
-  // Open the loop (and run) the address names, once the catalogue is here.
-  const openedFromUrl = useRef(false);
   useEffect(() => {
-    if (openedFromUrl.current) return;
-    const loopId = params.get('loop');
-    if (!loopId || !loops.length) return;
-    if (!loops.some((l) => l.loop_id === loopId)) return;
-    openedFromUrl.current = true;
-    openLoop(loopId, params.get('run'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loops]);
+    listFlows(selectedWorkspace)
+      .then((f) => setFlows(f.data.flows || f.data || []))
+      .catch(() => { /* the new-loop dialog just offers no flows */ });
+  }, [selectedWorkspace]);
 
-  // Iterations arrive on the loop channel; polling is the fallback so a dropped
-  // stream degrades to a slower page rather than a frozen one.
-  useChannel(run?.loop_run_id ? `loop:${run.loop_run_id}` : null, (ev) => {
-    const d = ev?.data;
-    if (!d) return;
-    if (d.type === 'iteration' || d.type === 'iteration_start') {
-      setIterations((prev) => {
-        const next = prev.filter((i) => i.iteration !== d.iteration);
-        return [...next, d].sort((a, b) => a.iteration - b.iteration);
-      });
-    } else if (d.type === 'loop_done') {
-      setRun((prev) => ({ ...prev, ...d }));
-    }
-  });
-
-  // Iteration catch-up, replacing what used to be a 4-second poll.
-  //
-  // Iterations arrive on the `loop:<run_id>` channel subscribed above, and
-  // `loop_runs.changed` (loops/store.py `_notify`) fires when a run starts,
-  // records an iteration or ends. `fallbackMs` is the floor under a dropped
-  // channel, not a poll.
-  const catchUpIterations = useCallback(async () => {
-    const runId = run?.loop_run_id;
-    if (!runId) return;
-    try {
-      const { data } = await getLoopIterations(runId, 0);
-      setIterations(data.iterations || []);
-      setRun((prev) => ({ ...prev, ...data }));
-    } catch { /* transient */ }
-  }, [run?.loop_run_id]);
-
-  useLiveRefetch(catchUpIterations, {
-    type: 'loop_runs.changed',
-    enabled: Boolean(run?.loop_run_id)
-      && (run?.status === 'running' || run?.status === 'stopping'),
-    fallbackMs: 30000,
-  });
-
-  // A reconnect that could not resume, or events dropped because this tab fell
-  // behind, leaves the trajectory holding whatever it had.
   const { onRefetch } = useStream();
-  useEffect(() => onRefetch(() => { catchUpIterations(); loadLoops(); }),
-    [onRefetch, catchUpIterations, loadLoops]);
+  useEffect(() => onRefetch(loadLoops), [onRefetch, loadLoops]);
+
+  const legacyLoop = params.get('loop');
+  if (legacyLoop) {
+    const legacyRun = params.get('run');
+    const to = `/loops/${encodeURIComponent(legacyLoop)}${legacyRun ? `/runs/${encodeURIComponent(legacyRun)}` : ''}`;
+    return <Navigate to={to} replace />;
+  }
 
   const handleCreate = async (name, flowId) => {
     try {
       const { data } = await createLoop({ ...emptyLoop(selectedWorkspace), name, flow_id: flowId });
       setShowNew(false);
-      await loadLoops();
-      selectLoop(data.loop_id);
+      navigate(`/loops/${encodeURIComponent(data.loop_id)}`);
     } catch (e) {
-      setMessage(e.response?.data?.detail || t('loops.createFailed'));
+      toast.error(t('loops.createFailed'), errorDetail(e));
     }
   };
 
-  const handleSave = async () => {
-    if (!draft) return;
-    setSaving(true); setMessage('');
+  // Deleting a loop takes its runs with it, so it asks first.
+  const removeLoop = async (loop) => {
+    if (!window.confirm(t('loops.confirmDelete', { name: loop.name }))) return;
     try {
-      const { data } = await updateLoop(draft.loop_id, draft);
-      setSelected(data); setDraft(data);
-      await loadLoops();
-      setMessage(t('common.saved'));
+      await deleteLoop(loop.loop_id);
     } catch (e) {
-      setMessage(e.response?.data?.detail || t('loops.saveFailed'));
-    } finally {
-      setSaving(false);
+      toast.error(t('loops.deleteFailed'), errorDetail(e));
     }
+    loadLoops();
   };
-
-  const handleStart = async () => {
-    if (!selected) return;
-    setStarting(true); setMessage('');
-    try {
-      const { data } = await startLoop(selected.loop_id, { goal, workspace: selectedWorkspace });
-      if (data.loop_run_id) {
-        setIterations([]);
-        setRun(data);
-        setMode('watch');
-        const { data: hist } = await getLoopRuns(selected.loop_id);
-        setRuns(hist.runs || []);
-      }
-    } catch (e) {
-      setMessage(e.response?.data?.detail || t('loops.startFailed'));
-    } finally {
-      setStarting(false);
-    }
-  };
-
-  const handleStop = async () => {
-    if (!run?.loop_run_id) return;
-    try {
-      await stopLoopRun(run.loop_run_id);
-      setRun((prev) => ({ ...prev, status: 'stopping' }));
-    } catch { /* already finished */ }
-  };
-
-  // A loop is a process of its own; when it dies the watchdog relaunches it,
-  // and a person can too. The stored position is what makes picking it up
-  // cheaper than starting over; a
-  // run that never finished an iteration has nothing to resume from. A
-  // completed run has nothing left to do, so only a failed or a deliberately
-  // stopped run is offered.
-  const isResumable = (r) => (r.status === 'failed' || r.status === 'stopped') && !!(r.position?.iterations_done);
-
-  const handleResume = async (loopRunId) => {
-    setResuming(loopRunId);
-    setMessage('');
-    try {
-      const { data } = await resumeLoopRun(loopRunId);
-      setRun(data);
-      const { data: hist } = await getLoopRuns(selected.loop_id);
-      setRuns(hist.runs || []);
-    } catch (e) {
-      setMessage(e.response?.data?.detail || t('loops.resumeFailed'));
-    } finally {
-      setResuming(null);
-    }
-  };
-
-  const handleEstimate = async () => {
-    try {
-      const { data } = await estimateLoop(selected.loop_id);
-      setEstimate(data);
-    } catch (e) {
-      setMessage(e.response?.data?.detail || t('loops.estimateFailed'));
-    }
-  };
-
-  const live = run?.status === 'running' || run?.status === 'stopping';
-  const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
-
-  // The chat edits the same loop the form does. Take the stored version it
-  // reports back — but never over unsaved edits in the form: silently replacing
-  // what someone just typed is worse than leaving a stale field they can save.
-  const applyLoopFromChat = useCallback((loop) => {
-    if (!loop?.loop_id) return;
-    setSelected((prev) => (prev?.loop_id === loop.loop_id ? loop : prev));
-    setDraft((prev) => {
-      if (!prev || prev.loop_id !== loop.loop_id) return prev;
-      const hasEdits = JSON.stringify(prev) !== JSON.stringify(selectedRef.current);
-      return hasEdits ? prev : loop;
-    });
-    setLoops((prev) => prev.map((l) => (l.loop_id === loop.loop_id ? { ...l, ...loop } : l)));
-  }, []);
-
-  // The selected loop's build chat, drawn either in the Chat tab or in the
-  // floating panel — one descriptor, so it is the same conversation either way.
-  const loopChat = useLoopChatDescriptor(selected?.loop_id, applyLoopFromChat);
-  usePageChat(loopChat);
-  const { inlineSuppressed: panelHoldsChat } = usePageChatPanel();
 
   return (
     <PageContainer>
@@ -505,514 +88,100 @@ export default function Loops() {
         }
       />
 
-      {message && (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {message}
+      {loaded && loops.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-sm text-gray-500">
+          {t('loops.noLoopsYet')}
+        </div>
+      ) : (
+        // The card of a flow on the Flows page (pages/AgentFlows.jsx): the two
+        // tiles and the row of actions. Fewer to a row than there, so a card
+        // is wide enough for its description on a narrower screen too.
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 min-[1800px]:grid-cols-5" data-testid="loop-list">
+          {loops.map((l) => {
+            const last = l.last_run;
+            const score = last && (hasScore(last.final_score) ? last.final_score : last.best_score);
+            const meta = [
+              l.flow_name,
+              t('loops.listUpTo', { count: l.max_iterations }),
+              hasScore(l.target_score) ? t('loops.listTarget', { score: l.target_score }) : null,
+            ].filter(Boolean).join(' · ');
+            return (
+              <div key={l.loop_id} className="group relative rounded-lg border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+                {/* The whole card opens the page: the name's link covers it (its
+                    ::after), the actions sit above it. */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <Link
+                        to={`/loops/${encodeURIComponent(l.loop_id)}`}
+                        className="block truncate text-sm font-semibold text-gray-900 group-hover:text-cyan-600 after:absolute after:inset-0 after:rounded-lg"
+                      >
+                        {l.name}
+                      </Link>
+                      {isLive(last) && (
+                        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-cyan-500" title={t('loops.statuses.running')} />
+                      )}
+                    </div>
+                  </div>
+                  {last && (
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <StatusBadge status={last.status} />
+                    </div>
+                  )}
+                </div>
+                {/* The description under the name and the status both, the
+                    card's whole width. */}
+                <div className="mb-3 mt-1">
+                  <div className="line-clamp-3 text-[11px] text-gray-500" title={meta}>
+                    {l.description || meta}
+                  </div>
+                  {!l.flow_exists && <div className="mt-0.5 text-[11px] text-red-600">{t('loops.flowIsMissing')}</div>}
+                </div>
+
+                <div className="mb-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1.5 text-center">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-blue-500">{t('loops.lastScore')}</div>
+                    <div className="inline-flex items-center gap-1 text-xs font-semibold text-blue-900">
+                      {hasScore(score) && <span className={`h-2 w-2 rounded-full ${scoreColor(score)}`} />}
+                      {hasScore(score) ? `${Math.round(score)}/100` : t('loops.none')}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-amber-100 bg-amber-50 px-2 py-1.5 text-center">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-amber-500">{t('loops.lastRun')}</div>
+                    <div className="truncate text-xs font-semibold text-amber-900">
+                      {last?.started_at ? new Date(last.started_at).toLocaleString() : t('loops.none')}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative z-10 flex justify-end gap-1">
+                  <Link
+                    to={`/loops/${encodeURIComponent(l.loop_id)}`}
+                    className="rounded-lg border border-transparent p-1.5 text-gray-400 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600"
+                    title={t('loops.openLoop')}
+                  >
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                  <button
+                    onClick={() => removeLoop(l)}
+                    title={t('loops.deleteLoop')} aria-label={t('loops.deleteLoop')}
+                    className="rounded-lg border border-transparent p-1.5 text-gray-400 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
-        {/* Loop list */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm h-fit overflow-hidden">
-          <h2 className="px-4 py-3 border-b border-gray-100 text-sm font-bold text-gray-700 uppercase tracking-wide">
-            {t('loops.loops')}
-            {loops.length > 0 && <span className="ml-1.5 font-normal text-gray-400">{loops.length}</span>}
-          </h2>
-          {loops.length === 0 ? (
-            <p className="px-4 py-4 text-sm text-gray-500 italic">{t('loops.noLoopsYet')}</p>
-          ) : (
-            <ul className="divide-y divide-gray-100">
-              {loops.map((l) => {
-                const active = selected?.loop_id === l.loop_id;
-                const hasTarget = l.target_score !== null && l.target_score !== undefined;
-                return (
-                  <li
-                    key={l.loop_id}
-                    className={`flex items-center gap-2 pl-3 pr-2 border-l-2 ${
-                      active ? 'border-indigo-500 bg-indigo-50/60' : 'border-transparent hover:bg-gray-50'
-                    }`}
-                  >
-                    <button onClick={() => selectLoop(l.loop_id)} className="min-w-0 flex-1 py-2 text-left">
-                      <div className={`text-sm truncate ${active ? 'font-semibold text-indigo-900' : 'font-medium text-gray-900'}`}>
-                        {l.name}
-                      </div>
-                      <div className="text-xs text-gray-500 truncate">
-                        {[
-                          l.flow_name,
-                          t('loops.listUpTo', { count: l.max_iterations }),
-                          hasTarget ? t('loops.listTarget', { score: l.target_score }) : null,
-                        ].filter(Boolean).join(' · ')}
-                      </div>
-                      {!l.flow_exists && (
-                        <div className="text-xs text-red-600">{t('loops.flowIsMissing')}</div>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => removeLoop(l)}
-                      title={t('loops.deleteLoop')}
-                      aria-label={t('loops.deleteLoop')}
-                      className="p-1 text-gray-400 hover:text-red-600 shrink-0"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-
-        <div className="space-y-6">
-          {!selected || !draft ? (
-            <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-sm text-gray-500">
-              {t('loops.selectALoopToSet')}
-            </div>
-          ) : (
-            <>
-              {/* Header + transport */}
-              <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div className="min-w-0">
-                    <h2 className="text-lg font-bold text-gray-900 truncate">{selected.name}</h2>
-                    <p className="text-xs text-gray-500">
-                      {selected.flow_name} ·{' '}
-                      {t('loops.judgedBy', {
-                        agent: selected.resolved_evaluator?.mode === 'rubric'
-                          ? t('outcomes.loopJudgedByRubric')
-                          : (selected.resolved_evaluator?.agent_id || t('loops.aModelCall')),
-                      })} ·{' '}
-                      {t('loops.upToIterations', { count: selected.max_iterations })}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {/* Three ways to work on one loop: fill the form in, talk
-                        it into shape, or watch it run. The chat is a peer of
-                        the form rather than a panel beside it — a build
-                        conversation wants the whole column. */}
-                    <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden">
-                      {['setup', 'chat', 'watch'].map((m) => (
-                        <button
-                          key={m} onClick={() => setMode(m)}
-                          className={`px-3 py-1.5 text-xs font-semibold ${
-                            mode === m ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600'
-                          }`}
-                        >
-                          {t(`loops.mode.${m}`)}
-                        </button>
-                      ))}
-                    </div>
-                    <button
-                      onClick={handleEstimate}
-                      className="inline-flex items-center px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
-                    >
-                      <DollarSign className="w-3.5 h-3.5 mr-1" /> {t('loops.estimate')}
-                    </button>
-                    {run?.loop_run_id && !live && (
-                      <button
-                        onClick={() => setCaseDialogOpen(true)}
-                        title={t('messageDetails.toEvalCaseHint')}
-                        className="inline-flex items-center px-3 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
-                      >
-                        <FlaskConical className="w-3.5 h-3.5 mr-1" /> {t('messageDetails.toEvalCase')}
-                      </button>
-                    )}
-                    {live ? (
-                      <button
-                        onClick={handleStop}
-                        className="inline-flex items-center px-3 py-2 text-xs font-semibold text-white bg-amber-600 rounded-lg hover:bg-amber-700"
-                      >
-                        <Square className="w-3.5 h-3.5 mr-1" /> {t('loops.stop')}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleStart}
-                        disabled={starting || !selected.flow_exists}
-                        className="inline-flex items-center px-3 py-2 text-xs font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                      >
-                        {starting ? <Loader className="w-3.5 h-3.5 mr-1 animate-spin" />
-                                  : <Play className="w-3.5 h-3.5 mr-1" />}
-                        Run
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-3">
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">
-                    {t('loops.whatThisRunShouldProduce')}
-                  </label>
-                  <textarea
-                    value={goal} onChange={(e) => setGoal(e.target.value)} rows={2}
-                    placeholder={t('loops.theRequestTheFlowWorks')}
-                    className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                  />
-                </div>
-
-                {estimate && (
-                  <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-xs text-indigo-800">
-                    <span className="font-bold">
-                      {t('loops.upToLlmCalls', { count: estimate.llm_calls_upper_bound })}
-                    </span>
-                    {' — '}{t('loops.estimateBreakdown', {
-                      nodes: estimate.agent_nodes,
-                      iterations: estimate.max_iterations,
-                    })}{' '}
-                    <span className="text-indigo-600">
-                      {t(`loops.${estimate.note_key}`, { defaultValue: estimate.note })}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {mode === 'chat' ? (
-                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                  {/* The tab is where this chat lives; while the floating panel
-                      is holding the same conversation, it says so rather than
-                      running a second copy of it. */}
-                  {panelHoldsChat
-                    ? <InPanelNote />
-                    : <EntityChat {...loopChat} heightClass="max-h-[32rem] min-h-[18rem]" />}
-                </div>
-              ) : mode === 'setup' ? (
-                <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm space-y-5">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.name')}</label>
-                      <input
-                        value={draft.name} onChange={(e) => set({ name: e.target.value })}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.flowToRepeat')}</label>
-                      <select
-                        value={draft.flow_id} onChange={(e) => set({ flow_id: e.target.value })}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                      >
-                        <option value="">{t('loops.selectAFlow')}</option>
-                        {flows.map((f) => (
-                          <option key={f.id} value={f.id}>{f.name || f.id}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.description')}</label>
-                    <textarea
-                      value={draft.description} onChange={(e) => set({ description: e.target.value })}
-                      rows={2}
-                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">
-                      <Target className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
-                      {t('loops.exitCriterion')}
-                    </label>
-                    <textarea
-                      value={draft.exit_criterion} onChange={(e) => set({ exit_criterion: e.target.value })}
-                      rows={4}
-                      placeholder={t('loops.eGEveryClaimIn')}
-                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Handed to the evaluator verbatim. Written as a standard to meet,
-                      not as a topic — a vague criterion produces a loop that never
-                      converges or one that stops immediately.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label htmlFor="loop-rubric" className="block text-xs font-semibold text-gray-600 mb-1">
-                      {t('outcomes.loopRubric')}
-                    </label>
-                    <textarea
-                      id="loop-rubric"
-                      value={draft.rubric || ''} onChange={(e) => set({ rubric: e.target.value })}
-                      rows={4}
-                      placeholder={t('outcomes.rubricPlaceholder')}
-                      className="w-full text-sm font-mono border border-gray-300 rounded-lg px-3 py-2"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">{t('outcomes.loopRubricHint')}</p>
-                    {(draft.rubric || '').trim() && (
-                      <div className="mt-2 max-w-md">
-                        <label htmlFor="loop-grader" className="block text-xs font-semibold text-gray-600 mb-1">
-                          {t('outcomes.loopGrader')}
-                        </label>
-                        <input
-                          id="loop-grader"
-                          value={graderText(draft.grader)}
-                          onChange={(e) => set({ grader: e.target.value.trim() || null })}
-                          placeholder={t('outcomes.loopGraderPlaceholder')}
-                          className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.whoJudges')}</label>
-                      <select
-                        value={draft.evaluator_mode}
-                        onChange={(e) => set({ evaluator_mode: e.target.value })}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                      >
-                        {EVALUATOR_KINDS.map((k) => [k, t(`loops.evaluators.${k}`)]).map(([k, v]) => (
-                          <option key={k} value={k}>{v}</option>
-                        ))}
-                      </select>
-                      <p className="text-xs text-gray-500 mt-1">
-                        The judge needs no reviewing instructions of its own — the
-                        evaluation prompt supplies that role for one call.
-                      </p>
-                    </div>
-                    {draft.evaluator_mode === 'agent' && (
-                      <div>
-                        <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.reviewer')}</label>
-                        <select
-                          value={draft.evaluator_agent_id || ''}
-                          onChange={(e) => set({ evaluator_agent_id: e.target.value || null })}
-                          className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                        >
-                          <option value="">{t('loops.selectAnAgent')}</option>
-                          {agents.map((a) => (
-                            <option key={a.id} value={a.id}>{a.name || a.id}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.maxIterations')}</label>
-                      <input
-                        type="number" min={1} max={50} value={draft.max_iterations}
-                        onChange={(e) => set({ max_iterations: Number(e.target.value) })}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.minIterations')}</label>
-                      <input
-                        type="number" min={1} max={50} value={draft.min_iterations}
-                        onChange={(e) => set({ min_iterations: Number(e.target.value) })}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                      />
-                      <p className="text-[11px] text-gray-500 mt-1">
-                        Overrules an early "stop" — models praise their own first draft.
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">
-                        <Gauge className="w-3.5 h-3.5 inline mr-1 -mt-0.5" /> {t('loops.targetScore')}
-                      </label>
-                      <input
-                        type="number" min={0} max={100}
-                        value={draft.target_score ?? ''}
-                        onChange={(e) => set({ target_score: e.target.value === '' ? null : Number(e.target.value) })}
-                        placeholder={t('loops.none')}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.patience')}</label>
-                      <input
-                        type="number" min={0} max={20} value={draft.patience}
-                        onChange={(e) => set({ patience: Number(e.target.value) })}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                      />
-                      <p className="text-[11px] text-gray-500 mt-1">
-                        {t('loops.stopAfterThisManyPasses')}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.costCeiling')}</label>
-                      <input
-                        type="number" step="0.01" min={0} value={draft.cost_ceiling ?? ''}
-                        onChange={(e) => set({ cost_ceiling: e.target.value === '' ? null : Number(e.target.value) })}
-                        placeholder={t('loops.none')}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.wallClockCap')}</label>
-                      <input
-                        type="number" min={60} value={draft.max_wall_seconds}
-                        onChange={(e) => set({ max_wall_seconds: Number(e.target.value) })}
-                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end">
-                    <button
-                      onClick={handleSave} disabled={saving}
-                      className="inline-flex items-center px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                    >
-                      {saving ? <Loader className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
-                      {t('common.save')}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {/* Run picker */}
-                  {runs.length > 0 && (
-                    <div className="bg-white rounded-xl border border-gray-200 p-3 shadow-sm flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-bold uppercase tracking-wide text-gray-500 mr-1">{t('loops.runs')}</span>
-                      {runs.slice(0, 8).map((r) => (
-                        <span key={r.loop_run_id} className="inline-flex items-center gap-1">
-                          <button
-                            onClick={() => loadRun(r.loop_run_id)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${
-                              run?.loop_run_id === r.loop_run_id
-                                ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
-                                : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                            }`}
-                          >
-                            {new Date(r.started_at).toLocaleString()} · {r.iterations_done}x
-                            {r.final_score !== null && r.final_score !== undefined ? ` · ${Math.round(r.final_score)}` : ''}
-                          </button>
-                          {isResumable(r) && (
-                            <button
-                              onClick={() => handleResume(r.loop_run_id)}
-                              disabled={resuming === r.loop_run_id}
-                              title={t('loops.resumeHint')}
-                              className="px-2 py-1 rounded-lg text-xs font-semibold border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
-                            >
-                              {resuming === r.loop_run_id ? t('loops.resuming') : t('loops.resume')}
-                            </button>
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {!run ? (
-                    <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-sm text-gray-500">
-                      {t('loops.noRunsYetPressRun')}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                        <div className="flex items-center gap-3 mb-4 flex-wrap">
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_STYLES[run.status] || 'bg-gray-100 text-gray-600'}`}>
-                            {run.status}
-                          </span>
-                          <span className="text-sm text-gray-600">
-                            {t('loops.iterationCount', { count: run.iterations_done })}
-                          </span>
-                          {run.best_score !== null && run.best_score !== undefined && (
-                            <span className="text-sm text-gray-600">{t('loops.bestScore', { score: Math.round(run.best_score) })}</span>
-                          )}
-                          <span className="text-sm text-gray-600">${(run.total_cost || 0).toFixed(4)}</span>
-                          {run.stop_reason && (
-                            <span className="text-sm text-gray-500 italic">
-                              — {stopReasonLabel(run.stop_reason, t)}
-                            </span>
-                          )}
-                          {run.task_id && (
-                            <Link to={`/tasks/${run.task_id}`} className="text-xs text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1">
-                              <ExternalLink className="w-3 h-3" /> {t('loops.task')}
-                            </Link>
-                          )}
-                        </div>
-                        <Trajectory iterations={iterations} />
-                        {run.error && (
-                          <p className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">
-                            {run.error}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        {iterations.map((it) => (
-                          <IterationRow key={it.iteration} iteration={it} flowId={selected.flow_id} />
-                        ))}
-                        {live && (
-                          <div className="flex items-center gap-2 text-sm text-gray-500 px-3 py-2">
-                            <Loader className="w-4 h-4 animate-spin" /> {t('loops.running')}
-                          </div>
-                        )}
-                      </div>
-
-                      {run.result && !live && (
-                        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-                          <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-2">{t('loops.result')}</h3>
-                          <pre className="text-sm text-gray-800 whitespace-pre-wrap max-h-96 overflow-auto">
-                            {run.result}
-                          </pre>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </>
-          )}
-        </div>
-      </div>
 
       {showNew && (
         <NewLoopModal flows={flows} onClose={() => setShowNew(false)} onCreate={handleCreate} />
       )}
-      {caseDialogOpen && run?.loop_run_id && (
-        <SaveAsEvalCaseDialog
-          runId={run.loop_run_id}
-          workspace={run.workspace || selectedWorkspace}
-          onClose={() => setCaseDialogOpen(false)}
-        />
-      )}
     </PageContainer>
   );
 }
-
-/**
- * The loop's build chat.
- *
- * A loop is three decisions — which flow, what "good enough" means, and when to
- * give up — and two of them are prose. That is a conversation, so it gets one,
- * pinned to this loop: the Loop Creator edits it in place and the form picks up
- * the result.
- *
- * The callbacks are memoised on the loop id because EntityChat loads its
- * transcript in an effect keyed on them — fresh closures each render would
- * refetch the conversation continuously.
- */
-function useLoopChatDescriptor(loopId, onLoopChanged) {
-  const { t } = useI18n();
-
-  const loadChat = useCallback(() => getLoopChat(loopId), [loopId]);
-  const clearChat = useCallback(() => clearLoopChat(loopId), [loopId]);
-  const stopChat = useCallback(() => stopLoopChat(loopId), [loopId]);
-
-  const onEvent = useCallback((ev) => {
-    if (ev.type === 'loop' && ev.loop) onLoopChanged(ev.loop);
-  }, [onLoopChanged]);
-
-  return useMemo(() => (loopId ? {
-    scope: `loop:${loopId}`,
-    path: loopChatUrl(loopId),
-    loadChat, clearChat, stopChat, onEvent,
-    title: t('loops.buildChat'),
-    emptyHint: t('loops.buildChatHint'),
-    suggestions: [
-      t('loops.chatSuggestCriterion'),
-      t('loops.chatSuggestReviewer'),
-      t('loops.chatSuggestCeilings'),
-      // The chat can start the loop too — behind an approval step.
-      t('loops.chatSuggestRun'),
-    ],
-  } : null), [loopId, loadChat, clearChat, stopChat, onEvent, t]);
-}
-
 
 function NewLoopModal({ flows, onClose, onCreate }) {
   const { t } = useI18n();
@@ -1031,7 +200,7 @@ function NewLoopModal({ flows, onClose, onCreate }) {
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">{t('loops.name')}</label>
             <input
-              value={name} onChange={(e) => setName(e.target.value)} autoFocus
+              value={name} onChange={(e) => setName(e.target.value)}
               className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
               placeholder={t('loops.refineTheLaunchPost')}
             />

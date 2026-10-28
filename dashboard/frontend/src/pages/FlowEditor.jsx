@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, Download, Factory, Loader2, Play, Save, SquareTerminal } from 'lucide-react';
+import { AlertTriangle, Download, Factory, Globe, Loader2, Play, Save, SquareTerminal } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import FlowCanvas, { EntityPalette } from '../components/flow/FlowCanvas';
 import { AppBar } from '../components/PageLayout';
+import FlowTitle from '../components/flowEditor/FlowTitle';
 import { useI18n } from '../i18n';
 import { useToast } from '../components/toast';
 import { NodeInspector } from '../components/flowEditor/NodeInspector';
 import { FlowSettings } from '../components/flowEditor/FlowSettings';
 import { GraphStateBlock } from '../components/flowEditor/RuntimeState';
 import { useFlowDocument } from '../components/flowEditor/useFlowDocument';
+import { upstreamOutputKeys } from '../components/flowEditor/graphHelpers';
 import PageLoader from '../components/PageLoader';
 
 // The flow editor (/flows/:flowId/edit): the graph and nothing that runs it.
@@ -66,7 +68,7 @@ function FlowEditor() {
     <div className="h-full flex flex-col overflow-hidden">
       <AppBar
         icon={Factory}
-        title={flow.name}
+        title={<FlowTitle flow={flow} onRenamed={(name) => setFlow((prev) => (prev ? { ...prev, name } : prev))} />}
         subtitle={flow.description}
         backTo="/flows"
         backLabel={t('flowEditor.flows')}
@@ -90,12 +92,27 @@ function FlowEditor() {
             {t('flowEditor.export')}
           </button>
           <button
+            onClick={docApi.handleToggleSharing}
+            className={`flex items-center rounded-lg border px-3 py-1.5 text-sm font-semibold shadow-sm transition-colors ${
+              flow.shared
+                ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                : 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100'
+            }`}
+            title={flow.shared ? t('agentFlows.removeFromMarketplace') : t('agentFlows.publishToMarketplace')}
+            data-testid="flow-toggle-sharing"
+          >
+            <Globe className={`mr-2 h-4 w-4 ${flow.shared ? 'text-indigo-500' : 'text-cyan-500'}`} />
+            {flow.shared ? t('flowEditor.published') : t('flowEditor.publish')}
+          </button>
+          {/* A way to the run page, not a run: drawn like Edit flow on that
+              page, the button that comes back here. */}
+          <button
             onClick={openRunPage}
-            className="flex items-center rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-700"
+            className="flex items-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-100"
             title={dirty ? t('flowEditor.saveAndOpenRunPage') : t('flowEditor.openRunPage')}
             data-testid="flow-open-run-page"
           >
-            <Play className="mr-2 h-4 w-4" />
+            <Play className="mr-2 h-4 w-4 text-cyan-500" />
             {t('flowEditor.runPage')}
           </button>
         </>}
@@ -103,7 +120,7 @@ function FlowEditor() {
 
       <section className="flex min-h-0 flex-1 overflow-hidden bg-white">
         {/* Left column — registry palette */}
-        <div className="hidden w-[300px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 p-3 lg:flex">
+        <div className="hidden w-[220px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 p-3 lg:flex xl:w-[250px] 2xl:w-[300px]">
           <EntityPalette entitiesByCategory={entitiesByCategory} />
         </div>
 
@@ -121,7 +138,7 @@ function FlowEditor() {
         </div>
 
         {/* Right column — node inspector or graph settings */}
-        <div className="flex w-[340px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+        <div className="flex w-[220px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white xl:w-[260px] 2xl:w-[300px] min-[1800px]:w-[340px]">
           <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 py-2.5">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100">
               <SquareTerminal className="h-4 w-4 text-slate-600" />
@@ -134,15 +151,6 @@ function FlowEditor() {
                 {t('flowEditor.graphCounts', { nodes: nodes.length, edges: edges.length })}
               </div>
             </div>
-            {selected ? (
-              <button
-                type="button"
-                onClick={() => setSelectedNodeId(null)}
-                className="text-[11px] font-medium text-slate-400 transition hover:text-slate-600"
-              >
-                {t('flowEditor.close')}
-              </button>
-            ) : null}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {selected ? (
@@ -152,6 +160,14 @@ function FlowEditor() {
                 isAgent={(selected.data.category || 'agent') === 'agent'}
                 agents={docApi.agentOptions}
                 onPatch={docApi.updateSelectedNode}
+                successors={edges.filter((e) => e.source === selected.id).map((e) => ({
+                  id: e.target,
+                  label: nodes.find((n) => n.id === e.target)?.data?.label || e.target,
+                }))}
+                stateKeys={{
+                  upstream: upstreamOutputKeys(selected.id, nodes, edges),
+                  declared: Object.keys(flow.state && typeof flow.state === 'object' ? flow.state : {}),
+                }}
               />
             ) : (
               <div className="space-y-3">

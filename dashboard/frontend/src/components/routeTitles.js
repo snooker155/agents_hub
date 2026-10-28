@@ -28,6 +28,7 @@ export const ROUTE_TITLES = [
   { match: /^\/flows\/[^/]+\/edit$/, titleKey: 'layout.titles.flowEditor' },
   { match: /^\/flows\/.+$/, titleKey: 'layout.titles.flowRun' },
   { match: /^\/loops$/, titleKey: 'layout.titles.loops' },
+  { match: /^\/loops\/.+$/, titleKey: 'layout.titles.loop' },
   { match: /^\/teams$/, titleKey: 'layout.titles.teams' },
   { match: /^\/teams\/.+$/, titleKey: 'layout.titles.team' },
   { match: /^\/registry$/, titleKey: 'layout.titles.registry' },

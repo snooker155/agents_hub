@@ -10,6 +10,7 @@ Precedence, narrowest first:  --workspace  >  AGENTS_HUB_WORKSPACE  >  cwd  >  f
 """
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -230,7 +231,20 @@ class TestShellIntegration:
         monkeypatch.setenv("SHELL", "/opt/homebrew/bin/fish")
         assert cli._guess_shell() == "fish"
 
-    def test_the_generated_paths_are_absolute(self):
+    def test_the_generated_paths_are_absolute(self, monkeypatch):
+        # With no console script to point at (none on PATH, none launched this
+        # process) the function calls this file under this interpreter.
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None)
+        monkeypatch.setattr(sys, "argv", ["pytest"])
         out = runner.invoke(cli.app, ["shell-init", "zsh"]).stdout
         assert str(Path(cli.__file__).resolve()) in out
         assert os.sep in out
+
+    def test_the_installed_command_is_preferred(self, monkeypatch, tmp_path):
+        script = tmp_path / "ah"
+        script.write_text("#!/bin/sh\n")
+        monkeypatch.setattr(sys, "argv", [str(script)])
+        out = runner.invoke(cli.app, ["shell-init", "zsh"]).stdout
+        assert str(script.resolve()) in out
+        assert str(Path(cli.__file__).resolve()) not in out

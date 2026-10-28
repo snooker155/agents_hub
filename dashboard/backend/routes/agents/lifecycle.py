@@ -3,14 +3,16 @@ import re
 import dataclasses
 
 from fastapi import APIRouter, HTTPException, Request
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 from agents import registry
 from agents import prompt_assembly
+from common.marketplace_names import agent_name_taken
 from agents.capability_guard import (
     CapabilityViolation,
 )
 from models import AgentCreateCustom, AgentCloneToWorkspace, AgentSharingUpdate
+from common import record_access
 
 
 
@@ -31,6 +33,11 @@ async def create_custom_agent(data: AgentCreateCustom, request: Request):
     field not given is inherited from the parent, ``system_prompt`` is
     optional and holds only the child's own additions, and ``tools``, when
     given, is the child's full effective tool list."""
+    record_access.require_in_workspace(request, data.workspace)
+    data.id = (data.id or "").strip()
+    if not data.id:
+        from agents.agent_ids import new_agent_id
+        data.id = new_agent_id(data.name, lambda i: registry.get_agent(i) is not None)
     if registry.get_agent(data.id) is not None:
         raise HTTPException(status_code=400, detail=f"Agent '{data.id}' already exists")
     # Checked before anything is written, so a bad target leaves no folder behind.
@@ -148,11 +155,17 @@ async def create_custom_agent(data: AgentCreateCustom, request: Request):
             # Best-effort; the agent itself is created and owner_workspace is set.
             log.debug("create_custom_agent: best-effort step failed", exc_info=True)
 
-    return spec.to_dict()
+    # The main agent may delegate to it and hand the chat to it, unless that
+    # would close a blocked capability combination (agents/main_links.py).
+    from agents.main_links import link_new_agent
+    out = spec.to_dict()
+    out["main_agent_link"] = link_new_agent(data.id)
+    return out
 
 
 @router.post("/{agent_id}/clone-to-workspace")
-async def clone_agent_to_workspace(agent_id: str, data: AgentCloneToWorkspace):
+async def clone_agent_to_workspace(agent_id: str, data: AgentCloneToWorkspace,
+                                   request: Request = cast(Request, None)):
     """Create a workspace-scoped copy of an agent that shares its definition.
 
     The new record copies all of the source agent's settings (model, memory,
@@ -167,6 +180,7 @@ async def clone_agent_to_workspace(agent_id: str, data: AgentCloneToWorkspace):
     workspace = (data.workspace or "").strip()
     if not workspace:
         raise HTTPException(status_code=400, detail="workspace is required")
+    record_access.require_in_workspace(request, workspace)
 
     def_id = source.def_id()
 
@@ -236,6 +250,10 @@ async def update_agent_sharing(agent_id: str, data: AgentSharingUpdate):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if data.shared:
+        taken = agent_name_taken(spec.name, exclude=[spec.id])
+        if taken:
+            raise HTTPException(status_code=409, detail=taken)
 
     # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
     # every field added to AgentSpec after it was written (delegates, handoffs,

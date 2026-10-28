@@ -376,7 +376,14 @@ def get_workspace_default_model_config(meta: Dict[str, Any] | None) -> Dict[str,
 
     A personal workspace (common/personal_workspace.py) that sets none of
     these takes ``default``'s; no other workspace falls back anywhere.
+
+    A workspace with a model policy (workspace/model_policy.py) defaults to
+    the policy's model, whatever else is set.
     """
+    from workspace.model_policy import from_metadata
+    policy = from_metadata(meta)
+    if policy is not None:
+        return {"provider": policy.default[0], "model": policy.default[1]}
     own = _own_default_model_config(meta)
     if own.get("provider") or own.get("model"):
         return own
@@ -384,6 +391,27 @@ def get_workspace_default_model_config(meta: Dict[str, Any] | None) -> Dict[str,
         fallback = get_workspace_metadata("default")
         if isinstance(fallback, dict) and not fallback.get("personal_of"):
             return _own_default_model_config(fallback)
+    return own
+
+
+def get_workspace_model_effort(meta: Dict[str, Any] | None) -> Optional[str]:
+    """The reasoning effort chosen in the header's model picker for this
+    workspace (top-level ``model_effort``), or None to inherit the model's own.
+    It applies to agents that inherit the model too. A personal workspace that
+    chose none takes ``default``'s, as it does the model."""
+    from agents.registry import normalize_effort
+    from workspace.model_policy import from_metadata
+    if not isinstance(meta, dict):
+        return None
+    policy = from_metadata(meta)
+    if policy is not None and policy.effort:
+        # Fixed by the workspace's model policy.
+        return policy.effort
+    own = normalize_effort(meta.get("model_effort"))
+    if own is None and meta.get("personal_of"):
+        fallback = get_workspace_metadata("default")
+        if isinstance(fallback, dict) and not fallback.get("personal_of"):
+            return normalize_effort(fallback.get("model_effort"))
     return own
 
 

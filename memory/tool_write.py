@@ -269,8 +269,8 @@ def build_write_tools(ctx):
                 # The vectors go whether or not the pool still had an index
                 # entry: an entry lost to an earlier partial delete is exactly
                 # the case where the chunks are still answering searches.
-                from memory.rag_query import delete_rag_vectors
-                vector_meta = delete_rag_vectors(str(target), file)
+                from memory.rag_query import forget_rag_file
+                vector_meta = forget_rag_file(str(target), file)
                 if indexed:
                     deleted.append({"type": "file", "filename": file, "vectors": vector_meta})
                 else:

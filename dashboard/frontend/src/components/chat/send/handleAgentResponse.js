@@ -6,10 +6,10 @@
  * per-node bubble alike (via `targetMsgId`); team mode has no such target, so
  * every branch below quietly no-ops for it.
  */
-import { appendIntoDelegation, appendUnderDelegation, mapDelegation, resolveDelegationTool } from '../delegationTimeline';
 import { stripUiBlock } from '../markdown';
 import { reduceGraphRun } from '../../graphRun';
-import { appendLiveThought, buildCompactionNotice, genId, mergeMessageFile } from '../turnState';
+import { buildCompactionNotice, genId } from '../turnState';
+import { applyTurnEvent, isDelegationEvent } from '../turnEvents';
 import { applyHandoff } from '../handoff';
 import { applyUndelivered, markSteerDelivered } from '../steering';
 import { applyApprovalEvent } from '../toolApprovals';
@@ -26,75 +26,34 @@ function targetMsgId(event, ctx) {
   return ctx.assistantId;
 }
 
+// Fold `event` into the target bubble with the reducer every chat shares
+// (../turnEvents.js), so this page and the embedded chats read a turn alike.
+function foldIntoTarget(event, ctx) {
+  const tgt = targetMsgId(event, ctx);
+  if (!tgt) return;
+  const { convId, setConversations } = ctx;
+  setConversations((prev) =>
+    prev.map((c) =>
+      c.id !== convId ? c : {
+        ...c,
+        messages: c.messages.map((m) => (m.id === tgt ? applyTurnEvent(m, event) : m)),
+      },
+    ),
+  );
+}
+
 // Delegated child runs (run_agent_tool) stream their inner events tagged with
 // `delegation` + the child run_id. Folded into a nested `delegation` timeline
 // entry instead of the top-level timeline, so the UI renders a live nested
 // block, and into the Process panel's run row, so the worker's graph grows
 // step by step (see ../processLive).
 function handleDelegationEvent(event, ctx) {
-  if (!(event.type === 'delegation_start' || event.type === 'delegation_end' || event.delegation)) {
-    return false;
-  }
-  const { convId, setConversations, setProcessInsights } = ctx;
-  setProcessInsights?.((prev) => {
+  if (!isDelegationEvent(event)) return false;
+  ctx.setProcessInsights?.((prev) => {
     const message_runs = applyDelegationEvent(prev.message_runs, event);
     return message_runs === prev.message_runs ? prev : { ...prev, message_runs };
   });
-  const tgt = targetMsgId(event, ctx);
-  if (tgt) {
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id !== convId ? c : {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== tgt) return m;
-            const messageRunId = m.run_id || null;
-            let tl = m.timeline || [];
-            if (event.type === 'delegation_start') {
-              tl = appendUnderDelegation(tl, event.parent_run_id, messageRunId, {
-                type: 'delegation',
-                run_id: event.run_id,
-                agent_id: event.agent_id,
-                agent_name: event.agent_name || event.agent_id,
-                depth: event.depth || 1,
-                input: event.input || '',
-                running: true,
-                ok: null,
-                timeline: [],
-              });
-            } else if (event.type === 'delegation_end') {
-              tl = mapDelegation(tl, event.run_id, (d) => ({
-                ...d,
-                running: false,
-                ok: event.ok,
-                error: event.error || '',
-                // The worker's answer, shown at the end of its card when its
-                // own steps did not already end on that text.
-                output: event.output || '',
-                duration_ms: event.duration_ms,
-              }));
-            } else if (event.type === 'think' || event.type === 'plan') {
-              tl = appendIntoDelegation(tl, event.run_id, {
-                type: 'reasoning', kind: event.type, step: event.step, content: event.content,
-              });
-            } else if (event.type === 'tool_start') {
-              tl = appendIntoDelegation(tl, event.run_id, {
-                type: 'tool', step: event.step, tool: event.tool, input: event.input, output: null, running: true,
-              });
-            } else if (event.type === 'tool_end') {
-              tl = resolveDelegationTool(tl, event.run_id, { output: event.output, ...toolOutcome(event) });
-            } else if (event.type === 'tool_error') {
-              tl = resolveDelegationTool(tl, event.run_id, { output: `ERROR: ${event.error}`, error: true });
-            } else if (event.type === 'text' && (event.content || '').trim()) {
-              // What the worker wrote at a step, between its tool calls.
-              tl = appendIntoDelegation(tl, event.run_id, { type: 'text', text: event.content });
-            }
-            return { ...m, timeline: tl };
-          }),
-        },
-      ),
-    );
-  }
+  foldIntoTarget(event, ctx);
   return true;
 }
 
@@ -145,47 +104,12 @@ function handleAgentEvent(event, ctx) {
       );
     }
   } else if (event.type === 'think_delta') {
-    // A slice of reasoning the model is still writing. Shown as a
-    // three-line ticker under the "working" indicator until the matching
-    // `think` event arrives with the completed thought.
-    const tgt = targetMsgId(event, ctx);
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id !== convId ? c : {
-          ...c,
-          messages: c.messages.map((m) =>
-            m.id === tgt
-              ? { ...m, thinking_live: appendLiveThought(m.thinking_live, event.delta) }
-              : m
-          ),
-        },
-      ),
-    );
+    // A slice of reasoning still being written: the ticker under "working".
+    foldIntoTarget(event, ctx);
   } else if (event.type === 'think' || event.type === 'plan') {
-    // Reasoning steps are appended in execution order so the UI can render
-    // each one inline, before the response that followed it. Also appended
-    // to `timeline` (the Build-view chronological feed).
-    const tgt = targetMsgId(event, ctx);
-    const step = { kind: event.type, step: event.step, content: event.content };
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id !== convId ? c : {
-          ...c,
-          messages: c.messages.map((m) =>
-            m.id === tgt
-              ? {
-                  ...m,
-                  reasoning: [...(m.reasoning || []), step],
-                  timeline: [...(m.timeline || []), { type: 'reasoning', ...step }],
-                  // The thought is complete and now renders as a collapsible
-                  // ReasoningStep, so the live ticker of the same text goes away.
-                  thinking_live: '',
-                }
-              : m
-          ),
-        },
-      ),
-    );
+    // Reasoning steps land in the timeline in execution order, before the
+    // text that followed them, and the ticker of the same thought goes away.
+    foldIntoTarget(event, ctx);
     // Native model thoughts also feed the Process column live.
     if (event.native) {
       setProcessInsights((prev) => ({
@@ -198,106 +122,16 @@ function handleAgentEvent(event, ctx) {
       }));
     }
   } else if (event.type === 'artifact') {
-    // File change — surface in the Artifacts panel and inline in the feed.
+    // File change: the Artifacts panel, and the bubble's own file list.
     mergeArtifact(event);
-    const tgt = targetMsgId(event, ctx);
-    const entry = {
-      type: 'artifact',
-      op: event.op,
-      path: event.path,
-      additions: event.additions,
-      deletions: event.deletions,
-    };
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id !== convId ? c : {
-          ...c,
-          messages: c.messages.map((m) =>
-            m.id === tgt
-              ? {
-                  ...m,
-                  timeline: [...(m.timeline || []), entry],
-                  // Persisted alongside the reply so the chat bubble lists
-                  // what the agent changed, not just the Artifacts column.
-                  files: mergeMessageFile(m.files, event),
-                }
-              : m
-          ),
-        },
-      ),
-    );
-  } else if (event.type === 'graph_node_start') {
+    foldIntoTarget(event, ctx);
+  } else if (event.type === 'graph_node_start' || event.type === 'graph_node_end') {
+    // An imported agent walking its own graph: one step per node, in the
+    // current bubble, since it is still one agent.
     setGraphRun((prev) => reduceGraphRun(prev, event));
-    // An imported agent walking its own graph. One timeline step per node, in
-    // the current bubble: the agent is still one agent, and the nodes are how
-    // it got to the answer.
-    const tgt = targetMsgId(event, ctx);
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id !== convId ? c : {
-          ...c,
-          messages: c.messages.map((m) =>
-            m.id === tgt
-              ? {
-                  ...m,
-                  timeline: [
-                    ...(m.timeline || []),
-                    { type: 'graph_node', node: event.node, depth: event.depth || 0, running: true, ok: null },
-                  ],
-                }
-              : m
-          ),
-        },
-      ),
-    );
-  } else if (event.type === 'graph_node_end') {
-    setGraphRun((prev) => reduceGraphRun(prev, event));
-    const tgt = targetMsgId(event, ctx);
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id !== convId ? c : {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== tgt || !m.timeline) return m;
-            const tl = [...m.timeline];
-            // Last running entry with this name: a graph with a loop enters
-            // the same node more than once, and resolving the first would
-            // leave later passes looking unfinished.
-            for (let i = tl.length - 1; i >= 0; i -= 1) {
-              if (tl[i].type === 'graph_node' && tl[i].running
-                  && (!event.node || tl[i].node === event.node)) {
-                tl[i] = { ...tl[i], running: false, ok: event.ok !== false, error: event.error || '', next: event.next || null };
-                break;
-              }
-            }
-            return { ...m, timeline: tl };
-          }),
-        },
-      ),
-    );
+    foldIntoTarget(event, ctx);
   } else if (event.type === 'tool_start') {
-    // Update message bubble to show the running tool name, and append a tool
-    // entry to the Build-view timeline (resolved on tool_end).
-    const tgt = targetMsgId(event, ctx);
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id !== convId ? c : {
-          ...c,
-          messages: c.messages.map((m) =>
-            m.id === tgt
-              ? {
-                  ...m,
-                  running_tool: event.tool,
-                  timeline: [
-                    ...(m.timeline || []),
-                    { type: 'tool', step: event.step, tool: event.tool, input: event.input, output: null, running: true },
-                  ],
-                }
-              : m
-          ),
-        },
-      ),
-    );
+    foldIntoTarget(event, ctx);
     setProcessInsights((prev) => ({
       ...prev,
       tools: [
@@ -318,33 +152,12 @@ function handleAgentEvent(event, ctx) {
       ),
     }));
   } else if (event.type === 'tool_end' || event.type === 'tool_error') {
-    // Keep running_tool set so the name stays visible until the next token arrives.
-    // Resolve the last running tool entry in the Build-view timeline; a call
-    // that raised ends on tool_error instead of tool_end.
+    // A call that raised ends on tool_error instead of tool_end. The bubble
+    // keeps the tool's name until the next token arrives.
     const outcome = event.type === 'tool_error'
       ? { output: `ERROR: ${event.error}`, error: true, running: false, ...toolOutcome(event) }
       : { output: event.output, running: false, ...toolOutcome(event) };
-    {
-      const tgt = targetMsgId(event, ctx);
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id !== convId ? c : {
-            ...c,
-            messages: c.messages.map((m) => {
-              if (m.id !== tgt || !m.timeline) return m;
-              const tl = [...m.timeline];
-              for (let i = tl.length - 1; i >= 0; i -= 1) {
-                if (tl[i].type === 'tool' && tl[i].running) {
-                  tl[i] = { ...tl[i], ...outcome };
-                  break;
-                }
-              }
-              return { ...m, timeline: tl };
-            }),
-          },
-        ),
-      );
-    }
+    foldIntoTarget(event, ctx);
     setProcessInsights((prev) => {
       const tools = [...(prev.tools || [])];
       for (let i = tools.length - 1; i >= 0; i -= 1) {
@@ -367,33 +180,7 @@ function handleAgentEvent(event, ctx) {
       return { ...prev, tools, message_runs };
     });
   } else if (event.type === 'token') {
-    const tgt = targetMsgId(event, ctx);
-    const tok = event.token || '';
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id !== convId ? c : {
-          ...c,
-          messages: c.messages.map((m) => {
-            if (m.id !== tgt) return m;
-            // Coalesce contiguous tokens into the trailing text segment so
-            // the Build-view feed shows continuous prose, not per-token noise.
-            const tl = [...(m.timeline || [])];
-            const last = tl[tl.length - 1];
-            if (last && last.type === 'text') {
-              tl[tl.length - 1] = { ...last, text: `${last.text || ''}${tok}` };
-            } else {
-              tl.push({ type: 'text', text: tok });
-            }
-            return {
-              ...m,
-              content: `${m.content || ''}${tok}`,
-              running_tool: null,
-              timeline: tl,
-            };
-          }),
-        },
-      ),
-    );
+    foldIntoTarget(event, ctx);
     setProcessInsights((prev) => ({
       ...prev,
       message_runs: (prev.message_runs || []).map((mr, idx) =>
@@ -464,6 +251,8 @@ function handleAgentEvent(event, ctx) {
                     context_overflow: event.error_code === 'context_overflow',
                     // Why the turn was refused, when the guard or a limit said (RefusalCard).
                     refusal: event.refusal || null,
+                    // Warn guardrails that found something; the turn went on (GuardrailWarnings).
+                    guardrail_warnings: event.guardrail_warnings || null,
                   }
                 : m
             ),

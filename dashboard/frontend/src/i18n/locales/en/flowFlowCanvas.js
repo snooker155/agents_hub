@@ -7,4 +7,25 @@ export default {
   dropAgentsToStart: "Drop nodes to start",
   dragAgentsFromTheGraph: "Drag the Agent node or a registry entity from the left panel onto the canvas.",
   noEntitiesAvailable: 'No entities available.',
+  categories: {
+    processor: "Processors",
+    condition: "Conditions",
+    map: "Per item",
+    transform: "Transforms",
+    interrupt: "Interrupts",
+    container: "Nested runs",
+  },
+  // Built-in registry entities by id; a user entity keeps its own text.
+  entities: {
+    state_branch: { name: "State Branch", description: "Route to one of two targets based on whether a state key is truthy." },
+    state_switch: { name: "Switch", description: "Route to the first case whose condition on a state value holds." },
+    run_flow: { name: "Run Flow", description: "Run another flow as a nested run of this one and wait for it. Its last output lands in the output key." },
+    run_loop: { name: "Run Loop", description: "Run a loop until it converges, as a nested run of this flow, and wait for the accepted output. The output lands in the output key." },
+    run_team: { name: "Run Team", description: "Run a team against a goal as a nested run of this flow and wait for its answer. The answer lands in the output key." },
+    human_interrupt: { name: "Human Interrupt", description: "Pause the flow and ask a person. The run waits for the answer and resumes from its checkpoint with the answer in state." },
+    map: { name: "Map", description: "Run one agent per item of a list, several at once. The list comes from a state key or from the previous step's output; the results land in the output key as a list." },
+    summarize: { name: "Summarize", description: "Condense the input text to roughly the first N words. Pure, no LLM." },
+    present_view: { name: "Present View", description: "Render the input data as a rich view: a chart, table, graph or markdown." },
+    rename_keys: { name: "Rename Keys", description: "Copy values from one set of state keys to another, to rename or remap them." },
+  },
 };

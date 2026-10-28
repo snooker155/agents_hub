@@ -7,6 +7,8 @@ import api from './index';
 // queue and where runs, instances and containers live (docs/deployment.md).
 // `/api/deployment` still answers the same document as an alias.
 export const getCluster = () => api.get('/cluster');
+// Only the shared-service probes (Postgres, Redis, ...), for the Health page.
+export const getClusterStack = () => api.get('/cluster/stack');
 export const getMemberLogs = (memberId, tail = 500) =>
   api.get(`/cluster/members/${encodeURIComponent(memberId)}/logs`, { params: { tail } });
 export const forgetMember = (memberId) =>

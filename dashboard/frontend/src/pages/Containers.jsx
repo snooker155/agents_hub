@@ -377,8 +377,8 @@ export default function Containers() {
                     {t('containers.unifiedBaseImage')}
                   </h2>
                   <p className="text-xs text-gray-500 mt-0.5">
+                    {t('containers.baseImageHint')}{' '}
                     <code className="bg-gray-100 rounded px-1">agents-hub/base:latest</code>
-                    {' '}— All agents derive from this image. Build it first.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -406,9 +406,9 @@ export default function Containers() {
               {visibleAgents.length === 0 && (
                 <p className="text-sm text-gray-500">{t('containers.noAgentsRegistered')}</p>
               )}
-              <div className="divide-y divide-gray-50">
+              <div className="divide-y divide-gray-200 -mx-2">
                 {visibleAgents.map(agent => (
-                  <div key={agent.agent_id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                  <div key={agent.agent_id} className="flex items-center justify-between px-2 py-3 hover:bg-gray-50">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-800">{agent.agent_name}</p>
                       <p className="text-xs text-gray-400">{agent.image_tag}</p>
@@ -438,7 +438,7 @@ export default function Containers() {
                         {building[agent.agent_id]
                           ? <Loader className="w-3 h-3 animate-spin" />
                           : <Play className="w-3 h-3" />}
-                        Build
+                        {t('containers.build')}
                       </button>
                     </div>
                   </div>
@@ -476,9 +476,9 @@ export default function Containers() {
                 <p className="text-xs mt-1">{t('containers.startANodeOrTask')}</p>
               </div>
             ) : (
-              <div className="divide-y divide-gray-50">
+              <div className="divide-y divide-gray-200 -mx-2">
                 {visibleContainers.map(c => (
-                  <div key={c.id || c.name} className="py-3 first:pt-0 last:pb-0">
+                  <div key={c.id || c.name} className="px-2 py-3 hover:bg-gray-50">
                   <div className="flex items-center justify-between">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-800 flex items-center gap-1">

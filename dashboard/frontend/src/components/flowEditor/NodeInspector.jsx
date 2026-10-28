@@ -6,6 +6,8 @@ import { getLoops, getTeams, listFlows, listN8nWorkflows } from '../../api';
 import { useWorkspace } from '../workspace';
 import { InfoHint } from '../PageLayout';
 import { INPUT_CLS, fmtKeys, isUnchosenAgent, parseKeys } from './graphHelpers';
+import { MapConfig, RouteConfig, SwitchConfig } from './BranchConfig';
+import AgentSelect from './AgentSelect';
 
 // Per-node execution policy: how many times a failed attempt is repeated and
 // how long one attempt may take. Both are optional; left at zero the node
@@ -342,7 +344,6 @@ export function AgentPicker({ node, agents, onPatch }) {
   const { t } = useI18n();
   const d = node.data || {};
   const current = d.agent_id || '';
-  const known = agents.some((a) => a.id === current);
   const choose = (agentId) => {
     const agent = agents.find((a) => a.id === agentId);
     const previous = agents.find((a) => a.id === current);
@@ -358,18 +359,7 @@ export function AgentPicker({ node, agents, onPatch }) {
       <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
         {t('flowEditor.agent')}
       </label>
-      <select
-        value={current}
-        onChange={(e) => choose(e.target.value)}
-        className={`${INPUT_CLS} ${isUnchosenAgent(d) ? 'border-amber-400' : ''}`}
-        data-testid="node-agent-picker"
-      >
-        <option value="">{t('flowEditor.chooseAgent')}</option>
-        {current && !known ? <option value={current}>{current}</option> : null}
-        {agents.map((a) => (
-          <option key={a.id} value={a.id}>{a.name || a.id}</option>
-        ))}
-      </select>
+      <AgentSelect agents={agents} value={current} onChange={choose} testId="node-agent-picker" />
       {isUnchosenAgent(d) ? (
         <p className="px-1 text-[11px] text-amber-600">{t('flowEditor.chooseAgentHint')}</p>
       ) : null}
@@ -377,10 +367,12 @@ export function AgentPicker({ node, agents, onPatch }) {
   );
 }
 
-// Node inspector: edits label/description/task for any node, plus the state
-// contract (input/output keys) and config JSON for non-agent entity nodes.
-// Running a node is the run page's business (pages/FlowRun.jsx), not this one.
-export function NodeInspector({ node, isAgent, onPatch, agents = [] }) {
+// Node inspector: edits the label and, for an agent node, which agent runs it
+// (right under the name) and the instruction it gets for its step, plus the
+// state contract (input/output keys) and the config of non-agent nodes.
+// Running a node is the run page's business (pages/FlowRun.jsx).
+// `stateKeys`: the keys a switch can test ({upstream, declared}, SwitchConfig).
+export function NodeInspector({ node, isAgent, onPatch, agents = [], successors = [], stateKeys }) {
   const { t } = useI18n();
   const d = node.data || {};
   const ident = isAgent ? d.agent_id : d.entity_id;
@@ -438,6 +430,26 @@ export function NodeInspector({ node, isAgent, onPatch, agents = [] }) {
         </div>
       </div>
 
+      {isAgent ? <AgentPicker node={node} agents={agents} onPatch={onPatch} /> : null}
+
+      {isAgent ? (
+        <div className="space-y-1.5">
+          <label htmlFor={`node-instruction-${node.id}`} className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            {t('flowEditor.nodeInstruction')}
+          </label>
+          <textarea
+            id={`node-instruction-${node.id}`}
+            value={d.nodeTask || ''}
+            onChange={(e) => onPatch({ nodeTask: e.target.value })}
+            rows={4}
+            placeholder={t('flowEditor.nodeInstructionPlaceholder')}
+            className={INPUT_CLS}
+            data-testid="node-instruction"
+          />
+          <p className="px-1 text-[11px] leading-5 text-slate-400">{t('flowEditor.nodeInstructionHint')}</p>
+        </div>
+      ) : null}
+
       {/* State contract, read/write keys shared via flow state */}
       <div className="space-y-2">
         <label className="block px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
@@ -460,19 +472,18 @@ export function NodeInspector({ node, isAgent, onPatch, agents = [] }) {
         />
       </div>
 
-      {isAgent ? <AgentPicker node={node} agents={agents} onPatch={onPatch} /> : null}
-
       {isAgent ? (
         <>
-          <textarea
-            value={d.nodeTask || ''}
-            onChange={(e) => onPatch({ nodeTask: e.target.value })}
-            rows={4}
-            placeholder={t('flowEditor.optionalNodeSpecificTask')}
-            className={INPUT_CLS}
-          />
+          <RouteConfig node={node} successors={successors} onPatch={onPatch} />
           <NodePolicy node={node} onPatch={onPatch} />
         </>
+      ) : d.entity_id === 'map' ? (
+        <>
+          <MapConfig node={node} agents={agents} onPatch={onPatch} />
+          <NodePolicy node={node} onPatch={onPatch} />
+        </>
+      ) : d.entity_id === 'state_switch' ? (
+        <SwitchConfig node={node} successors={successors} onPatch={onPatch} stateKeys={stateKeys} />
       ) : d.entity_id === 'human_interrupt' ? (
         <InterruptConfig node={node} onPatch={onPatch} />
       ) : d.entity_id === 'run_n8n' ? (

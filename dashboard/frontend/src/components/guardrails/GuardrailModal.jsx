@@ -108,7 +108,8 @@ export default function GuardrailModal({ guardrail, workspace, onClose, onSaved 
   const labelCls = 'block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider';
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}
+      role="dialog" aria-modal="true">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">

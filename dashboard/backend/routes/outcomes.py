@@ -2,6 +2,7 @@
 Routes: a task's outcome (tasks/outcome.py).
 
 ``GET|PUT|DELETE /api/tasks/{task_id}/outcome``      the rubric and grading settings
+``PUT  /api/tasks/{task_id}/outcome/use-agent``     {"enabled": bool}: use the agent's criterion
 ``GET  /api/tasks/{task_id}/outcome/evaluations``    every grading, oldest first
 ``POST /api/tasks/{task_id}/outcome/grade``          grade the latest completed run now
 
@@ -30,6 +31,10 @@ class OutcomeIn(BaseModel):
     threshold: Optional[float] = None
 
 
+class UseAgentIn(BaseModel):
+    enabled: bool
+
+
 def _task_or_404(task_id: str, request: Request):
     from tasks import service as tasks_service
 
@@ -47,16 +52,31 @@ def _task_or_404(task_id: str, request: Request):
     return task
 
 
+def _agent_id(task) -> Optional[str]:
+    executor = getattr(task, "executor", None)
+    if executor is not None and getattr(executor, "kind", None) == "agent" and executor.id:
+        return str(executor.id)
+    return (getattr(task, "assigned_agent_type", None) or getattr(task, "container_agent", None)) or None
+
+
 def _view(task) -> Dict[str, Any]:
     from tasks.outcome import DEFAULT_MAX_ITERATIONS, MAX_ITERATIONS_LIMIT, parse_rubric
 
+    from tasks.outcome import agent_outcome, effective_outcome
+
     outcome = getattr(task, "outcome", None)
+    effective = effective_outcome(task)
+    agent_default = agent_outcome(task)
     evaluations = list(getattr(task, "outcome_evaluations", None) or [])
     attempts = sum(1 for e in evaluations if (e.get("trigger") or "run") == "run")
     return {
         "task_id": str(task.id),
         "outcome": outcome,
-        "criteria": parse_rubric(outcome.get("rubric", "")) if outcome else [],
+        "use_agent_outcome": bool(getattr(task, "use_agent_outcome", False)),
+        "agent_outcome": agent_default,
+        "agent_id": _agent_id(task) if agent_default else None,
+        "effective": effective,
+        "criteria": parse_rubric(effective.get("rubric", "")) if effective else [],
         "evaluations": evaluations,
         "attempts": attempts,
         "latest": evaluations[-1] if evaluations else None,
@@ -96,6 +116,16 @@ async def put_outcome(task_id: str, body: OutcomeIn, request: Request):
         "threshold": outcome["threshold"], "rubric_chars": len(outcome["rubric"]),
         "replaced": bool(getattr(task, "outcome", None)),
     })
+    return _view(tasks_service.get_task(task.id))
+
+
+@router.put("/api/tasks/{task_id}/outcome/use-agent")
+async def put_use_agent(task_id: str, body: UseAgentIn, request: Request):
+    """Turn the agent's default criterion on or off for this task."""
+    from tasks import service as tasks_service
+
+    task = _task_or_404(task_id, request)
+    tasks_service.update_task(task.id, use_agent_outcome=bool(body.enabled))
     return _view(tasks_service.get_task(task.id))
 
 

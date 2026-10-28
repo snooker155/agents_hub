@@ -251,6 +251,68 @@ def test_scenario_tools_answer_another_workspaces_scenario_as_missing(two_ws):
         assert call(get_scenario_tool, scenario_id=theirs.scenario_id)["ok"] is True
 
 
+def test_list_flows_shows_only_the_flows_of_the_workspace(flows):
+    """A flow that names no workspace is the default one's, and a workspace
+    that keeps ``allowed_flows`` lists those, as its Flows page does."""
+    from flow import store as flow_store
+    from tools.langchain_tools import list_flows_tool
+    from workspace import update_workspace_metadata
+    flow_store.save_flow({
+        "id": "flow-default", "name": "flow-default", "description": "", "workspace": None,
+        "task_id": None, "nodes": [], "edges": [],
+    })
+    try:
+        def listed(ws):
+            with run_in(ws):
+                return sorted(f["id"] for f in call(list_flows_tool)["flows"]
+                              if f["id"].startswith("flow-"))
+        assert listed("ws_a") == ["flow-a"]
+        assert listed("default") == ["flow-default"]
+        update_workspace_metadata("ws_b", {"allowed_flows": ["flow-a", "gone"]})
+        assert listed("ws_b") == ["flow-a"]
+    finally:
+        flow_store.delete_flow("flow-default")
+
+
+def test_pages_list_a_record_without_workspace_in_default_only(flows):
+    """The Flows, Loops and Teams pages: a flow, loop or team that names no
+    workspace is the default one's, not every workspace's."""
+    import asyncio
+
+    from common import db
+    from dashboard.backend.routes.flows import list_flows
+    from flow import store as flow_store
+    from loops import store as loop_store
+    from loops.models import Loop
+    from teams import store as team_store
+
+    flow_store.save_flow({
+        "id": "flow-nows", "name": "flow-nows", "description": "", "workspace": None,
+        "task_id": None, "nodes": [], "edges": [],
+    })
+    loop = loop_store.save_loop(Loop(name="nows", flow_id="flow-nows"))
+    assert loop.workspace == "default"
+    team = _team("nows", None, "helper")
+    assert team.workspace == "default"
+    # Rows saved before every record named its workspace.
+    with db.transaction() as conn:
+        conn.execute("UPDATE loops SET workspace = NULL WHERE loop_id = ?", (loop.loop_id,))
+        conn.execute("UPDATE teams SET workspace = NULL WHERE team_id = ?", (team.team_id,))
+    try:
+        def flow_ids(ws):
+            return {f["id"] for f in asyncio.run(list_flows(workspace=ws))}
+        assert "flow-nows" not in flow_ids("ws_a")
+        assert "flow-nows" in flow_ids("default")
+        assert loop.loop_id not in {item.loop_id for item in loop_store.list_loops("ws_a")}
+        assert loop.loop_id in {item.loop_id for item in loop_store.list_loops("default")}
+        assert team.team_id not in {item.team_id for item in team_store.list_teams("ws_a")}
+        assert team.team_id in {item.team_id for item in team_store.list_teams("default")}
+    finally:
+        flow_store.delete_flow("flow-nows")
+        loop_store.delete_loop(loop.loop_id)
+        team_store.delete_team(team.team_id)
+
+
 # ── tools/team_management.py ─────────────────────────────────────────────────
 
 def _team(name, ws, agent):

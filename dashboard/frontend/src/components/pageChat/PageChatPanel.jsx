@@ -116,7 +116,7 @@ export default function PageChatPanel() {
   return (
     <aside
       className={`fixed inset-y-0 right-0 z-40 flex flex-col pt-safe pb-safe bg-white border-l border-gray-200
-                  shadow-2xl w-full ${wide ? 'sm:w-[40rem]' : 'sm:w-[26rem]'}`}
+                  shadow-2xl w-full ${wide ? 'sm:w-[40rem] 2xl:w-[46rem]' : 'sm:w-[26rem] 2xl:w-[30rem]'}`}
       aria-label={t('pageChat.title')}
     >
       <header className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 shrink-0">
@@ -166,7 +166,7 @@ export default function PageChatPanel() {
         suggestions={suggestions}
         heightClass="min-h-0 max-h-none"
         className="flex-1 min-h-0 p-4"
-        composerClassName="mt-auto pt-3"
+        composerClassName="mt-auto pt-3 -mx-4 px-4"
       />
     </aside>
   );

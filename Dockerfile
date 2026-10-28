@@ -71,6 +71,10 @@ FROM python:3.11-slim AS docker-cli
 
 ARG TARGETARCH
 ARG DOCKER_CLI_VERSION=27.5.1
+# The Compose v2 plugin rides along: `ah setup` run from this image starts the
+# stack it just configured through the mounted socket, and the overlay it
+# writes uses the !reset and !override tags, which need Compose 2.24 or newer.
+ARG DOCKER_COMPOSE_VERSION=2.32.4
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends curl ca-certificates; \
@@ -84,7 +88,11 @@ RUN set -eux; \
     tar -xzf /tmp/docker.tgz -C /tmp docker/docker; \
     mv /tmp/docker/docker /usr/local/bin/docker; \
     rm -rf /tmp/docker /tmp/docker.tgz; \
-    docker --version
+    mkdir -p /usr/local/lib/docker/cli-plugins; \
+    curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${docker_arch}" -o /usr/local/lib/docker/cli-plugins/docker-compose; \
+    chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose; \
+    docker --version; \
+    docker compose version
 
 # ============================================================
 # backend: the service
@@ -92,6 +100,7 @@ RUN set -eux; \
 FROM deps-${WITH_RAG} AS backend
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-cli /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 
 # `ah` on PATH, so `docker compose exec backend ah ...` works the way it does on
 # a local install. A wrapper rather than `pip install -e .`: the source under
@@ -100,13 +109,25 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 RUN printf '#!/bin/sh\nexec python -m cli "$@"\n' > /usr/local/bin/ah \
     && chmod 755 /usr/local/bin/ah
 
+# `setup` is the guided installer for a container started in the folder the
+# install should land in (docker run ... setup, docker compose run --rm
+# setup). It remembers that folder, then changes to /app before starting
+# Python: with a checkout mounted as the working directory, the current
+# directory would otherwise be first on sys.path and its cli package would
+# shadow the one this image was built with.
+RUN printf '#!/bin/sh\ntarget="$(pwd)"\ncd /app && exec python -m cli setup --in-docker --workdir "$target" "$@"\n' > /usr/local/bin/setup \
+    && chmod 755 /usr/local/bin/setup
+
 # ---------- security: non-root user ----------
 # Root is only needed for apt-get and pip install above. The docker CLI is
 # still usable from here: docker-compose.yml adds this user to the socket's
 # host group via group_add, so the backend can keep driving the daemon
 # without running as root itself.
 RUN groupadd -g 1000 hub \
-    && useradd -u 1000 -g hub -m hub --shell /bin/bash
+    && useradd -u 1000 -g hub -m hub --shell /bin/bash \
+    && mkdir -p /data/agents_hub && chown hub:hub /data/agents_hub
+# /data/agents_hub: where docker-compose.volume.yml mounts the state volume. An
+# empty volume takes this directory's owner on first use, so the hub can write.
 
 COPY --chown=hub:hub . /app
 

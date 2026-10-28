@@ -350,8 +350,8 @@ def _q(value: str) -> str:
 # agent
 # ---------------------------------------------------------------------------
 
-MODEL_KEYS = ("provider", "model", "base_url", "temperature", "max_tokens")
-REASONING_KEYS = ("think_enabled", "think_mode", "thinking_level", "plan_enabled", "plan_format")
+MODEL_KEYS = ("provider", "model", "base_url", "temperature", "max_tokens", "effort")
+REASONING_KEYS = ("think_enabled", "think_mode", "plan_enabled", "plan_format")
 LOOP_KEYS = ("fallback_models", "advisor_model", "output_schema", "max_concurrent_delegates",
              "tool_search", "compaction", "data_class")
 WEB_KEYS = ("allowed_domains", "blocked_domains")
@@ -406,6 +406,8 @@ def _norm_model(v: Any) -> Dict[str, Any]:
             out[k] = _text(val) or "inherit"
         elif k in ("model", "base_url"):
             out[k] = _text(val)
+        elif k == "effort":
+            out[k] = (_text(val).lower() or None) if val is not None else None
         else:
             out[k] = val
     return out
@@ -551,7 +553,8 @@ class AgentKind(Kind):
     DEFAULTS: Dict[str, Any] = {
         "domain": "general", "capacity": 1, "workspace": "default", "capability_override": False,
         "extends": None, "extends_version": None,
-        "model": {"provider": "inherit", "model": "", "base_url": "", "temperature": None, "max_tokens": None},
+        "model": {"provider": "inherit", "model": "", "base_url": "", "temperature": None, "max_tokens": None,
+                  "effort": None},
         "reasoning": {}, "memory": [], "delegates": [], "handoffs": [], "handoff_history": "full",
         "description": "", "capabilities": "", "usage": "", "skills": {}, "skills_enabled": False,
         "episodic_write": None, "response_format": "none", "clarify_gate": False,
@@ -680,6 +683,7 @@ class AgentKind(Kind):
                 "base_url": detail.get("base_url") or "",
                 "temperature": detail.get("temperature"),
                 "max_tokens": detail.get("max_tokens"),
+                "effort": detail.get("effort"),
             },
             "reasoning": dict(detail.get("reasoning") or {}),
             "memory": _observed_memory(detail),
@@ -806,6 +810,8 @@ class AgentKind(Kind):
                 for k, v in value.items():
                     if k in ("temperature", "max_tokens") and v is None:
                         body[f"clear_{k}"] = True
+                    elif k == "effort" and v is None:
+                        body[k] = ""
                     else:
                         body[k] = v
                 ctx.call("POST", f"{base}/model", json=body)

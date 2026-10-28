@@ -16,6 +16,7 @@ import ViewRenderer from '../views/ViewRenderer';
 import { FILL_KINDS } from '../views/fillKinds';
 import ControlsPanel from '../views/ControlsPanel';
 import { KindIcon } from '../views/ViewCard';
+import ViewImageMenu from '../views/ViewImageMenu';
 import { ownerLink } from '../views/owner';
 
 import { AppBar } from '../components/PageLayout';
@@ -207,6 +208,7 @@ export default function ViewDetail() {
               <Boxes className="w-4 h-4" /> {t('viewDetail.studio')}
             </Link>
           )}
+          {view && !isCode && <ViewImageMenu view={view} getRoot={() => viewportRef.current} buttonClass={btn} />}
           <button onClick={capture} title={t('viewDetail.saveSnapshot')} className={btn}><Camera className="w-4 h-4" /></button>
           <button onClick={copyLink} title={t('viewDetail.copyLink')} className={btn}><Link2 className="w-4 h-4" /></button>
           <button onClick={toggleFullscreen} title={fullscreen ? t('viewDetail.exitFullscreen') : t('viewDetail.fullscreen')} className={btn}>

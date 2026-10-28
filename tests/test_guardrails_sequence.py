@@ -314,4 +314,4 @@ def test_the_test_endpoint_runs_pasted_calls():
                     json={"calls": [{"tool": "check_invoice", "input": {}}, {"tool": "pay", "input": {}}]})
     assert r.json()["passed"] is True
     assert client.post(f"/api/guardrails/{g['id']}/test", json={"text": "x"}).status_code == 400
-    assert client.get("/api/guardrails/events").json() == []
+    assert client.get("/api/guardrails/events").json()["total"] == 0

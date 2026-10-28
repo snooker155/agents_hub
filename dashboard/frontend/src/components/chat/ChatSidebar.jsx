@@ -1,10 +1,13 @@
-import { AlertCircle, AudioLines, Copy, FolderGit2, Loader, MessageSquare, PlusCircle, Send as SendIcon, Trash2, UsersRound, Workflow } from 'lucide-react';
+import { useState } from 'react';
+import { AlertCircle, AudioLines, Copy, FolderGit2, Loader, MessageSquare, PlusCircle, Search, Send as SendIcon, Trash2, UsersRound, Workflow, X } from 'lucide-react';
 import { useChatPage } from './context';
+import { useChatSearch } from './chatSearch';
 
 /**
  * The conversation list: the ordinary chats on top, the Telegram threads below
  * when there are any, each labelled with the workspace, target and project it
- * belongs to.
+ * belongs to, with a search over the chats above it (titles at once, the
+ * messages from the server: chatSearch.js).
  */
 export default function ChatSidebar() {
   const {
@@ -14,6 +17,11 @@ export default function ChatSidebar() {
     setSelectedFlow, setSelectedProject, setSelectedTeam, setTargetMode, syncError, t,
     runningChats, teams, turns, visibleConversations, visibleTelegramBindings,
   } = useChatPage();
+  // A page that has no Telegram (a test's page, a hub without the connector) lists none.
+  const telegramBindings = visibleTelegramBindings || [];
+  const [query, setQuery] = useState('');
+  const { results, searching } = useChatSearch(query, visibleConversations, selectedWorkspace);
+  const shown = results || visibleConversations;
   return (
     <>
       {/* ── Sidebar: a column on a wide screen, a drawer on a phone ── */}
@@ -25,41 +33,67 @@ export default function ChatSidebar() {
           ? 'flex bg-gray-50 max-sm:fixed max-sm:inset-y-0 max-sm:left-0 max-sm:z-50 max-sm:w-72 max-sm:max-w-[85vw] max-sm:shadow-xl max-sm:pt-safe max-sm:pb-safe'
           : 'hidden sm:flex'
       }`}>
-        <div className="p-3">
+        {/* New chat in a band as tall as the top bar beside it (60px), so its
+            line under it runs on with the bar's across the page. */}
+        <div className="h-[60px] flex-shrink-0 flex items-center px-3 border-b border-gray-200">
           <button
             onClick={newConversation}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
+            className="w-full h-9 flex items-center justify-center gap-2 px-3 rounded-xl text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors"
           >
             <PlusCircle className="w-4 h-4" />
             {t('chat.newChat')}
           </button>
         </div>
+        <div className="p-3 pb-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
+              placeholder={t('chat.search.placeholder')}
+              aria-label={t('chat.search.placeholder')}
+              data-testid="chat-search"
+              className="w-full h-8 rounded-lg border border-gray-200 bg-white pl-8 pr-7 text-xs text-gray-700 placeholder:text-gray-400 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100 [&::-webkit-search-cancel-button]:hidden"
+            />
+            {query && (
+              <button type="button" onClick={() => setQuery('')} aria-label={t('chat.search.clear')}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-400 hover:text-gray-600">
+                {searching ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* Top panel — normal chats */}
         <div className="flex-1 min-h-0 flex flex-col">
-          <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold flex-shrink-0">
-            <MessageSquare className="w-3 h-3" /> {t('chat.chats')}
-            {/* Chats are stored on the server; when that write keeps failing the
-                conversation only exists in this tab, and saying so is the
-                difference between a delay and silent loss. */}
-            {syncError && (
-              <span
-                className="ml-auto flex items-center gap-1 normal-case tracking-normal text-amber-600"
-                title={t('chat.notSavedHint')}
-              >
-                <AlertCircle className="w-3 h-3" /> {t('chat.notSaved')}
-              </span>
-            )}
-          </div>
+          {/* Chats are stored on the server; when that write keeps failing the
+              conversation only exists in this tab, and saying so is the
+              difference between a delay and silent loss. The list has no
+              heading of its own: this line shows only then. */}
+          {syncError && (
+            <div
+              className="px-3 pt-2 pb-1 flex items-center gap-1 text-[10px] font-semibold text-amber-600 flex-shrink-0"
+              title={t('chat.notSavedHint')}
+            >
+              <AlertCircle className="w-3 h-3" /> {t('chat.notSaved')}
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
-          {visibleConversations.length === 0 && (
+          {results && !results.length && (
+            <p className="text-xs text-gray-400 text-center py-6 px-3" data-testid="chat-search-none">
+              {searching ? t('chat.search.searching') : t('chat.search.none')}
+            </p>
+          )}
+          {!results && visibleConversations.length === 0 && (
             <p className="text-xs text-gray-400 text-center py-10 px-3 leading-relaxed">
               No conversations yet.
               <br />
               Click <strong>{t('chat.newChat')}</strong> to start.
             </p>
           )}
-          {visibleConversations.map((conv) => (
+          {shown.map((conv) => (
             // Rendered as a div, not a button: it contains the delete button and
             // nesting a button inside a button is invalid HTML. role/tabIndex/
             // onKeyDown restore the keyboard and a11y behaviour of a button.
@@ -75,6 +109,15 @@ export default function ChatSidebar() {
               }}
               onClick={() => {
                 setListOpen(false);
+                // A chat older than the loaded page, found by the search:
+                // listed first, so it opens (and loads) like any other. Marked
+                // not loaded, so the store reads its transcript and never
+                // writes this empty summary over it (chatStore.js).
+                if (conv._searchOnly) {
+                  const { _searchOnly: _found, match: _match, ...summary } = conv;
+                  setConversations((prev) => (prev.some((c) => c.id === conv.id)
+                    ? prev : [...prev, { ...summary, messages: [], _hydrated: false }]));
+                }
                 navigate(`/chat/${conv.id}`);
                 // A conversation with the Assistant opens with the Assistant
                 // picked (its record's agent_id), like any other agent's.
@@ -99,18 +142,20 @@ export default function ChatSidebar() {
                 }`}
             >
               {/* Being answered now: a turn this tab sent (it goes on while
-                  another conversation is open), or anyone else's. */}
-              {turns?.[conv.id] || runningChats?.has(conv.id) ? (
+                  another conversation is open), or anyone else's. A chat at
+                  rest has no icon. */}
+              {(turns?.[conv.id] || runningChats?.has(conv.id)) && (
                 <Loader
                   className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 animate-spin text-indigo-500"
                   data-testid="chat-conv-running"
                   aria-label={t('chat.answering')}
                 />
-              ) : (
-                <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 opacity-60" />
               )}
               <div className="flex-1 min-w-0">
                 <div className="truncate leading-5">{conv.title}</div>
+                {conv.match && (
+                  <div className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-gray-400" data-testid="chat-search-match">{conv.match}</div>
+                )}
                 <div className="mt-0.5 flex flex-wrap gap-1">
                   {/* A conversation with the Assistant is no workspace's and talks to the Assistant only: its own badge says both. */}
                   {conv.origin !== 'assistant' && (!selectedWorkspace || selectedWorkspace === 'default') && (
@@ -200,13 +245,13 @@ export default function ChatSidebar() {
             exactly the bottom half of the column (flex-1 + a matching flex-1 on
             the top "Chats" panel makes them split 50/50). Overflow uses the
             macOS-style overlay scrollbar via overflow-y-auto. */}
-        {visibleTelegramBindings.length > 0 && (
+        {telegramBindings.length > 0 && (
           <div className="flex-1 min-h-0 flex flex-col border-t border-gray-200">
             <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold flex-shrink-0">
               <SendIcon className="w-3 h-3" /> {t('chat.telegramChats')}
             </div>
             <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
-              {visibleTelegramBindings.map((b) => {
+              {telegramBindings.map((b) => {
                 const convId = b.conversation_id;
                 const isActive = currentConvId === convId;
                 const agent = selectableAgents.find((a) => a.id === b.agent_id);

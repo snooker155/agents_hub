@@ -60,6 +60,8 @@ export default {
   comingSoonItem: '{{name}} — coming soon',
   health: 'Status',
   cluster: 'Cluster',
+  vault: 'Synced data',
+  catalog: 'Catalog',
   connections: 'Connections',
   watchers: 'Watchers',
   connectors: 'Connectors',

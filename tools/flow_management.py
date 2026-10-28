@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 from uuid import uuid4
 
+from langchain_core.tools import tool
 from pydantic import BaseModel, Field, field_validator
 
 from common.entity_sink import record_entity
@@ -46,17 +48,32 @@ def _coerce_json_list(v: Any) -> Any:
 
 # ── graph shape conversion ────────────────────────────────────────────────────
 
-def _to_combined_nodes(nodes: List[Dict[str, Any]], existing: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+#: Node fields copied through as they are: the step's state keys and config,
+#: its retry and timeout, and how it picks the next step (flow/branching.py).
+_PASSTHROUGH_FIELDS = ("input", "inputs", "output", "outputs", "config", "retry",
+                       "timeout_seconds", "route", "route_default", "route_hint")
+
+
+def _layout(nodes: List[Dict[str, Any]], edges: Optional[List[Dict[str, Any]]]) -> Dict[str, Dict[str, int]]:
+    from flow.store import layout_positions
+    return layout_positions(nodes, edges)
+
+
+def _to_combined_nodes(nodes: List[Dict[str, Any]], existing: Optional[List[Dict[str, Any]]] = None,
+                       edges: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     """Convert logical nodes to the combined dict shape flow.store persists.
 
     Positions: keep the position of an existing node with the same id (so a
-    modify doesn't scramble the user's layout), else lay out left-to-right.
+    modify doesn't scramble the user's layout), else lay out by depth when the
+    edges are given, left-to-right when not. A node's ``task`` becomes the
+    step's own task (``nodeTask``, what the engine adds to its prompt).
     """
     positions = {
         n.get("id"): n.get("position")
         for n in (existing or [])
         if isinstance(n, dict) and n.get("position")
     }
+    laid_out = _layout(nodes, edges) if edges is not None else {}
     out: List[Dict[str, Any]] = []
     for i, n in enumerate(nodes):
         nid = str(n.get("id") or f"node-{i + 1}")
@@ -71,13 +88,16 @@ def _to_combined_nodes(nodes: List[Dict[str, Any]], existing: Optional[List[Dict
             data["entity_id"] = str(n["entity_id"])
         if n.get("category"):
             data["category"] = n["category"]
-        for f in ("input", "inputs", "output", "outputs", "config"):
+        for f in _PASSTHROUGH_FIELDS:
             if n.get(f) is not None:
                 data[f] = n[f]
+        task = n.get("task") or n.get("nodeTask")
+        if task:
+            data["nodeTask"] = str(task)
         out.append({
             "id": nid,
             "type": "flowNode",
-            "position": positions.get(nid) or {"x": 120 + i * 220, "y": 160},
+            "position": positions.get(nid) or laid_out.get(nid) or {"x": 120 + i * 220, "y": 160},
             "data": data,
         })
     return out
@@ -101,14 +121,20 @@ def _simplify(flow: Dict[str, Any]) -> Dict[str, Any]:
     nodes = []
     for n in flow.get("nodes", []):
         data = n.get("data", {}) if isinstance(n.get("data"), dict) else {}
-        nodes.append({
+        node = {
             "id": n.get("id"),
             "agent_id": data.get("agent_id") or data.get("entity_id") or "",
             "label": data.get("label") or "",
             "description": data.get("description") or "",
-        })
+        }
+        if data.get("nodeTask"):
+            node["task"] = data["nodeTask"]
+        for f in ("route", "route_default", "config", "output"):
+            if data.get(f) not in (None, "", [], {}):
+                node[f] = data[f]
+        nodes.append(node)
     edges = [{"source": e.get("source"), "target": e.get("target")} for e in flow.get("edges", [])]
-    return {
+    out = {
         "id": flow.get("id"),
         "name": flow.get("name"),
         "description": flow.get("description") or "",
@@ -116,21 +142,21 @@ def _simplify(flow: Dict[str, Any]) -> Dict[str, Any]:
         "nodes": nodes,
         "edges": edges,
     }
+    if flow.get("ephemeral"):
+        out["ephemeral"] = True
+    return out
 
 
 # ── workspace scope ───────────────────────────────────────────────────────────
 
-def _hidden(flow: Optional[Dict[str, Any]], *, write: bool = False) -> bool:
+def _hidden(flow: Optional[Dict[str, Any]]) -> bool:
     """Whether ``flow`` is out of this run's reach: a flow of another
     workspace is answered like a missing one (``check_record``). A flow with
-    no workspace is shared by every workspace for reading (``list_flows_tool``
-    lists it everywhere) and is the default workspace's to change."""
+    no workspace is the default workspace's, for reading and for changing,
+    as ``list_flows_tool`` lists it."""
     if flow is None:
         return False
-    flow_ws = flow.get("workspace")
-    if not flow_ws and not write:
-        return False
-    return check_record(flow_ws, what="flow") is not None
+    return check_record(flow.get("workspace"), what="flow") is not None
 
 
 # ── validation ────────────────────────────────────────────────────────────────
@@ -232,6 +258,13 @@ class ModifyFlowInput(BaseModel):
     edges: Optional[List[Dict[str, Any]]] = Field(
         None, description="Replacement edge list: [{'source': ..., 'target': ...}]"
     )
+    keep: Optional[bool] = Field(
+        None,
+        description=(
+            "True keeps a temporary flow built by run_new_flow_tool: it joins the "
+            "flow list and is no longer deleted after a week. Only when the user asks."
+        ),
+    )
 
     @field_validator("nodes", "edges", mode="before")
     @classmethod
@@ -292,7 +325,7 @@ def _create_flow(
         "id": str(uuid4()),
         "name": name.strip(),
         "description": description or "",
-        "nodes": _to_combined_nodes(nodes or []),
+        "nodes": _to_combined_nodes(nodes or [], edges=edges or []),
         "edges": _to_combined_edges(edges or []),
         "workspace": ws,
         "task_id": None,
@@ -350,6 +383,7 @@ def _modify_flow(
     description: Optional[str] = None,
     nodes: Optional[List[Dict[str, Any]]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
+    keep: Optional[bool] = None,
 ) -> str:
     """Modify an existing flow. Only the provided fields change.
 
@@ -364,25 +398,33 @@ def _modify_flow(
     try:
         flow = flow_store.get_flow(flow_id)
     except flow_store.FlowParseError as e:
-        if _hidden(_raw_flow(flow_id), write=True):
+        if _hidden(_raw_flow(flow_id)):
             return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
         return _json_err(f"Flow is broken: {e}", code="invalid_flow", extra={"flow_id": flow_id})
-    if flow is None or _hidden(flow, write=True):
+    if flow is None or _hidden(flow):
         return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
 
     changed: List[str] = []
     if name is not None and name.strip():
+        if flow.get("shared"):
+            from common.marketplace_names import flow_name_taken
+            taken = flow_name_taken(name, exclude=[flow_id])
+            if taken:
+                return _json_err(taken, code="name_taken", extra={"flow_id": flow_id})
         flow["name"] = name.strip()
         changed.append("name")
     if description is not None:
         flow["description"] = description
         changed.append("description")
     if nodes is not None:
-        flow["nodes"] = _to_combined_nodes(nodes, existing=flow.get("nodes"))
+        flow["nodes"] = _to_combined_nodes(nodes, existing=flow.get("nodes"), edges=edges)
         changed.append("nodes")
     if edges is not None:
         flow["edges"] = _to_combined_edges(edges)
         changed.append("edges")
+    if keep and flow.get("ephemeral"):
+        flow["ephemeral"] = False
+        changed.append("kept")
 
     if not changed:
         return _json_ok({"flow": _simplify(flow), "message": f"Flow '{flow_id}' unchanged"})
@@ -421,7 +463,7 @@ def _delete_flow(flow_id: str) -> str:
         flow = None  # broken flows can still be deleted
     # A broken flow still names its workspace in the stored record.
     raw = flow if flow is not None else _raw_flow(flow_id)
-    if _hidden(raw, write=True):
+    if _hidden(raw):
         return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
     if flow is not None and flow.get("running"):
         return _json_err(
@@ -470,6 +512,258 @@ def _validate_flow(
     return _json_ok({"valid": not errors, "errors": errors, "warnings": warnings})
 
 
+# ── build and run in one call ─────────────────────────────────────────────────
+#
+# run_new_flow_tool is the agent's way to orchestrate work it planned itself:
+# the graph is assembled for this request, validated, checked against what the
+# caller may delegate to, and started, without first becoming an entry in the
+# flow list. It is stored (the run loads its flow by id and the run page shows
+# it) as a temporary flow, which no list shows and which is deleted a week after
+# its last change unless the person keeps it (flow.store.is_ephemeral).
+
+#: Nodes that start other runs (a team, a loop, a flow, an n8n workflow). Their
+#: members are not checked against the caller's delegation allowlist, so an
+#: agent with an allowlist may not put one in a flow it builds.
+_NESTING_ENTITIES = frozenset({"run_flow", "run_team", "run_loop", "run_n8n"})
+
+_NODE_SHAPES = (
+    "Each node is one of: an agent step {'id', 'agent_id', 'label', 'task'} where task is "
+    "what this step does; a map step {'id', 'entity_id': 'map', 'label', 'config': "
+    "{'agent_id', 'task', 'over'?, 'max_parallel'?, 'allow_failures'?}, 'output': ['key']} "
+    "that runs config.agent_id once per item of a list (the previous step's output read as a "
+    "JSON list or one item per line, or state key 'over'), all items in parallel, and writes "
+    "the results as a list to its output key; a switch {'id', 'entity_id': 'state_switch', "
+    "'config': {'routes': [{'target', 'match': 'all'|'any', 'conditions': [{'key', 'op', "
+    "'value'}]}], 'default'}} that follows the first route whose conditions hold, each "
+    "condition on its own state key (op: equals, contains, matches, gt, lt, count_gt, empty, "
+    "...), 'default' when none does. An agent step with two or more next steps may add "
+    "'route': 'one' (or 'many') to choose the next step itself; 'route_default' names the "
+    "step taken when it does not choose. An agent step may write its answer to state with "
+    "'output': ['key'] and read keys with 'input': ['key']."
+)
+
+
+class RunNewFlowInput(BaseModel):
+    name: str = Field(..., min_length=1, description="Short name of what this run does")
+    goal: str = Field(
+        ..., min_length=1,
+        description="The request the flow works on: every first step reads it.",
+    )
+    nodes: List[Dict[str, Any]] = Field(..., description="The steps. " + _NODE_SHAPES)
+    edges: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=("Order: [{'source': 'a', 'target': 'b'}]. Acyclic. Steps with no edge "
+                     "between them run at the same time."),
+    )
+    max_parallel: Optional[int] = Field(
+        None, description="How many steps may run at once (default 4)")
+    on_error: Optional[str] = Field(
+        None, description="fail_fast (default), continue, or isolate_branch")
+    save: bool = Field(
+        False,
+        description=("True keeps the flow in the flow list for reuse. Default False: a "
+                     "temporary flow, deleted a week after the run unless the user keeps it."),
+    )
+    create_task: bool = Field(
+        False, description="True only when the user asks to track this run as a task.")
+    user_approved: bool = Field(
+        False,
+        description=(
+            "Must be True to start. Show the user the plan (the steps and the estimate the "
+            "first call returns) and set it only after they said yes. In auto mode the "
+            "call runs without it."
+        ),
+    )
+
+    @field_validator("nodes", "edges", mode="before")
+    @classmethod
+    def coerce_lists(cls, v):
+        return _coerce_json_list(v)
+
+
+def _referenced_agents(flow: Dict[str, Any]) -> List[str]:
+    """Every agent the flow runs: its agent steps and its map steps' agents."""
+    out: List[str] = []
+    for n in flow.get("nodes", []):
+        data = n.get("data", {}) if isinstance(n.get("data"), dict) else {}
+        aid = data.get("agent_id")
+        if not aid and data.get("entity_id") == "map":
+            aid = (data.get("config") or {}).get("agent_id")
+        if aid and str(aid) not in out:
+            out.append(str(aid))
+    return out
+
+
+def _delegation_errors(flow: Dict[str, Any], ws: Optional[str]) -> List[str]:
+    """What the caller may not run through this flow: an agent it may not
+    delegate to (its ``delegates`` allowlist, the self-delegation rule), an
+    agent not available in the workspace, and, for a caller with an
+    allowlist, a step that starts other runs whose members it cannot see."""
+    from agents.registry import get_agent as reg_get_agent
+    from tools.langchain_tools import _agent_available, _caller_delegates, _delegation_blocked
+
+    errors: List[str] = []
+    for aid in _referenced_agents(flow):
+        spec = reg_get_agent(aid)
+        if spec is None:
+            continue  # the preflight already names an unknown agent
+        if not _agent_available(spec, ws):
+            errors.append(f"agent '{aid}' is not available in workspace '{ws}'")
+            continue
+        blocked = _delegation_blocked(aid)
+        if blocked:
+            errors.append(blocked)
+    if _caller_delegates() is not None:
+        for n in flow.get("nodes", []):
+            data = n.get("data", {}) if isinstance(n.get("data"), dict) else {}
+            if data.get("entity_id") in _NESTING_ENTITIES:
+                errors.append(
+                    f"step '{n.get('id')}' starts another run ({data['entity_id']}), which an "
+                    "agent with a delegation allowlist may not put in a flow it builds")
+    return errors
+
+def _estimate(flow: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The cost of one run, with the map steps priced per item."""
+    try:
+        from flow.estimate import estimate_flow_cost
+        estimate = estimate_flow_cost(flow)
+    except Exception:  # noqa: BLE001 - a run without an estimate is still a run
+        return None
+    maps = [n.get("id") for n in flow.get("nodes", [])
+            if (n.get("data") or {}).get("entity_id") == "map"]
+    if maps:
+        estimate["note"] = (
+            "Map steps (" + ", ".join(str(m) for m in maps) + ") run their agent once per item; "
+            "the number of items is known only when the run gets there, so they are not in "
+            "the total.")
+    return estimate
+
+
+
+def run_new_flow(
+    name: str,
+    goal: str,
+    nodes: List[Dict[str, Any]],
+    edges: Optional[List[Dict[str, Any]]] = None,
+    max_parallel: Optional[int] = None,
+    on_error: Optional[str] = None,
+    save: bool = False,
+    create_task: bool = False,
+    user_approved: bool = False,
+) -> str:
+    """Build a flow for this request and run it, in one call.
+
+    Use it when the work splits into steps for several agents: some in
+    parallel, some one after another, one step per item of a list the run
+    finds (map), or a branch chosen by an agent or by a condition. The graph is
+    checked first (unknown agents, cycles, branch targets, agents you may not
+    delegate to); nothing is saved or started while it has errors.
+
+    The first call without user_approved returns the plan and its cost
+    estimate: show both to the user and call again with the same arguments and
+    user_approved=True once they agree. The run goes on in the background:
+    report that it started and give the link; do not poll it here.
+
+    The flow is temporary unless save=True: it stays out of the flow list and
+    is deleted a week after the run, unless the user keeps it (the run page's
+    Keep button, or modify_flow_tool with keep=True).
+    """
+    from datetime import datetime, timezone
+
+    from common.agent_context import current_agent_id
+    from common.auto_mode import approved
+    from flow import store as flow_store
+
+    ws = resolve_active_workspace()
+    now = datetime.now(timezone.utc).isoformat()
+    flow: Dict[str, Any] = {
+        "id": str(uuid4()),
+        "name": name.strip(),
+        "description": goal.strip(),
+        "nodes": _to_combined_nodes(nodes or [], edges=edges or []),
+        "edges": _to_combined_edges(edges or []),
+        "workspace": ws,
+        "task_id": None,
+        "created_at": now,
+        "updated_at": now,
+        "ephemeral": not save,
+        "created_by_agent": current_agent_id.get() or None,
+    }
+    if max_parallel is not None:
+        flow["max_parallel"] = max_parallel
+    if on_error:
+        flow["on_error"] = on_error
+
+    errors, warnings = _validate_combined(flow, ws)
+    if not errors:
+        errors = _delegation_errors(flow, ws)
+    if errors:
+        return _json_err(
+            "The flow is invalid and was NOT started. Fix the problems and call again.",
+            code="invalid_flow",
+            extra={"errors": errors, "warnings": warnings},
+        )
+    estimate = _estimate(flow)
+
+    plan = _simplify(flow)
+    plan.pop("id", None)
+    if not approved("run_new_flow_tool", user_approved,
+                    {"name": flow["name"], "goal": goal, "steps": len(flow["nodes"])},
+                    reason="Builds a flow for this request and runs it."):
+        extra: Dict[str, Any] = {"plan": plan}
+        if estimate:
+            extra["estimate"] = estimate
+        if warnings:
+            extra["warnings"] = warnings
+        return _json_err(
+            "This run is not approved yet. Show the user the plan and the estimate, ask "
+            "them to confirm, and only then call run_new_flow_tool again with the same "
+            "arguments and user_approved=True.",
+            code="approval_required",
+            extra=extra,
+        )
+
+    flow_store.save_flow(flow)
+    record_entity("flow", flow["id"], "created", flow["name"])
+    from tools.langchain_tools import launch_flow_run
+    payload = launch_flow_run(flow["id"], flow, ws, goal.strip(), create_task=create_task)
+    # The run's own page under the flow (dashboard App.jsx /flows/:id/runs/:run).
+    payload["link"] = f"/flows/{flow['id']}/runs/{quote(str(payload['run_id']), safe='')}"
+    payload["ephemeral"] = bool(flow["ephemeral"])
+    payload["plan"] = plan
+    if flow["ephemeral"]:
+        payload["message"] = (
+            f"{payload['message']} The flow is temporary: it is not in the flow list and "
+            "is deleted in a week unless the user keeps it from the run page.")
+    if warnings:
+        payload["warnings"] = warnings
+    return _json_ok(payload)
+
+
+def _run_new_flow_tool(
+    name: str,
+    goal: str,
+    nodes: List[Dict[str, Any]],
+    edges: Optional[List[Dict[str, Any]]] = None,
+    max_parallel: Optional[int] = None,
+    on_error: Optional[str] = None,
+    save: bool = False,
+    create_task: bool = False,
+    user_approved: bool = False,
+) -> str:
+    try:
+        return run_new_flow(name, goal, nodes, edges=edges, max_parallel=max_parallel,
+                            on_error=on_error, save=save, create_task=create_task,
+                            user_approved=user_approved)
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to run the new flow: {e}")
+
+
+# One docstring, on run_new_flow, read by the tool catalog as the description.
+_run_new_flow_tool.__doc__ = run_new_flow.__doc__
+run_new_flow_tool = tool("run_new_flow_tool", args_schema=RunNewFlowInput)(_run_new_flow_tool)
+
+
 # ── tools ─────────────────────────────────────────────────────────────────────
 
 _SPEC = EntityToolSpec(
@@ -491,6 +785,7 @@ validate_flow_tool = _TOOLS["validate_flow_tool"]
 
 
 __all__ = [
+    "run_new_flow_tool",
     "create_flow_tool",
     "get_flow_tool",
     "modify_flow_tool",

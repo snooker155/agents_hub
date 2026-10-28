@@ -32,6 +32,7 @@ export default {
   lastNLabel: 'Anzahl der Nachrichten',
   lastNUnit: 'Nachrichten',
   lastNInvalid: 'Gib eine Anzahl von 1 bis {{max}} Nachrichten an.',
+  passing: 'Ich übergebe den Chat an {{agent}}.',
   divider: 'Übergeben an {{agent}}: {{reason}}',
   dividerNoReason: 'Übergeben an {{agent}}',
   openRun: 'Lauf öffnen',

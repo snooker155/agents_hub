@@ -15,12 +15,14 @@ import {
   EyeOff,
   ArrowRight,
 } from 'lucide-react';
-import { getWebLogs, getWebLogStats, getWebLogEntry, clearWebLogs } from '../api';
+import { Link } from 'react-router-dom';
+import { getAgents, getWebLogs, getWebLogStats, getWebLogEntry, clearWebLogs } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { ListLoadMore, ListPagingControls } from '../components/ListPaging';
 import { useListPaging } from '../components/listPagingState';
 import { useI18n } from '../i18n';
+import { useWorkspace } from '../components/workspace';
 import PageLoader from '../components/PageLoader';
 const SEVERITY_STYLES = {
   high: 'bg-red-50 text-red-700 border-red-200',
@@ -65,6 +67,24 @@ const WebLogs = () => {
   const [entry, setEntry] = useState(null);
   const [entryLoading, setEntryLoading] = useState(false);
   const [filters, setFilters] = useState({ kind: '', status: '', min_severity: '', search: '' });
+  // Only the calls made in the workspace the person is in.
+  const { selectedWorkspace } = useWorkspace();
+  const workspace = selectedWorkspace || 'default';
+  // Agent names for the rows, which carry only the id.
+  const [agentNames, setAgentNames] = useState({});
+  useEffect(() => {
+    getAgents()
+      .then((r) => {
+        const list = Array.isArray(r.data) ? r.data : (r.data?.items || r.data?.agents || []);
+        setAgentNames(Object.fromEntries(list.map((a) => [a.id, a.name || a.id])));
+      })
+      .catch(() => setAgentNames({}));
+  }, []);
+  const agentLink = (id) => (
+    <Link to={`/agents/${encodeURIComponent(id)}`} className="text-indigo-600 hover:text-indigo-800" onClick={(e) => e.stopPropagation()}>
+      {agentNames[id] || id}
+    </Link>
+  );
   const [search, setSearch] = useState('');
 
   const paging = useListPaging('webLogs', {
@@ -77,16 +97,16 @@ const WebLogs = () => {
   // The rows on screen are for this query; a different one shows the loader
   // (or, with rows already shown, the load-more spinner), derived rather than
   // set inside the effect.
-  const queryKey = JSON.stringify([filters, pageParams]);
+  const queryKey = JSON.stringify([filters, pageParams, workspace]);
   const [loadedKey, setLoadedKey] = useState(null);
   const loading = loadedKey !== queryKey;
 
   // A promise chain rather than an async body, so the effect below may call it
   // without a synchronous setState.
   const fetchData = useCallback(() => {
-    const params = { ...pageParams };
+    const params = { ...pageParams, workspace };
     Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
-    return Promise.all([getWebLogs(params), getWebLogStats()])
+    return Promise.all([getWebLogs(params), getWebLogStats(workspace)])
       .then(([logs, s]) => {
         setRows(logs.data.items || []);
         setTotal(logs.data.total || 0);
@@ -94,7 +114,7 @@ const WebLogs = () => {
       })
       .catch((error) => { console.error('Error fetching web logs:', error); })
       .then(() => setLoadedKey(queryKey));
-  }, [filters, pageParams, queryKey]);
+  }, [filters, pageParams, queryKey, workspace]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -120,7 +140,7 @@ const WebLogs = () => {
   const handleClear = async () => {
     if (!window.confirm(t('webLogs.confirmClear'))) return;
     try {
-      const { data } = await clearWebLogs();
+      const { data } = await clearWebLogs(workspace);
       setEntry(null);
       setLoadedKey(null);
       await fetchData();
@@ -293,7 +313,7 @@ const WebLogs = () => {
                   </td>
                   <td className="px-4 py-2 text-xs text-gray-500 whitespace-nowrap">
                     {row.agent_id ? (
-                      <span className="inline-flex items-center gap-1"><Bot className="w-3 h-3" /> {row.agent_id}</span>
+                      <span className="inline-flex items-center gap-1"><Bot className="w-3 h-3" /> {agentLink(row.agent_id)}</span>
                     ) : <span className="text-gray-300">—</span>}
                     {row.workspace && (
                       <span className="inline-flex items-center gap-1 ml-2 text-gray-400">
@@ -373,9 +393,17 @@ const WebLogs = () => {
                     {[
                       [t('webLogs.facts.when'), when(entry.ts)],
                       [t('webLogs.facts.workspace'), entry.workspace || '—'],
-                      [t('webLogs.facts.agent'), entry.agent_id || '—'],
-                      [t('webLogs.facts.session'), entry.session_id || '—'],
-                      [t('webLogs.facts.task'), entry.task_id || '—'],
+                      [t('webLogs.facts.agent'), entry.agent_id ? agentLink(entry.agent_id) : '—'],
+                      [t('webLogs.facts.run'), entry.run_id ? (
+                        <Link to={`/messages/${encodeURIComponent(entry.run_id)}`} className="text-indigo-600 hover:text-indigo-800">
+                          {t('webLogs.openRun')}
+                        </Link>
+                      ) : '—'],
+                      [t('webLogs.facts.task'), entry.task_id ? (
+                        <Link to={`/tasks/${encodeURIComponent(entry.task_id)}`} className="text-indigo-600 hover:text-indigo-800">
+                          {entry.task_id}
+                        </Link>
+                      ) : '—'],
                       [t('webLogs.facts.duration'), `${entry.duration_ms ?? 0} ms`],
                       ...(entry.kind === 'search'
                         ? [

@@ -7,9 +7,11 @@ from tasks.models import Task, TaskPriority, TaskStatus, coerce_priority, is_ove
 
 # -------------------- enum coercion --------------------
 
-def test_default_priority_is_medium():
+def test_a_task_has_no_priority_until_one_is_set():
     t = ts.create_task("work")
-    assert t.priority == TaskPriority.medium
+    assert t.priority is None
+    assert ts.update_task(t.id, priority="high").priority == TaskPriority.high
+    assert ts.update_task(t.id, priority=None).priority is None
 
 
 def test_priority_accepts_known_strings_case_insensitively():
@@ -23,10 +25,19 @@ def test_unknown_priority_string_falls_back_to_medium():
     assert t.priority == TaskPriority.medium
 
 
-def test_none_priority_falls_back_to_medium():
+def test_none_priority_is_ordered_as_medium_but_stored_as_none():
     assert coerce_priority(None) == TaskPriority.medium
-    t = Task(title="x", priority=None)
-    assert t.priority == TaskPriority.medium
+    assert Task(title="x", priority=None).priority is None
+    assert Task(title="x", priority="").priority is None
+
+
+def test_a_task_without_priority_dispatches_with_the_medium_ones():
+    now = datetime.now(timezone.utc)
+    high = Task(title="high", priority="high", created_at=now)
+    unset = Task(title="unset", created_at=now - timedelta(seconds=2))
+    medium = Task(title="medium", priority="medium", created_at=now - timedelta(seconds=1))
+    low = Task(title="low", priority="low", created_at=now - timedelta(seconds=3))
+    assert [t.title for t in ts.order_for_dispatch([low, medium, unset, high])] == ["high", "unset", "medium", "low"]
 
 
 def test_coerce_priority_passes_through_enum_values():

@@ -33,14 +33,15 @@ context between them.
 
 ## The Settings tab
 
-The workspace page has a Settings tab drawn by the same sections as the
-Settings page, holding what is configured per workspace: agent execution,
-the tool policy, **web access** (the workspace's own allow and deny domain
-lists, `/api/workspaces/{name}/web-policy`, which replace the global ones
-for its runs), **personal memory** (the switch that lets the agents keep a
-private pool about the user, [memory](memory.md)), task assignment,
-secrets and the palette. Anything not set here falls through to the global
-[settings](settings.md).
+The workspace page has a Settings tab holding what only a workspace has:
+agent roles ([workspace-roles](workspace-roles.md)), **personal memory** (the
+switch that lets the agents keep a private pool about the user,
+[memory](memory.md)), the special models, isolation ([isolation](isolation.md)),
+secrets and the palette. The workspace's overrides of
+global values (execution mode, tool policy, its own allow and deny domain
+lists at `/api/workspaces/{name}/web-policy`, task assignment) are on the
+[settings](settings.md) page, beside the global values, for the workspace
+picked in the header.
 
 ## One workspace per run
 
@@ -93,7 +94,8 @@ cannot see is "not found".
 Isolation, secrets, hooks and the tool policy, members, environment variables,
 the web domain policy and connectors are not reachable from these tools. An
 agent able to change them could switch off the fence it runs behind or grant
-itself access, so a person changes them on the workspace's Settings tab.
+itself access, so a person changes them on the Settings page or the
+workspace's Settings tab.
 
 `delete_workspace` is on the approval list (`tools/approval.py`), and the
 main agent's own tool policy marks it `always_ask`, so the call waits for a

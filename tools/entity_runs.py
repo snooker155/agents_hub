@@ -32,8 +32,10 @@ from typing import Any, Callable, Dict, Optional
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from common.auto_mode import approved as _approved
 from common.entity_sink import record_entity
 from common.workspace_scope import check_record
+from common.untrusted import agent_output_fence
 from common.workspace_context import (
     normalize_workspace_name,
     resolve_active_workspace,
@@ -148,14 +150,20 @@ def _start_background_run(
 
 
 def _started(kind: str, name: str, record: Dict[str, Any], run_key: str,
-             follow_tool: str) -> Dict[str, Any]:
-    """The common half of a "it is running now" answer."""
-    return {
-        "message": (
+             follow_tool: str, *, from_chat: bool = False) -> Dict[str, Any]:
+    """The common half of a "it is running now" answer. ``from_chat``: the
+    run was started from a chat, which it reports back to when it ends."""
+    from chat.background_runs import started_note
+    if from_chat:
+        message = started_note(kind, name, from_chat=True)
+    else:
+        message = (
             f"{kind.capitalize()} '{name}' started. It runs in the background — "
             f"tell the user it is under way and give them the id; do not poll for "
             f"completion. Use {follow_tool} when they ask how it went."
-        ),
+        )
+    return {
+        "message": message,
         run_key: record.get(run_key),
         "status": record.get("status"),
     }
@@ -214,7 +222,7 @@ def run_scenario_tool(scenario_id: str, user_approved: bool = False,
         except Exception:  # noqa: BLE001 — an estimate is help, not a precondition
             estimate = None
 
-        if not user_approved:
+        if not _approved("run_scenario_tool", user_approved, {"scenario_id": scenario_id}):
             return _approval_required("scenario", scenario_id,
                                       "list_scenarios_tool", "run_scenario_tool", estimate)
 
@@ -376,7 +384,7 @@ def run_team_tool(team_id: str, goal: str = "", user_approved: bool = False,
         except Exception:  # noqa: BLE001
             estimate = None
 
-        if not user_approved:
+        if not _approved("run_team_tool", user_approved, {"team_id": team_id, "goal": goal}):
             return _approval_required("team", team_id, "list_teams_tool",
                                       "run_team_tool", estimate)
 
@@ -385,14 +393,18 @@ def run_team_tool(team_id: str, goal: str = "", user_approved: bool = False,
         # The launch is the shared envelope (teams/launcher.py): the record is
         # written and the process spawned or queued before this returns.
         from teams.launcher import start_team_run
+        from chat.background_runs import chat_origin
+        origin = chat_origin()
         try:
-            record = start_team_run(team_id, request, workspace=run_ws).to_dict()
+            record = start_team_run(team_id, request, workspace=run_ws,
+                                    origin=origin).to_dict()
         except Exception as e:  # noqa: BLE001 - reported to the caller, not raised
             return _json_err(f"Failed to start the team run: {type(e).__name__}: {e}",
                              code="start_failed", extra={"team_id": team_id})
 
         record_entity("team", team_id, "viewed", team.name)
-        payload = _started("team", team.name, record, "team_run_id", "get_team_run_tool")
+        payload = _started("team", team.name, record, "team_run_id", "get_team_run_tool",
+                           from_chat=bool(origin))
         payload["team_id"] = team_id
         payload["goal"] = request
         if estimate:
@@ -440,7 +452,8 @@ def get_team_run_tool(team_run_id: Optional[str] = None,
             "status": d["status"], "live": d["status"] in LIVE_STATUSES,
             "mode": d["mode"], "goal": d["goal"],
             "rounds_done": d["rounds_done"], "total_cost": d["total_cost"],
-            "result": d["result"], "stop_reason": d["stop_reason"],
+            "result": agent_output_fence(d["result"] or "", source=f"team {d['team_id']}, run {d['team_run_id']}"),
+            "stop_reason": d["stop_reason"],
             "error": d["error"],
             "started_at": d["started_at"], "finished_at": d["finished_at"],
         })
@@ -528,7 +541,7 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
             flow = None
         # The loop runs its flow in the loop's workspace: a flow of another
         # workspace reads as missing.
-        if flow is not None and flow.get("workspace") and check_record(
+        if flow is not None and check_record(
                 flow.get("workspace"), what="flow", workspace=loop.workspace or active_ws):
             flow = None
         if flow is None:
@@ -546,7 +559,7 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
         except Exception:  # noqa: BLE001
             estimate = None
 
-        if not user_approved:
+        if not _approved("run_loop_tool", user_approved, {"loop_id": loop_id, "goal": goal}):
             return _approval_required("loop", loop_id, "list_loops_tool",
                                       "run_loop_tool", estimate)
 
@@ -555,14 +568,18 @@ def run_loop_tool(loop_id: str, goal: str = "", user_approved: bool = False,
         # The launch is the shared envelope (loops/launcher.py): the record is
         # written and the process spawned or queued before this returns.
         from loops.launcher import start_loop_run
+        from chat.background_runs import chat_origin
+        origin = chat_origin()
         try:
-            record = start_loop_run(loop_id, request, workspace=run_ws).to_dict()
+            record = start_loop_run(loop_id, request, workspace=run_ws,
+                                    origin=origin).to_dict()
         except Exception as e:  # noqa: BLE001 - reported to the caller, not raised
             return _json_err(f"Failed to start the loop run: {type(e).__name__}: {e}",
                              code="start_failed", extra={"loop_id": loop_id})
 
         record_entity("loop", loop_id, "viewed", loop.name)
-        payload = _started("loop", loop.name, record, "loop_run_id", "get_loop_run_tool")
+        payload = _started("loop", loop.name, record, "loop_run_id", "get_loop_run_tool",
+                           from_chat=bool(origin))
         payload["loop_id"] = loop_id
         if request:
             payload["goal"] = request
@@ -617,7 +634,8 @@ def get_loop_run_tool(loop_run_id: Optional[str] = None,
             "goal": d["goal"], "iterations_done": d["iterations_done"],
             "best_score": d["best_score"], "final_score": d["final_score"],
             "stop_reason": d["stop_reason"], "total_cost": d["total_cost"],
-            "result": d["result"], "error": d["error"],
+            "result": agent_output_fence(d["result"] or "", source=f"loop {d['loop_id']}, run {d['loop_run_id']}"),
+            "error": d["error"],
             "trajectory": trajectory,
             "started_at": d["started_at"], "finished_at": d["finished_at"],
         })

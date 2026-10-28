@@ -56,13 +56,16 @@ import PageLoader from '../components/PageLoader';
 import { deleteView, getView, listViews } from '../api';
 import ViewCard from '../views/ViewCard';
 import { ownerLink } from '../views/owner';
+import { allDirPaths, buildFileTree } from '../components/files/fileTree';
 
 const SOURCES = ['upload', 'chat', 'agent', 'memory', 'task', 'eval', 'api'];
 // The virtual folder the views sit in; `?folder=` and the tree use the same key.
 const VIEWS_PATH = '__views__';
-// A panel lies over the right of the list instead of taking a grid column:
-// the list keeps its width, so opening or closing one reflows nothing.
-const PANEL_CLASS = 'absolute inset-y-0 right-0 z-20 w-full sm:w-[28rem] lg:w-[40%] bg-white border-l border-gray-200 rounded-r-xl shadow-2xl p-4';
+// A panel is a column of its own beside the list on a wide screen, so the
+// list narrows to make room for it rather than going under it. A narrower
+// screen has no room for two columns: there the panel lies over the list.
+const PANEL_CLASS = 'absolute inset-y-0 right-0 z-20 w-full sm:w-[28rem] bg-white border-l border-gray-200 rounded-r-xl shadow-2xl p-4 '
+  + 'lg:static lg:z-auto lg:w-[40%] lg:flex-shrink-0 lg:rounded-xl lg:border lg:shadow-none';
 // The right side of a tree row, as columns shared by folders, files and
 // views so they line up: source or kind, size, date, actions. Narrow windows
 // keep size and actions only.
@@ -81,30 +84,10 @@ function readView() {
   }
 }
 
-/** The files as folders by their workspace path (an upload with no path sits
- * at the root), plus the views in a virtual folder of their own at the root. */
+/** The files as folders by their workspace path (components/files/fileTree.js),
+ * plus the views in a virtual folder of their own at the root. */
 function buildTree(files, views = [], viewsName = 'Views') {
-  const mk = (name, path) => ({ name, path, dirs: new Map(), files: [] });
-  const root = mk('', '');
-  for (const f of files) {
-    const parts = String(f.meta?.path || f.name || '').split('/').filter(Boolean);
-    let node = root;
-    for (let i = 0; i < parts.length - 1; i += 1) {
-      const seg = parts[i];
-      if (!node.dirs.has(seg)) node.dirs.set(seg, mk(seg, node.path ? `${node.path}/${seg}` : seg));
-      node = node.dirs.get(seg);
-    }
-    node.files.push({ ...f, leaf: parts[parts.length - 1] || f.name });
-  }
-  const finish = (node) => {
-    node.children = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name)).map(finish);
-    node.files.sort((a, b) => a.leaf.localeCompare(b.leaf));
-    node.count = node.files.length + node.children.reduce((sum, c) => sum + c.count, 0);
-    node.bytes = node.files.reduce((sum, f) => sum + (f.size || 0), 0)
-      + node.children.reduce((sum, c) => sum + c.bytes, 0);
-    return node;
-  };
-  finish(root);
+  const root = buildFileTree(files);
   if (views.length) {
     root.children.unshift({
       name: viewsName, path: VIEWS_PATH, virtual: true, dirs: new Map(), children: [], files: [],
@@ -127,11 +110,6 @@ function findDir(root, path) {
   return node;
 }
 
-function allDirPaths(node, out = []) {
-  for (const c of node.children) { out.push(c.path); allDirPaths(c, out); }
-  return out;
-}
-
 function TreeFile({ file, depth, openId, openFile, onPreview, t, formatDate }) {
   const active = openId === file.file_id;
   return (
@@ -139,6 +117,7 @@ function TreeFile({ file, depth, openId, openFile, onPreview, t, formatDate }) {
       className={`flex items-center gap-2 pr-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 ${active ? 'bg-indigo-50/60' : ''}`}
       style={{ paddingLeft: `${12 + depth * 18 + 18}px` }}
       data-testid="tree-file"
+      data-opens-panel
       onClick={() => openFile(file.file_id)}
     >
       <span className="flex-1 min-w-0 flex items-center gap-2 text-gray-800">
@@ -186,6 +165,7 @@ function TreeView({ view, depth, active, onOpenView, navigate, t, formatDate }) 
       className={`flex items-center gap-2 pr-3 py-1.5 text-sm cursor-pointer hover:bg-gray-50 ${active ? 'bg-indigo-50/60' : ''}`}
       style={{ paddingLeft: `${12 + depth * 18 + 18}px` }}
       data-testid="tree-view"
+      data-opens-panel
       onClick={() => onOpenView(view.view_id)}
     >
       <span className="flex-1 min-w-0 flex items-center gap-2 text-gray-800">
@@ -511,7 +491,7 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
   };
 
   return (
-    <aside className={`${PANEL_CLASS} space-y-4 overflow-y-auto`} data-testid="file-panel">
+    <aside className={`${PANEL_CLASS} space-y-4 overflow-y-auto`} data-testid="file-panel" data-artifact-panel>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-gray-800 break-all">{rec?.name || fileId}</h3>
@@ -613,7 +593,7 @@ function FolderCard({ node, onOpen, t }) {
 
 function FileCard({ file, active, openFile, onPreview, t, formatDate }) {
   return (
-    <div role="button" tabIndex={0} onClick={() => openFile(file.file_id)} data-testid="file-card"
+    <div role="button" tabIndex={0} onClick={() => openFile(file.file_id)} data-testid="file-card" data-opens-panel
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFile(file.file_id); } }}
       className={`text-left rounded-xl border bg-white dark:bg-gray-900 p-4 cursor-pointer hover:border-indigo-300 hover:shadow-sm transition-colors flex flex-col gap-3 min-h-[9rem] ${
         active ? 'border-indigo-400 ring-2 ring-indigo-100' : 'border-gray-200 dark:border-gray-700'}`}>
@@ -650,7 +630,7 @@ function ViewGrid({ views, onOpenView, onDeleteView, navigate, t }) {
             actions={(
               <>
                 <button type="button" onClick={() => onOpenView(row.view_id)} title={t('artifacts.details')}
-                  data-testid="view-details"
+                  data-testid="view-details" data-opens-panel
                   className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-600">
                   <Info className="w-4 h-4" />
                 </button>
@@ -774,7 +754,7 @@ function ViewPanel({ viewId, onClose, onDeleteView }) {
   return (
     // A flex column: the details keep their height and the card takes the
     // rest, down to the bottom of the page, scrolling inside for a document.
-    <aside className={`${PANEL_CLASS} flex flex-col gap-4 min-h-0`} data-testid="view-panel">
+    <aside className={`${PANEL_CLASS} flex flex-col gap-4 min-h-0`} data-testid="view-panel" data-artifact-panel>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-gray-800 break-words">{view?.title || viewId}</h3>
@@ -952,12 +932,39 @@ export default function Artifacts() {
     setSearchParams(next, { replace: !viewId });
   };
 
+  // A press anywhere but the open panel or a row that opens one closes the
+  // panel. A row is left to its own click, which switches the panel to it; the
+  // preview dialog lies over the page and closes on its own.
+  const panelOpen = Boolean(openId || openViewId);
+  useEffect(() => {
+    if (!panelOpen) return undefined;
+    const onPointerDown = (e) => {
+      if (e.button > 0 || !(e.target instanceof Element)) return;
+      if (e.target.closest('[data-artifact-panel], [data-opens-panel], [role="dialog"]')) return;
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('file');
+        next.delete('view');
+        return next;
+      }, { replace: true });
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [panelOpen, setSearchParams]);
+
   // The folder the cards show, kept in the URL so a folder can be linked to
   // (the Views folder is `?folder=__views__`, where the old /views lands).
+  // Going to another folder closes the open panel: what it showed is no
+  // longer among the cards. Built from the current params, not this render's,
+  // so it does not put back a panel the outside press just closed.
   const setFolder = (path) => {
-    const next = new URLSearchParams(searchParams);
-    if (path) next.set('folder', path); else next.delete('folder');
-    setSearchParams(next);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (path) next.set('folder', path); else next.delete('folder');
+      next.delete('file');
+      next.delete('view');
+      return next;
+    });
   };
 
   const onOpenView = (viewId) => openView(viewId);
@@ -1123,12 +1130,12 @@ export default function Artifacts() {
         </div>
       </div>
 
-      {/* The list, with a panel laid over its right side when one is open. The
-          wrapper, not the scrolling list, positions the panel, so the panel
-          stays put while the list scrolls under it. */}
-      <div className="relative flex-1 lg:min-h-0 flex flex-col">
+      {/* The list, and the open panel beside it (over it on a narrow
+          screen). The wrapper, not the scrolling list, holds the panel, so the
+          panel stays put while the list scrolls. */}
+      <div className="relative flex-1 lg:min-h-0 flex flex-col lg:flex-row lg:gap-4">
         <div
-          className={`relative flex-1 bg-white rounded-xl border overflow-hidden lg:min-h-0 lg:overflow-y-auto ${
+          className={`relative flex-1 min-w-0 bg-white rounded-xl border overflow-hidden lg:min-h-0 lg:overflow-y-auto ${
             dragging ? (canDrop ? 'border-indigo-400' : 'border-red-300') : 'border-gray-200'}`}
           onDragEnter={onDragEnter}
           onDragOver={onDragOver}
@@ -1178,7 +1185,7 @@ export default function Artifacts() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {shownViews.map((v) => (
-                    <tr key={v.view_id} onClick={() => onOpenView(v.view_id)} data-testid="list-view-row"
+                    <tr key={v.view_id} onClick={() => onOpenView(v.view_id)} data-testid="list-view-row" data-opens-panel
                       className={`cursor-pointer hover:bg-gray-50 ${openViewId === v.view_id ? 'bg-indigo-50/60' : ''}`}>
                       <td className="px-4 py-2.5">
                         <span className="flex items-center gap-2 text-gray-800">
@@ -1198,7 +1205,7 @@ export default function Artifacts() {
                     </tr>
                   ))}
                   {shownFiles.map((f) => (
-                    <tr key={f.file_id} onClick={() => openFile(f.file_id)} data-testid="list-row"
+                    <tr key={f.file_id} onClick={() => openFile(f.file_id)} data-testid="list-row" data-opens-panel
                       className={`cursor-pointer hover:bg-gray-50 ${openId === f.file_id ? 'bg-indigo-50/60' : ''}`}>
                       <td className="px-4 py-2.5">
                         <span className="flex items-center gap-2 text-gray-800">

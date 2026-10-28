@@ -23,6 +23,7 @@ import { DEFAULT_BLOCK_NAMES, fmt } from './helpers';
 import { EpisodesPanel } from './EpisodesPanel';
 import { GraphPanel } from './GraphPanel';
 import { useColumnHeight } from '../ChatColumn';
+import { InfoHint } from '../PageLayout';
 import { MemoryHistoryPanel } from './MemoryHistoryPanel';
 import { MemoryConsolidationPanel } from './MemoryConsolidationPanel';
 import ChatMarkdown from '../chat/ChatMarkdown';
@@ -85,8 +86,10 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
       setShowAddSlot(false); setEditingSlot(null);
       setBlockDrafts({}); setShowAddBlock(false);
       setHistoryTarget(null);
+      return resp.data;
     } catch (e) {
       toast.error(t('memoryManager.errors.openMemory'), errorDetail(e));
+      return null;
     }
   }, [t, toast, onPoolSelected]);
 
@@ -108,15 +111,23 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const handleAddNote = async (e) => {
     e.preventDefault();
     await addMemoryNote(selected.id, { title: noteTitle, content: noteContent });
+    const title = noteTitle;
     setNoteTitle(''); setNoteContent(''); setShowAddNote(false);
-    await selectPool(selected.id);
+    const pool = await selectPool(selected.id);
+    // Open the note just added (appended last) instead of dropping the selection.
+    const added = [...(pool?.notes || [])].reverse().find(n => n.title === title);
+    if (added) setViewingNote(added);
   };
 
   const handleSaveNote = async (e) => {
     e.preventDefault();
-    await updateMemoryNote(selected.id, editingNote.id, { title: noteTitle, content: noteContent });
+    const noteId = editingNote.id;
+    await updateMemoryNote(selected.id, noteId, { title: noteTitle, content: noteContent });
     setEditingNote(null); setNoteTitle(''); setNoteContent('');
-    await selectPool(selected.id);
+    const pool = await selectPool(selected.id);
+    // Keep the saved note open rather than dropping the selection.
+    const saved = (pool?.notes || []).find(n => n.id === noteId);
+    if (saved) setViewingNote(saved);
   };
 
   const handleDeleteNote = async (id) => {
@@ -408,7 +419,11 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                     </span>
                   )}
                 </p>
-                <p className="text-xs text-gray-500 truncate">{poolDescription(m, t) || t('memoryManager.noDescription')}</p>
+                {/* The personal pool's hint lives behind its badge and the ⓘ by
+                    its title, not repeated on every row. */}
+                {!isPersonalPool(m) && (
+                  <p className="text-xs text-gray-500 truncate">{poolDescription(m, t) || t('memoryManager.noDescription')}</p>
+                )}
                 {(() => {
                   const all = m.notes || [];
                   const journalCount = all.filter(n => n.title?.startsWith('journal:')).length;
@@ -444,9 +459,16 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
             {/* Pool header */}
             <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between">
               <div>
-                <h2 className="text-lg font-bold text-gray-900">{poolName(selected, t, !workspaceFilter)}</h2>
+                {/* The personal pool's long explanation waits behind an ⓘ by
+                    the title; a pool's own description stays in view. */}
+                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-1">
+                  {poolName(selected, t, !workspaceFilter)}
+                  {isPersonalPool(selected) && (
+                    <InfoHint text={poolDescription(selected, t)} label={t('memoryManager.aboutPersonal')} className="font-normal" />
+                  )}
+                </h2>
                 <p className="text-xs text-gray-400 mt-0.5">{selected.id}</p>
-                {poolDescription(selected, t) && <p className="text-sm text-gray-600 mt-1">{poolDescription(selected, t)}</p>}
+                {!isPersonalPool(selected) && poolDescription(selected, t) && <p className="text-sm text-gray-600 mt-1">{poolDescription(selected, t)}</p>}
               </div>
               <div className="flex gap-2">
                 <button
@@ -511,11 +533,8 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                 </p>
 
                 {showAddBlock && (
-                  <form onSubmit={handleAddBlock} className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 space-y-3">
-                    <div className="flex justify-between items-center">
-                      <h4 className="text-sm font-semibold text-indigo-800">{t('memoryManager.blocks.newBlock')}</h4>
-                      <button type="button" onClick={() => setShowAddBlock(false)} className="text-indigo-400 hover:text-indigo-600"><X className="w-4 h-4" /></button>
-                    </div>
+                  <form onSubmit={handleAddBlock} className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                    <h4 className="text-sm font-semibold text-gray-900">{t('memoryManager.blocks.newBlock')}</h4>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="sm:col-span-2">
                         <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.blocks.name')}</label>
@@ -533,9 +552,12 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                       <input value={newBlockDesc} onChange={e => setNewBlockDesc(e.target.value)} placeholder={t('memoryManager.blocks.descriptionPlaceholder')}
                         className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
                     </div>
-                    <button type="submit" className="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2">
-                      <Plus className="w-3.5 h-3.5" /> {t('memoryManager.blocks.addBlock')}
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button type="button" onClick={() => setShowAddBlock(false)} className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">{t('common.cancel')}</button>
+                      <button type="submit" className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 inline-flex items-center gap-1.5">
+                        <Save className="w-3.5 h-3.5" /> {t('common.save')}
+                      </button>
+                    </div>
                   </form>
                 )}
 
@@ -644,10 +666,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                 <div className="flex-1 overflow-y-auto bg-gray-50">
                   {showAddNote || editingNote ? (
                     <div className="p-5 bg-white h-full">
-                      <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-semibold text-gray-900">{editingNote ? t('memoryManager.editNote') : t('memoryManager.newNote')}</h3>
-                        <button onClick={() => { setShowAddNote(false); setEditingNote(null); }} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
-                      </div>
+                      <h3 className="font-semibold text-gray-900 mb-4">{editingNote ? t('memoryManager.editNote') : t('memoryManager.newNote')}</h3>
                       <form onSubmit={editingNote ? handleSaveNote : handleAddNote} className="space-y-4">
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.title')}</label>
@@ -657,7 +676,10 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                           <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.content')}</label>
                           <textarea required value={noteContent} onChange={e => setNoteContent(e.target.value)} rows={12} placeholder={t('memoryManager.writeYourNoteHere')} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none" />
                         </div>
-                        <button type="submit" className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2"><Save className="w-4 h-4" /> {editingNote ? t('memoryManager.saveChanges') : t('common.save')}</button>
+                        <div className="flex justify-end gap-2">
+                          <button type="button" onClick={() => { setShowAddNote(false); setEditingNote(null); }} className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">{t('common.cancel')}</button>
+                          <button type="submit" className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 inline-flex items-center gap-1.5"><Save className="w-3.5 h-3.5" /> {editingNote ? t('memoryManager.saveChanges') : t('common.save')}</button>
+                        </div>
                       </form>
                     </div>
                   ) : viewingNote && !isJournalNote(viewingNote) ? (
@@ -731,13 +753,10 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
             {contentTab === 'structured' && (
               <div className="flex-1 overflow-y-auto p-5 space-y-3">
                 {(showAddSlot || editingSlot) && (
-                  <form onSubmit={handleSaveSlot} className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 space-y-3">
-                    <div className="flex justify-between items-center">
-                      <h4 className="text-sm font-semibold text-indigo-800">
-                        {editingSlot ? t('memoryManager.editSlot', { slot: editingSlot.slot }) : t('memoryManager.newSlot')}
-                      </h4>
-                      <button type="button" onClick={() => { setShowAddSlot(false); setEditingSlot(null); resetSlotForm(); }} className="text-indigo-400 hover:text-indigo-600"><X className="w-4 h-4" /></button>
-                    </div>
+                  <form onSubmit={handleSaveSlot} className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                    <h4 className="text-sm font-semibold text-gray-900">
+                      {editingSlot ? t('memoryManager.editSlot', { slot: editingSlot.slot }) : t('memoryManager.newSlot')}
+                    </h4>
                     <div>
                       <label className="block text-xs font-medium text-gray-600 mb-1">{t('memoryManager.name')}</label>
                       <input required value={slotName} onChange={e => setSlotName(e.target.value)} disabled={!!editingSlot} placeholder={t('memoryManager.apiVersion')}
@@ -773,7 +792,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                           placeholder={t('memoryManager.aSingleValue')}
                           className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none font-mono"
                         />
-                        <p className="text-[11px] text-gray-500 mt-1">{t('memoryManager.storedAs')} <code className="bg-white px-1 rounded">{`{ "value": ... }`}</code>.</p>
+                        <p className="text-[11px] text-gray-500 mt-1">{t('memoryManager.storedAs')} <code className="bg-gray-100 px-1 rounded">{`{ "value": ... }`}</code>.</p>
                       </div>
                     )}
 
@@ -832,9 +851,12 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
 
                     {slotDataError && <p className="text-xs text-red-500">{slotDataError}</p>}
 
-                    <button type="submit" className="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-2">
-                      <Save className="w-3.5 h-3.5" /> {editingSlot ? 'Update' : 'Save'}
-                    </button>
+                    <div className="flex justify-end gap-2">
+                      <button type="button" onClick={() => { setShowAddSlot(false); setEditingSlot(null); resetSlotForm(); }} className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">{t('common.cancel')}</button>
+                      <button type="submit" className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-indigo-700 inline-flex items-center gap-1.5">
+                        <Save className="w-3.5 h-3.5" /> {editingSlot ? t('memoryManager.saveChanges') : t('common.save')}
+                      </button>
+                    </div>
                   </form>
                 )}
                 {structuredSlots.length === 0 && !showAddSlot ? (

@@ -5,12 +5,94 @@ export default {
     markReadFailed: 'Konnte nicht als gelesen markiert werden',
     markAllRead: 'Alle als gelesen',
     empty: 'Keine Benachrichtigungen',
+    viewConversation: 'Gespräch öffnen →',
     viewTask: 'Aufgabe öffnen →',
     viewAllInPlan: 'Alle im Plan anzeigen →',
     justNow: 'gerade eben',
+    newNotification: 'Neue Benachrichtigung',
     minutesAgo: 'vor {{count}} Min.',
     hoursAgo: 'vor {{count}} Std.',
     daysAgo: 'vor {{count}} T.',
+    messages: {
+      taskStarted: {
+        title: 'Aufgabe gestartet: {{title}}',
+        body: 'Agent „{{agent}}“ hat die Aufgabe begonnen.',
+      },
+      taskCompleted: {
+        title: 'Aufgabe erledigt: {{title}}',
+        body: 'Agent „{{agent}}“ hat die Aufgabe abgeschlossen.',
+      },
+      taskFailed: {
+        title: 'Aufgabe fehlgeschlagen: {{title}}',
+        body: 'Agent „{{agent}}“ ist fehlgeschlagen: {{error}}',
+        bodyNoError: 'Agent „{{agent}}“ ist fehlgeschlagen.',
+      },
+      routingFailed: {
+        title: 'Zuweisung fehlgeschlagen: {{title}}',
+        body: 'Der Orchestrator konnte die Aufgabe nicht zuweisen: {{error}}',
+        bodyNoError: 'Der Orchestrator konnte die Aufgabe nicht zuweisen.',
+      },
+      approvalNeeded: {
+        title: 'Freigabe nötig: {{title}}',
+        body: 'Geben Sie es auf der Aufgabenseite frei, damit Agent „{{agent}}“ startet.',
+        bodyWithReason: 'Geben Sie es auf der Aufgabenseite frei, damit Agent „{{agent}}“ startet. Warum dieser Agent: {{reason}}',
+      },
+      toolApprovalNeeded: {
+        title: 'Freigabe nötig: {{tool}}',
+        body: '„{{agent}}“ im Flow „{{flow}}“ möchte {{tool}} aufrufen und wartet auf Ihre Antwort.',
+        bodyWithReason: '„{{agent}}“ im Flow „{{flow}}“ möchte {{tool}} aufrufen und wartet auf Ihre Antwort. {{reason}}',
+      },
+      toolApprovalNeededTeam: {
+        title: 'Freigabe nötig: {{tool}}',
+        body: '„{{agent}}“ im Team „{{team}}“ möchte {{tool}} aufrufen und wartet auf Ihre Antwort.',
+        bodyWithReason: '„{{agent}}“ im Team „{{team}}“ möchte {{tool}} aufrufen und wartet auf Ihre Antwort. {{reason}}',
+      },
+      containerCompleted: {
+        title: 'Aufgabe erledigt: {{title}}',
+        body: 'Alle Teilaufgaben sind erledigt ({{count}}).',
+      },
+      taskNeedsInput: {
+        title: 'Eine Aufgabe braucht Ihre Antwort',
+        body: '{{question}}',
+        bodyNoQuestion: 'Der Agent wartet auf Ihre Antwort.',
+      },
+      scheduledTaskStarted: {
+        title: 'Geplante Aufgabe gestartet: {{title}}',
+        body: 'Agent „{{agent}}“ wurde für die Aufgabe gestartet.',
+        bodyNoAgent: 'Die Aufgabe wurde dem Orchestrator zur Zuweisung übergeben.',
+      },
+      scheduledFlowStarted: {
+        title: 'Geplanter Flow gestartet: {{title}}',
+        body: 'Flow „{{flow}}“ wurde nach Zeitplan gestartet.',
+      },
+      scheduledRunStarted: {
+        title: 'Geplanter Agentenlauf gestartet: {{title}}',
+        body: 'Agent „{{agent}}“ wurde nach Zeitplan gestartet.',
+      },
+      scheduledLoopStarted: {
+        title: 'Geplante Schleife gestartet: {{title}}',
+        body: 'Schleife „{{loop}}“ wurde nach Zeitplan gestartet.',
+      },
+      scheduledJobPaused: {
+        title: 'Geplanter Job nach {{count}} Fehlern pausiert',
+        body: '„{{title}}“ wurde nach wiederholten Fehlern pausiert: {{error}}',
+        bodyNoError: '„{{title}}“ wurde nach wiederholten Fehlern pausiert.',
+      },
+      scheduledJobFailed: {
+        title: 'Geplanter Job fehlgeschlagen: {{title}}',
+        body: '„{{title}}“ konnte nicht starten: {{error}}',
+        bodyNoError: '„{{title}}“ konnte nicht starten.',
+      },
+      scheduledJobTargetMissing: {
+        title: 'Geplanter Job pausiert: {{title}}',
+        body: '„{{title}}“ wurde pausiert: Was er startet, existiert nicht mehr ({{error}}). Wählen Sie ein anderes Ziel und setzen Sie ihn fort.',
+        bodyNoError: '„{{title}}“ wurde pausiert: Was er startet, existiert nicht mehr. Wählen Sie ein anderes Ziel und setzen Sie ihn fort.',
+      },
+      reviewCycleLimit: {
+        title: 'Eine Aufgabe hat das Limit der Prüfrunden erreicht',
+        body: 'Das Limit der Prüfrunden ({{limit}}) ist erreicht: Die Aufgabe braucht Ihre Entscheidung statt einer weiteren automatischen Korrektur- und Prüfrunde.',
+      },
+    },
   },
   inlineEdit: {
     clickToEdit: 'Zum Bearbeiten klicken',
@@ -27,5 +109,27 @@ export default {
   cronHint: {
     next: 'Nächste: {{times}}',
     checking: 'Prüfung läuft…',
+  },
+  recurrence: {
+    options: { none: 'Einmalig', hourly: 'Stündlich', daily: 'Täglich', weekly: 'Wöchentlich', cron: 'Eigene (cron)' },
+    everyMinute: 'Jede Minute',
+    everyMinutes_one: 'Jede Minute',
+    everyMinutes_other: 'Alle {{count}} Minuten',
+    everyHour: 'Stündlich',
+    everyHourAt: 'Stündlich um :{{minute}}',
+    everyHours_one: 'Stündlich',
+    everyHours_other: 'Alle {{count}} Stunden',
+    everyHoursAt_one: 'Stündlich um :{{minute}}',
+    everyHoursAt_other: 'Alle {{count}} Stunden um :{{minute}}',
+    hourlyBetween: 'Stündlich von {{from}} bis {{to}}',
+    everyDay: 'Täglich',
+    everyWeek: 'Wöchentlich',
+    weekdays: 'Werktags',
+    weekends: 'Am Wochenende',
+    onDays: '{{days}}',
+    monthly: 'Monatlich am Tag {{days}}',
+    at: '{{day}} um {{time}}',
+    and: 'und',
+    days: { 0: 'sonntags', 1: 'montags', 2: 'dienstags', 3: 'mittwochs', 4: 'donnerstags', 5: 'freitags', 6: 'samstags' },
   },
 };

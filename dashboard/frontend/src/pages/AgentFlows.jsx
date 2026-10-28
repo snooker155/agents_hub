@@ -49,6 +49,9 @@ const AgentFlows = () => {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { selectedWorkspace, workspaceFilter } = useWorkspace();
+  // Another workspace lists only its own flows, so a card names its workspace
+  // only in the default one.
+  const isDefaultWorkspace = !selectedWorkspace || selectedWorkspace === 'default';
   const [flows, setFlows] = useState([]);
   // The list is for this workspace filter; another filter shows the loader
   // again, derived instead of set inside the effect.
@@ -135,7 +138,7 @@ const AgentFlows = () => {
       const response = await exportFlow(flow.id);
       const blob = new Blob([response.data], { type: 'application/x-yaml' });
       const url = URL.createObjectURL(blob);
-      const slug = (flow.name || flow.id).replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '') || 'flow';
+      const slug = (flow.name || flow.id).replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '') || 'flow';
       const link = document.createElement('a');
       link.href = url;
       link.download = `${slug}.yaml`;
@@ -175,6 +178,7 @@ const AgentFlows = () => {
       const response = await importFlow({
         yaml: importYaml,
         name: importName.trim() || undefined,
+        workspace: selectedWorkspace || undefined,
       });
       closeImport();
       navigate(`/flows/${response.data.id}/edit`);
@@ -230,6 +234,7 @@ const AgentFlows = () => {
       const response = await createFlow({
         name: wizardResult.name || t('agentFlows.aiGeneratedFlow'),
         description: wizardResult.description || '',
+        workspace: selectedWorkspace || undefined,
       });
       const flowId = response.data.id;
 
@@ -381,13 +386,15 @@ const AgentFlows = () => {
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {visibleFlows.map((flow) => (
-                <div key={flow.id} className="rounded-lg border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+                <div key={flow.id} className="group relative rounded-lg border border-gray-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
+                  {/* The whole card opens the page: the name's link covers it (its
+                      ::after), the actions sit above it. */}
                   <div className="mb-3 flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <Link
                           to={`/flows/${flow.id}`}
-                          className="block truncate text-sm font-semibold text-gray-900 hover:text-cyan-600"
+                          className="block truncate text-sm font-semibold text-gray-900 group-hover:text-cyan-600 after:absolute after:inset-0 after:rounded-lg"
                         >
                           {flow.name}
                         </Link>
@@ -396,13 +403,15 @@ const AgentFlows = () => {
                         )}
                       </div>
                       <div className="mt-0.5 line-clamp-2 text-[11px] text-gray-500">
-                        {flow.description || 'No description provided.'}
+                        {flow.description || t('agentFlows.noDescription')}
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
-                      <span className="rounded bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
-                        {flow.workspace || 'Shared'}
-                      </span>
+                      {isDefaultWorkspace && (
+                        <span className="rounded bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
+                          {flow.workspace || t('agentFlows.sharedWorkspace')}
+                        </span>
+                      )}
                       {flow.shared && (
                         <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-indigo-600" title={t('agentFlows.publishedToTheMarketplace')}>
                           <Globe className="h-2.5 w-2.5" /> {t('agentFlows.market')}
@@ -422,7 +431,7 @@ const AgentFlows = () => {
                     </div>
                   </div>
 
-                  <div className="flex justify-end gap-1">
+                  <div className="relative z-10 flex justify-end gap-1">
                     <Link
                       to={`/flows/${flow.id}/edit`}
                       className="rounded-lg border border-transparent p-1.5 text-gray-400 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-600"
@@ -437,7 +446,7 @@ const AgentFlows = () => {
                           ? 'text-indigo-500 hover:border-indigo-200 hover:bg-indigo-50'
                           : 'text-gray-400 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600'
                       }`}
-                      title={flow.shared ? 'Remove from marketplace' : 'Publish to marketplace (also publishes its agents)'}
+                      title={flow.shared ? t('agentFlows.removeFromMarketplace') : t('agentFlows.publishToMarketplace')}
                     >
                       <Globe className="h-3.5 w-3.5" />
                     </button>
@@ -464,7 +473,7 @@ const AgentFlows = () => {
       </section>
 
       {/* Create flow: template, then name and description */}
-      {createOpen && <CreateFlowDialog onClose={() => setCreateOpen(false)} />}
+      {createOpen && <CreateFlowDialog workspace={selectedWorkspace} onClose={() => setCreateOpen(false)} />}
 
       {/* Import Modal — review parsed YAML before validating + storing it */}
       {importOpen && (

@@ -281,6 +281,15 @@ def _flow_stop(flow_run_id: str) -> bool:
             stopped = True
         except OSError:
             log.debug("could not signal flow orchestrator pid %s", pid, exc_info=True)
+    # In docker mode the orchestrator is a container (nodes and nested runs inside).
+    container = rec.get("container_name")
+    if container:
+        try:
+            from managers.container_manager import stop_container
+            if stop_container(str(container), 5):
+                stopped = True
+        except Exception:  # noqa: BLE001 - the record is closed below either way
+            log.debug("could not stop flow container %s", container, exc_info=True)
     for run_id in _flow_children(str(flow_run_id)):
         try:
             if stop_run_by_id(run_id):

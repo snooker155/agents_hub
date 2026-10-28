@@ -31,6 +31,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from common.ssrf import resolve_and_check
+from common.untrusted import strip_quote_markers
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,8 @@ def wrap_untrusted(source: str, body: str) -> str:
     # Strip any markers the page itself contains, so a hostile page cannot close
     # the envelope early and have its tail read as trusted text.
     body = body.replace(_BEGIN, "").replace(_END, "")
+    # Nor close a team member's quote of it (common/untrusted.py).
+    body = strip_quote_markers(body)
     return (
         f"{_BEGIN}\nsource: {source}\n{_ENVELOPE_NOTE}\n---\n"
         f"{body}\n{_END}"
@@ -226,7 +229,7 @@ def intersect_domains(a: Any, b: Any) -> List[str]:
     return out
 
 
-def check_domain_policy(url: str) -> Tuple[bool, str]:
+def check_domain_policy(url: str, spec: Any = None, workspace: Optional[str] = None) -> Tuple[bool, str]:
     """Apply the environment's fence, the deny lists, then the allow lists.
 
     The run's environment (``AGENTS_HUB_NETWORK`` / ``AGENTS_HUB_ALLOWED_HOSTS``,
@@ -234,7 +237,8 @@ def check_domain_policy(url: str) -> Tuple[bool, str]:
     widened by the workspace lists. The deny list always applies. The allow
     list is opt-in per workspace (or globally), mirroring
     ``shell_allowlist_enabled``: off by default so web access works out of
-    the box, on in environments that want it fenced.
+    the box, on in environments that want it fenced. ``spec`` and
+    ``workspace`` default to the running agent and the active workspace.
     """
     host = (urlparse(url).hostname or "").lower()
     ok, reason = _environment_check(host)
@@ -245,8 +249,8 @@ def check_domain_policy(url: str) -> Tuple[bool, str]:
     # workspace's own list, when set, replaces the global one as before. The
     # agent's own lists (AgentSpec.allowed_domains / blocked_domains) come on
     # top: its blocked hosts join the deny list, its allowed hosts narrow.
-    lists = effective_domain_lists()
-    agent_blocked = set(agent_domain_lists()[1])
+    lists = effective_domain_lists(spec, workspace)
+    agent_blocked = set(agent_domain_lists(spec)[1])
     for pattern in lists["blocked"]:
         if _host_matches(host, str(pattern)):
             where = "this agent's blocked_domains" if pattern in agent_blocked else "the deny list"
@@ -299,6 +303,43 @@ def validate_url(url: str) -> Tuple[bool, str]:
     if not ok:
         return False, reason
     return resolve_and_check(parsed.hostname or "")
+
+
+#: The tools whose input names a URL to fetch, and the field that holds it.
+URL_TOOL_FIELDS = {"fetch_url": "url"}
+
+
+def precheck_call(tool_id: str, tool_input: Any, spec: Any = None,
+                  workspace: Optional[str] = None) -> Optional[str]:
+    """The tool's own refusal for a URL its policy already rules out, or None.
+
+    The tool gate (agents/hooks.py) asks this before any hook, classifier or
+    approval card, so nobody is asked about a call that would be refused
+    anyway. Only the scheme and the domain lists are judged here, with no
+    DNS: the tool still runs :func:`validate_url` on every hop, which is the
+    check that counts (a redirect or a rebinding host is only seen then).
+    """
+    field = URL_TOOL_FIELDS.get(str(tool_id or ""))
+    if not field or not isinstance(tool_input, dict):
+        return None
+    url = str(tool_input.get(field) or "").strip()
+    if not url:
+        return None
+    try:
+        scheme = urlparse(url).scheme
+    except ValueError:
+        return None  # malformed: the tool says so itself
+    if scheme not in ("http", "https"):
+        ok, reason = False, _BLOCKED_SCHEMES_MSG
+    else:
+        ok, reason = check_domain_policy(url, spec, workspace)
+    if ok:
+        return None
+    from tools import web_log
+    call = web_log.WebCall("fetch", url=url)
+    call.set(status="refused", final_url=url, error=reason)
+    call.add_flag("policy.refused", "medium", f"Refused {url}: {reason}")
+    return call.finish(f"{tool_id} refused {url!r}: {reason}")
 
 
 # ── HTML → text ───────────────────────────────────────────────────────────────
@@ -742,7 +783,11 @@ def _search_anthropic(query: str, count: int, key: str, timeout: float,
         tool["allowed_domains"] = list(include)
     elif exclude:
         tool["blocked_domains"] = list(exclude)
-    client = anthropic.Anthropic(api_key=key, timeout=timeout, max_retries=1)
+    # The base URL is always passed: the SDK reads ANTHROPIC_BASE_URL itself,
+    # and an empty one (a .env line `ANTHROPIC_BASE_URL=""` loaded into the
+    # process) becomes an empty address that fails every call.
+    base = (os.environ.get("ANTHROPIC_BASE_URL") or "").strip() or "https://api.anthropic.com"
+    client = anthropic.Anthropic(api_key=key, base_url=base, timeout=timeout, max_retries=1)
     resp = client.messages.create(
         model=_search_model("anthropic"), max_tokens=1024, tools=[tool],
         messages=[{"role": "user", "content": _SEARCH_PROMPT.format(query=query)}],
@@ -779,7 +824,10 @@ def _search_openai(query: str, count: int, key: str, timeout: float,
     if include:
         tool["filters"] = {"allowed_domains": list(include)}
     # OpenAI's tool has no block list: blocked hosts are filtered out of the results.
-    base = (provider_env.live().get("OPENAI_BASE_URL") or "").strip() or None
+    # Never None: the SDK then reads OPENAI_BASE_URL from the environment,
+    # and the backend loads .env into it, so `OPENAI_BASE_URL=""` there made
+    # the address empty and every search a connection error.
+    base = (provider_env.live().get("OPENAI_BASE_URL") or "").strip() or "https://api.openai.com/v1"
     client = openai.OpenAI(api_key=key, base_url=base, timeout=timeout, max_retries=1)
     resp = client.responses.create(
         model=_search_model("openai"), tools=[tool],
@@ -1345,7 +1393,7 @@ WEB_TOOLS = [web_search, fetch_url]
 
 __all__ = [
     "web_search", "fetch_url", "WEB_TOOLS",
-    "wrap_untrusted", "validate_url", "check_domain_policy",
+    "wrap_untrusted", "validate_url", "check_domain_policy", "precheck_call", "URL_TOOL_FIELDS",
     "effective_domain_lists", "search_domain_filters", "agent_domain_lists", "intersect_domains",
     "resolve_and_check", "html_to_text", "fetch_and_extract", "run_search",
     "isolated_workspace", "isolated_fetch_check", "current_run_key", "spend_isolated_budget",

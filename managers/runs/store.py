@@ -22,7 +22,7 @@ from common import attribution as _attribution
 from common import db
 from common import run_payloads as rp
 from common.db_migrate import RUN_COLUMNS
-from common.paths import AGENTS_HUB_ROOT
+from common.paths import AGENTS_HUB_ROOT, host_state_path
 from common.session_broker import notify_change
 
 from .notifications import (_notify_task_run_finished, _publish_run_delta,
@@ -55,6 +55,8 @@ def _row_to_record(row) -> Dict[str, Any]:
     extra = db.loads(row["extra"], {}) or {}
     if isinstance(extra, dict):
         rec.update(extra)
+    # A run in a container records its log under the container's mount.
+    rec["log_file"] = host_state_path(rec.get("log_file"))
     has_stats = row["duration_ms"] is not None or any(
         row[k] is not None for k in ("prompt_tokens", "completion_tokens", "total_tokens")
     )
@@ -180,6 +182,8 @@ def _list_row_to_record(row) -> Dict[str, Any]:
     extra = db.loads(row["extra"], {}) or {}
     if isinstance(extra, dict):
         rec.update(extra)
+    # A run in a container records its log under the container's mount.
+    rec["log_file"] = host_state_path(rec.get("log_file"))
     if row["duration_ms"] is not None or any(
         row[k] is not None for k in ("prompt_tokens", "completion_tokens", "total_tokens")
     ):
@@ -677,6 +681,21 @@ def update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]
     if merged:
         _publish_run_delta(merged, str(run_id))
     return merged
+
+
+def detach_runs_from_task(task_id: str) -> int:
+    """Unlink a task's runs from it, keeping the runs themselves.
+
+    A task reset to todo starts over: its execution history goes, but the runs
+    stay where everything else reads them (Messages, spend, the agent's own
+    history). Returns how many runs were unlinked.
+    """
+    with db.transaction() as conn:
+        cur = conn.execute("UPDATE runs SET task_id = NULL WHERE task_id = ?", (str(task_id),))
+        count = cur.rowcount or 0
+    if count:
+        notify_change("runs", task_id=str(task_id))
+    return count
 
 
 def delete_run(run_id: str) -> bool:

@@ -173,17 +173,38 @@ def _require_agent_admin(principal, spec) -> None:
     identity.require_role(principal, workspace=workspace, role=WS_OWNER)
 
 
+def _with_guard(spec) -> dict:
+    """The declared names, and what the capability guard makes of them: the
+    combination a saved record still forms (``capability_warning``, shown as a
+    banner even when the save went through in warn mode or on the agent's own
+    override), the guard's mode and whether this agent is exempted."""
+    from agents.capability_guard import guard_mode
+    from routes.agents.capabilities import _capability_warning_dict
+    return {
+        "secrets": list(spec.secrets or []),
+        "capability_warning": _capability_warning_dict(spec),
+        "guard_mode": guard_mode(),
+        "capability_override": bool(getattr(spec, "capability_override", False)),
+    }
+
+
 @router.get("/api/agents/{agent_id}/secrets")
 async def get_agent_secrets(agent_id: str) -> dict:
     spec = _agent_or_404(agent_id)
-    return {"secrets": list(spec.secrets or []),
+    return {**_with_guard(spec),
             "github_identity": getattr(spec, "github_identity", "app") or "app"}
 
 
 @router.put("/api/agents/{agent_id}/secrets")
 async def put_agent_secrets(request: Request, agent_id: str, payload: AgentSecretsPut) -> dict:
     """Replace the names this agent may receive. Saved through
-    ``registry.add_agent``, so the capability guard judges the new list."""
+    ``registry.add_agent``, so the capability guard judges the new list.
+
+    A system agent may declare secrets too: it is one record serving every
+    workspace, so an operator declares a name once and stores the value in
+    the default workspace (common/secrets.py falls back to it). The save is
+    not a user edit of the agent: the seed does not own ``secrets``, so the
+    agent keeps receiving the shipped updates of its tools and prompt."""
     from agents import registry
     principal = _principal(request)
     spec = _agent_or_404(agent_id)
@@ -204,7 +225,7 @@ async def put_agent_secrets(request: Request, agent_id: str, payload: AgentSecre
                                 detail="github_identity must be 'app' or 'user'")
     try:
         registry.add_agent(dataclasses.replace(spec, secrets=names,
-                                               github_identity=github_identity),
+                                               github_identity=github_identity), user_edit=False,
                            actor=getattr(principal, "username", None) or "dashboard",
                            note="secrets allowlist")
     except ValueError as exc:  # CapabilityViolation included
@@ -212,4 +233,4 @@ async def put_agent_secrets(request: Request, agent_id: str, payload: AgentSecre
     audit.record("agent.secrets", principal=principal, object_type="agent", object_id=agent_id,
                  ip=identity.client_ip(request),
                  details={"secrets": names, "github_identity": github_identity})
-    return {"secrets": names, "github_identity": github_identity}
+    return {**_with_guard(_agent_or_404(agent_id)), "github_identity": github_identity}

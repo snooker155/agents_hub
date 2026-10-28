@@ -18,8 +18,9 @@ const fromTriState = (value) => (value === '' ? null : value === 'on');
  * consult mid-run (tools/advisor.py), the JSON Schema the final answer
  * must match with a repair retry (agents/loop_ext/structured.py), how many
  * of this agent's delegated subtasks may run at once
- * (tools/delegation.py delegate_task_tool), and the two tri-state loop
- * toggles (tool search, compaction; None follows the workspace/global default).
+ * (tools/delegation.py delegate_task_tool), and context compaction
+ * (tri-state; None follows the workspace/global default). Tool search is
+ * switched on the Tools tab (ToolVisibilityCard), next to what it hides.
  */
 export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
   const { t } = useI18n();
@@ -30,7 +31,6 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
   const [maxConcurrentDelegates, setMaxConcurrentDelegates] = useState(6);
   const [schemaMode, setSchemaMode] = useState('free'); // 'free' | 'schema'
   const [schemaText, setSchemaText] = useState('');
-  const [toolSearch, setToolSearch] = useState('');
   const [compaction, setCompaction] = useState('');
   const [dataClass, setDataClass] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -51,7 +51,6 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
     const schema = body?.output_schema;
     setSchemaMode(schema ? 'schema' : 'free');
     setSchemaText(schema ? JSON.stringify(schema, null, 2) : '');
-    setToolSearch(triState(body?.tool_search));
     setCompaction(triState(body?.compaction));
     setDataClass(body?.data_class || '');
     setDirty(false);
@@ -136,7 +135,6 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
         advisor_model: advisorModel || null,
         max_concurrent_delegates: maxConcurrentDelegates,
         output_schema: schema,
-        tool_search: fromTriState(toolSearch),
         compaction: fromTriState(compaction),
         data_class: dataClass,
       });
@@ -303,18 +301,8 @@ export default function LoopSettingsCard({ agentId, agent: _agent, onSaved }) {
             )}
           </div>
 
-          {/* Tool search / compaction */}
+          {/* Compaction */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <label className="flex flex-col gap-1 text-sm text-gray-700">
-              <span className="font-medium">{t('agentLoop.toolSearch.title')}</span>
-              <select value={toolSearch} onChange={(e) => { setToolSearch(e.target.value); markDirty(); }}
-                      aria-label={t('agentLoop.toolSearch.title')} className={selectCls}>
-                <option value="">{t('agentLoop.triState.automatic')}</option>
-                <option value="on">{t('agentLoop.triState.on')}</option>
-                <option value="off">{t('agentLoop.triState.off')}</option>
-              </select>
-              <span className="text-xs text-gray-500">{t('agentLoop.toolSearch.hint')}</span>
-            </label>
             <label className="flex flex-col gap-1 text-sm text-gray-700">
               <span className="font-medium">{t('agentLoop.compaction.title')}</span>
               <select value={compaction} onChange={(e) => { setCompaction(e.target.value); markDirty(); }}

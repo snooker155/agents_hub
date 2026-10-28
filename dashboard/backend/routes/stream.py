@@ -213,5 +213,20 @@ async def relay_publish(body: PublishEvent):
         raise HTTPException(status_code=400, detail="channel is required")
     if not body.event.get("type"):
         raise HTTPException(status_code=400, detail="event needs a type")
-    await broker.apublish(channel, body.event)
+    # A run's live channel keeps what went past, for a page that opens in
+    # the middle of it (common/run_replay.py).
+    from common import run_replay
+    await broker.apublish(channel, run_replay.record(channel, body.event))
     return {"ok": True}
+
+
+@router.get("/replay")
+async def replay_channel(channel: str):
+    """What a run's live channel (``run:<id>``, ``team:<id>``) has streamed
+    so far, numbered: a page that opens in the middle of the run folds this
+    first, then the live events past its last number (common/run_replay.py).
+    An empty list for a channel that keeps nothing."""
+    from common import run_replay
+    if not run_replay.kept(channel):
+        raise HTTPException(status_code=400, detail="not a run channel")
+    return run_replay.replay(channel)

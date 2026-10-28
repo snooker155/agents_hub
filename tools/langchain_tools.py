@@ -22,6 +22,7 @@ from agents.registry import (
     add_agent as reg_add_agent,
     get_agent as reg_get_agent,
     list_agents as reg_list_agents,
+    normalize_effort,
     remove_agent as reg_remove_agent,
 )
 from managers.run_manager import (
@@ -32,8 +33,9 @@ from agents.agent_launcher import (
     preregister_run as rm_preregister_run,
 )
 from common.entity_sink import record_entity
+from common.untrusted import agent_output_fence
 from common.workspace_context import filter_agents_for_workspace
-from common.workspace_scope import check_record, current_agent, is_service_wide
+from common.workspace_scope import check_record, current_agent, is_service_wide, same_workspace
 from common.session_service import get_or_create_task_session, add_run_to_session
 from tasks.context import augment_params_with_block_reason
 from tasks.service import (
@@ -135,6 +137,11 @@ def _delegation_blocked(agent_id: str) -> Optional[str]:
     allow = _caller_delegates()
     if allow is None or agent_id in allow:
         return None
+    # Not linked for security (agents/main_links.py): say so, not just "not allowed".
+    from agents.main_links import refusal_message
+    refused = refusal_message(reg_get_agent(caller_id) if caller_id else None, agent_id, "delegate to")
+    if refused:
+        return refused
     return (
         f"Agent '{caller_id}' is not allowed to delegate to '{agent_id}'. "
         f"Allowed delegation targets: {sorted(allow)}. {_DELEGATION_STOP_GUIDANCE}"
@@ -256,7 +263,11 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
             if run_status == "awaiting_approval" and existing_agent:
                 spec = reg_get_agent(existing_agent)
                 return _json_ok({
-                    "message": "Task already has a pending assignment.",
+                    "message": (
+                        "Task already has an assignment waiting for the user's approval. "
+                        "STOP: do not call start_agent_tool, the user approves it."
+                    ),
+                    "assignment_mode": "manual",
                     "existing_assignment": True,
                     "run_id": str(existing_run_id),
                     "assigned_agent_id": existing_agent,
@@ -331,6 +342,11 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
         # Live mode: pre-register with "pending" so the task shows as pending (not awaiting_approval).
         # Manual mode: pre-register with "awaiting_approval" for the approval gate.
         run_id = rm_preregister_run(str(task.id), agent_id, session_id=session_id)
+        # The run that made the assignment cannot approve it: start_agent_tool
+        # refuses it (see _approval_pending_for_caller).
+        assigned_by = _calling_run_id()
+        if assigned_by:
+            run_manager.update_run(run_id, {"assigned_by_run": assigned_by})
         if assignment_mode == "live":
             run_manager.update_run(run_id, {"status": "pending"})
             # Link to session immediately in live mode — start_agent_tool follows right away.
@@ -357,6 +373,8 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
             svc_update_task(task.id, status=TaskStatus.reviewing)
         if assignment_mode != "live":
             svc_update_task(task.id, status=TaskStatus.pending)
+            from managers.runs.notifications import notify_assignment_awaiting_approval
+            notify_assignment_awaiting_approval(svc_get_task(task.id) or task, agent_id, reason)
 
         updated = svc_get_task(task.id)
         
@@ -509,7 +527,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
                 provider_id, model_id = resolve_model(str(model))
             except ValueError as exc:
                 return _json_err(str(exc), code="bad_model",
-                                 extra={"models": [m["id"] for m in enabled_models()]})
+                                 extra={"models": [m["id"] for m in enabled_models(_active_workspace())]})
             model_params = {"provider": provider_id, "model": model_id}
 
         from agents.agent_factory import create_agent
@@ -721,7 +739,9 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
                     "is fully handled, summarise it for the user; if follow-up work "
                     "is needed, chain another agent with run_agent_tool."
                 ),
-                "output": output,
+                # Fenced: the worker's answer is data for the caller, not orders
+                # (common/untrusted.py). The chat stream above keeps it raw.
+                "output": agent_output_fence(output, source=f"agent {agent_id}, run {run_id}"),
                 "session_id": session_id,
                 "provider": worker.provider or "",
                 "model": worker.model or "",
@@ -751,6 +771,27 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
 
 # -------------------- Flow tools --------------------
 
+def _workspace_flows(ws: Optional[str]) -> List[Dict[str, Any]]:
+    """The flows of workspace ``ws`` and of no other: the ids in its
+    ``allowed_flows`` when it keeps that list (what its Flows page lists),
+    else the flows it owns, a flow that names no workspace being the default
+    one's (``same_workspace``). A call with no workspace (the CLI, a
+    service-wide agent) sees every flow.
+
+    The default workspace goes by ownership: its page shows every
+    workspace's flows, and its list only names some of its own.
+    """
+    from flow import store as flow_store
+    from workspace.storage import get_workspace_metadata
+    if not ws:
+        return flow_store.list_flows()
+    allowed = None if same_workspace(None, ws) else get_workspace_metadata(ws).get("allowed_flows")
+    if allowed is not None:
+        wanted = {str(fid) for fid in allowed}
+        return [f for f in flow_store.list_flows() if str(f.get("id")) in wanted]
+    return [f for f in flow_store.list_flows() if same_workspace(f.get("workspace"), ws)]
+
+
 @tool("list_flows_tool")
 def list_flows_tool() -> str:
     """List the agent flows available in the active workspace.
@@ -760,19 +801,15 @@ def list_flows_tool() -> str:
     ask them which one to run. Returns JSON with an array of flows, each with
     `id`, `name`, `description`, and `running` (whether an instance is active).
 
-    Only flows belonging to the active workspace (or with no workspace set) are
-    returned. After listing, ASK the user to pick a target flow and confirm —
+    Only the flows of the active workspace are returned, the ones its Flows
+    page lists. After listing, ASK the user to pick a target flow and confirm —
     then call run_flow_tool with the chosen flow_id.
     """
     try:
-        from flow import store as flow_store
         ws = _active_workspace()
         flows = []
-        for f in flow_store.list_flows():
+        for f in _workspace_flows(ws):
             f_ws = f.get("workspace")
-            # A flow with no workspace is shared by every workspace.
-            if ws and f_ws and check_record(f_ws, what="flow", workspace=ws):
-                continue
             flows.append({
                 "id": f.get("id"),
                 "name": f.get("name") or f.get("id"),
@@ -783,6 +820,54 @@ def list_flows_tool() -> str:
         return _json_ok({"flows": flows, "workspace": ws})
     except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to list flows: {e}")
+
+
+def launch_flow_run(flow_id: str, flow: Dict[str, Any], ws_name: Optional[str], desc: str,
+                    *, create_task: bool = False) -> Dict[str, object]:
+    """Start a stored flow in the background and return what the caller reports.
+
+    Shared by ``run_flow_tool`` and ``run_new_flow_tool`` (tools/flow_management.py):
+    every check (approval, workspace) is the caller's, this only launches.
+    """
+    from flow import launcher as flow_launcher
+
+    flow_name = flow.get("name") or flow_id
+
+    # A run is not a task: a task exists only when the user asked to track the
+    # run as one (``create_task``), and then it is theirs.
+    task = None
+    if create_task:
+        from tasks.service import create_task as svc_create_task
+        task = svc_create_task(
+            title=f"Flow: {flow_name}",
+            description=desc,
+            workspace=ws_name,
+            created_by=CreatedBy.user,
+        )
+
+    params = {"workspace": ws_name, "description": desc, "title": f"Flow: {flow_name}"}
+    # Started from a chat: the chat is told when it ends (chat/background_runs.py).
+    from chat.background_runs import ORIGIN_KEY, chat_origin, started_note
+    origin = chat_origin()
+    run_id, session_id = flow_launcher.start_flow_run(
+        str(task.id) if task else None, flow_id, params,
+        record={ORIGIN_KEY: origin} if origin else None,
+    )
+    if task is not None:
+        svc_assign_agent(task.id, "flow-custom-graph", params, run_id=run_id)
+
+    payload: Dict[str, object] = {
+        "message": started_note("flow", flow_name, from_chat=bool(origin)),
+        "flow_id": flow_id,
+        "flow_name": flow_name,
+        "run_id": run_id,
+        "session_id": session_id,
+        "workspace": ws_name,
+        "taskless": not create_task,
+    }
+    if task is not None:
+        payload["task_id"] = str(task.id)
+    return payload
 
 
 class RunFlowInput(BaseModel):
@@ -827,12 +912,12 @@ def run_flow_tool(
     set user_approved yourself without a clear "yes, run it" from the user.
 
     Launches the flow as a background process. Returns JSON with the run_id,
-    session_id, and task_id (an internal task that drives execution; omitted from
-    the user unless create_task was requested). The flow runs asynchronously —
-    report that it has started; do not poll for completion here.
+    session_id, and the task_id only when create_task made one. The flow runs
+    asynchronously: report that it has started; do not poll for completion here.
     """
     try:
-        if not user_approved:
+        from common.auto_mode import approved as _approved
+        if not _approved("run_flow_tool", user_approved, {"flow_id": flow_id}):
             return _json_err(
                 "Flow run not approved. First call list_flows_tool, ask the user to "
                 "select a target flow and confirm, then call run_flow_tool again with "
@@ -842,7 +927,6 @@ def run_flow_tool(
             )
 
         from flow import store as flow_store
-        from flow import launcher as flow_launcher
 
         flow = flow_store.get_flow(flow_id)
         if not flow:
@@ -850,48 +934,107 @@ def run_flow_tool(
 
         ws = _active_workspace()
         flow_ws = flow.get("workspace")
-        if flow_ws and check_record(flow_ws, what="flow", workspace=ws):
+        if check_record(flow_ws, what="flow", workspace=ws):
             return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
 
         ws_name = flow_ws or ws
         desc = (description or flow.get("description") or "").strip()
-        flow_name = flow.get("name") or flow_id
-
-        # The flow runtime is task-driven (it finalizes a task record on completion),
-        # so a backing task always exists. For a taskless run we mark it
-        # orchestrator-created so it is not presented as a user task; only when the
-        # user explicitly asks do we create a user-facing task.
-        from tasks.service import create_task as svc_create_task
-        task = svc_create_task(
-            title=f"Flow: {flow_name}",
-            description=desc,
-            workspace=ws_name,
-            created_by=CreatedBy.user if create_task else CreatedBy.orchestrator,
-        )
-
-        params = {"workspace": ws_name, "description": desc}
-        run_id, session_id = flow_launcher.start_flow_run(str(task.id), flow_id, params)
-        svc_assign_agent(task.id, "flow-custom-graph", params, run_id=run_id)
-
-        payload: Dict[str, object] = {
-            "message": (
-                f"Flow '{flow_name}' started. It runs in the background — report this "
-                "to the user; do not poll for completion."
-            ),
-            "flow_id": flow_id,
-            "flow_name": flow_name,
-            "run_id": run_id,
-            "session_id": session_id,
-            "workspace": ws_name,
-            "taskless": not create_task,
-        }
-        # Only surface the task id when the user asked to track it; otherwise it is
-        # an internal execution record and not something to report.
-        if create_task:
-            payload["task_id"] = str(task.id)
+        payload = launch_flow_run(flow_id, flow, ws_name, desc, create_task=create_task)
         return _json_ok(payload)
     except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to run flow: {e}")
+
+
+class AssignFlowInput(BaseModel):
+    task_id: str = Field(..., description="UUID of the task")
+    flow_id: str = Field(..., min_length=1, description="Id of a saved flow in the active workspace (see list_flows_tool)")
+    params_json: Optional[str] = Field(
+        None, description="Optional JSON object string with parameters for the flow run"
+    )
+    user_approved: bool = Field(
+        False, description="True only after the user named this flow for this task and said to start it"
+    )
+    reason: Optional[str] = Field(
+        None, description="Brief explanation of why this flow fits the task"
+    )
+
+    @field_validator("params_json", mode="before")
+    @classmethod
+    def coerce_params_json(cls, v):
+        if isinstance(v, (dict, list)):
+            return json.dumps(v)
+        return v
+
+
+@tool("assign_flow_tool", args_schema=AssignFlowInput)
+def assign_flow_tool(task_id: str, flow_id: str, params_json: Optional[str] = None,
+                     user_approved: bool = False, reason: Optional[str] = None) -> str:
+    """Put a saved flow on a task as its executor and start it, AFTER the user has approved it.
+
+    The flow becomes the task's executor (kind "flow") and its run starts at
+    once in the flow's workspace; from there on the run drives the task's
+    status itself, so do not assign an agent to the task or call
+    start_agent_tool for it. Read the outcome later with get_task_result.
+
+    Approval gate: this tool refuses unless `user_approved` is True. First call
+    list_flows_tool, tell the user which saved flow fits the task and ask them
+    to confirm; only once they have said to start it, call this with that
+    flow_id and user_approved=True. Returns JSON with the task and the run_id.
+    """
+    try:
+        from common.auto_mode import approved as _approved
+        if not _approved("assign_flow_tool", user_approved, {"task_id": task_id, "flow_id": flow_id}):
+            return _json_err(
+                "Flow assignment not approved. First call list_flows_tool, tell the user "
+                "which flow fits the task and ask them to confirm, then call "
+                "assign_flow_tool again with user_approved=True.",
+                code="approval_required",
+                extra={"task_id": task_id, "flow_id": flow_id},
+            )
+        tid = _uuid_from_str(task_id)
+        task = svc_get_task(tid)
+        if not task or _task_out_of_scope(task):
+            return _json_err("Task not found", code="not_found", extra={"task_id": task_id})
+        if getattr(task, "status", None) == TaskStatus.stopped:
+            return _json_err("Task is stopped and cannot be assigned", code="invalid_task")
+
+        from flow import store as flow_store
+        flow = flow_store.get_flow(flow_id)
+        if not flow:
+            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
+        ws = _active_workspace()
+        if check_record(flow.get("workspace"), what="flow", workspace=ws):
+            return _json_err("Flow not found", code="not_found", extra={"flow_id": flow_id})
+
+        params: Optional[Dict[str, Any]] = None
+        if params_json:
+            try:
+                params = json.loads(params_json)
+            except json.JSONDecodeError as e:
+                return _json_err(f"Invalid params_json: {e}", code="invalid_params")
+            if not isinstance(params, dict):
+                return _json_err("params_json must be a JSON object", code="invalid_params")
+
+        from tasks.assign import AssignError, assign_executor_to_task
+        from tasks.models import Executor
+        try:
+            result = assign_executor_to_task(
+                tid, Executor(kind="flow", id=flow_id), params, task_to_dict=_task_to_dict,
+            )
+        except AssignError as e:
+            code = "not_found" if getattr(e, "status", 400) == 404 else "invalid_task"
+            return _json_err(str(e), code=code, extra={"task_id": task_id, "flow_id": flow_id})
+        return _json_ok({
+            "message": (
+                f"Flow '{flow_id}' is the task's executor and its run has started; "
+                "it drives the task from here on. Read the outcome with get_task_result."
+            ),
+            "run_id": result.get("run_id"),
+            "task": result.get("task"),
+            "reason": reason,
+        })
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to assign flow: {e}")
 
 
 class StartAgentInput(BaseModel):
@@ -936,6 +1079,13 @@ def start_agent_tool(task_id: str) -> str:
                     code="invalid_task",
                     extra={"run_id": str(existing_run_id), "run_status": run_status},
                 )
+            if run_status == "awaiting_approval" and _approval_pending_for_caller(run):
+                return _json_err(
+                    "This assignment is waiting for the user's approval. Do not start it: "
+                    "STOP and report that the user must approve it.",
+                    code="awaiting_approval",
+                    extra={"run_id": str(existing_run_id), "agent_id": agent_id},
+                )
             if run_status not in {"awaiting_approval", "pending", ""}:
                 return _json_err(
                     "Task is not awaiting approval; it has already been started. "
@@ -974,9 +1124,11 @@ def start_agent_tool(task_id: str) -> str:
         # Register a session continuation only in fire-and-forget mode.
         # When wait_for_completion=true the orchestrator polls and handles followup
         # itself — registering a continuation would spawn a second orchestrator.
+        # Inside an orchestrator instance that takes tasks the same holds: its
+        # sweep picks the finished task up as a follow-up, in either execution mode.
         try:
             _fmode = _get_followup_mode(_task_ws or ws)
-            if _fmode == "continuous" and not wait_for_completion:
+            if _fmode == "continuous" and not wait_for_completion and not _in_task_taking_orchestrator():
                 from common.agent_context import current_session_id as _sess_ctx
                 from common.session_service import register_continuation
                 _sid = _sess_ctx.get() or os.environ.get("AGENT_SESSION_ID")
@@ -1104,6 +1256,37 @@ def _get_followup_mode(workspace: Optional[str]) -> str:
     except Exception:  # noqa: BLE001 - unreadable workspace settings mean the default mode
         log.debug("followup mode lookup failed", exc_info=True)
         return "single"
+
+
+def _calling_run_id() -> Optional[str]:
+    """The run this tool call belongs to: the context of an in-process run
+    (chat, an instance sweep), or the env of an agent subprocess."""
+    from common.agent_context import current_run_id
+    return current_run_id.get() or os.environ.get("AGENT_RUN_ID") or None
+
+
+def _approval_pending_for_caller(run: Optional[Dict[str, Any]]) -> bool:
+    """True when ``run`` awaits approval and the caller is the very run that
+    assigned it. Approval belongs to a person: the approve button, or their
+    "yes" in a later chat turn (a run of its own). An agent that assigns in
+    manual mode and then starts the run itself would skip that person."""
+    by = str((run or {}).get("assigned_by_run") or "")
+    return bool(by) and by == (_calling_run_id() or "")
+
+
+def _in_task_taking_orchestrator() -> bool:
+    """True when this process is an orchestrator instance whose task sweep
+    (runtime/instance_run.py) follows up on the tasks it routes."""
+    instance_id = os.environ.get("AGENT_INSTANCE_ID")
+    if not instance_id:
+        return False
+    try:
+        from instances import store as _instance_store
+        instance = _instance_store.get(instance_id) or {}
+    except Exception:  # noqa: BLE001 - unknown instance: keep the continuation
+        log.debug("instance lookup failed for %s", instance_id, exc_info=True)
+        return False
+    return instance.get("agent_id") == "orchestrator" and bool(instance.get("take_tasks"))
 
 
 def _get_wait_for_completion(workspace: Optional[str]) -> bool:
@@ -1438,6 +1621,10 @@ def create_agent_tool(
             payload["message"] = (
                 f"Agent '{name}' created and added to workspace '{added_to_workspace}'"
             )
+        # The main agent may delegate to it and hand the chat to it, unless
+        # that would close a blocked capability combination (agents/main_links.py).
+        from agents.main_links import link_new_agent
+        payload["main_agent_link"] = link_new_agent(agent_id)
         return _json_ok(payload)
     except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
         return _json_err(f"Failed to create agent: {e}")
@@ -1470,9 +1657,13 @@ class ModifyAgentInput(BaseModel):
     base_url: Optional[str] = Field(None, description="Provider base URL override; empty string clears")
     temperature: Optional[float] = Field(None, description="Temperature override")
     max_tokens: Optional[int] = Field(None, ge=1, description="Max tokens override")
+    effort: Optional[str] = Field(
+        None,
+        description="How much the model reasons: off, none, minimal, low, medium, high, xhigh or max, clamped to what the model accepts; empty string or 'inherit' clears it (the header's choice, then the model's default apply).",
+    )
     reasoning: Optional[Dict[str, Any]] = Field(
         None,
-        description="Reasoning settings, e.g. {'think_enabled': true, 'think_mode': 'deep', 'thinking_level': 'high', 'plan_enabled': true, 'plan_format': 'bullet'}. 'thinking_level' (off|low|medium|high) is the native model reasoning parameter, separate from the 'think' scratchpad tool.",
+        description="Scratchpad tool settings, e.g. {'think_enabled': true, 'think_mode': 'deep', 'plan_enabled': true, 'plan_format': 'bullet'}. How much the model itself reasons is 'effort', not this.",
     )
     delegates: Optional[List[str]] = Field(
         None,
@@ -1520,6 +1711,7 @@ def modify_agent_tool(
     base_url: Optional[str] = None,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
+    effort: Optional[str] = None,
     reasoning: Optional[Dict[str, Any]] = None,
     delegates: Optional[List[str]] = None,
 ) -> str:
@@ -1605,6 +1797,7 @@ def modify_agent_tool(
             base_url=_blank_to_none(base_url) if base_url is not None else spec.base_url,
             temperature=temperature if temperature is not None else spec.temperature,
             max_tokens=int(max_tokens) if max_tokens is not None else spec.max_tokens,
+            effort=(normalize_effort(effort) if effort is not None else spec.effort),
             skills_enabled=bool(skills_enabled) if skills_enabled is not None else spec.skills_enabled,
             episodic_write_enabled=bool(episodic_write_enabled) if episodic_write_enabled is not None else spec.episodic_write_enabled,
             reasoning=dict(reasoning) if reasoning is not None else dict(spec.reasoning or {}),
@@ -1617,7 +1810,7 @@ def modify_agent_tool(
         before = spec.to_dict()
         reg_add_agent(new_spec)
         after = new_spec.to_dict()
-        for key in ("name", "description", "domain", "tools", "capacity", "memory_type", "memory_data", "skills_enabled", "episodic_write_enabled", "provider", "model", "base_url", "temperature", "max_tokens", "reasoning", "delegates"):
+        for key in ("name", "description", "domain", "tools", "capacity", "memory_type", "memory_data", "skills_enabled", "episodic_write_enabled", "provider", "model", "base_url", "temperature", "max_tokens", "effort", "reasoning", "delegates"):
             if before.get(key) != after.get(key):
                 changed.append(key)
 

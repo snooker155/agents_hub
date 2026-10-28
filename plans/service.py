@@ -133,8 +133,10 @@ def _validate_resources(kind: JobKind, workspace: Optional[str], agent_id: Optio
                         memory_access: Optional[str] = None) -> Dict[str, Any]:
     """The deployment's resources, cleaned, or ``ValueError``.
 
-    Only an ``agent_task`` job creates a task of its own, so only it can carry
-    resources. Each id must exist in the job's workspace: a project of that
+    An ``agent_task`` job copies them onto every task it creates, an
+    ``agent_run`` job hands them to the turn each firing starts
+    (``_fire_agent_run``); no other kind runs one agent it could give them
+    to. Each id must exist in the job's workspace: a project of that
     workspace, a live workspace file, a shared memory pool of that workspace
     (or a global one). Secret names are checked for shape; whether a value
     exists is decided at run time, like the agent's own allowlist. Extra
@@ -164,8 +166,9 @@ def _validate_resources(kind: JobKind, workspace: Optional[str], agent_id: Optio
     out["memory_pool_ids"] = list(dict.fromkeys(out["memory_pool_ids"]))
     if not any([out["project_id"], out["file_ids"], out["secrets"], out["memory_pool_ids"]]):
         return out
-    if kind != JobKind.agent_task:
-        raise ValueError("resources (project, files, secrets, memory pools) apply to agent task jobs only")
+    if kind not in (JobKind.agent_task, JobKind.agent_run):
+        raise ValueError("resources (project, files, secrets, memory pools) apply to agent task "
+                         "and agent run jobs only")
     ws = (workspace or "").strip() or None
     if out["project_id"]:
         from projects.storage import ProjectStore
@@ -175,18 +178,16 @@ def _validate_resources(kind: JobKind, workspace: Optional[str], agent_id: Optio
             raise ValueError(f"project '{out['project_id']}' does not exist in workspace '{ws or 'default'}'")
     if out["file_ids"]:
         from files.service import get_files
-        found = {str(f.get("id")): f for f in get_files(out["file_ids"])}
+        found = {str(f.get("file_id")): f for f in get_files(out["file_ids"])}
         for fid in out["file_ids"]:
             rec = found.get(fid)
             if rec is None or (ws and (rec.get("workspace") or "") != ws):
                 raise ValueError(f"file '{fid}' does not exist in workspace '{ws or 'default'}'")
     if out["memory_pool_ids"]:
         from memory.store import MemoryStore
-        pools = {str(m.id): m for m in MemoryStore().load()}
-        for pid in out["memory_pool_ids"]:
-            pool = pools.get(pid)
-            if pool is None or (pool.workspace and ws and pool.workspace != ws):
-                raise ValueError(f"memory pool '{pid}' does not exist in workspace '{ws or 'default'}'")
+        pools = MemoryStore().load()
+        out["memory_pool_ids"] = list(dict.fromkeys(
+            _resolve_pool(pid, ws, pools) for pid in out["memory_pool_ids"]))
     if out["secrets"] and agent_id:
         from agents.registry import get_agent
         from agents.capability_guard import check_agent_tools, guard_mode
@@ -203,6 +204,27 @@ def _validate_resources(kind: JobKind, workspace: Optional[str], agent_id: Optio
             if violation is not None and violation.blocking and guard_mode() == "block":
                 raise ValueError(f"secrets refused by the capability guard: {violation.message}")
     return out
+
+
+def _resolve_pool(ref: str, ws: Optional[str], pools: Optional[List[Any]] = None) -> str:
+    """The id of the memory pool ``ref`` names in workspace ``ws``: an id, or
+    a pool name (case-insensitive), since an agent often knows only the name
+    the person said. Raises ValueError naming the pools it can see."""
+    from memory.store import MemoryStore
+    if pools is None:
+        pools = MemoryStore().load()
+    visible = [m for m in pools if not (m.workspace and ws and m.workspace != ws)]
+    by_id = next((m for m in visible if str(m.id) == ref), None)
+    if by_id is not None:
+        return str(by_id.id)
+    named = [m for m in visible if (getattr(m, "name", "") or "").strip().casefold() == ref.casefold()]
+    if len(named) == 1:
+        return str(named[0].id)
+    if len(named) > 1:
+        ids = ", ".join(str(m.id) for m in named)
+        raise ValueError(f"several memory pools are named '{ref}' in workspace '{ws or 'default'}': pass one id of {ids}")
+    known = ", ".join(f"'{getattr(m, 'name', '')}' ({m.id})" for m in visible if getattr(m, "kind", "") != "personal") or "none"
+    raise ValueError(f"memory pool '{ref}' does not exist in workspace '{ws or 'default'}'; its pools: {known}")
 
 
 def _validate_consolidate(kind: JobKind, workspace: Optional[str],
@@ -224,12 +246,38 @@ def _validate_consolidate(kind: JobKind, workspace: Optional[str],
         return {"consolidate_pool_id": None, "consolidate_session_limit": limit}
     if not pool_id:
         raise ValueError("memory_consolidate requires consolidate_pool_id")
-    from memory.store import MemoryStore
-    pool = MemoryStore().get(pool_id)
-    ws = (workspace or "").strip() or None
-    if pool is None or (pool.workspace and ws and pool.workspace != ws):
-        raise ValueError(f"memory pool '{pool_id}' does not exist in workspace '{ws or 'default'}'")
+    pool_id = _resolve_pool(pool_id, (workspace or "").strip() or None)
     return {"consolidate_pool_id": pool_id, "consolidate_session_limit": limit}
+
+
+def _validate_loop(kind: JobKind, workspace: Optional[str], loop_id: Optional[str]) -> Optional[str]:
+    """A loop job's loop: required, and one of the job's workspace. Other
+    kinds carry none. Without this a loop job could be saved with no loop
+    (the field was not passed through) and every firing failed."""
+    loop_id = str(loop_id or "").strip() or None
+    if kind != JobKind.loop:
+        if loop_id:
+            raise ValueError("loop_id applies to loop jobs only")
+        return None
+    if not loop_id:
+        raise ValueError("a loop job requires loop_id")
+    from loops import store as loop_store
+    loop = loop_store.get_loop(loop_id)
+    ws = (workspace or "").strip() or None
+    if loop is None or (loop.workspace and ws and loop.workspace != ws):
+        raise ValueError(f"loop '{loop_id}' does not exist in workspace '{ws or 'default'}'")
+    return loop_id
+
+
+def _validate_agent_run(kind: JobKind, agent_id: Optional[str]) -> None:
+    """An agent_run job names the agent that runs, and that agent exists."""
+    if kind != JobKind.agent_run:
+        return
+    if not (agent_id or "").strip():
+        raise ValueError("an agent_run job requires agent_id")
+    from agents.registry import get_agent
+    if get_agent(agent_id) is None:
+        raise ValueError(f"Agent not found: {agent_id}")
 
 
 def create_job(
@@ -260,8 +308,13 @@ def create_job(
     memory_access: Optional[str] = None,
     consolidate_pool_id: Optional[str] = None,
     consolidate_session_limit: Optional[int] = None,
+    loop_id: Optional[str] = None,
+    use_agent_outcome: bool = False,
 ) -> ScheduledJob:
     tz_name = _validate_timezone(timezone)
+    _validate_agent_run(kind, agent_id)
+    if use_agent_outcome and kind != JobKind.agent_task:
+        raise ValueError("use_agent_outcome applies to agent task jobs only")
     cron_expr = _validate_cron(cron) if recurrence == Recurrence.cron else None
     _validate_environment_id(environment_id, workspace)
     _validate_agent_version(agent_version, agent_id)
@@ -269,6 +322,7 @@ def create_job(
                                     secrets=secrets, memory_pool_ids=memory_pool_ids,
                                     memory_access=memory_access)
     consolidate = _validate_consolidate(kind, workspace, consolidate_pool_id, consolidate_session_limit)
+    loop_id = _validate_loop(kind, workspace, loop_id)
     job = ScheduledJob(
         kind=kind,
         title=title,
@@ -284,11 +338,13 @@ def create_job(
         flow_id=flow_id,
         seed=seed,
         max_concurrent=max_concurrent,
+        loop_id=loop_id,
         channels=channels or ["dashboard"],
         environment_id=environment_id,
         budget_usd=budget_usd,
         agent_version=agent_version,
         auto_pause_after=auto_pause_after,
+        use_agent_outcome=bool(use_agent_outcome),
         **resources,
         **consolidate,
     )
@@ -331,6 +387,12 @@ def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
         existing = plan_store.get(job_id)
         ws = existing.workspace if existing else None
         _validate_environment_id(fields["environment_id"], ws)
+    if "agent_id" in fields or fields.get("use_agent_outcome"):
+        existing = plan_store.get(job_id)
+        if existing is not None:
+            _validate_agent_run(existing.kind, fields.get("agent_id", existing.agent_id))
+            if fields.get("use_agent_outcome") and existing.kind != JobKind.agent_task:
+                raise ValueError("use_agent_outcome applies to agent task jobs only")
     if "agent_version" in fields or "agent_id" in fields:
         existing = plan_store.get(job_id)
         agent_id = fields.get("agent_id", existing.agent_id if existing else None)
@@ -480,6 +542,13 @@ def _push_endpoints(workspace: Optional[str], kind: str, n: Notification) -> Non
             notify_outbound.dispatch(endpoint, event)
     except Exception:  # noqa: BLE001 - best effort delivery that never raises
         log.debug("%s notification delivery failed", kind, exc_info=True)
+
+
+def _message(key: str, **params: Any) -> Dict[str, Any]:
+    """The message key a notification carries so the dashboard shows it in
+    the reader's language (managers/runs/notifications.py, notification_message)."""
+    from managers.runs.notifications import notification_message
+    return notification_message(key, **params)
 
 
 def _publish_notification(n: Notification) -> None:
@@ -709,6 +778,133 @@ def fire_to_dict(f: FireRecord) -> Dict[str, Any]:
     return data
 
 
+#: How much of a result the journal quotes.
+_RESULT_EXCERPT = 600
+
+_TASK_STATES = {
+    "resolved": "completed", "done": "completed", "reviewed": "completed",
+    "stopped": "stopped",
+    "blocked": "waiting", "awaiting_input": "waiting", "awaiting_approval": "waiting",
+}
+
+
+def _excerpt(text: Any) -> str:
+    text = str(text or "").strip()
+    return text if len(text) <= _RESULT_EXCERPT else text[:_RESULT_EXCERPT].rstrip() + "…"
+
+
+def _run_state(status: Any) -> str:
+    """A run status (leaf or container spelling) as one of running, waiting,
+    completed, failed, stopped."""
+    from common.run_status import normalize
+    s = normalize(status)
+    if s in ("pending", "running", "stopping"):
+        return "running"
+    if s == "awaiting_input":
+        return "waiting"
+    return s if s in ("completed", "failed", "stopped") else "running"
+
+
+def _task_result(task_id: str) -> Dict[str, Any]:
+    from tasks import service as tasks_service
+    task = tasks_service.get_task(UUID(str(task_id)))
+    if task is None:
+        return {"kind": "task", "id": task_id, "state": "missing"}
+    status = getattr(task.status, "value", task.status)
+    out: Dict[str, Any] = {
+        "kind": "task", "id": task_id, "key": getattr(task, "key", None),
+        "status": status, "state": _TASK_STATES.get(status, "running"),
+    }
+    if status == "blocked" and getattr(task, "blocked_reason", None):
+        out["reason"] = _excerpt(task.blocked_reason)
+    results = tasks_service.get_task_results(task.id) or []
+    if results:
+        out["result"] = _excerpt(results[-1].get("result"))
+    evaluations = list(getattr(task, "outcome_evaluations", None) or [])
+    if evaluations:
+        last = evaluations[-1]
+        out["outcome"] = {"passed": bool(last.get("passed")), "score": last.get("score"),
+                          "gradings": len(evaluations)}
+    return out
+
+
+def _flow_run_result(flow_run_id: str) -> Dict[str, Any]:
+    from flow.run_store import get_flow_run
+    rec = get_flow_run(flow_run_id)
+    if rec is None:
+        return {"kind": "flow_run", "id": flow_run_id, "state": "missing"}
+    out = {"kind": "flow_run", "id": flow_run_id, "status": rec.get("status"),
+           "state": _run_state(rec.get("status"))}
+    if rec.get("output"):
+        out["result"] = _excerpt(rec.get("output"))
+    if rec.get("error"):
+        out["error"] = _excerpt(rec.get("error"))
+    return out
+
+
+def _loop_run_result(loop_run_id: str) -> Dict[str, Any]:
+    from loops import store as loop_store
+    run = loop_store.get_run(loop_run_id)
+    if run is None:
+        return {"kind": "loop_run", "id": loop_run_id, "state": "missing"}
+    out = {"kind": "loop_run", "id": loop_run_id, "status": run.status,
+           "state": _run_state(run.status), "score": run.final_score or run.best_score}
+    if run.result:
+        out["result"] = _excerpt(run.result)
+    if run.error:
+        out["error"] = _excerpt(run.error)
+    return out
+
+
+def _conversation_result(conversation_id: str) -> Dict[str, Any]:
+    from common import chat_store
+    from managers.runs.lifecycle import latest_run_for_task
+    run = latest_run_for_task(conversation_id)
+    out: Dict[str, Any] = {"kind": "conversation", "id": conversation_id}
+    if run is None:
+        # The turn is created a moment after the conversation.
+        out.update(status="pending", state="running")
+    else:
+        out.update(run_id=run.get("run_id"), status=run.get("status"),
+                   state=_run_state(run.get("status")))
+        if run.get("error"):
+            out["error"] = _excerpt(run.get("error"))
+    chat = chat_store.get_chat(conversation_id)
+    if chat is None:
+        out["state"] = "missing"
+        return out
+    answers = [m for m in (chat.get("messages") or []) if m.get("role") == "agent"]
+    if answers and str(answers[-1].get("content") or "").strip():
+        out["result"] = _excerpt(answers[-1].get("content"))
+    return out
+
+
+def fire_result(fire: FireRecord) -> Optional[Dict[str, Any]]:
+    """What the work a firing started has come to, read now.
+
+    A firing's ``ok`` says only that the work was started. This follows it
+    to the task, flow run, loop run or conversation it started and says where
+    that stands: ``state`` is running, waiting (on a person), completed,
+    failed, stopped or missing (deleted since), with ``status`` as the record
+    spells it, and ``result`` quoting the start of what it produced. None for
+    a firing that started nothing to follow (a notification, a failed or
+    skipped firing, a consolidation).
+    """
+    try:
+        if fire.conversation_id:
+            return _conversation_result(fire.conversation_id)
+        if fire.loop_run_id:
+            return _loop_run_result(fire.loop_run_id)
+        if fire.flow_run_id:
+            return _flow_run_result(fire.flow_run_id)
+        if fire.task_id:
+            return _task_result(fire.task_id)
+    except Exception:  # noqa: BLE001 - a record that cannot be read leaves the firing without its result
+        log.debug("result of fire %s could not be read", fire.id, exc_info=True)
+        return {"state": "unknown"}
+    return None
+
+
 def list_job_fires(
     job_id: UUID | str, *, only_errors: bool = False, limit: int = 50,
 ) -> List[FireRecord]:
@@ -824,20 +1020,71 @@ def classify_fire_error(exc_or_message: Any) -> str:
     return "other"
 
 
-def _notify_job_paused(job: ScheduledJob, error: Optional[str], consecutive_errors: int) -> None:
+def _notify_job_paused(job: ScheduledJob, error: Optional[str], consecutive_errors: int,
+                       *, target_missing: bool = False) -> None:
     """Best-effort inbox alert when a job auto-pauses (errors or
     target_missing); never raises, so a notification failure can never wedge
-    a firing tick."""
+    a firing tick. A missing target pauses on the first failure, so it says
+    that rather than counting failures."""
     try:
+        if target_missing:
+            title = f"Scheduled job paused: {job.title}"
+            body = f"'{job.title}' was paused: its {_target_kind(job)} no longer exists ({error or 'not found'})."
+            message = _message("scheduledJobTargetMissing", title=job.title, error=error or None)
+        else:
+            title = f"Scheduled job paused after {consecutive_errors} failures"
+            body = f"'{job.title}' was paused after repeated failures: {error or 'unknown error'}"
+            message = _message("scheduledJobPaused", title=job.title,
+                               count=consecutive_errors, error=error or None)
         create_notification(
-            title=f"Scheduled job paused after {consecutive_errors} failures",
-            body=f"'{job.title}' was paused after repeated failures: {error or 'unknown error'}",
-            severity="warning",
-            source={"job_id": str(job.id)},
+            title=title, body=body, severity="warning",
+            source={"job_id": str(job.id), "message": message},
             workspace=job.workspace,
         )
     except Exception:  # noqa: BLE001 - the pause notification is best effort
         log.debug("auto-pause notification failed for job %s", job.id, exc_info=True)
+
+
+def _notify_job_failed(job: ScheduledJob, error: Optional[str]) -> None:
+    """Best-effort inbox alert for a firing that failed and did not pause the
+    job (that one says so itself): a one-off job, which is then over, or a
+    recurring one still short of its auto-pause threshold."""
+    try:
+        create_notification(
+            title=f"Scheduled job failed: {job.title}",
+            body=f"'{job.title}' could not start: {error or 'unknown error'}",
+            severity="error",
+            source={"job_id": str(job.id),
+                    "message": _message("scheduledJobFailed", title=job.title, error=error or None)},
+            workspace=job.workspace,
+        )
+    except Exception:  # noqa: BLE001 - the failure notification is best effort
+        log.debug("failure notification failed for job %s", job.id, exc_info=True)
+
+
+def _target_kind(job: ScheduledJob) -> str:
+    return {JobKind.flow: "flow", JobKind.loop: "loop"}.get(job.kind, "agent")
+
+
+def _target_name(job: ScheduledJob) -> Optional[str]:
+    """The name the dashboard shows for what the job starts (its agent, flow
+    or loop), for the notifications: the id when it has no name."""
+    try:
+        if job.kind == JobKind.flow and job.flow_id:
+            from flow import store as flow_store
+            flow = flow_store.get_flow(job.flow_id) or {}
+            return (flow.get("name") or "").strip() or job.flow_id
+        if job.kind == JobKind.loop and job.loop_id:
+            from loops import store as loop_store
+            loop = loop_store.get_loop(job.loop_id)
+            return (getattr(loop, "name", "") or "").strip() or job.loop_id
+        if job.agent_id:
+            from agents.registry import get_agent
+            spec = get_agent(job.agent_id)
+            return (getattr(spec, "name", "") or "").strip() or job.agent_id
+    except Exception:  # noqa: BLE001 - the id names it well enough
+        log.debug("target name lookup failed for job %s", job.id, exc_info=True)
+    return job.flow_id or job.loop_id or job.agent_id
 
 
 def _record_fire(
@@ -845,6 +1092,7 @@ def _record_fire(
     error: Optional[str], task_id: Optional[str], notification_id: Optional[str],
     loop_run_id: Optional[str], slot: datetime, duration_ms: int,
     outcome: Optional[str] = None, summary: Optional[str] = None,
+    flow_run_id: Optional[str] = None, conversation_id: Optional[str] = None,
 ) -> Optional[FireRecord]:
     """Append one journal row; never raises (a journal write must not turn a
     successful, or already-failed, firing into a harder failure). Returns the
@@ -861,6 +1109,8 @@ def _record_fire(
             task_id=task_id,
             notification_id=notification_id,
             loop_run_id=loop_run_id,
+            flow_run_id=flow_run_id,
+            conversation_id=conversation_id,
             duration_ms=duration_ms,
             outcome=outcome,
             summary=summary,
@@ -942,7 +1192,7 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
                 )
                 result["notification_id"] = str(n.id)
             elif job.kind == JobKind.flow:
-                result["task_id"] = _fire_flow(job)
+                result["flow_run_id"] = _fire_flow(job)
             elif job.kind == JobKind.loop:
                 fired = _fire_loop(job)
                 result["task_id"] = fired.get("task_id")
@@ -963,6 +1213,8 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
                         resume_at = _ensure_aware(fired["resume_at"])
             elif job.kind == JobKind.memory_consolidate:
                 result["consolidation_id"] = _fire_memory_consolidate(job, trigger=trigger)
+            elif job.kind == JobKind.agent_run:
+                result["conversation_id"] = _fire_agent_run(job)
             else:
                 result["task_id"] = _fire_agent_task(job)
         except Exception as e:  # noqa: BLE001 - the failure is recorded on the fire and classified
@@ -980,6 +1232,8 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
         fields["created_task_ids"] = [*job.created_task_ids, result["task_id"]]
     if job.kind == JobKind.memory_consolidate and result.get("consolidation_id"):
         fields["created_consolidation_ids"] = [*job.created_consolidation_ids, result["consolidation_id"]]
+    if job.kind == JobKind.agent_run and result.get("conversation_id"):
+        fields["created_conversation_ids"] = [*job.created_conversation_ids, result["conversation_id"]]
 
     # -------------------- consecutive errors + auto pause --------------------
     # A one-off job (recurrence == none) is already terminal below (failed on
@@ -996,7 +1250,12 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
             if target_missing or threshold_hit:
                 fields["status"] = JobStatus.paused
                 fields["paused_reason"] = "target_missing" if target_missing else "errors"
-                _notify_job_paused(job, error, fields["consecutive_errors"])
+                _notify_job_paused(job, error, fields["consecutive_errors"],
+                                   target_missing=target_missing)
+        # Every failed firing reaches the inbox: one that paused the job said
+        # so above, any other says it here.
+        if fields.get("status") != JobStatus.paused:
+            _notify_job_failed(job, error)
     elif job.kind != JobKind.heartbeat:
         fields["consecutive_errors"] = 0
     # A heartbeat's counter is fed by its *runs* (proactive.service.
@@ -1032,7 +1291,8 @@ def fire_job(job: ScheduledJob, trigger: str = "schedule") -> Dict[str, Any]:
     _record_fire(
         job, trigger=trigger, ok=error is None, error_type=error_type, error=error,
         task_id=result.get("task_id"), notification_id=result.get("notification_id"),
-        loop_run_id=result.get("loop_run_id"), slot=slot, duration_ms=duration_ms,
+        loop_run_id=result.get("loop_run_id"), flow_run_id=result.get("flow_run_id"),
+        conversation_id=result.get("conversation_id"), slot=slot, duration_ms=duration_ms,
         outcome=outcome, summary=skip_summary,
     )
     return result
@@ -1090,6 +1350,7 @@ def _fire_agent_task(
         # creates unassigned carries the pin with no agent yet to check it
         # against, same as a task the operator pins before assigning one.
         agent_version=job.agent_version if job.agent_id else None,
+        use_agent_outcome=bool(job.use_agent_outcome),
     )
     tasks_service.append_task_activity_log(
         task.id, activity, f"Created by scheduled job {job.id}", job_id=str(job.id)
@@ -1148,11 +1409,13 @@ def _fire_agent_task(
     create_notification(
         title=f"Scheduled task started: {job.title}",
         body=(
-            f"Agent '{job.agent_id}' was started on the task."
+            f"Agent '{_target_name(job)}' was started on the task."
             if job.agent_id
             else "The task was handed to the orchestrator for routing."
         ),
-        source={"job_id": str(job.id), "task_id": str(task.id)},
+        source={"job_id": str(job.id), "task_id": str(task.id),
+                "message": _message("scheduledTaskStarted", title=job.title,
+                                    agent=_target_name(job) if job.agent_id else None)},
         workspace=job.workspace,
         channels=job.channels,
     )
@@ -1186,8 +1449,149 @@ def _apply_job_fields_to_task(task_id: str, job: ScheduledJob) -> None:
         )
 
 
+def _fire_agent_run(job: ScheduledJob) -> str:
+    """Start one run of the job's agent in a new conversation. Returns the
+    conversation id: a scheduled run is a run, it makes no task.
+
+    The deployment's resources (docs/deployments.md, "Resources") reach this
+    one turn, as they reach a task's runs: the project is the conversation's,
+    the files are attached to the message by id, and the memory pools and
+    extra secret names are granted to the job's agent through the request's
+    private ``_grants`` (chat/runs.py), which no client can set. A turn the
+    person sends later in the conversation runs with the agent's own binding.
+
+    The conversation is created first, so it is in the Chat list (and the
+    journal can point at it) the moment the firing returns; the turn then
+    runs as any chat turn does (chat.pipelines.run_chat_pipeline), recorded
+    with ``message_origin`` "schedule", and stays in that conversation for
+    the person to read or continue. The turn runs in the background: the
+    firing does not wait for the agent to answer.
+    """
+    from agents.registry import get_agent
+    from chat.models import ChatAttachment, ChatRequest
+    from common import chat_store
+
+    if not job.agent_id or get_agent(job.agent_id) is None:
+        raise ValueError(f"Agent not found: {job.agent_id}")
+    ws_name = job.workspace or None
+    if ws_name:
+        from workspace import create_workspace_folder
+        ws_name = create_workspace_folder(ws_name).name
+
+    conversation_id = str(uuid4())
+    title = job.title
+    if job.recurrence != Recurrence.none:
+        title = f"{job.title} · {_now().strftime('%Y-%m-%d %H:%M')} UTC"
+    message = job.message or job.title
+    files = _job_files(job, ws_name)
+    if files:
+        # Named in the message itself, the way the chat page writes a message
+        # with attachments, so the stored bubble shows them and stays the one
+        # the turn's record matches (common/chat_store.append_turn).
+        message += "\nAttached files: " + ", ".join(f["name"] for f in files)
+    # The message is in the conversation from the start: opened while the
+    # agent is still answering, it reads as a conversation, not as the empty
+    # chat's greeting and examples. The answer is added when the turn ends
+    # (chat/broadcast.py).
+    chat_store.save_chat({
+        "id": conversation_id, "title": title, "workspace": ws_name,
+        "project_id": job.project_id or None, "agent_id": job.agent_id,
+        "target_mode": "agent", "origin": "schedule",
+        "messages": [{"id": f"sched-u-{conversation_id}", "role": "user", "content": message}],
+    })
+    request = ChatRequest(
+        agent_id=job.agent_id,
+        message=message,
+        workspace=ws_name,
+        project_id=job.project_id or None,
+        conversation_id=conversation_id,
+        conversation_title=title,
+        agent_version=job.agent_version,
+        source="schedule",
+        attachments=[ChatAttachment(file_id=f["file_id"]) for f in files],
+    )
+    if job.memory_pool_ids or job.secrets:
+        request._grants = {
+            "agent_id": job.agent_id,
+            "memory_pool_ids": list(job.memory_pool_ids or []),
+            "memory_access": job.memory_access or "read",
+            "secrets": list(job.secrets or []),
+        }
+    _start_chat_turn(request)
+    create_notification(
+        title=f"Scheduled run started: {job.title}",
+        body=f"Agent '{_target_name(job)}' was started by scheduled job {job.id}.",
+        source={"job_id": str(job.id), "conversation_id": conversation_id,
+                "message": _message("scheduledRunStarted", title=job.title, agent=_target_name(job))},
+        workspace=job.workspace,
+        channels=job.channels,
+    )
+    return conversation_id
+
+
+def _job_files(job: ScheduledJob, ws_name: Optional[str]) -> List[Dict[str, Any]]:
+    """The job's workspace files that still exist in its workspace, in the
+    job's order. A file deleted since the job was saved is left out (logged)
+    rather than failing every firing: the run goes on without it."""
+    if not job.file_ids:
+        return []
+    from files.service import get_files
+    found = {str(f.get("file_id")): f for f in get_files(job.file_ids)}
+    out = []
+    for fid in job.file_ids:
+        rec = found.get(str(fid))
+        if rec is None or (ws_name and (rec.get("workspace") or "") != ws_name):
+            log.warning("scheduled job %s: file %s is gone, the run starts without it", job.id, fid)
+            continue
+        out.append({"file_id": str(rec["file_id"]), "name": rec.get("name") or str(fid)})
+    return out
+
+
+def _start_chat_turn(request: Any) -> None:
+    """Run a chat turn without waiting for it.
+
+    On the backend's event loop when there is one (the broker keeps it):
+    scheduled from this thread when the firing runs in a worker thread (the
+    scheduler tick), or as a task when it runs on the loop itself (the
+    run-now route). A process with no loop (a script, a test) runs the turn
+    in a thread of its own.
+    """
+    import asyncio
+    import threading
+
+    async def _turn() -> None:
+        from chat.pipelines import run_chat_pipeline
+        try:
+            async for _event in run_chat_pipeline(request):
+                pass
+        except Exception:  # noqa: BLE001 - a failed turn is on its run record, the tick goes on
+            log.exception("scheduled run in conversation %s failed", request.conversation_id)
+
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is not None:
+        task = running.create_task(_turn())
+        _turn_tasks.add(task)
+        task.add_done_callback(_turn_tasks.discard)
+        return
+    from common.session_broker import broker
+    loop = broker.loop
+    if loop is not None and loop.is_running():
+        asyncio.run_coroutine_threadsafe(_turn(), loop)
+        return
+    threading.Thread(target=lambda: asyncio.run(_turn()), name="scheduled-agent-run",
+                     daemon=True).start()
+
+
+#: Turns started on the running loop, kept so they are not collected mid-run.
+_turn_tasks: set = set()
+
+
 def _fire_flow(job: ScheduledJob) -> str:
-    """Trigger a flow run for a scheduled ``flow`` job. Returns the task id.
+    """Trigger a flow run for a scheduled ``flow`` job. Returns the flow run
+    id: a scheduled run is a run, it makes no task.
 
     Reuses ``flow.launcher.trigger_flow`` so scheduled and webhook triggers share
     concurrency + authorization semantics. A concurrency-capped skip raises, which
@@ -1210,12 +1614,13 @@ def _fire_flow(job: ScheduledJob) -> str:
     _apply_job_fields_to_task(result["task_id"], job)
     create_notification(
         title=f"Scheduled flow started: {job.title}",
-        body=f"Flow '{job.flow_id}' was triggered by scheduled job {job.id}.",
-        source={"job_id": str(job.id), "task_id": result["task_id"], "flow_id": job.flow_id},
+        body=f"Flow '{_target_name(job)}' was triggered by scheduled job {job.id}.",
+        source={"job_id": str(job.id), "flow_run_id": result["run_id"], "flow_id": job.flow_id,
+                "message": _message("scheduledFlowStarted", title=job.title, flow=_target_name(job))},
         workspace=job.workspace,
         channels=job.channels,
     )
-    return result["task_id"]
+    return result["run_id"]
 
 
 def _fire_loop(job: ScheduledJob) -> Dict[str, Any]:
@@ -1252,9 +1657,10 @@ def _fire_loop(job: ScheduledJob) -> Dict[str, Any]:
     _apply_job_fields_to_task(run.task_id, job)
     create_notification(
         title=f"Scheduled loop started: {job.title}",
-        body=f"Loop '{job.loop_id}' was started by scheduled job {job.id}.",
+        body=f"Loop '{loop.name or job.loop_id}' was started by scheduled job {job.id}.",
         source={"job_id": str(job.id), "task_id": run.task_id, "loop_id": job.loop_id,
-                "loop_run_id": run.loop_run_id},
+                "loop_run_id": run.loop_run_id,
+                "message": _message("scheduledLoopStarted", title=job.title, loop=loop.name or job.loop_id)},
         workspace=job.workspace,
         channels=job.channels,
     )

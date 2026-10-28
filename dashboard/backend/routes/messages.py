@@ -5,6 +5,7 @@ A message represents a single agent run - its log, tools, token usage, etc.
 This is the granular view of execution, as opposed to /api/sessions which
 groups multiple messages into a process-level context.
 """
+import json
 import re
 
 from fastapi import APIRouter, HTTPException, Request
@@ -188,6 +189,226 @@ async def get_message_live(run_id: str, request: Request):
     # Async on purpose: a run executing on another replica has its live tail
     # only in the Redis mirror (common/live_runs.py), which is read awaited.
     return {"turn": await live_runs.by_run_async(run_id)}
+
+
+_TRAIL_TOOL_CHARS = 2000
+_TRAIL_REASONING_CHARS = 8000
+_TRAIL_TEXT_CHARS = 20000
+_TRAIL_PSEUDO_TOOLS = {"think", "plan"}
+_TRAIL_TOOL_KEYS = {"step", "tool", "input", "output", "running", "status",
+                    "started_at", "finished_at", "agent_id", "run_id"}
+
+
+def _trail_clip(value, limit: int):
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    return text[:limit] + "\u2026 (truncated)" if len(text) > limit else text
+
+
+def trail_tool_status(tool: dict) -> str:
+    """Same rule as the frontend: an explicit status wins, then the output."""
+    explicit = tool.get("status")
+    if explicit:
+        return "error" if str(explicit).lower() == "error" else "ok"
+    out = tool.get("output")
+    if isinstance(out, str):
+        head = out.lstrip()
+        if head.startswith(("ERROR:", "Error:")):
+            return "error"
+        if re.match(r'^\{\s*"ok"\s*:\s*false', head):
+            return "error"
+    return "ok"
+
+
+def _place_file_steps(timeline: list, files: list) -> None:
+    """Each file change as a step of the timeline, the way a live turn has it
+    (an ``artifact`` entry, diff included): right after the last tool call
+    whose input names the file, else after every step. The log does not say
+    which call wrote it, so the path in the call's input is the best tie."""
+    for art in files:
+        path = art.get("path")
+        if not path:
+            continue
+        entry = {"type": "artifact", **{k: v for k, v in art.items() if k != "run_id"}}
+        at = len(timeline)
+        for i in range(len(timeline) - 1, -1, -1):
+            e = timeline[i]
+            if e.get("type") == "tool" and path in str(e.get("input") or ""):
+                at = i + 1
+                while at < len(timeline) and timeline[at].get("type") == "artifact":
+                    at += 1
+                break
+        timeline.insert(at, entry)
+
+
+#: A file tool's call in a node run's log (flow/task_driver.py writes
+#: ``[tool_start] tool=<name> input=<dict>``), and the change it makes.
+_FILE_TOOL_LINE = re.compile(
+    r"^\[tool_start\] tool=(write_file|create_file|apply_unified_diff|delete_file) "
+    r"input=.*?['\"]path['\"]:\s*['\"]([^'\"]+)['\"]", re.M)
+_FILE_TOOL_OP = {"write_file": "modify", "create_file": "add",
+                 "apply_unified_diff": "modify", "delete_file": "delete"}
+
+
+def _node_log_timeline(log_text: str, tool_calls: list) -> list:
+    """The steps of a flow node run written before nodes were logged by the
+    chat callback (the old NodeFileCallback format: ``[tool_start] tool=…
+    input=…`` lines, no step numbers), in the order they happened. The k-th tool line is
+    the k-th entry of the run's recorded tool calls, which carry the whole
+    input, output and verdict; a line past them keeps what the log shows."""
+    timeline: list = []
+    calls = list(tool_calls or [])
+    used = 0
+    step = 0
+    for line in log_text.splitlines():
+        if line.startswith("[reasoning] content="):
+            try:
+                content = json.loads(line[len("[reasoning] content="):])
+            except ValueError:
+                content = line[len("[reasoning] content="):]
+            step += 1
+            timeline.append({"type": "reasoning", "kind": "think", "step": step,
+                             "content": _trail_clip(str(content or ""), _TRAIL_REASONING_CHARS)})
+        elif line.startswith("[tool_start] tool="):
+            step += 1
+            call = calls[used] if used < len(calls) and isinstance(calls[used], dict) else None
+            used += 1
+            if call is None:
+                head = line[len("[tool_start] tool="):]
+                name, _, rest = head.partition(" input=")
+                call = {"tool": name, "input": rest}
+            entry = {"type": "tool", "step": step, "tool": call.get("tool") or "tool",
+                     "input": _trail_clip(call.get("input") or "", _TRAIL_TOOL_CHARS),
+                     "output": _trail_clip(call.get("output"), _TRAIL_TOOL_CHARS),
+                     "status": trail_tool_status(call)}
+            for k, v in call.items():
+                if k not in _TRAIL_TOOL_KEYS:
+                    entry[k] = v
+            timeline.append(entry)
+    return timeline
+
+
+def _files_from_tool_lines(log_text: str, run_id: str) -> list:
+    """The files a run's file tools wrote, read off its log, for a run that
+    recorded no changes of its own (a flow node run from before the task
+    driver caught them). No diff: the file is shown as it is now."""
+    files: dict = {}
+    for tool, path in _FILE_TOOL_LINE.findall(log_text):
+        op = _FILE_TOOL_OP[tool]
+        prev = files.get(path)
+        if prev and prev["op"] == "add" and op == "modify":
+            op = "add"
+        files[path] = {"op": op, "path": path, "run_id": run_id}
+    return list(files.values())
+
+
+def build_run_trail(run_id: str) -> Optional[dict]:
+    """Chronological timeline (reasoning, tools, file steps, final text), file
+    changes, step stats and, when it touched any, the service entities of one
+    run. None when the run does not exist."""
+    run = run_manager.get_run_by_id(run_id)
+    if not run:
+        return None
+    log_text = ""
+    log_file = run.get("log_file")
+    if log_file:
+        try:
+            p = Path(log_file)
+            if p.exists():
+                log_text = p.read_text(encoding="utf-8", errors="replace")[-120_000:]
+        except Exception:  # noqa: BLE001 - unreadable log falls back to an empty trail
+            log.debug("build_run_trail: unreadable log", exc_info=True)
+            log_text = ""
+    message_runs: list = []
+    if log_text:
+        try:
+            if "=== Message at" not in log_text:
+                log_text = "=== Message at worker ===\n" + log_text
+            message_runs = _extract_chat_message_runs(log_text)
+        except Exception:  # noqa: BLE001
+            log.debug("build_run_trail: log parse failed", exc_info=True)
+            message_runs = []
+
+    timeline: list = []
+    outputs: list = []
+    # A flow node run logged before nodes used the chat callback is not a chat
+    # log: its steps are read in its old format, with the recorded tool calls.
+    node_log = "--- Node run started at" in log_text
+    if node_log:
+        try:
+            timeline = _node_log_timeline(log_text, (run_manager.get_run_process(run_id) or {}).get("tool_calls") or [])
+        except Exception:  # noqa: BLE001 - an unreadable node log falls back to the chat parse
+            log.debug("build_run_trail: node log parse failed", exc_info=True)
+            timeline = []
+        if timeline:
+            message_runs = []
+    for mr in message_runs:
+        entries = []
+        for r in (mr.get("reasoning") or []):
+            entries.append((int(r.get("step") or 0), 0,
+                            {"type": "reasoning", "kind": "think", "step": int(r.get("step") or 0),
+                             "content": _trail_clip(r.get("content") or "", _TRAIL_REASONING_CHARS)}))
+        for t in (mr.get("tools") or []):
+            step = int(t.get("step") or 0)
+            entry = {"type": "tool", "step": step, "tool": t.get("tool") or "tool",
+                     "input": _trail_clip(t.get("input") or "", _TRAIL_TOOL_CHARS),
+                     "output": _trail_clip(t.get("output"), _TRAIL_TOOL_CHARS),
+                     "status": trail_tool_status(t)}
+            for k, v in t.items():
+                if k not in _TRAIL_TOOL_KEYS:
+                    entry[k] = v
+            entries.append((step, 1, entry))
+        entries.sort(key=lambda e: (e[0], e[1]))  # stable: reasoning first at an equal step
+        timeline.extend(e[2] for e in entries)
+        if mr.get("output"):
+            outputs.append(mr["output"])
+
+    files: list = []
+    # The service entities the run touched (its views, tasks, files), so a
+    # reopened turn links and lists them as the live one did.
+    entities: list = []
+    try:
+        process = run_manager.get_run_process(run_id) or {}
+        for art in (process.get("artifacts") or []):
+            if isinstance(art, dict):
+                files.append({**art, "run_id": run_id})
+        entities = [e for e in (run.get("entities") or process.get("entities") or [])
+                    if isinstance(e, dict)]
+    except Exception:  # noqa: BLE001
+        log.debug("build_run_trail: no process data", exc_info=True)
+        files, entities = [], []
+    if not files and log_text:
+        files = _files_from_tool_lines(log_text, run_id)
+    _place_file_steps(timeline, files)
+
+    final = run.get("output") or "\n\n".join(outputs)
+    if isinstance(final, str) and final.strip():
+        timeline.append({"type": "text", "text": _trail_clip(final, _TRAIL_TEXT_CHARS)})
+
+    tools = [e for e in timeline if e["type"] == "tool"]
+    stats = {
+        "tools": sum(1 for e in tools if e["tool"] not in _TRAIL_PSEUDO_TOOLS),
+        "errors": sum(1 for e in tools if e["status"] == "error"),
+        "thoughts": sum(1 for e in timeline if e["type"] == "reasoning"),
+        "files": len({f.get("path") for f in files if f.get("path")}),
+    }
+    trail = {"run_id": run_id, "timeline": timeline, "files": files, "stats": stats}
+    # What the run was given: a flow node's log line may not carry it.
+    if run.get("input"):
+        trail["input"] = _trail_clip(str(run["input"]), _TRAIL_TEXT_CHARS)
+    if entities:
+        trail["entities"] = entities
+    return trail
+
+
+@router.get("/{run_id}/trail")
+async def get_message_trail(run_id: str):
+    """The run as the chat draws a turn: timeline, file changes, stats."""
+    trail = build_run_trail(run_id)
+    if trail is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+    return trail
 
 
 @router.get("/{run_id}/insights")

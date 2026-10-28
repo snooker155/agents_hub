@@ -331,6 +331,9 @@ def context_block_lines(request: ChatRequest) -> list[str]:
             blocks.extend(group)
     if getattr(request, "voice", False):
         blocks.extend(["", "(This message was spoken and transcribed: a word may be misheard.)"])
+    if getattr(request, "auto_approve", False):
+        from common.auto_mode import prompt_note
+        blocks.extend(["", f"({prompt_note()})"])
     return blocks
 
 

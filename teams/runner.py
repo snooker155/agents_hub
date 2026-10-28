@@ -40,6 +40,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from agents.callbacks import ChatStreamCallback, append_log, write_log
+from common import artifact_sink, citation_sink as citation_sink_mod, entity_sink as entity_sink_mod
+from common.untrusted import auto_quote
+from flow.node_log import node_files, node_log_header, node_log_ending, node_step_stats, node_summary_line
 from teams import control, store
 from teams.models import (
     BROADCAST, HANDOFF_MODES, MAX_MEMBERS, MAX_ROUNDS_CAP, MAX_WALL_SECONDS_CAP,
@@ -79,12 +83,16 @@ class Turn:
 
 
 def _publish(team_run_id: str, event: Dict[str, Any]) -> None:
-    """Push an event to the ``team:<id>`` channel. Never fatal."""
-    try:
-        from common.session_broker import broker
-        broker.publish_threadsafe(f"team:{team_run_id}", event)
-    except Exception:  # noqa: BLE001 - live publish is never fatal to the run
-        log.debug("team event publish failed", exc_info=True)
+    """Push an event to the ``team:<id>`` channel. Never fatal. From this
+    process's broker when it has one, else through the backend: a run in a
+    process of its own has no broker that reaches a page (common/run_stream.py)."""
+    from common import run_stream
+    run_stream.publish([channel_for(team_run_id)], event)
+
+
+def channel_for(team_run_id: str) -> str:
+    """The channel the team page follows a run on."""
+    return f"team:{team_run_id}"
 
 
 def _turn_cost(provider: str, model: str, inbound: int, outbound: int) -> float:
@@ -107,10 +115,16 @@ def _run_member(
     session_id: Optional[str], team_run_id: str, is_leader: bool = False,
     provider: Optional[str] = None, model: Optional[str] = None,
     run_id: Optional[str] = None, in_process: bool = True,
+    quote_tool_copies: bool = False,
 ) -> Turn:
     """Build the agent with its team seat and run one turn. Never raises: a
     member that fails posts an error to the board and the team continues, the
-    way a colleague who is out sick does not end the project."""
+    way a colleague who is out sick does not end the project.
+
+    ``quote_tool_copies`` is for a member's board reply: outside text it copied
+    word for word from its own tool results is put in quote markers, so the
+    next member reads it as data (common.untrusted.auto_quote). Not for the
+    lead, whose reply is a JSON plan, nor for the closing answer."""
     from agents.agent_factory import create_agent, get_factory
     from agents.agent_invoke import invoke_agent
     from agents.callbacks import RunStopCallback
@@ -134,7 +148,7 @@ def _run_member(
         # substituted for it: the member keeps its expertise and gains a roster.
         base = get_factory().load_definition(agent_id).get("system_prompt", "")
         overrides: Dict[str, Any] = {
-            "system_prompt": f"{base}\n\n---\n\n{team_system_prompt(team, member, is_leader=is_leader)}",
+            "system_prompt": f"{base}\n\n---\n\n{team_system_prompt(team, member, is_leader=is_leader, task_id=task_id)}",
         }
         if provider:
             overrides["provider"] = provider
@@ -191,28 +205,81 @@ def _run_member(
             provider=agent.provider or "", model=agent.model or "",
             input=prompt, instance_id=instance_id,
         )
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write(f"--- Team turn started at {utc_iso()} ---\n"
-                    f"Team : {team.name}\nSeat : {speaker}\nAgent: {agent_id}\n\n"
-                    f"=== PROMPT ===\n{prompt}\n\n=== EXECUTION ===\n")
     except Exception:  # noqa: BLE001 - run bookkeeping must never fail the turn
         log.debug("opening run record for team turn failed", exc_info=True)
+
+    # The turn is watched by the chat callback, as a flow node is
+    # (flow/task_driver.py): the same log of its steps, the same record of its
+    # tool calls, thoughts, changed files, touched records and cited sources,
+    # which the team page reads back as the turn's trail and artifacts.
+    started = utc_iso()
+    msg_id = str(uuid4())[:8]
+    log_lines = node_log_header(meta=[
+        f"=== Team turn  run_id={run_id} ===",
+        f"Started   : {started}",
+        f"Team      : {team.name} ({team_run_id})",
+        f"Seat      : {speaker}",
+        f"Agent     : {agent_id}",
+    ], started=started, msg_id=msg_id, agent_id=agent_id, user_message=prompt)
+    # What the member does streams on the team's channel, stamped with its
+    # turn, so the team page shows the reply being written and its steps; and
+    # on the run's session, which the page of the task the team works on
+    # follows (LiveRunStream), as a flow node's work does.
+    from common import run_stream
+    relay = run_stream.ChannelRelay([channel_for(team_run_id), session_id],
+                                    {"run_id": run_id, "speaker": speaker, "member_event": True})
+    if session_id:
+        run_stream.publish([session_id], {"type": "meta", "run_id": run_id, "session_id": session_id,
+                                          "agent_id": agent_id, "continuation": True})
+    watcher = ChatStreamCallback(None, None, log_lines, log_path,
+                                 session_id=session_id, run_id=run_id, publish=relay)
+    watcher.bind_model(agent.provider or "", agent.model or "")
+    try:
+        write_log(log_path, log_lines)
+    except Exception:  # noqa: BLE001 - run bookkeeping must never fail the turn
+        log.debug("writing team turn log failed", exc_info=True)
+    turn_entities = entity_sink_mod.EntitySink()
+    turn_citations = citation_sink_mod.CitationSink()
+    _publish(team_run_id, {"type": "turn_start", "run_id": run_id, "speaker": speaker,
+                           "agent_id": agent_id, "started_at": started})
 
     # Two guards, because a turn can be stopped from either side: the team page
     # (the event) or this member's own run record (the runs page, the API).
     control.track(team_run_id, run_id)
+    collector = control.ToolOutputCollector()
+    artifact_token = artifact_sink.set_recorder(watcher.record_artifact)
+    entity_token = entity_sink_mod.set_sink(turn_entities)
+    citation_token = citation_sink_mod.set_sink(turn_citations)
+    # A tool call that needs a person waits in this turn (common/tool_approvals.py
+    # ``background_scope``): the card on the team's channel, a notification
+    # in the bell, the turn clock paused, until an answer, a stop or the
+    # background approval timeout.
+    from common import tool_approvals
     try:
-        inv = invoke_agent(
-            agent, prompt, run_id=run_id,
-            extra_callbacks=[control.TeamStopCallback(team_run_id),
-                             RunStopCallback(run_id)],
-        )
+        with tool_approvals.background_scope(
+                kind=tool_approvals.KIND_TEAM, group_run_id=team_run_id, entity_id=team.team_id,
+                entity_name=team.name, seat_id=speaker, seat_label=speaker, emitter=relay,
+                should_stop=lambda: control.is_stopped(team_run_id) or store.stop_requested(team_run_id),
+                on_wait=lambda waiting: control.note_wait(team_run_id, waiting)):
+            inv = invoke_agent(
+                agent, prompt, run_id=run_id,
+                extra_callbacks=[control.TeamStopCallback(team_run_id),
+                                 RunStopCallback(run_id), collector, watcher],
+            )
     finally:
+        artifact_sink.reset_recorder(artifact_token)
+        entity_sink_mod.reset_sink(entity_token)
+        citation_sink_mod.reset_sink(citation_token)
         control.untrack(team_run_id, run_id)
 
     result = inv.result
     turn.run_id = run_id
     turn.text = str(getattr(result, "agent_output", "") or "").strip()
+    if quote_tool_copies and turn.text and collector.sources:
+        try:
+            turn.text = auto_quote(turn.text, collector.sources)
+        except Exception:  # noqa: BLE001 - an unquoted reply still beats a lost turn
+            log.debug("auto-quoting a team turn failed", exc_info=True)
     if not getattr(result, "ok", False):
         turn.error = str(getattr(result, "error", "") or "agent run failed")
     turn.stopped = control.is_stopped(team_run_id)
@@ -222,20 +289,73 @@ def _run_member(
     turn.tokens = inbound + outbound
     turn.cost = _turn_cost(agent.provider or "", agent.model or "", inbound, outbound)
 
+    stopped_run = turn.stopped and not getattr(result, "ok", False)
+    status = "stopped" if stopped_run else ("completed" if getattr(result, "ok", False) else "failed")
+    process = dict(inv.process or {})
     try:
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"\n=== OUTPUT ===\n{turn.text or turn.error}\n"
-                    f"--- duration_ms={inv.duration_ms} ---\n")
-        if turn.stopped and not getattr(result, "ok", False):
+        process.update(_turn_process(watcher, prompt, result, inv, usage,
+                                     turn_entities, turn_citations, run_id))
+    except Exception:  # noqa: BLE001 - the plain process record still closes the run
+        log.debug("building team turn process failed", exc_info=True)
+    try:
+        if turn.error:
+            append_log(log_lines, f"(error: {turn.error})", log_path)
+        elif turn.text:
+            append_log(log_lines, turn.text, log_path)
+        append_log(log_lines, node_summary_line(watcher, msg_id, inv.duration_ms), log_path)
+        write_log(log_path, log_lines + node_log_ending(status, utc_iso()))
+        if stopped_run:
             # A turn cut off by the user is not a failed run, and recording it as
             # one would leave the runs page claiming the agent broke.
             close_run(run_id, status="stopped", exit_code=1,
-                      error="stopped by user", process=inv.process)
+                      error="stopped by user", process=process)
         else:
-            close_run_from_result(run_id, result, process=inv.process)
+            close_run_from_result(run_id, result, process=process)
     except Exception:  # noqa: BLE001 - run bookkeeping must never fail the turn
         log.debug("closing run record for team turn failed", exc_info=True)
+    relay.flush()
+    if session_id:
+        run_stream.publish([session_id], {"type": "done", "run_id": run_id, "session_id": session_id,
+                                          "ok": status == "completed", "output": turn.text or "",
+                                          "error": turn.error or None})
+    _publish(team_run_id, {"type": "turn_done", "run_id": run_id, "speaker": speaker,
+                           "status": status, "error": turn.error or None,
+                           "cost": turn.cost, "tokens": turn.tokens,
+                           "duration_ms": inv.duration_ms,
+                           "stats": node_step_stats(watcher, log_lines),
+                           "files": node_files(watcher)})
     return turn
+
+
+def _turn_process(watcher: Any, prompt: str, result: Any, inv: Any, usage: Dict[str, Any],
+                  entities_sink: Any, citations_sink: Any, run_id: str) -> Dict[str, Any]:
+    """A turn's process record as the chat builds one (chat.streaming.
+    build_process_payload), with its links kept at the top of the run record
+    where the run page reads them."""
+    from chat.streaming import build_process_payload
+    from managers.run_manager import update_run
+    entities: list = []
+    if entities_sink:
+        try:
+            from common.entity_links import entity_payloads
+            entities = entity_payloads(entities_sink.records())
+        except Exception:  # noqa: BLE001 - links to touched records are a nicety
+            log.debug("team turn entity payloads failed", exc_info=True)
+    citations = citations_sink.payloads()
+    links = {k: v for k, v in (("entities", entities), ("citations", citations)) if v}
+    if links:
+        try:
+            update_run(run_id, links)
+        except Exception:  # noqa: BLE001 - the process record still carries them
+            log.debug("could not store the links of run %s", run_id, exc_info=True)
+    return build_process_payload(
+        watcher, full_prompt=prompt,
+        final_response=str(getattr(result, "agent_output", "") or ""),
+        response_obj=getattr(result, "response", None),
+        entities=entities, citations=citations,
+        usage={**usage, **watcher.context_usage()},
+        duration_ms=int(getattr(inv, "duration_ms", 0) or 0),
+    )
 
 
 def _turn_run_id(team_run_id: str, round_no: int, speaker: str) -> str:
@@ -336,7 +456,7 @@ def _run_turns(
             provider=member.provider or team.default_provider,
             model=member.model or team.default_model,
             run_id=_turn_run_id(team_run_id, round_no, member.display_name()),
-            in_process=member_in_process,
+            in_process=member_in_process, quote_tool_copies=True,
         ): member
         for member, prompt in jobs
     }
@@ -363,10 +483,12 @@ def _run_turns(
                 except Exception as e:  # noqa: BLE001
                     turns.append(Turn(speaker=member.display_name(),
                                       error=f"{type(e).__name__}: {e}"))
-            if done and pending:
+            if (done and pending) or control.is_waiting(team_run_id):
                 # Somebody answered, so the provider is working through the
                 # round rather than hanging; whoever it serves next starts
-                # their own clock instead of inheriting the wait.
+                # their own clock instead of inheriting the wait. A member
+                # whose tool call waits for a person is not slow either: the
+                # clock starts again once the person answered.
                 deadline = time.monotonic() + _budget(len(pending))
             if pending and time.monotonic() > deadline:
                 for future in pending:
@@ -580,6 +702,9 @@ def run_team(
         board.messages.extend(store.list_messages(run.team_run_id))
     else:
         board.post(sender="(request)", content=goal, round_no=0, kind="goal")
+    # The board shows the request as typed; the turns also read what came
+    # attached to it (files, hub records).
+    work_goal = f"{goal}\n\n{run.context}" if run.context else goal
 
     max_rounds = max(1, min(int(team.max_rounds or 1), MAX_ROUNDS_CAP))
     wall_cap = min(float(team.max_wall_seconds or MAX_WALL_SECONDS_CAP), MAX_WALL_SECONDS_CAP)
@@ -593,7 +718,7 @@ def run_team(
                 _publish(run.team_run_id, {"type": "round_start", "round": round_no})
 
                 round_cost, finished, answer = driver(
-                    team=team, run=run, board=board, goal=goal, round_no=round_no,
+                    team=team, run=run, board=board, goal=work_goal, round_no=round_no,
                     workspace=ws_path, task_id=task_id, session_id=session_id,
                     state=state, member_in_process=member_in_process,
                 )
@@ -643,8 +768,8 @@ def run_team(
     # which case another paid call to summarise an interrupted run is not what
     # the user asked for when they pressed stop.
     if team.synthesize and run.status != "stopped" and not final_answer:
-        final_answer, synth_cost = _synthesize(
-            team=team, run=run, board=board, goal=goal, workspace=ws_path,
+        final_answer, synth_cost, synth_run_id = _synthesize(
+            team=team, run=run, board=board, goal=work_goal, workspace=ws_path,
             task_id=task_id, session_id=session_id, member_in_process=member_in_process,
         )
         spend = round(spend + synth_cost, 6)
@@ -654,6 +779,7 @@ def run_team(
             board.post(
                 sender=team.leader_display_name() if team.leader_agent_id else "(team)",
                 content=final_answer, round_no=run.rounds_done, kind="result",
+                run_id=synth_run_id, cost=synth_cost,
             )
 
     run.result = final_answer or _last_substantive(board)
@@ -901,11 +1027,12 @@ def _post_turns(
 def _synthesize(
     *, team: Team, run: TeamRun, board: _Board, goal: str, workspace: str,
     task_id: str, session_id: str, member_in_process: bool = True,
-) -> Tuple[str, float]:
-    """Closing pass: one member writes the team's answer from the board."""
+) -> Tuple[str, float, Optional[str]]:
+    """Closing pass: one member writes the team's answer from the board.
+    Returns the answer, its cost and the run that wrote it."""
     speaker_id = team.leader_agent_id or (team.members[0].agent_id if team.members else None)
     if not speaker_id:
-        return "", 0.0
+        return "", 0.0, None
     member = next((m for m in team.members if m.agent_id == speaker_id), None)
     speaker = member.display_name() if member else team.leader_display_name()
     turn = _run_member(
@@ -917,7 +1044,7 @@ def _synthesize(
         model=(member.model if member else None) or team.default_model,
         in_process=member_in_process,
     )
-    return turn.text, turn.cost
+    return turn.text, turn.cost, turn.run_id
 
 
 def _last_substantive(board: _Board) -> str:
@@ -936,7 +1063,9 @@ def _check_between_rounds(
 ) -> None:
     if control.is_stopped(team_run_id) or store.stop_requested(team_run_id):
         raise TeamStopped("stopped", "stopped by request")
-    elapsed = time.monotonic() - started
+    # Time members spent waiting for a person to approve a tool call is not
+    # the team working: it does not count against the cap.
+    elapsed = time.monotonic() - started - control.waited_seconds(team_run_id)
     if elapsed > wall_cap:
         raise TeamStopped("wall_clock", f"wall-clock cap reached ({elapsed:.0f}s of {wall_cap:.0f}s)")
     if team.cost_ceiling and spend >= float(team.cost_ceiling):
@@ -960,11 +1089,10 @@ def _prepare_context(
 ) -> Tuple[Optional[str], str, Optional[str], Optional[str]]:
     """Resolve the workspace and give the run one session to live in.
 
-    A run started from the Teams page or attached to a task is task-shaped: it
-    gets (or reuses) a task, and every member's turn lands in that task's
-    session. A run started from **chat** is not — a conversation turn is not a
-    unit of work to track, and minting a task per message would bury the task
-    board — so it uses the conversation's own chat session and no task at all.
+    A run works on a task only when it is given one: then every member's turn
+    lands in that task's session. Otherwise it makes none (a run is not a
+    task): a run started from **chat** uses the conversation's own chat
+    session, any other run a session of its own.
     """
     from tasks import service as _ts
     from common.session_service import (
@@ -981,15 +1109,6 @@ def _prepare_context(
         task = _ts.get_task(task_id)
         if task is None:
             raise ValueError(f"Task not found: {task_id}")
-    elif not conversation_id:
-        # Created as running, not as todo: the team is already starting, and a
-        # task that sits in todo — even for the moment before the run claims it —
-        # is a task a polling orchestrator can pick up and route somewhere else.
-        task = _ts.create_task(
-            title=f"Team: {team.name}", description=goal, workspace=ws_name,
-            status=_ts.TaskStatus.in_progress,
-        )
-        task_id = str(task.id)
 
     if task is not None:
         _, ws_path = resolve_task_workspace(task, as_param_dict({"workspace": ws_name}))
@@ -1006,7 +1125,7 @@ def _prepare_context(
                 _ts.update_task(task_id, session_id=session_id)
             except Exception:  # noqa: BLE001 - linking the session is cosmetic, the run goes on
                 log.debug("linking task to team session failed", exc_info=True)
-        else:
+        elif conversation_id:
             try:
                 session_id = get_or_create_chat_session(
                     conversation_id=conversation_id,
@@ -1016,6 +1135,10 @@ def _prepare_context(
             except Exception:  # noqa: BLE001 - no chat session just means the run is not shown in a chat
                 log.debug("creating chat session for team run failed", exc_info=True)
                 session_id = None
+        else:
+            session_id = get_or_create_task_session(
+                title=f"Team: {team.name}", workspace=ws_name, is_flow=True, task_id=None,
+            )
     return ws_name, str(ws_path), task_id, session_id
 
 

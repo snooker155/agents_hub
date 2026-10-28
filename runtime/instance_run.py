@@ -341,6 +341,14 @@ def _task_build_pin(task: Any, run_id: str, agent_id: str) -> Dict[str, Any]:
     return out
 
 
+def _runnable_here(tasks):
+    """Leave out tasks another hub synced in (hubsync/copies.py): they run
+    where they were created, and their results come back by sync."""
+    from hubsync import copies
+    synced_in = copies.task_copies()
+    return [t for t in tasks if str(t.id) not in synced_in] if synced_in else tasks
+
+
 def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str],
                        scope: str) -> int:
     """Run every task assigned to this agent in the workspace, one at a time.
@@ -362,7 +370,7 @@ def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str]
         return 0
 
     assigned = [
-        t for t in tasks_service.list_tasks()
+        t for t in _runnable_here(tasks_service.list_tasks())
         if t.assigned_agent_type == agent_id
         and t.agent_state == AgentState.assigned
         and task_in_workspace(t, scope)
@@ -438,7 +446,8 @@ def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str]
                     orig_out, orig_err = sys.stdout, sys.stderr
                     sys.stdout, sys.stderr = _Tee(orig_out, lf), _Tee(orig_err, lf)
                     try:
-                        invocation = invoke_agent(agent, prompt, extra_callbacks=[stop_cb, *pub_cbs])
+                        invocation = invoke_agent(agent, prompt, run_id=run_id,
+                                                  extra_callbacks=[stop_cb, *pub_cbs])
                         result = invocation.result
                         if stop_cb.cancelled:
                             lf.write(f"\n[stopped] Run stopped by user at {_utc_now_iso()}\nStatus  : stopped\n")
@@ -494,7 +503,7 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
     from agents.agent_factory import create_agent
     from managers.run_manager import _upsert_run, _update_run, _utc_now_iso, run_log_path
 
-    tasks = tasks_service.list_tasks()
+    tasks = _runnable_here(tasks_service.list_tasks())
     try:
         from workspace import get_workspace_metadata as _get_ws_meta
         orch_cfg = _get_ws_meta(scope).get("orchestrator", {})
@@ -532,7 +541,7 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
         except Exception as exc:  # noqa: BLE001 - one task's container handling does not stop the sweep
             log(f"[warn] container handling failed for {str(t.id)[:8]}: {exc}")
     if touched:
-        tasks = tasks_service.list_tasks()
+        tasks = _runnable_here(tasks_service.list_tasks())
 
     def _is_container(t) -> bool:
         return str(t.id) in container_ids
@@ -557,9 +566,21 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
         pending = direct + followup
     pending = tasks_service.order_for_dispatch(pending)
 
+    skipped = 0
     for task in pending:
         if _stopping.is_set():
             break
+        # The list is a snapshot and each run takes a while. Meanwhile a
+        # subprocess (a continuation, a subtask dispatch, the watchdog) may
+        # have taken the task: skip it unless it still looks the same.
+        fresh = tasks_service.get_task(task.id)
+        if (fresh is None or fresh.status != task.status
+                or fresh.agent_state != task.agent_state
+                or str(fresh.assigned_agent_run_id or "") != str(task.assigned_agent_run_id or "")):
+            log(f"[skip] task {str(task.id)[:8]} changed since the sweep began")
+            skipped += 1
+            continue
+        task = fresh
         abs_ws = _task_workspace_path(task, workspace)
         is_followup = task.status in (TaskStatus.reviewed, TaskStatus.in_progress)
         log(f"{'[follow-up]' if is_followup else '[new]'} task {str(task.id)[:8]}: "
@@ -625,7 +646,8 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
                     orig_out, orig_err = sys.stdout, sys.stderr
                     sys.stdout, sys.stderr = _Tee(orig_out, lf), _Tee(orig_err, lf)
                     try:
-                        invocation = invoke_agent(agent, prompt, extra_callbacks=[stop_cb, *pub_cbs])
+                        invocation = invoke_agent(agent, prompt, run_id=run_id,
+                                                  extra_callbacks=[stop_cb, *pub_cbs])
                         result = invocation.result
                         if stop_cb.cancelled:
                             lf.write(f"\n[stopped] Run stopped by user at {_utc_now_iso()}\nStatus  : stopped\n")
@@ -692,7 +714,7 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
                     tasks_service.clear_agent(task.id)
             except Exception:  # noqa: BLE001 - already failing; the task keeps its agent
                 _logger.debug("could not clear the agent of task %s", task.id, exc_info=True)
-    return len(pending)
+    return len(pending) - skipped
 
 
 # ── The loop ─────────────────────────────────────────────────────────────────
@@ -859,6 +881,12 @@ def _on_sigterm(instance_id: str):
             store.update(instance_id, stop_requested_at=None)
         except Exception:  # noqa: BLE001 - exiting anyway
             _logger.debug("could not clear the stop request of %s", instance_id, exc_info=True)
+        # os._exit skips atexit, so the waiting live updates go out here.
+        try:
+            from common.session_broker import flush_relayed_notifications
+            flush_relayed_notifications()
+        except Exception:  # noqa: BLE001 - exiting anyway
+            _logger.debug("could not flush live updates of %s", instance_id, exc_info=True)
         os._exit(0)
     return handler
 

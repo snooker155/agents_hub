@@ -5,6 +5,8 @@ import { getHubLink, saveHubLink, syncHubLink, unlinkHub } from '../../api/hubLi
 import { SectionCard, inputCls } from '../settingsUi';
 import { useI18n } from '../../i18n';
 import PageLoader from '../PageLoader';
+import HubLinkSyncCard from './HubLinkSyncCard';
+import HubLinkCatalogCard from './HubLinkCatalogCard';
 
 const MIRROR_KINDS = ['runs', 'chats', 'memory'];
 
@@ -26,7 +28,7 @@ function Toggle({ checked, onChange, label, hint }) {
 }
 
 /**
- * Settings → System → Remote hub (docs/hub-link.md): attach this hub to
+ * Settings → Remote hub (docs/hub-link.md): attach this hub to
  * another one. Its models and agents become usable here, what happens here
  * is mirrored there, and this hub can serve it as a node.
  */
@@ -248,6 +250,11 @@ export default function HubLinkSection() {
           </p>
         </SectionCard>
       )}
+
+      {linked && <HubLinkCatalogCard />}
+      {/* Shown before the link too, so encryption can be found; it remounts
+          once the hub is linked and reads the real state. */}
+      <HubLinkSyncCard key={linked ? 'linked' : 'unlinked'} />
     </>
   );
 }

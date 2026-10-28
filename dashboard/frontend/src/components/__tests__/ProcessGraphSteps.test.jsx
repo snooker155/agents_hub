@@ -26,10 +26,14 @@ const show = () => render(<I18nProvider><ProcessGraph messageRuns={[RUN]} /></I1
 describe('ProcessGraph steps', () => {
   beforeAll(() => { Element.prototype.scrollIntoView = vi.fn(); });
 
-  it('lays the run statistics out in two rows', () => {
+  it('lays the five run statistics out on one row that wraps when narrow', () => {
     show();
+    const row = screen.getByTestId('run-stats');
     const tokens = screen.getByTestId('run-stats-tokens');
     const run = screen.getByTestId('run-stats-run');
+    expect(tokens.parentElement).toBe(row);
+    expect(run.parentElement).toBe(row);
+    expect(row.className).toContain('flex-wrap');
     expect(tokens).toHaveTextContent(/in: 120.*out: 30.*total: 150/);
     expect(run).toHaveTextContent(/tools: 1.*duration/);
     expect(run).not.toHaveTextContent('total');
@@ -91,7 +95,7 @@ describe('ProcessGraph steps', () => {
     // An empty input reads as {}, not as a folder with nothing in it.
     expect(within(modal).getByText('{}')).toBeInTheDocument();
   });
-  it('keeps duration on the second stats row, its pills unbreakable', () => {
+  it('keeps tools and duration together, their pills unbreakable', () => {
     show();
     const run = screen.getByTestId('run-stats-run');
     expect(run.className).not.toContain('flex-wrap');

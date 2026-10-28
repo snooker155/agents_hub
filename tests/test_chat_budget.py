@@ -50,7 +50,8 @@ def stub_pipeline(monkeypatch):
     monkeypatch.setattr(chat_send, "_write_log", lambda *a, **k: None)
     monkeypatch.setattr(chat_send, "update_run", lambda *a, **k: None)
     monkeypatch.setattr(chat_send, "get_run", lambda run_id: {"status": "completed"})
-    monkeypatch.setattr(chat_send, "get_pool_id", lambda *a, **k: None)
+    import chat.runs as chat_runs
+    monkeypatch.setattr(chat_runs, "get_pool_id", lambda *a, **k: None)
     monkeypatch.setattr(chat_send, "auto_journal", lambda *a, **k: None)
     monkeypatch.setattr(chat_send, "agent_overrides", lambda agent_id: {})
 

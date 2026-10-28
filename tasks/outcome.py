@@ -2,7 +2,9 @@
 Task outcomes: a rubric, an independent grader, and another attempt when the
 work falls short.
 
-A task may say what "done" means (``Task.outcome``): a markdown rubric, how
+A task may say what "done" means (``Task.outcome``, or the assigned agent's default one when the task has
+``use_agent_outcome`` on and no rubric of its own, see :func:`effective_outcome`;
+the agent never adds its criterion by itself): a markdown rubric, how
 many attempts the agent gets, which model grades, and an optional pass
 threshold. After every completed agent run on the task, the finalizer hands
 the run here (:func:`on_run_completed`). A fresh model call grades the result
@@ -219,6 +221,41 @@ def parse_grader_ref(value: Any, field: str = "grader") -> Optional[Dict[str, st
     raise OutcomeError(f"{field} must be 'provider/model' or an object with provider and model")
 
 
+def agent_outcome(task: Any) -> Optional[Dict[str, Any]]:
+    """The default outcome of the agent that works on ``task``, or None.
+
+    The agent is the task's executor when that is an agent, else its assigned
+    agent type, else its container agent. Best effort: any error is None.
+    """
+    try:
+        executor = getattr(task, "executor", None)
+        agent_id = ""
+        if executor is not None and getattr(executor, "kind", None) == "agent":
+            agent_id = str(getattr(executor, "id", "") or "")
+        agent_id = (agent_id or str(getattr(task, "assigned_agent_type", "") or "")
+                    or str(getattr(task, "container_agent", "") or ""))
+        if not agent_id:
+            return None
+        from agents.registry import get_agent
+        spec = get_agent(agent_id)
+        default = getattr(spec, "default_outcome", None) if spec else None
+        return dict(default) if default else None
+    except Exception:  # noqa: BLE001 - a lookup that fails means no agent criterion
+        log.debug("could not read the agent outcome of task %s", getattr(task, "id", None), exc_info=True)
+        return None
+
+
+def effective_outcome(task: Any) -> Optional[Dict[str, Any]]:
+    """The outcome that grades ``task``: its own rubric, else the agent's
+    default one when ``use_agent_outcome`` is on, else None."""
+    own = getattr(task, "outcome", None)
+    if isinstance(own, dict) and str(own.get("rubric") or "").strip():
+        return own
+    if getattr(task, "use_agent_outcome", False):
+        return agent_outcome(task)
+    return None
+
+
 def normalize_outcome(data: Dict[str, Any]) -> Dict[str, Any]:
     """Validate an outcome definition and return it in its stored shape.
 
@@ -323,6 +360,66 @@ def _task_context(task: Any) -> str:
     return "\n\n".join(p for p in (title, desc) if p)
 
 
+#: How much of one subtask's result the grader reads.
+SUBTASK_RESULT_LIMIT = 4000
+
+
+def _subtasks_section(task: Any) -> str:
+    """The task's subtasks with their status and latest result, for a task
+    whose work was split: the outcome is about the whole, so the grader reads
+    what each part produced, not only the last run on the parent."""
+    from tasks import service as _ts
+
+    tid = getattr(task, "id", None)
+    if tid is None:
+        return ""
+    try:
+        subtasks = sorted(_ts.get_subtasks(tid), key=lambda s: (
+            s.order if s.order is not None else 1_000_000, str(s.created_at or "")))
+    except Exception:  # noqa: BLE001 - no subtask list grades the parent's own result alone
+        log.debug("subtasks lookup failed for %s", tid, exc_info=True)
+        return ""
+    parts = []
+    for sub in subtasks:
+        status = getattr(sub.status, "value", sub.status)
+        result = ""
+        try:
+            for entry in reversed(_ts.get_task_results(sub.id) or []):
+                if str(entry.get("agent_id") or "") not in NON_GRADED_AGENTS:
+                    result = str(entry.get("result") or "").strip()
+                    break
+        except Exception:  # noqa: BLE001 - a missing result reads as none
+            log.debug("subtask result lookup failed for %s", sub.id, exc_info=True)
+        if len(result) > SUBTASK_RESULT_LIMIT:
+            result = result[:SUBTASK_RESULT_LIMIT] + "\n[…]"
+        label = f"{sub.key + ': ' if sub.key else ''}{sub.title} (status: {status})"
+        parts.append(f"### {label}\n{result or '(no result recorded)'}")
+    if not parts:
+        return ""
+    return "SUBTASKS (the work was split into these; judge the whole)\n\n" + "\n\n".join(parts)
+
+
+def _graded_text(task: Any, output: str) -> str:
+    """What the grader judges: the run's answer plus, for a split task, the
+    subtasks' results."""
+    sections = []
+    if (output or "").strip():
+        sections.append(output.strip())
+    subtasks = _subtasks_section(task)
+    if subtasks:
+        sections.append(subtasks)
+    return "\n\n".join(sections)
+
+
+def grading_input_text(task: Any, rubric: str, graded: str) -> str:
+    """The grading's input as a reader sees it on its run record."""
+    return "\n\n".join([
+        "TASK\n" + (_task_context(task) or "(no title)"),
+        "RUBRIC\n" + rubric.strip(),
+        "RESULT GRADED\n" + (graded.strip() or "(empty: the run produced no answer)"),
+    ])
+
+
 def grade_outcome(task: Any, output: str, *, run_id: Optional[str] = None,
                   trigger: str = "run") -> Dict[str, Any]:
     """Grade ``output`` against the task's outcome and return the evaluation.
@@ -330,10 +427,13 @@ def grade_outcome(task: Any, output: str, *, run_id: Optional[str] = None,
     Nothing is written here; :func:`record_evaluation` keeps it on the task.
     ``trigger`` is ``run`` for the grading after a finished run (it counts
     against ``max_iterations``) or ``manual`` for "Grade now" (it does not).
+    A task with subtasks is graded on their results too (:func:`_graded_text`).
+    The text the grader read rides along as ``input_text`` for the grading's
+    run record and is dropped before the evaluation is kept.
     """
     from evals.graders import _load_run_payload, grade_rubric
 
-    outcome = dict(getattr(task, "outcome", None) or {})
+    outcome = dict(effective_outcome(task) or {})
     rubric = str(outcome.get("rubric") or "").strip()
     if not rubric:
         raise OutcomeError("the task has no outcome rubric")
@@ -341,8 +441,9 @@ def grade_outcome(task: Any, output: str, *, run_id: Optional[str] = None,
     threshold = outcome.get("threshold")
     context = _task_context(task)
     payload = _load_run_payload(run_id) if run_id else None
+    graded = _graded_text(task, output or "")
     result = grade_rubric(
-        output or "",
+        graded,
         SimpleNamespace(input=context, rubric=rubric, expected=None),
         {"rubric": rubric, "criteria": parse_rubric(rubric),
          "grader": grader if grader.get("model") else None,
@@ -363,6 +464,7 @@ def grade_outcome(task: Any, output: str, *, run_id: Optional[str] = None,
         "cost_usd": float(extra.get("cost_usd") or 0.0),
         "tokens": dict(extra.get("tokens") or {}),
         "graded_at": _utc_now_iso(),
+        "input_text": grading_input_text(task, rubric, graded),
     }
     if extra.get("error"):
         evaluation["error"] = str(extra["error"])
@@ -371,10 +473,10 @@ def grade_outcome(task: Any, output: str, *, run_id: Optional[str] = None,
 
 
 #: The grading is recorded as a run of its own (see _record_grading_run):
-#: this agent id and channel mark it, and keep it out of the runs a grading
-#: looks for.
+#: this agent id marks it and keeps it out of the runs a grading looks for.
+#: Its channel says where it ran, like any run's: in the hub process.
 GRADER_AGENT_ID = "outcome_grader"
-GRADING_CHANNEL = "outcome"
+GRADING_CHANNEL = "local"
 
 
 def _record_grading_run(task: Any, evaluation: Dict[str, Any], *, parent_run_id: Optional[str] = None,
@@ -384,7 +486,7 @@ def _record_grading_run(task: Any, evaluation: Dict[str, Any], *, parent_run_id:
     A grading is one model call about a whole attempt: an agent run, or a
     flow, team, loop or scenario run made of many runs, each of which already
     carries its own tokens. So it is not added to any of them. It gets a run
-    record of its own (agent ``outcome_grader``, channel ``outcome``) with the
+    record of its own (agent ``outcome_grader``) with the
     grader's model and tokens, tied to the task (so the task's money cap and
     the Costs page count it once) and to the work it graded through
     ``parent_run_id`` (plus ``sim_run_id`` or ``flow_run_id``, the link the
@@ -394,6 +496,7 @@ def _record_grading_run(task: Any, evaluation: Dict[str, Any], *, parent_run_id:
     cost including its grading. Written without the start and finish
     notifications of a task run: it is bookkeeping, not work on the task.
     """
+    input_text = str(evaluation.pop("input_text", "") or "")
     tokens = evaluation.get("tokens") or {}
     inbound, outbound = int(tokens.get("input") or 0), int(tokens.get("output") or 0)
     if not (inbound or outbound):
@@ -412,7 +515,8 @@ def _record_grading_run(task: Any, evaluation: Dict[str, Any], *, parent_run_id:
             "provider": str(grader.get("provider") or ""), "model": str(grader.get("model") or ""),
             "created_at": when, "started_at": when, "finished_at": when,
             "parent_run_id": parent_run_id or None,
-            "output": _summary(evaluation),
+            "input": input_text,
+            "output": _grading_output(evaluation),
             "process": {"token_usage": {"inbound_tokens": inbound, "outbound_tokens": outbound,
                                         "total_tokens": inbound + outbound}},
             "outcome_grading": {"iteration": iteration, "trigger": evaluation.get("trigger"),
@@ -456,6 +560,7 @@ def record_evaluation(task_id: Any, evaluation: Dict[str, Any]) -> List[Dict[str
     tid = task_id if isinstance(task_id, UUID) else UUID(str(task_id))
     task = _ts.get_task(tid)
     evaluations = list(getattr(task, "outcome_evaluations", None) or []) if task else []
+    evaluation.pop("input_text", None)
     evaluations.append(evaluation)
     evaluations = evaluations[-MAX_EVALUATIONS:]
     _ts.update_task(tid, outcome_evaluations=evaluations)
@@ -476,6 +581,22 @@ def _summary(evaluation: Dict[str, Any]) -> str:
         return f"Outcome check {it}: met (score {score:.2f})"
     names = ", ".join(str(c.get("name")) for c in _unmet(evaluation)) or "overall"
     return f"Outcome check {it}: not met (score {score:.2f}); unmet: {names}"
+
+
+def _grading_output(evaluation: Dict[str, Any]) -> str:
+    """The grading's answer on its run record: the verdict, each criterion
+    with its score and note, and the grader's feedback."""
+    lines = [_summary(evaluation)]
+    for c in evaluation.get("criteria") or []:
+        mark = "met" if c.get("passed") else "not met"
+        note = str(c.get("feedback") or "").strip()
+        lines.append(f"- {c.get('name')}: {mark} ({float(c.get('score') or 0.0):.2f})"
+                     + (f". {note}" if note else ""))
+    feedback = str(evaluation.get("feedback") or "").strip()
+    if feedback:
+        lines.append("")
+        lines.append(feedback)
+    return "\n".join(lines)
 
 
 def _run_output(run: Dict[str, Any], task_id: UUID) -> str:
@@ -602,7 +723,7 @@ def on_run_completed(task_id: Any, run: Dict[str, Any]) -> bool:
 
     tid = task_id if isinstance(task_id, UUID) else UUID(str(task_id))
     task = _ts.get_task(tid)
-    outcome = getattr(task, "outcome", None) if task else None
+    outcome = effective_outcome(task) if task else None
     if not outcome or not str(outcome.get("rubric") or "").strip():
         return False
     agent_id = str((run or {}).get("agent_id") or "")
@@ -610,12 +731,15 @@ def on_run_completed(task_id: Any, run: Dict[str, Any]) -> bool:
         return False
     run_id = str((run or {}).get("run_id") or "")
 
+    # In the activity the grader is who acted; the agent whose work it
+    # graded is ``graded_agent``.
     evaluation = grade_outcome(task, _run_output(run, tid), run_id=run_id or None, trigger="run")
     _record_grading_run(task, evaluation, parent_run_id=run_id or None)
     evaluations = record_evaluation(tid, evaluation)
     try:
         _ts.append_task_activity_log(
-            tid, "outcome_graded", _summary(evaluation), run_id=run_id, agent_id=agent_id,
+            tid, "outcome_graded", _summary(evaluation), run_id=run_id,
+            agent=GRADER_AGENT_ID, graded_agent=agent_id,
             passed=bool(evaluation.get("passed")), score=evaluation.get("score"),
         )
     except Exception:  # noqa: BLE001 - an activity-log write is best-effort
@@ -712,7 +836,7 @@ def on_executor_completed(task_id: Any) -> bool:
 
     tid = task_id if isinstance(task_id, UUID) else UUID(str(task_id))
     task = _ts.get_task(tid)
-    outcome = getattr(task, "outcome", None) if task else None
+    outcome = effective_outcome(task) if task else None
     if not outcome or not str(outcome.get("rubric") or "").strip():
         return False
     executor = getattr(task, "executor", None)
@@ -737,7 +861,8 @@ def on_executor_completed(task_id: Any) -> bool:
     actor = f"{executor.kind}:{executor.id}"
     try:
         _ts.append_task_activity_log(
-            tid, "outcome_graded", _summary(evaluation), run_id=run_id, agent_id=actor,
+            tid, "outcome_graded", _summary(evaluation), run_id=run_id,
+            agent=GRADER_AGENT_ID, graded_agent=actor,
             passed=bool(evaluation.get("passed")), score=evaluation.get("score"),
         )
     except Exception:  # noqa: BLE001 - an activity-log write is best-effort
@@ -745,6 +870,40 @@ def on_executor_completed(task_id: Any) -> bool:
     return _act_on(tid, task, outcome, evaluation, evaluations, run_id=run_id,
                    relaunch=lambda attempt, limit: _relaunch_executor(tid, task, executor, attempt, limit),
                    actor=actor)
+
+
+def on_container_completed(task_id: Any) -> bool:
+    """Grade a parent whose container agent has just finished its last subtask.
+
+    The graded result is the subtasks' results (:func:`_graded_text` adds
+    them). Returns True when this decided what happens to the parent:
+    another attempt, run by the container agent on the parent itself with
+    the grader's feedback, or a block. False when the outcome passed, so the
+    caller completes the parent as usual.
+    """
+    from tasks import service as _ts
+
+    tid = task_id if isinstance(task_id, UUID) else UUID(str(task_id))
+    task = _ts.get_task(tid)
+    outcome = effective_outcome(task) if task else None
+    agent_id = str(getattr(task, "container_agent", "") or "") if task else ""
+    if not outcome or not str(outcome.get("rubric") or "").strip() or not agent_id:
+        return False
+
+    evaluation = grade_outcome(task, "", run_id=None, trigger="run")
+    _record_grading_run(task, evaluation)
+    evaluations = record_evaluation(tid, evaluation)
+    try:
+        _ts.append_task_activity_log(
+            tid, "outcome_graded", _summary(evaluation) + " (on the subtasks' results)",
+            agent=GRADER_AGENT_ID, graded_agent=agent_id,
+            passed=bool(evaluation.get("passed")), score=evaluation.get("score"),
+        )
+    except Exception:  # noqa: BLE001 - an activity-log write is best-effort
+        log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
+    return _act_on(tid, task, outcome, evaluation, evaluations, run_id="",
+                   relaunch=lambda attempt, limit: _relaunch(tid, task, agent_id, attempt, limit),
+                   actor=agent_id)
 
 
 # ── Grading on request ───────────────────────────────────────────────────────
@@ -791,17 +950,18 @@ def grade_now(task_id: Any) -> Dict[str, Any]:
     task = _ts.get_task(tid)
     if not task:
         raise OutcomeError("task not found")
-    if not getattr(task, "outcome", None):
+    if not effective_outcome(task):
         raise OutcomeError("the task has no outcome to grade against")
     run_id, output = _latest_gradable_run(tid)
-    if not run_id and not output.strip():
+    if not run_id and not output.strip() and not _subtasks_section(task):
         raise OutcomeError("the task has no completed run to grade")
     evaluation = grade_outcome(task, output, run_id=run_id, trigger="manual")
     _record_grading_run(task, evaluation, parent_run_id=run_id)
     record_evaluation(tid, evaluation)
     try:
         _ts.append_task_activity_log(tid, "outcome_graded", _summary(evaluation) + " (graded on request)",
-                                     run_id=run_id or "", passed=bool(evaluation.get("passed")),
+                                     run_id=run_id or "", agent=GRADER_AGENT_ID,
+                                     passed=bool(evaluation.get("passed")),
                                      score=evaluation.get("score"))
     except Exception:  # noqa: BLE001 - an activity-log write is best-effort
         log.debug("append_task_activity_log failed for %s", tid, exc_info=True)
@@ -817,7 +977,7 @@ def instruction_sections(task: Any) -> str:
     not pass, the grader's per-criterion feedback on that attempt: an agent
     that is not told why it is running again produces the same thing again.
     """
-    outcome = getattr(task, "outcome", None) or {}
+    outcome = effective_outcome(task) or {}
     rubric = str(outcome.get("rubric") or "").strip()
     if not rubric:
         return ""

@@ -2,13 +2,14 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   BarChart3, Table2, GitBranch, FileText, Image as ImageIcon,
-  Box, Maximize2, ExternalLink, X, AlertCircle, Boxes, Code2, Sigma, Atom, Waypoints, Activity,
-  Presentation, FileText as FileDoc, Camera,
+  Box, Maximize2, X, AlertCircle, Boxes, Code2, Sigma, Atom, Waypoints, Activity,
+  Presentation, FileText as FileDoc,
 } from 'lucide-react';
-import { getView, applyViewOps, saveViewSnapshot } from '../api';
+import { getView, applyViewOps } from '../api';
 import { applyOp as applyOpLocal } from './opsClient';
 import ViewRenderer from './ViewRenderer';
 import { FILL_KINDS } from './fillKinds';
+import ViewImageMenu from './ViewImageMenu';
 import { useI18n } from '../i18n';
 
 // A view card — the surface-agnostic embed for a view reference (view_ref). It
@@ -101,8 +102,42 @@ function Modal({ children, onClose, title, fill = false }) {
 // gives it (a flex column with a definite height: the Artifacts panel), down
 // to the bottom of the page; where the host has no height to give it keeps
 // the compact card's 420px as a floor.
+// `inChat` — a preview inside a chat reply, whose width follows its content.
+// A deck scales its stage to the card, so there the card gets a width of its
+// own: sized by the stage it would grow step by step, every measure widening
+// the card it measures, up to the reply's full width. CHAT_DECK_WIDTH is about
+// half that full width, read off the window (the chat column is the window
+// less the two sidebars), and never wider than the reply.
 // `className` — extra classes on the root.
-export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false, fill = false, className = '' }) {
+const CHAT_DECK_WIDTH = { width: 'clamp(16rem, calc((100vw - 38rem) * 0.367), 40rem)' };
+
+// A long content kind in a chat reply shows only its top part, CHAT_PEEK_PX
+// high, fading out at the bottom; the header's Expand button shows the whole
+// view. It folds only when there is a fair amount to hide (CHAT_FOLD_SLACK
+// times the peek), so a view a few lines over the cap is shown whole.
+const CHAT_PEEK_PX = 384;
+const CHAT_FOLD_SLACK = 1.25;
+
+// The natural height of `ref`'s element, kept current as it grows (a table
+// still loading rows, an image decoding).
+// `active` is falsy while there is nothing to measure, and changes when the
+// measured element is replaced (another view).
+function useContentHeight(ref, active) {
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!active || !el) return undefined;
+    const measure = () => setHeight(el.scrollHeight);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, active]);
+  return height;
+}
+
+export default function ViewCard({ viewRef, embedded = true, actions = null, compact = false, fill = false, inChat = false, className = '' }) {
   const { t } = useI18n();
   const viewId = viewRef?.view_id;
   const { view, error, loading, setView } = useView(viewId);
@@ -116,6 +151,13 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
   const bodyRef = useRef(null);
   const fillBody = Boolean(view) && FILL_KINDS.has(view.kind);
 
+  // Fill kinds size to the frame, not to their content: they have no
+  // overflow to fold. Content kinds in a chat reply do.
+  const foldable = inChat && Boolean(view) && !fillBody;
+  const contentRef = useRef(null);
+  const contentHeight = useContentHeight(contentRef, foldable && view.view_id);
+  const folded = foldable && contentHeight > CHAT_PEEK_PX * CHAT_FOLD_SLACK;
+
   // Interactive control/param changes: optimistic local apply + persist as a
   // user op (echoed on the view channel for any Studio watching the same view).
   const onOp = useCallback((op) => {
@@ -123,67 +165,51 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
     if (viewId) applyViewOps(viewId, [op]).catch(() => {});
   }, [viewId, setView]);
 
-  // Best-effort snapshot: capture a <canvas> in the rendered view (chart, scene,
-  // simulation, math) and store it as the view's fallback image.
-  const [snapMsg, setSnapMsg] = useState('');
-  const capture = useCallback(() => {
-    const canvas = bodyRef.current?.querySelector('canvas');
-    if (!canvas || !viewId) { setSnapMsg(t('viewViewCard.noImageToCapture')); setTimeout(() => setSnapMsg(''), 1500); return; }
-    try {
-      const dataUrl = canvas.toDataURL('image/png');
-      saveViewSnapshot(viewId, dataUrl).then(() => { setSnapMsg(t('viewViewCard.snapshotSaved')); setTimeout(() => setSnapMsg(''), 1500); })
-        .catch(() => { setSnapMsg(t('viewViewCard.saveFailed')); setTimeout(() => setSnapMsg(''), 1500); });
-    } catch { setSnapMsg(t('viewViewCard.captureFailed')); setTimeout(() => setSnapMsg(''), 1500); }
-  }, [t, viewId]);
-
   return (
     <div className={`${embedded ? 'mt-2 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-900' : ''} ${
-      compact ? 'flex flex-col h-[420px]' : fill ? 'flex flex-col flex-1 min-h-[420px]' : ''} ${className}`}>
+      compact ? 'flex flex-col h-[420px]' : fill ? 'flex flex-col flex-1 min-h-[420px]' : ''} ${
+      inChat && kind === 'slides' ? 'max-w-full' : ''} ${className}`}
+      style={inChat && kind === 'slides' ? CHAT_DECK_WIDTH : undefined}>
       <div className="flex items-start justify-between gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-start gap-2 min-w-0">
-          <KindIcon kind={kind} className="w-4 h-4 mt-0.5 text-indigo-600 flex-shrink-0" />
           <div className="min-w-0">
-            <div className="flex items-center gap-2 min-w-0">
-              {viewId ? (
-                <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
-                  className="block text-sm font-medium text-gray-900 dark:text-gray-100 truncate no-underline hover:text-indigo-600 transition-colors">
-                  {title}
-                </Link>
-              ) : (
-                <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{title}</div>
-              )}
-              {kind && (
-                <span className="shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
-                  {kind}
-                </span>
-              )}
-            </div>
+            {/* The title wraps rather than cuts off: the buttons take most of
+                the header row, and a cut title says nothing. */}
+            {viewId ? (
+              <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
+                className="block text-sm font-medium text-gray-900 dark:text-gray-100 break-words no-underline hover:text-indigo-600 transition-colors">
+                {title}
+              </Link>
+            ) : (
+              <div className="text-sm font-medium text-gray-900 dark:text-gray-100 break-words">{title}</div>
+            )}
             {/* A summary that only repeats the title says nothing: left out. */}
             {summary && summary.trim().toLowerCase() !== String(title || '').trim().toLowerCase() && (
               <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2">{summary}</div>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {snapMsg && <span className="text-[10px] text-gray-400">{snapMsg}</span>}
-          {viewId && (
-            <Link to={`/views/${viewId}`} title={t('viewViewCard.openFullView')}
-              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-indigo-600">
-              <ExternalLink className="w-4 h-4" />
-            </Link>
-          )}
-          {actions}
-          {view && (
-            <>
-              <button onClick={capture} title={t('viewViewCard.saveSnapshot')}
-                className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
-                <Camera className="w-4 h-4" />
-              </button>
-              <button onClick={() => setExpanded(true)} title={t('viewViewCard.expand')}
-                className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
-                <Maximize2 className="w-4 h-4" />
-              </button>
-            </>
+        {/* The buttons, and the kind under them. Pulled into the corner by
+            the buttons' own padding, so the icons sit as close to the edge
+            as the title does. */}
+        <div className="flex flex-col items-end gap-1 flex-shrink-0 -mt-1 -mr-2">
+          <div className="flex items-center gap-1">
+            {actions}
+            {view && (
+              <>
+                <ViewImageMenu view={view} getRoot={() => bodyRef.current} />
+                <button onClick={() => setExpanded(true)} title={t('viewViewCard.expand')}
+                  className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500">
+                  <Maximize2 className="w-4 h-4" />
+                </button>
+              </>
+            )}
+          </div>
+          {kind && (
+            <span className="mr-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-gray-700 text-gray-500 dark:text-gray-300">
+              <KindIcon kind={kind} className="w-3 h-3 text-indigo-600 flex-shrink-0" />
+              {kind}
+            </span>
           )}
         </div>
       </div>
@@ -205,8 +231,18 @@ export default function ViewCard({ viewRef, embedded = true, actions = null, com
             <AlertCircle className="w-4 h-4 text-amber-500" /> {error}
           </div>
         )}
-        {view && <ViewRenderer view={view} onOp={onOp} className={fillBody ? 'flex-1 min-h-0' : ''} />}
+        {view && foldable && (
+          <div data-testid="view-fold" className={`relative ${folded ? 'overflow-hidden' : ''}`}
+            style={folded ? { maxHeight: CHAT_PEEK_PX } : undefined}>
+            <div ref={contentRef}><ViewRenderer view={view} onOp={onOp} /></div>
+            {folded && (
+              <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-white dark:from-gray-900" />
+            )}
+          </div>
+        )}
+        {view && !foldable && <ViewRenderer view={view} onOp={onOp} className={fillBody ? 'flex-1 min-h-0' : ''} />}
       </div>
+
 
       {expanded && view && (
         <Modal title={title} onClose={close} fill={FILL_KINDS.has(view.kind)}>

@@ -6,11 +6,16 @@ import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
 import { MULTI, useAuth } from './auth';
 import { buildMenu, visibleGroups, hiddenCount, defaultMenuMode, readMenuMode, writeMenuMode, isItemActive, SIMPLE, FULL } from './navMenu';
-import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
+import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog, getModelReasoning } from '../api';
+import { EffortSlider } from './EffortSelect';
+import { clampEffort, effortLabel } from './effort';
+import { policyAllows, policyModels } from './workspace/modelPolicy';
 import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
 import { LogOut, Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
+import SyncIndicator from './SyncIndicator';
+import SyncedDataBanner from './vault/SyncedDataBanner';
 import LanguageSwitcher from './LanguageSwitcher';
 import IsolationBadge from './workspace/IsolationBadge';
 import { useI18n } from '../i18n';
@@ -22,6 +27,7 @@ import HelpPanel from './help/HelpPanel';
 import { isEmbedded } from './embed';
 import WakeListener from './assistant/WakeListener';
 import InstallAppButton from './InstallAppButton';
+import WorkspacePicker from './WorkspacePicker';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
@@ -206,7 +212,11 @@ const Layout = ({ children }) => {
   // global default is not a distinct choice — treat it as "global" so the picker
   // doesn't show the same provider twice (once as Global, once as Default).
   const wsDefault = workspaceModel.workspace_default || { provider: '', model: '' };
-  const workspaceDefaultIsGlobal = Boolean(
+  // The administrator's model policy of the workspace (workspace/model_policy.py):
+  // the picker offers its models only, and its default is the workspace default.
+  const policy = workspaceModel.policy?.models?.length ? workspaceModel.policy : null;
+  const pickerModels = policy ? policyModels(policy) : availableModels;
+  const workspaceDefaultIsGlobal = !policy && Boolean(
     wsDefault.provider &&
     wsDefault.provider === globalDefault.provider &&
     (wsDefault.model || '') === (globalDefault.model || '')
@@ -222,16 +232,47 @@ const Layout = ({ children }) => {
 
   const displayModel = (() => {
     const op = workspaceModel.override?.provider || '';
-    if (op && op !== 'workspace_default') {
+    const overrideAllowed = !policy
+      || (op !== 'global' && policyAllows(policy, op, workspaceModel.override?.model));
+    if (op && op !== 'workspace_default' && overrideAllowed) {
       if (op === 'global') return { ...globalDefault, source: 'global' };
       return { provider: op, model: workspaceModel.override.model, source: 'override' };
     }
     const dp = workspaceModel.workspace_default?.provider || '';
-    if (dp && dp !== 'global' && !workspaceDefaultIsGlobal) {
+    if (dp && (dp !== 'global' || policy) && !workspaceDefaultIsGlobal) {
       return { provider: dp, model: workspaceModel.workspace_default.model, source: 'workspace_default' };
     }
     return { ...globalDefault, source: 'global' };
   })();
+
+  // The header's reasoning effort, for agents that inherit the model: kept
+  // apart from the model, so it outlives a switch, and shown as the displayed
+  // model can take it (providers/reasoning_profile.py).
+  const workspaceEffort = workspaceModel.effort || null;
+  const [displayProfile, setDisplayProfile] = useState(null);
+  const displayProvider = displayModel.provider;
+  const displayModelId = displayModel.model;
+  useEffect(() => {
+    let live = true;
+    getModelReasoning({ provider: displayProvider || '', model: displayModelId || '' })
+      .then(({ data }) => { if (live) setDisplayProfile(data); })
+      .catch(() => { if (live) setDisplayProfile(null); });
+    return () => { live = false; };
+  }, [displayProvider, displayModelId]);
+  const effortShown = workspaceEffort
+    ? clampEffort(displayProfile?.profile, workspaceEffort) || workspaceEffort
+    : null;
+
+  const handleEffortSwitch = async (effort) => {
+    try {
+      await updateWorkspaceModel(selectedWorkspace || 'default', { effort: effort || '' });
+      const next = { ...workspaceModel, effort: effort || null, effort_own: effort || null };
+      setWorkspaceModel(next);
+      patchWorkspaceSummary(selectedWorkspace || 'default', { model: next });
+    } catch (e) {
+      console.error('Error switching workspace effort:', e);
+    }
+  };
 
   const handleModelSwitch = async (provider, model) => {
     try {
@@ -303,8 +344,7 @@ const Layout = ({ children }) => {
     setMenuChoice(next);
   };
 
-  const handleWorkspaceChange = (e) => {
-    const newWs = e.target.value;
+  const handleWorkspaceChange = (newWs) => {
     setSelectedWorkspace(newWs);
     if (location.pathname.startsWith('/workspaces/')) {
       navigate('/workspaces');
@@ -491,18 +531,13 @@ const Layout = ({ children }) => {
               {narrow ? <Menu className="w-5 h-5" /> : sidebarCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
             </button>
             <span className="hidden sm:inline text-sm font-bold text-gray-400 uppercase tracking-widest">{t('layout.workspaceLabel')}</span>
-            <select
-              aria-label={t('layout.workspaceLabel')}
-              className="min-w-0 max-w-[9rem] sm:max-w-none truncate bg-gray-50 border border-gray-200 rounded-lg px-2 sm:px-3 py-1.5 text-sm font-semibold text-gray-700 focus:outline-none"
+            <WorkspacePicker
+              workspaces={workspaces}
               value={selectedWorkspace}
               onChange={handleWorkspaceChange}
-            >
-              {workspaces.map(ws => (
-                <option key={ws.name} value={ws.name}>
-                  {workspaceLabel(ws)}
-                </option>
-              ))}
-            </select>
+              label={workspaceLabel}
+              compact={narrow}
+            />
             <span className="hidden sm:contents"><IsolationBadge workspace={selectedWorkspace} /></span>
             <div className="hidden sm:block h-5 w-px bg-gray-200" />
             {/* Global model picker; on a phone the chip is its icon alone */}
@@ -519,6 +554,7 @@ const Layout = ({ children }) => {
                 <span className="hidden sm:contents">
                   <span>{PROVIDER_CONFIG[displayModel.provider]?.label || displayModel.provider}</span>
                   {displayModel.model && <><span className="opacity-50">·</span><span className="max-w-32 truncate">{displayModel.model}</span></>}
+                  {effortShown && <><span className="opacity-50">·</span><span>{effortLabel(t, effortShown)}</span></>}
                   {displayModel.source === 'global' && <span className="opacity-40 italic text-[10px]">{t('layout.modelPicker.globalSuffix')}</span>}
                   {displayModel.source === 'workspace_default' && <span className="opacity-40 italic text-[10px]">{workspaceModel?.workspace_default?.inherited_from ? t('layout.modelPicker.inheritedSuffix', { workspace: workspaceModel.workspace_default.inherited_from }) : t('layout.modelPicker.defaultSuffix')}</span>}
                 </span>
@@ -526,8 +562,9 @@ const Layout = ({ children }) => {
               </button>
               {showModelPicker && (
                 <div className="header-sheet absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-64 py-1">
-                  {/* Global — DEFAULT_PROVIDER from .env, lowest priority fallback */}
-                  <button
+                  {/* Global — DEFAULT_PROVIDER from .env, lowest priority fallback.
+                      Not offered under a model policy: the policy's default replaces it. */}
+                  {!policy && <button
                     onClick={() => handleModelSwitch('global', '')}
                     className={`w-full text-left flex items-center gap-2 px-4 py-2 text-xs hover:bg-gray-50 transition-colors ${
                       displayModel.source === 'global' ? 'bg-indigo-50' : ''
@@ -544,14 +581,19 @@ const Layout = ({ children }) => {
                     {displayModel.source === 'global' && (
                       <span className="ml-auto text-indigo-500 font-bold shrink-0">✓</span>
                     )}
-                  </button>
-                  {availableModels.length > 0 && <div className="border-t border-gray-100 my-1" />}
+                  </button>}
+                  {policy && (
+                    <p className="px-4 pt-1.5 pb-0.5 text-[10px] text-gray-400">
+                      {policy.models.length === 1 ? t('modelPolicy.picker.onlyModel') : t('modelPolicy.models.policyNote')}
+                    </p>
+                  )}
+                  {!policy && pickerModels.length > 0 && <div className="border-t border-gray-100 my-1" />}
                   {/* Every enabled catalog model (grouped by provider), with marks
                       for the global model and this workspace's default model. */}
-                  {availableModels.map(({ provider, model }, idx) => {
-                    const showHeader = idx === 0 || availableModels[idx - 1].provider !== provider;
+                  {pickerModels.map(({ provider, model }, idx) => {
+                    const showHeader = idx === 0 || pickerModels[idx - 1].provider !== provider;
                     const wd = workspaceModel.workspace_default || {};
-                    const isGlobal = provider === globalDefault.provider && model === globalDefault.model;
+                    const isGlobal = !policy && provider === globalDefault.provider && model === globalDefault.model;
                     const isDefault = wd.provider === provider && wd.model === model;
                     const isActive = displayModel.source !== 'global'
                       && displayModel.provider === provider && displayModel.model === model;
@@ -581,6 +623,27 @@ const Layout = ({ children }) => {
                       </div>
                     );
                   })}
+                  {/* Reasoning effort for agents that inherit the model: the
+                      leftmost stop is the model's own default */}
+                  {displayProfile?.profile?.efforts?.length > 0 && (
+                    <div className="border-t border-gray-100 mt-1 px-4 pt-2 pb-1.5">
+                      {policy?.effort ? (
+                        <div className="flex items-baseline justify-between gap-2 opacity-60 cursor-not-allowed" title={t('modelPolicy.picker.fixedEffort')} data-testid="policy-fixed-effort">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{t('effort.headerTitle')}</span>
+                          <span className="text-xs font-medium text-gray-600">{effortLabel(t, effortShown || policy.effort)}</span>
+                        </div>
+                      ) : (
+                      <EffortSlider
+                        efforts={displayProfile.profile.efforts}
+                        value={effortShown}
+                        onChange={handleEffortSwitch}
+                        title={t('effort.headerTitle')}
+                        hint={t('effort.headerHint')}
+                        defaultLabel={t('effort.headerDefault', { value: effortLabel(t, displayProfile.value) || '—' })}
+                      />
+                      )}
+                    </div>
+                  )}
                   <div className="border-t border-gray-100 mt-1 pt-1">
                     <p className="px-4 py-1.5 text-[10px] text-gray-400">
                       {t('layout.modelPicker.legend')} <span className="text-green-600">●</span> {t('layout.modelPicker.legendAvailable')} &nbsp;
@@ -626,6 +689,8 @@ const Layout = ({ children }) => {
             )}
             {/* Active watchers (docs/watchers.md): what is being observed right now */}
             <WatchersIndicator />
+            {/* Two-way sync with the linked hub: only while it is on */}
+            <SyncIndicator />
             {/* Notification bell (Plan inbox) */}
             <NotificationBell />
             {/* Live updates toggle with backend status */}
@@ -655,6 +720,9 @@ const Layout = ({ children }) => {
             <HelpPanel />
           </div>
         </header>
+        {/* Data the person synced into this workspace end-to-end encrypted: said
+            plainly, so nobody wonders why their records look locked here. */}
+        <SyncedDataBanner />
         <main className="flex-1 min-h-0 overflow-y-auto pb-safe">{children}</main>
         {/* The chat that follows the page: a button in the corner everywhere
             but on the Chat page, which is one already. */}

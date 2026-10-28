@@ -104,7 +104,14 @@ def entity_run_active(kind: str, entity_id: str) -> bool:
     the running turn under whichever thread happened to be live when it ended,
     so the session picker asks first."""
     task = _ACTIVE_RUNS.get(_run_key(kind, entity_id))
-    return bool(task and not task.done())
+    if task and not task.done():
+        return True
+    if kind == "project_graph":
+        # The architect chat tracks its turn in the project routes, per view.
+        from routes.projects.graph import graph_run_active
+        project_id, _, view = entity_id.partition(":")
+        return graph_run_active(project_id, view)
+    return False
 
 
 def cancel_entity_runs(kind: str, entity_id: str) -> int:
@@ -207,6 +214,14 @@ async def guarded(run_turn, queue: asyncio.Queue):
             log.debug("stream sentinel dropped, queue full", exc_info=True)
 
 
+_TRACE_OUTPUT_CHARS = 2000
+
+
+def _clip_output(value: Any, limit: int = _TRACE_OUTPUT_CHARS) -> str:
+    text = value if isinstance(value, str) else str(value)
+    return text[:limit] + "\u2026 (truncated)" if len(text) > limit else text
+
+
 def settle_tool_step(items: List[Dict[str, Any]], ev: dict) -> bool:
     """Close the latest tool step of a stored trace on its ``tool_end`` or
     ``tool_error``: ``done``, or ``error`` with what went wrong. True when the
@@ -227,6 +242,8 @@ def settle_tool_step(items: List[Dict[str, Any]], ev: dict) -> bool:
             step["error"] = str(ev["error"])
     elif step.get("status") == "running":
         step["status"] = "done"
+    if t == "tool_end" and ev.get("output") is not None:
+        step["output"] = _clip_output(ev["output"])
     return True
 
 
@@ -239,7 +256,12 @@ def trace_item_for(ev: dict) -> Optional[Dict[str, Any]]:
     t = ev.get("type")
     if t == "think":
         content = ev.get("content")
-        return {"k": "thinking", "text": content} if content else None
+        if not content:
+            return None
+        item = {"k": "thinking", "text": content}
+        if ev.get("step") is not None:
+            item["step"] = ev["step"]
+        return item
     if t in ("thinking", "native_reasoning"):
         txt = ev.get("message") or ev.get("content") or ""
         # "[llm_start] …" and friends are log markers, not the model's words.
@@ -255,11 +277,23 @@ def trace_item_for(ev: dict) -> Optional[Dict[str, Any]]:
     if t == "entity_changed":
         return {"k": "entity", "action": ev.get("action") or "updated",
                 "kind": ev.get("kind") or "", "label": ev.get("label") or ""}
+    if t == "artifact":
+        item = {"k": "artifact", "op": ev.get("op") or "", "path": ev.get("path") or "",
+                "additions": int(ev.get("additions") or 0),
+                "deletions": int(ev.get("deletions") or 0)}
+        if ev.get("url"):
+            item["url"] = ev["url"]
+        return item
     if t == "stopped":
         return {"k": "tool", "tool": "stopped by you", "status": "done"}
     if t == "message":
         content = ev.get("content")
-        return {"k": "assistant", "text": content} if content else None
+        if not content:
+            return None
+        item = {"k": "assistant", "text": content}
+        if ev.get("run_id"):
+            item["run_id"] = ev["run_id"]
+        return item
     if t == "error":
         return {"k": "error", "text": ev.get("error") or "error"}
     return None
@@ -310,6 +344,10 @@ class EntityChatSpec:
     #: the prompt gets that summary plus every turn since: the assistant's thread
     #: is the person's short-term memory, so turn 7 must not simply vanish.
     fold_history: bool = False
+    #: Auto mode (common/auto_mode.py): the person switched it on for this
+    #: thread, so the turn's confirmations are accepted without a card. The
+    #: route decides it (an interactive thread, a workspace that allows it).
+    auto_approve: bool = False
 
 
 async def run_entity_chat_turn(
@@ -370,7 +408,12 @@ async def run_entity_chat_turn(
     prompt = build_prompt(folded_history(history, session_id) if spec.fold_history else history)
     _open_run(run_id, spec.agent_id, task_id=conv_id, session_id=session_id,
               session_type="chat", message_origin=f"{spec.kind}-chat", channel="chat",
-              workspace=spec.workspace, title=user_message[:60], log_file=str(log_file))
+              workspace=spec.workspace, title=user_message[:60], log_file=str(log_file),
+              **({"auto_approve": True} if spec.auto_approve else {}))
+    # This coroutine is its own task (guarded / spawn_detached), so the flag
+    # set here lives as long as the turn and reaches the agent's threads.
+    from common import auto_mode
+    auto_mode.set_turn(spec.auto_approve)
     # The run id before any token, so a client can refer to the turn while it
     # streams (the assistant reads its first sentences aloud: chat/voice.py).
     await emit({"type": "run", "run_id": run_id})
@@ -477,11 +520,15 @@ async def run_entity_chat_turn(
                 # main chat does (chat/pipelines.py): a delegated agent's
                 # events and an approval or connection card reach this stream
                 # (common/tool_approvals.py chat_context).
-                from common import stream_sink
+                from common import artifact_sink, stream_sink
                 _stream_token = stream_sink.set_emitter(getattr(callback, "emit_external", None))
+                # File changes reach this chat too, as on the Chat page
+                # (chat/pipelines.py): listed under the reply, linked.
+                _artifact_token = artifact_sink.set_recorder(getattr(callback, "record_artifact", None))
                 try:
                     task = asyncio.create_task(agent.arun(prompt, callbacks=[callback]))
                 finally:
+                    artifact_sink.reset_recorder(_artifact_token)
                     stream_sink.reset_emitter(_stream_token)
             register_entity_run(spec.kind, entity_id, task)
 
@@ -601,8 +648,20 @@ async def run_entity_chat_turn(
 
     # Persist this turn's display trace from the recording queue, so it is
     # captured even when the client disconnected mid-run.
-    turn_items: List[Dict[str, Any]] = [{"k": "user", "text": user_message, **(spec.user_meta or {})}]
-    for ev in list(getattr(queue, "recorded", [])):
+    turn_items = build_turn_items(user_message, list(getattr(queue, "recorded", [])),
+                                  user_meta=spec.user_meta)
+    try:
+        store.append_trace(spec.kind, entity_id, turn_items)
+    except Exception:  # noqa: BLE001 - a trace that cannot be saved must not fail the answered turn
+        log.debug("trace append failed", exc_info=True)
+
+
+def build_turn_items(user_message: str, recorded: List[Any],
+                     user_meta: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """The turn's stored display trace from its recorded events. ``user_meta``
+    rides on the user item (where the message came from, for a page chat)."""
+    turn_items: List[Dict[str, Any]] = [{"k": "user", "text": user_message, **(user_meta or {})}]
+    for ev in recorded:
         if not isinstance(ev, dict):
             continue
         if ev.get("type") == "tool_end" and ev.get("memory"):
@@ -610,15 +669,25 @@ async def run_entity_chat_turn(
             step = next((it for it in reversed(turn_items) if it.get("k") == "tool"), None)
             if step is not None:
                 step["memory"] = ev["memory"]
+        if ev.get("type") == "token":
+            # Consecutive tokens are one stretch of intermediate text.
+            piece = ev.get("token")
+            if isinstance(piece, str) and piece:
+                if turn_items and turn_items[-1].get("k") == "text":
+                    turn_items[-1]["text"] += piece
+                else:
+                    turn_items.append({"k": "text", "text": piece})
+            continue
         if settle_tool_step(turn_items, ev):
             continue
         item = trace_item_for(ev)
         if item:
+            if item["k"] == "assistant" and turn_items[-1].get("k") == "text":
+                turn_items.pop()  # the final reply replaces the streamed text
             turn_items.append(item)
-    try:
-        store.append_trace(spec.kind, entity_id, turn_items)
-    except Exception:  # noqa: BLE001 - a trace that cannot be saved must not fail the answered turn
-        log.debug("trace append failed", exc_info=True)
+    turn_items[:] = [it for it in turn_items
+                     if not (it.get("k") == "text" and not it.get("text", "").strip())]
+    return turn_items
 
 
 def transcript_block(history: List[dict], limit: Optional[int] = 12) -> str:
@@ -757,6 +826,7 @@ __all__ = [
     "run_entity_chat_turn",
     "spawn_detached",
     "sse",
+    "build_turn_items",
     "settle_tool_step",
     "trace_item_for",
     "transcript_block",

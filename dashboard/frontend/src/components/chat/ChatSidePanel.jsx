@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { ArtifactsPanel, ProcessPanelContent } from './panels';
-import CodePanel from './CodePanel';
-import { Code2, FileText, RefreshCw, X } from 'lucide-react';
+import { ArtifactsModeSwitch, ArtifactsPanel, ProcessPanelContent } from './panels';
+import { useArtifactsMode } from './artifactsMode';
+import { useChatCode } from './useChatCode';
+import { FileText, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react';
 import { useChatPage } from './context';
 
 // On a phone there is no room beside the conversation: a panel covers the
@@ -9,10 +9,10 @@ import { useChatPage } from './context';
 const PHONE_SHEET = 'max-sm:fixed max-sm:inset-0 max-sm:z-40 max-sm:min-w-0 max-sm:w-auto max-sm:pt-safe max-sm:pb-safe';
 
 /**
- * The columns beside the transcript, toggled from the top bar: the files and
- * views the turns produced (Artifacts) or the code they wrote (Code), one at
- * a time, and in the chat view the Process (what the agent's run looked like)
- * as a column of its own to the right of it.
+ * The columns beside the transcript, toggled from the top bar: what the turns
+ * produced (Artifacts: their views, code and files, in one list), and in the
+ * chat view the Process (what the agent's run looked like) as a column of its
+ * own to the right of it.
  */
 function Column({ width, title, icon: Icon, actions = null, onClose, t, children, testId }) {
   return (
@@ -40,43 +40,21 @@ function Column({ width, title, icon: Icon, actions = null, onClose, t, children
   );
 }
 
-const ARTIFACTS_MODE_KEY = 'agent_hub_chat_artifacts_mode';
-
-/** Files (what each file holds now) or Diff (what the runs changed). */
-function ArtifactsModeSwitch({ mode, onChange, t }) {
-  return (
-    <div className="inline-flex rounded-md border border-gray-200 overflow-hidden text-xs" role="tablist" aria-label={t('chat.artifactModes.label')}>
-      {[['content', t('chat.artifactModes.files')], ['diff', t('chat.artifactModes.diff')]].map(([key, label], i) => (
-        <button key={key} type="button" role="tab" aria-selected={mode === key} onClick={() => onChange(key)}
-          className={`px-2 py-0.5 ${i ? 'border-l border-gray-200' : ''} ${
-            mode === key ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'}`}>
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export default function ChatSidePanel() {
   const {
-    activeRunId, agentTopology, artifactViews, artifacts, artifactsOpen, codeOpen, currentConv, graphRun,
+    activeRunId, agentTopology, artifactPick = null, artifactViews, artifacts, artifactsFull = false, artifactsOpen, currentConv, graphRun,
     loadProcessData, processError, processInsights, processLoading, processOpen, selectedWorkspace,
-    setArtifactsOpen, setCodeOpen, setProcessOpen, t, viewMode,
+    setArtifactsFull = () => {}, setArtifactsOpen, setProcessOpen, t, viewMode,
   } = useChatPage();
+  const code = useChatCode();
   const workspace = currentConv?.workspace || selectedWorkspace || null;
-  // Content unless the person picked Diff; the pick survives leaving the page.
-  const [artifactsMode, setArtifactsMode] = useState(() => {
-    try { return localStorage.getItem(ARTIFACTS_MODE_KEY) === 'diff' ? 'diff' : 'content'; } catch { return 'content'; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem(ARTIFACTS_MODE_KEY, artifactsMode); } catch { /* storage unavailable */ }
-  }, [artifactsMode]);
-  const showProcess = processOpen && viewMode !== 'build';
-  // One panel at a time (the top bar closes one when opening the other); a
-  // stale pair from an older saved state resolves to Code.
-  const showCode = codeOpen;
-  const showArtifacts = artifactsOpen && !codeOpen;
-  if (!showArtifacts && !showCode && !showProcess) return null;
+  const [artifactsMode, setArtifactsMode] = useArtifactsMode();
+  // The whole width, in the chat's place (Chat.jsx hides the conversation):
+  // nothing else beside it, the Process column included.
+  const full = artifactsOpen && artifactsFull;
+  const showProcess = processOpen && viewMode !== 'build' && !full;
+  const showArtifacts = artifactsOpen;
+  if (!showArtifacts && !showProcess) return null;
 
   const processHeader = (
     <div className="px-4 h-[60px] border-b border-gray-200 flex items-center justify-between shrink-0">
@@ -134,25 +112,37 @@ export default function ChatSidePanel() {
 
   return (
     <>
+      {/* Beside the chat, 15% narrower under 1800 CSS px: a narrow window, and
+          a laptop's high-resolution screen too (a 13–14" one is 1440–1512 CSS
+          px wide, a 16" MacBook 1728): a smaller share of the room beside the
+          transcript and a smaller floor; the full share on a monitor (1920
+          on). Or, when asked, the whole width in the chat's place. */}
       {showArtifacts && (
         <Column
           testId="chat-artifacts-column"
-          width="flex-1 min-w-[460px]"
+          width={full ? 'flex-1 min-w-0' : 'flex-[0.85_1_0%] min-w-[391px] min-[1800px]:flex-1 min-[1800px]:min-w-[460px]'}
           title={t('chat.artifacts')} icon={FileText} t={t}
-          actions={<ArtifactsModeSwitch mode={artifactsMode} onChange={setArtifactsMode} t={t} />}
+          actions={(
+            <>
+              <ArtifactsModeSwitch mode={artifactsMode} onChange={setArtifactsMode} t={t} />
+              {/* A phone shows the column over everything already. */}
+              <button
+                type="button"
+                onClick={() => setArtifactsFull((v) => !v)}
+                className="max-sm:hidden p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                title={full ? t('chat.artifactsBeside') : t('chat.artifactsFull')}
+                aria-label={full ? t('chat.artifactsBeside') : t('chat.artifactsFull')}
+                aria-pressed={full}
+                data-testid="artifacts-full-toggle"
+              >
+                {full ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              </button>
+            </>
+          )}
+          // Closing keeps the way it was shown: it opens that way next time.
           onClose={() => setArtifactsOpen(false)}
         >
-          <ArtifactsPanel artifacts={artifacts} views={artifactViews || []} workspace={workspace} mode={artifactsMode} />
-        </Column>
-      )}
-      {showCode && (
-        <Column
-          testId="chat-code-column"
-          width="flex-1 min-w-[460px]"
-          title={t('chat.code.panelTitle')} icon={Code2} t={t}
-          onClose={() => setCodeOpen(false)}
-        >
-          <CodePanel />
+          <ArtifactsPanel artifacts={artifacts} views={artifactViews || []} workspace={workspace} mode={artifactsMode} code={code} pick={artifactPick} />
         </Column>
       )}
       {showProcess && (

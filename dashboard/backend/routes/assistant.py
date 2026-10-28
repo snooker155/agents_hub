@@ -113,6 +113,23 @@ class AssistantTurnIn(BaseModel):
     #: The first run's screen the person asks from (common/first_run.py), while
     #: the first run is on; the turn then says so in its prompt.
     first_run_screen: str = ""
+    #: Auto mode (common/auto_mode.py): the person switched it on for this
+    #: thread. Honoured only where the turn's workspace allows it.
+    auto_approve: bool = False
+
+
+def _auto_mode_note() -> str:
+    from common.auto_mode import prompt_note
+    return prompt_note()
+
+
+def _auto_approve(ctx: SimpleNamespace) -> bool:
+    """Whether this turn runs in auto mode: asked for, and allowed where it runs."""
+    payload = getattr(ctx, "payload", None)
+    if not getattr(payload, "auto_approve", False):
+        return False
+    from common.auto_mode import allowed_for
+    return allowed_for(ctx.workspace, "assistant-chat")
 
 
 def _timezone(value: str) -> str:
@@ -461,6 +478,7 @@ def assistant_prompt(ctx: SimpleNamespace, history: List[dict], user_message: st
                                if getattr(ctx, "personal_pool", None) else "off in this workspace"),
         "Workspaces this person can reach: " + (", ".join(ctx.reachable) or ctx.home),
         f"Input: {'spoken, transcribed' if ctx.payload.voice else 'typed'}",
+        *([f"Auto mode: on. {_auto_mode_note()}"] if _auto_approve(ctx) else []),
         *([f"Person's timezone (browser): {_timezone(ctx.payload.timezone)}"]
           if _timezone(ctx.payload.timezone) else []),
     ]
@@ -624,6 +642,7 @@ def _spec(ctx: SimpleNamespace) -> EntityChatSpec:
         # The thread is the person's short-term memory: older turns fold
         # into the session's summary instead of dropping off after twelve.
         fold_history=True,
+        auto_approve=_auto_approve(ctx),
         # Where the turn ran rides on the person's message, so a past
         # conversation can be found by workspace (tools/assistant_conversations.py).
         user_meta={"workspace": ctx.workspace,

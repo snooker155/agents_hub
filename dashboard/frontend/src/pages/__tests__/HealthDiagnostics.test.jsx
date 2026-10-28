@@ -72,6 +72,8 @@ vi.mock('../../api/support', () => ({
   getSupportBundle: () => Promise.resolve({ data: new Blob([]) }),
 }));
 
+// The Stack services card loads on its own; these tests are about other cards.
+vi.mock('../../api/services', () => ({ getClusterStack: () => Promise.resolve({ data: { components: [] } }) }));
 vi.mock('../../api', () => ({
   getHealth: () => ok({ status: 'ok', database: {}, services: {}, storage: {}, providers: {} }),
   getServiceChat: () => ok({ messages: [] }),
@@ -120,6 +122,21 @@ describe('Health — Diagnostics', () => {
     await waitFor(() => expect(screen.getByText('Disk space')).toBeInTheDocument());
     const readMoreLinks = screen.getAllByText(/read more/i);
     expect(readMoreLinks[0].closest('a')).toHaveAttribute('href', '/docs/service-health#check-db');
+  });
+
+  it('links each flagged skill to the Skills page in its own workspace', async () => {
+    getDoctor.mockImplementation(() => ok({
+      status: 'warn',
+      checks: [{
+        id: 'skills', title: 'Skill safety review', status: 'warn', summary: 'Flagged.',
+        detail: { catalog_high: [{ id: 's-1', name: 'claude-api', workspace: 'dev', agent_id: '' }] },
+      }],
+    }));
+    show();
+    await waitFor(() => expect(screen.getByText('Flagged.')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Flagged.'));
+    expect(screen.getByText('claude-api (dev)').closest('a'))
+      .toHaveAttribute('href', '/skills?workspace=dev&skill=s-1');
   });
 
   it('re-runs the checks on Run', async () => {

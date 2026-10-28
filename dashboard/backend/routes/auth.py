@@ -257,6 +257,9 @@ async def me(request: Request):
         payload["has_password"] = bool(user.get("has_password"))
         from common import groups
         payload["groups"] = groups.group_names_of_user(principal.id)
+        # The sidebar rows this member does not see (common/member_menu.py).
+        from common import member_menu
+        payload["hidden_menu"] = member_menu.hidden_for(principal)
     return payload
 
 

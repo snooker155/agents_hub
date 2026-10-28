@@ -4,11 +4,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { I18nProvider } from '../../i18n';
 
-// Deployments (Part D of the run-budget / firing-journal / environments /
-// deployments contract): agent_task/flow/loop scheduled jobs with a firing
-// journal, an environment and a per-run budget. The backend (Parts A/B) is
-// written in parallel, so every call here is mocked against the contract's
-// documented shapes.
+// Deployments: agent_run/agent_task/flow/loop scheduled jobs with a firing
+// journal and the resources a job hands to its runs. Every call is mocked against the
+// documented shapes of routes/plan.py.
 
 const ok = (data) => Promise.resolve({ data });
 
@@ -23,7 +21,8 @@ const runPlanJobNow = vi.fn(() => ok({}));
 const getJobFires = vi.fn(() => ok([]));
 const getAgents = vi.fn(() => ok([{ id: 'agent-1', name: 'Scout' }]));
 const listFlows = vi.fn(() => ok([{ id: 'flow-1', name: 'Onboarding' }]));
-const getLoops = vi.fn(() => ok([{ id: 'loop-1', name: 'Retry loop' }]));
+// The loops API answers { loops: [...] } and names a loop by loop_id.
+const getLoops = vi.fn(() => ok({ loops: [{ loop_id: 'loop-1', name: 'Retry loop' }] }));
 const getEnvironments = vi.fn(() => ok([{ id: 'env-1', name: 'sandboxed-python' }]));
 // CronHint (under the recurrence field once it is not 'none') debounces a
 // call to this; never resolving keeps every existing assertion exactly as
@@ -57,9 +56,13 @@ vi.mock('../../api', () => ({
 // resolves, so an empty list here keeps every existing case exactly as it
 // was before the field existed.
 const getAgentVersions = vi.fn(() => ok({ agent_id: 'agent-1', versions: [] }));
+// The files API names a file by file_id (files/service.py).
+const listWorkspaceFiles = vi.fn(() => ok({ files: [] }));
 vi.mock('../../api/files', () => ({
-  listWorkspaceFiles: vi.fn(() => Promise.resolve({ data: { files: [] } })),
-  uploadWorkspaceFileObject: vi.fn(() => Promise.resolve({ data: { id: 'file_new', filename: 'new.txt' } })),
+  listWorkspaceFiles: (...args) => listWorkspaceFiles(...args),
+  getWorkspaceFileRecord: vi.fn(() => Promise.resolve({ data: null })),
+  formatBytes: (n) => `${n} B`,
+  uploadWorkspaceFileObject: vi.fn(() => Promise.resolve({ data: { file_id: 'file_new', name: 'new.txt' } })),
 }));
 vi.mock('../../api/agentVersions', () => ({
   getAgentVersions: (...args) => getAgentVersions(...args),
@@ -116,10 +119,57 @@ describe('Deployments — empty state', () => {
     await waitFor(() => expect(screen.getByText(/nothing scheduled yet/i)).toBeInTheDocument());
   });
 
-  it('asks the jobs API for the deployment kinds only (agent_task, flow, loop, heartbeat)', async () => {
+  it('asks the jobs API for the deployment kinds only (agent_run, agent_task, flow, loop, heartbeat)', async () => {
     show();
     await waitFor(() => expect(getPlanJobs).toHaveBeenCalled());
-    expect(getPlanJobs.mock.calls[0][2]).toEqual(['agent_task', 'flow', 'loop', 'heartbeat']);
+    expect(getPlanJobs.mock.calls[0][2]).toEqual(['agent_run', 'agent_task', 'flow', 'loop', 'heartbeat']);
+  });
+});
+
+describe('Deployments — a new agent run', () => {
+  it('starts on an agent run, which needs its agent and takes resources', async () => {
+    listWorkspaceFiles.mockImplementation((ws, { q } = {}) => ok({ files: [
+      { file_id: 'file_1', name: 'leads.csv', size: 10, source: 'upload' },
+      { file_id: 'file_2', name: 'notes.md', size: 20, source: 'upload' },
+    ].filter((f) => !q || f.name.includes(q)) }));
+    show();
+    await waitFor(() => expect(getPlanJobs).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: /new deployment/i }));
+
+    // The Plan form's picker; no orchestrator to fall back on: a run names its agent.
+    const picker = screen.getByTestId('agent-picker');
+    expect(picker).toHaveTextContent('Select an agent');
+    fireEvent.click(picker);
+    expect(screen.getByTestId('agent-picker-panel')).toBeInTheDocument();
+    expect(document.querySelector('[data-agent-id=""]')).toBeNull();
+    fireEvent.click(document.querySelector('[data-agent-id="agent-1"]'));
+    expect(screen.getByTestId('agent-picker')).toHaveTextContent('Scout');
+    expect(screen.getByText('What the agent is asked')).toBeInTheDocument();
+    expect(screen.getByTestId('deployment-resources')).toBeInTheDocument();
+
+    // Files come from the workspace file dialog, searched on the server.
+    fireEvent.click(screen.getByRole('button', { name: /add from workspace files/i }));
+    fireEvent.change(await screen.findByPlaceholderText('Search files'), { target: { value: 'leads' } });
+    await waitFor(() => expect(listWorkspaceFiles).toHaveBeenLastCalledWith('default', { q: 'leads', limit: 200 }));
+    await waitFor(() => expect(screen.queryByText('notes.md')).toBeNull());
+    fireEvent.click(screen.getByText('leads.csv'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 file' }));
+    expect(screen.getByText(/Files\s*\(1\)/)).toBeInTheDocument();
+    expect(screen.getByTitle('file_1')).toHaveTextContent('leads.csv');
+  });
+});
+
+describe('Deployments — an agent run in the journal', () => {
+  it('links a firing to the conversation it opened', async () => {
+    getPlanJobs.mockImplementation(() => ok([{ ...JOB, kind: 'agent_run', created_task_ids: [] }]));
+    getJobFires.mockImplementation(() => ok([{ id: 'f1', at: '2026-09-24T09:00:00.000Z', ok: true,
+      trigger: 'tick', conversation_id: 'conv-7' }]));
+    show();
+    await waitFor(() => expect(screen.getByText('Nightly scout run')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTitle('View firing journal'));
+    const link = await screen.findByRole('link', { name: 'Open conversation' });
+    expect(link).toHaveAttribute('href', '/chat/conv-7');
   });
 });
 
@@ -134,6 +184,14 @@ describe('Deployments — the list', () => {
     expect(screen.getByText(/3 consecutive failures/i)).toBeInTheDocument();
     expect(screen.getByText('sandboxed-python')).toBeInTheDocument();
     expect(screen.getByText('$5')).toBeInTheDocument();
+  });
+});
+
+describe('Deployments — a loop job', () => {
+  it('names the loop of a loop job and offers the loops by their loop_id', async () => {
+    getPlanJobs.mockImplementation(() => ok([{ ...JOB, id: 'job-2', kind: 'loop', agent_id: null, loop_id: 'loop-1', title: 'Weekly polish' }]));
+    show();
+    await waitFor(() => expect(screen.getByText('Retry loop')).toBeInTheDocument());
   });
 });
 
@@ -182,5 +240,20 @@ describe('Deployments — actions', () => {
 
     fireEvent.click(screen.getByTitle('Run now'));
     await waitFor(() => expect(runPlanJobNow).toHaveBeenCalledWith('job-1'));
+  });
+
+  it('keeps the row buttons in place, disabled, while a firing runs', async () => {
+    let finish;
+    runPlanJobNow.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    getPlanJobs.mockImplementation(() => ok([JOB]));
+    show();
+    await waitFor(() => expect(screen.getByText('Nightly scout run')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTitle('Run now'));
+    // Still there, so the column keeps its width; hidden under the spinner.
+    await waitFor(() => expect(screen.getByTitle('Delete')).toBeDisabled());
+    expect(screen.getByTitle('Run now')).toHaveClass('invisible');
+    finish({ data: {} });
+    await waitFor(() => expect(screen.getByTitle('Delete')).not.toBeDisabled());
   });
 });

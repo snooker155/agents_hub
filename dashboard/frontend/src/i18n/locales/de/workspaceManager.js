@@ -5,6 +5,8 @@ export default {
   name: 'Name',
   nameOptional: 'Name (optional)',
   path: 'Pfad',
+  agents: 'Agenten',
+  projects: 'Projekte',
   tasks: 'Aufgaben',
   actions: 'Aktionen',
   noWorkspaces: 'Keine Workspaces',

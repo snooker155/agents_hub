@@ -397,8 +397,16 @@ def test_skills_check_skips_without_skills_and_warns_on_a_high_flag(monkeypatch)
 
     monkeypatch.setattr(procedural, "all_procedures", lambda: [clean, flagged])
     status, summary, detail = doc.check_skills(_snap())
-    assert status == "warn" and "bad" in summary
+    assert status == "warn" and "bad (w)" in summary
     assert detail["attached_high"][0]["agent_id"] == "agent-1"
+
+    # One no agent holds is named with its workspace too, not as a catalog entry.
+    loose = Procedure(name="loose", description="when", body="do", workspace="dev",
+                      safety={"severity": "high", "flags": [], "scripts": []})
+    monkeypatch.setattr(procedural, "all_procedures", lambda: [clean, loose])
+    status, summary, detail = doc.check_skills(_snap())
+    assert status == "warn" and "not attached" in summary and "loose (dev)" in summary
+    assert detail["catalog_high"][0]["workspace"] == "dev"
 
     closed = Procedure(name="closed", description="when", body="do", workspace="w",
                        shared=True, license="Proprietary")
@@ -432,4 +440,31 @@ def test_security_is_ok_for_the_laptop_case_and_names_each_problem(monkeypatch):
     monkeypatch.setattr(config, "agent_execution_mode", lambda: "docker")
     monkeypatch.setattr(guard, "guard_mode", lambda: "block")
     monkeypatch.setattr(secrets, "key_configured", lambda: True)
+    assert doctor.check_security(_snap())[0] == "ok"
+
+
+def test_security_warns_on_host_bound_secrets_without_the_egress_proxy(monkeypatch):
+    import agents.capability_guard as guard
+    import common.config as config
+    from common import db, identity, secrets
+    from environments import egress
+    monkeypatch.setattr(identity, "current_mode", lambda: "single")
+    monkeypatch.setattr(config, "agent_execution_mode", lambda: "docker")
+    monkeypatch.setattr(guard, "guard_mode", lambda: "block")
+    monkeypatch.setattr(secrets, "key_configured", lambda: True)
+    monkeypatch.setattr(secrets, "_plaintext_fallback", lambda: False)
+    monkeypatch.setattr(egress, "enabled", lambda: False)
+    db.get_conn().execute(
+        "INSERT INTO secrets (secret_id, workspace, name, agent_id, user_id, ciphertext, key_version, hint,"
+        " created_by, created_at, updated_at, allowed_hosts) VALUES ('s2', 'default', 'GH_TOKEN', '', '',"
+        " 'x', 1, '', '', '', '', 'github.com')")
+    status, summary, detail = doctor.check_security(_snap())
+    assert status == "warn" and detail["host_bound_secrets"] == 1
+    assert "refuse to start" in summary and summary.parts[0].key == "security.hostBoundNoProxy"
+
+    monkeypatch.setattr(secrets, "_plaintext_fallback", lambda: True)
+    status, summary, _detail = doctor.check_security(_snap())
+    assert status == "warn" and summary.parts[0].key == "security.hostBoundPlain"
+
+    monkeypatch.setattr(egress, "enabled", lambda: True)
     assert doctor.check_security(_snap())[0] == "ok"

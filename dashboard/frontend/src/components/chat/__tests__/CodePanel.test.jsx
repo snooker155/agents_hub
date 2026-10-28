@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ChatPageContext } from '../context';
-import CodePanel from '../CodePanel';
+import { MemoryRouter } from 'react-router-dom';
+import { useChatCode } from '../useChatCode';
+import { ArtifactsPanel } from '../panels';
 import { useConversationCode } from '../useConversationCode';
 import { listViews, getView } from '../../../api';
 import { createCodeFromReply, getSnippetVersions, runCode, runSnippet, saveSnippetToProject, saveSnippetVersion } from '../../../api/code';
@@ -10,7 +12,11 @@ import { createCodeFromReply, getSnippetVersions, runCode, runSnippet, saveSnipp
 vi.mock('../../../api', () => ({
   listViews: vi.fn(),
   getView: vi.fn(),
+  getWorkspaceFileContent: vi.fn(),
 }));
+vi.mock('../../../views/ViewCard', () => ({ default: () => null }));
+vi.mock('../../GraphMirror', () => ({ default: () => null }));
+vi.mock('../../ProcessGraph', () => ({ default: () => null, TokenPill: () => null }));
 
 // CodeMirror does not take typing under jsdom; a plain textarea stands in.
 vi.mock('../CodeEditor', () => ({
@@ -57,14 +63,22 @@ const VIEW_ENVELOPE = {
   },
 };
 
-// The page holds the snippet list (useConversationCode) and the panel reads
-// it from the context; this stands in for the page.
+// The page holds the snippet list (useConversationCode) and the Artifacts
+// panel lists it with the files and views (useChatCode); this stands in for
+// the page and its side column.
+function CodeInArtifacts() {
+  const code = useChatCode();
+  return <ArtifactsPanel artifacts={{}} views={[]} code={code} />;
+}
+
 function Harness({ page }) {
   const code = useConversationCode(page);
   return (
-    <ChatPageContext.Provider value={{ ...page, ...code }}>
-      <CodePanel />
-    </ChatPageContext.Provider>
+    <MemoryRouter>
+      <ChatPageContext.Provider value={{ ...page, ...code }}>
+        <CodeInArtifacts />
+      </ChatPageContext.Provider>
+    </MemoryRouter>
   );
 }
 
@@ -80,9 +94,19 @@ function renderPanel(overrides = {}) {
   return { page, ...render(<Harness page={page} />) };
 }
 
-describe('CodePanel', () => {
+describe('code in the Artifacts panel', () => {
   // restoreMocks clears the factory defaults between tests.
   beforeEach(() => { getSnippetVersions.mockResolvedValue({ data: { versions: [] } }); });
+
+  it('selects a reply\'s block when "Open in Code panel" asks for it', async () => {
+    listViews.mockResolvedValue({ data: { views: [VIEW_ROW] } });
+    getView.mockResolvedValue({ data: VIEW_ENVELOPE });
+    const block = { id: 'reply:a1:0', message_id: 'a1', run_id: 'r1', index: 0, language: 'python', filename: '', name: 'from-reply.py', body: 'print(2)' };
+    renderPanel({ replyBlocks: [block], savedReplyIds: new Set(), currentConv: { workspace: 'ws' }, currentConvId: 'c1',
+      codeFocus: { replyId: 'reply:a1:0', nonce: 1 } });
+    await waitFor(() => expect(screen.getByTestId('code-editor-textarea').value).toBe('print(2)'));
+    expect(screen.getByTestId('artifacts-code')).toBeInTheDocument();
+  });
 
   it('lists snippets returned by the mocked views API', async () => {
     listViews.mockResolvedValue({ data: { views: [VIEW_ROW] } });

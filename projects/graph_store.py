@@ -141,6 +141,16 @@ class ProjectGraphStore:
             self.docs.put(key, entry)
             return int(entry.get("session_epoch") or 0)
 
+    def drop_chat(self, project_id: str, view: str) -> None:
+        """Forget the chat fields once they live in the entity chat store."""
+        key = self._key(project_id, view)
+        with self.docs.transaction():
+            entry = self.docs.get(key)
+            if entry and any(k in entry for k in ("messages", "trace", "session_epoch")):
+                for k in ("messages", "trace", "session_epoch"):
+                    entry.pop(k, None)
+                self.docs.put(key, entry)
+
     def delete(self, project_id: str, view: str, timeout: float = 10.0) -> bool:
         return self.docs.delete(self._key(project_id, view))
 

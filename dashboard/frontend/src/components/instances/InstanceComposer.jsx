@@ -1,14 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  CheckCircle, Clock, FolderOpen, Loader, Paperclip, Send, StopCircle, Terminal, Upload, X,
-} from 'lucide-react';
+import { Clock, Loader, Send, StopCircle, Terminal, X } from 'lucide-react';
 import { getAgentDefinition } from '../../api';
 import { steerRun } from '../../api/steering';
-import ContextEntityPicker from '../ContextEntityPicker';
-import WorkspaceFilePicker from '../files/WorkspaceFilePicker';
 import MarkdownRenderer from '../MarkdownRenderer';
 import { useChatComposerInput } from '../chat/useChatComposerInput';
+import ComposerBox from '../chat/ComposerBox';
+import { COMPOSER_SEND_CLS, COMPOSER_STOP_CLS, COMPOSER_TEXTAREA_CLS } from '../chat/composerStyles';
+import { AttachButton, AttachPickers, PendingAttachments, PendingReferences } from '../chat/ComposerAttachments';
+import { attachmentsPayload, referencesPayload } from '../chat/composerPayload';
 import { STEER_MODES, loadSteerMode, readLocalSteerMode, saveSteerMode } from '../chat/steering';
 import { useI18n } from '../../i18n';
 
@@ -187,13 +186,8 @@ export default function InstanceComposer({
 
   const deliver = async (text) => onSend({
     message: text,
-    attachments: pendingAttachments.map((a) => ({
-      filename: a.filename,
-      content: a.file_id ? '' : a.content,
-      store_to_workspace: Boolean(a.store_to_workspace && workspace),
-      ...(a.file_id ? { file_id: a.file_id } : {}),
-    })),
-    references: pendingReferences.map((r) => ({ kind: r.kind, id: r.id, label: r.label || '' })),
+    attachments: attachmentsPayload(pendingAttachments, workspace),
+    references: referencesPayload(pendingReferences),
   });
 
   const send = async () => {
@@ -271,7 +265,7 @@ export default function InstanceComposer({
     && !sending && !(isRunner && !runnerAgent);
 
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl shadow-lg p-3" data-testid="instance-composer">
+    <div data-testid="instance-composer">
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onPickFiles} />
 
       {localNote && (
@@ -288,80 +282,14 @@ export default function InstanceComposer({
         </div>
       )}
 
-      {pendingReferences.length > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          {pendingReferences.map((ref) => (
-            <span
-              key={`${ref.kind}:${ref.id}`}
-              className="inline-flex items-center gap-1.5 max-w-full rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] text-indigo-700"
-              title={t(`chat.entityKind.${ref.kind}`, { defaultValue: ref.kind })}
-            >
-              <span aria-hidden="true">{ref.icon}</span>
-              {ref.url ? (
-                <Link to={ref.url} className="truncate max-w-[14rem] font-medium hover:underline">{ref.label || ref.id}</Link>
-              ) : (
-                <span className="truncate max-w-[14rem] font-medium">{ref.label || ref.id}</span>
-              )}
-              <button
-                type="button"
-                onClick={() => removeReference(ref.kind, ref.id)}
-                className="text-indigo-400 hover:text-red-600 flex-shrink-0"
-                title={t('chat.removeAttachment')}
-                disabled={sending}
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {pendingAttachments.length > 0 && (
-        <div className="mb-2 space-y-1.5">
-          {pendingAttachments.map((att) => (
-            <div key={att.id} className="flex items-center justify-between gap-3 px-3 py-1.5 rounded-lg border border-gray-200 bg-gray-50">
-              <div className="min-w-0">
-                <div className="text-xs text-gray-700 font-medium truncate">{att.filename}</div>
-                <div className="text-[11px] text-gray-500">{t('chat.bytes', { count: att.size })}</div>
-              </div>
-              <div className="flex items-center gap-3">
-                {att.file_id ? (
-                  <Link
-                    to={`/files?file=${encodeURIComponent(att.file_id)}`}
-                    className="flex items-center gap-1 text-xs text-emerald-700 hover:underline"
-                  >
-                    {att.from_workspace ? <FolderOpen className="w-3.5 h-3.5" /> : <CheckCircle className="w-3.5 h-3.5" />}
-                    {att.from_workspace ? t('files.chat.workspaceFile') : t('files.chat.saved')}
-                  </Link>
-                ) : att.saving ? (
-                  <span className="flex items-center gap-1 text-xs text-gray-500">
-                    <Loader className="w-3.5 h-3.5 animate-spin" /> {t('files.chat.saving')}
-                  </span>
-                ) : (
-                  <label className="flex items-center gap-1.5 text-xs text-gray-600">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(att.store_to_workspace)}
-                      onChange={(e) => toggleAttachmentStore(att.id, e.target.checked)}
-                      disabled={!workspace || sending}
-                    />
-                    {t('chat.storeInWorkspace')}
-                  </label>
-                )}
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(att.id)}
-                  className="text-gray-400 hover:text-red-600"
-                  title={t('chat.removeAttachment')}
-                  disabled={sending}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <PendingReferences references={pendingReferences} onRemove={removeReference} disabled={sending} />
+      <PendingAttachments
+        attachments={pendingAttachments}
+        workspace={workspace}
+        onToggleStore={toggleAttachmentStore}
+        onRemove={removeAttachment}
+        disabled={sending}
+      />
 
       {commandMenuOpen && commandSuggestions.length > 0 && (
         <div className="mb-2 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
@@ -386,11 +314,10 @@ export default function InstanceComposer({
       )}
 
       {streaming && (
-        <div className="mb-2 flex flex-wrap items-center gap-2" data-testid="instance-steer-bar">
+        <div className="mb-2 flex items-center gap-2 min-w-0" data-testid="instance-steer-bar">
           {modes.length > 1 ? (
             <>
-              <span className="text-[11px] text-gray-500">{t('steering.modeLabel')}</span>
-              <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 p-0.5" role="radiogroup">
+              <div className="inline-flex flex-shrink-0 rounded-full border border-gray-200 bg-gray-50 p-0.5" role="radiogroup">
                 {modes.map((m) => (
                   <button
                     key={m}
@@ -398,7 +325,7 @@ export default function InstanceComposer({
                     role="radio"
                     aria-checked={activeMode === m}
                     onClick={() => setSteerMode(m)}
-                    className={`px-2.5 py-0.5 text-[11px] font-medium rounded-full transition-colors ${
+                    className={`px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap rounded-full transition-colors ${
                       activeMode === m ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >
@@ -406,7 +333,9 @@ export default function InstanceComposer({
                   </button>
                 ))}
               </div>
-              <span className="text-[11px] text-gray-400">{t(`steering.modeHints.${activeMode}`)}</span>
+              <span className="min-w-0 truncate text-[11px] text-gray-400" title={t(`steering.modeHints.${activeMode}`)}>
+                {t(`steering.modeHints.${activeMode}`)}
+              </span>
             </>
           ) : (
             <span className="text-[11px] text-gray-400">{t('steering.queueOnlyHint')}</span>
@@ -432,78 +361,20 @@ export default function InstanceComposer({
         </select>
       )}
 
-      <div
-        className="flex-1 min-w-0 flex items-center gap-2 border border-gray-300 rounded-2xl px-3 py-2
-          transition-all"
-      >
-        <div className="relative flex-shrink-0">
-          <button
-            type="button"
-            onClick={() => setAttachMenuOpen((open) => !open)}
-            className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors disabled:opacity-40"
-            title={t('chat.attachMenuTitle')}
+      <div className="flex-1 min-w-0">
+      <ComposerBox
+        leading={(
+          <AttachButton
+            open={attachMenuOpen}
+            onOpenChange={setAttachMenuOpen}
             disabled={sending}
-          >
-            <Paperclip className="w-4 h-4" />
-          </button>
-          {attachMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
-              <div className="absolute bottom-10 left-0 z-50 w-60 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg py-1">
-                <button
-                  type="button"
-                  onClick={() => { setAttachMenuOpen(false); fileInputRef.current?.click(); }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                >
-                  <Upload className="w-4 h-4 text-gray-400" />
-                  {t('chat.attachFiles')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setAttachMenuOpen(false); setFilePickerOpen(true); }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                >
-                  <FolderOpen className="w-4 h-4 text-gray-400" />
-                  {t('files.chat.fromWorkspace')}
-                </button>
-                {contextKinds.length > 0 && (
-                  <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-gray-400 border-t border-gray-100 mt-1">
-                    {t('chat.attachFromHub')}
-                  </div>
-                )}
-                {contextKinds.map((k) => (
-                  <button
-                    key={k.kind}
-                    type="button"
-                    onClick={() => { setAttachMenuOpen(false); setPickerKind(k.kind); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    <span aria-hidden="true">{k.icon}</span>
-                    {t(`chat.entityKind.${k.kind}`, { defaultValue: k.noun })}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={input}
-          onChange={(e) => {
-            const val = e.target.value;
-            setInput(val);
-            resizeTextarea();
-            setCommandMenuOpen(val.startsWith('/'));
-            setCommandMenuIndex(0);
-          }}
-          onKeyDown={onKeyDown}
-          placeholder={streaming ? t('steering.placeholderBusy') : t('instanceDetail.message.placeholder')}
-          className="flex-1 resize-none text-sm text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
-        />
-
-        {streaming ? (
+            contextKinds={contextKinds}
+            onFiles={() => fileInputRef.current?.click()}
+            onWorkspaceFiles={() => setFilePickerOpen(true)}
+            onKind={setPickerKind}
+          />
+        )}
+        actions={streaming ? (
           <>
             {canSend && (
               <button
@@ -521,7 +392,7 @@ export default function InstanceComposer({
               type="button"
               onClick={onStop}
               title={t('chat.stop')}
-              className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-red-100 text-red-600 hover:bg-red-200 transition-colors"
+              className={COMPOSER_STOP_CLS}
             >
               <StopCircle className="w-4 h-4" />
             </button>
@@ -532,11 +403,29 @@ export default function InstanceComposer({
             onClick={send}
             disabled={!canSend}
             title={t('chat.sendEnter')}
-            className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className={COMPOSER_SEND_CLS}
           >
             {sending ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           </button>
         )}
+        hint={<>{hint && <>{hint} · </>}{t('chat.composerHint')} <span>/</span> {t('chat.forCommands')}</>}
+      >
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={input}
+          onChange={(e) => {
+            const val = e.target.value;
+            setInput(val);
+            resizeTextarea();
+            setCommandMenuOpen(val.startsWith('/'));
+            setCommandMenuIndex(0);
+          }}
+          onKeyDown={onKeyDown}
+          placeholder={streaming ? t('steering.placeholderBusy') : t('instanceDetail.message.placeholder')}
+          className={COMPOSER_TEXTAREA_CLS}
+        />
+      </ComposerBox>
       </div>
       </div>
 
@@ -550,30 +439,19 @@ export default function InstanceComposer({
           {t('instanceDetail.message.pending', { count: pendingCount })}
         </p>
       )}
-      <p className="text-center text-[11px] text-gray-400 mt-2">
-        {hint && <>{hint} · </>}
-        {t('chat.composerHint')} <span>/</span> {t('chat.forCommands')}
-      </p>
 
-      {filePickerOpen && (
-        <WorkspaceFilePicker
-          workspace={workspace}
-          excludeIds={pendingAttachments.map((a) => a.file_id).filter(Boolean)}
-          uploadSource="chat"
-          onPick={(records) => { setFilePickerOpen(false); addWorkspaceFiles(records); }}
-          onClose={() => setFilePickerOpen(false)}
-        />
-      )}
-      {pickerKind && (
-        <ContextEntityPicker
-          initialKind={pickerKind}
-          workspace={workspace}
-          projectId={projectId}
-          selected={pendingReferences}
-          onAdd={addReferences}
-          onClose={() => setPickerKind(null)}
-        />
-      )}
+      <AttachPickers
+        workspace={workspace}
+        projectId={projectId}
+        filePickerOpen={filePickerOpen}
+        onCloseFilePicker={() => setFilePickerOpen(false)}
+        attachments={pendingAttachments}
+        onAddWorkspaceFiles={addWorkspaceFiles}
+        pickerKind={pickerKind}
+        onClosePicker={() => setPickerKind(null)}
+        references={pendingReferences}
+        onAddReferences={addReferences}
+      />
     </div>
   );
 }

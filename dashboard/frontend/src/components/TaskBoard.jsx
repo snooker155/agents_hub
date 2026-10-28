@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLiveRefetch } from './stream';
@@ -6,10 +6,14 @@ import {
   Plus, CheckCircle, Clock, AlertCircle, StopCircle, Loader,
   ExternalLink, Trash2, List, Columns, UserPlus, ChevronRight,
   GitBranch, User, X, ThumbsUp, ThumbsDown, Github, Gitlab, Workflow, Folder, HelpCircle, ShieldQuestion,
-  Users, RotateCw
+  Users, RotateCw, Search
 } from 'lucide-react';
-import { getTasks, deleteTask, getAgents, assignAgent, approveAssignment, rejectAssignment, updateTask, listFlows, runFlow, getProjects } from '../api';
+import { getTasks, deleteTask, approveAssignment, rejectAssignment, updateTask, getProjects } from '../api';
 import CreateTaskModal from './CreateTaskModal';
+import AssignExecutorModal from './task/AssignExecutorModal';
+import DependencyChips from './task/DependencyChips';
+import { projectTasksBack } from './task/taskBack';
+import { confirmStatusChange } from './task/taskUtils';
 import { useI18n, statusLabel } from '../i18n';
 
 // ─── Status configuration ────────────────────────────────────────────────────
@@ -38,6 +42,13 @@ const EXECUTOR_BADGE = {
   team: { label: 'team', cls: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
   loop: { label: 'loop', cls: 'bg-teal-50 text-teal-600 border-teal-100' },
 };
+
+// The router state a task opened from this board gets: on a project's board,
+// the way back to it (task/taskBack.js).
+const BackStateContext = createContext(undefined);
+
+// The project filter's value for tasks that belong to no project.
+const NO_PROJECT = '__none__';
 
 function executorLabel(task) {
   const kind = task.executor?.kind || (task.assigned_agent_params?.flow_id ? 'flow' : 'agent');
@@ -171,10 +182,23 @@ function ProgressBar({ total, done }) {
   );
 }
 
+// The board's tasks by id, built once per fetched list (the cards and rows
+// all read the same array) for the dependency chips.
+const byIdCache = new WeakMap();
+function tasksByIdOf(allTasks) {
+  let byId = byIdCache.get(allTasks);
+  if (!byId) {
+    byId = new Map(allTasks.map((x) => [x.id, x]));
+    byIdCache.set(allTasks, byId);
+  }
+  return byId;
+}
+
 // ─── Kanban card ─────────────────────────────────────────────────────────────
 function KanbanCard({ task, allTasks, onDelete, onAssign, onApprove, onReject, deletingById, projectName, showWorkspace }) {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const backState = useContext(BackStateContext);
   const parentTask = task.parent_id ? allTasks.find(t => t.id === task.parent_id) : null;
   const subtasks = allTasks.filter(t => t.parent_id === task.id);
   const doneSubtasks = subtasks.filter(t => t.status === 'done').length;
@@ -199,6 +223,7 @@ function KanbanCard({ task, allTasks, onDelete, onAssign, onApprove, onReject, d
               <GitBranch className="w-3 h-3 flex-shrink-0" />
               <Link
                 to={`/tasks/${parentTask.id}`}
+                state={backState}
                 className="truncate hover:text-indigo-500 max-w-[180px]"
                 onClick={e => e.stopPropagation()}
                 title={parentTask.title}
@@ -212,12 +237,15 @@ function KanbanCard({ task, allTasks, onDelete, onAssign, onApprove, onReject, d
           {/* Title */}
           <div
             className="text-sm font-medium text-gray-800 leading-snug cursor-pointer hover:text-indigo-600"
-            onClick={() => navigate(`/tasks/${task.id}`)}
+            onClick={() => navigate(`/tasks/${task.id}`, { state: backState })}
             title={task.title}
           >
             {task.key && <span className="text-xs font-semibold text-gray-400 mr-1.5">{task.key}</span>}
             {task.title}
-            {projectName && <span className="ml-1.5 align-middle"><ProjectBadge name={projectName} /></span>}
+            {/* A space, not a left margin: when the badge wraps to its own
+                line the space goes with the line break, a margin would stay
+                as a gap in front of it. */}
+            {projectName && <>{' '}<span className="align-middle"><ProjectBadge name={projectName} /></span></>}
           </div>
         </div>
 
@@ -252,6 +280,11 @@ function KanbanCard({ task, allTasks, onDelete, onAssign, onApprove, onReject, d
           <AlertCircle className="w-3 h-3 text-red-500 mt-0.5 flex-shrink-0" />
           <span className="text-xs text-red-600 line-clamp-2">{task.blocked_reason}</span>
         </div>
+      )}
+
+      {/* What it waits for */}
+      {task.depends?.length > 0 && (
+        <DependencyChips ids={task.depends} byId={tasksByIdOf(allTasks)} linkState={backState} className="mb-2" />
       )}
 
       {/* Meta row */}
@@ -347,7 +380,9 @@ function KanbanColumn({ column, tasks, allTasks, onDrop, onDelete, onAssign, onA
   };
 
   return (
-    <div className="w-[280px] shrink-0 flex flex-col">
+    // The outline is what shows the column: in the light theme its fill is
+    // all but the page's own grey.
+    <div className="w-[280px] shrink-0 flex flex-col rounded-lg border border-gray-200 bg-gray-50">
       {/* Column header */}
       <div className={`flex items-center justify-between px-3 py-2 rounded-t-lg ${column.headerBg}`}>
         <div className="flex items-center gap-2">
@@ -378,7 +413,7 @@ function KanbanColumn({ column, tasks, allTasks, onDrop, onDelete, onAssign, onA
         className={`flex-1 p-2 pb-4 rounded-b-lg border-2 transition-colors flex flex-col gap-2 ${
           isDragOver && column.droppable !== false
             ? `border-dashed ${column.dropBorder} bg-opacity-20`
-            : 'border-transparent bg-gray-50'
+            : 'border-transparent'
         }`}
       >
         {tasks.length === 0 && !isDragOver && (
@@ -403,116 +438,12 @@ function KanbanColumn({ column, tasks, allTasks, onDrop, onDelete, onAssign, onA
   );
 }
 
-// ─── Assign Agent Modal ───────────────────────────────────────────────────────
-function AssignAgentModal({ task, agents, flows, onClose, onAssigned }) {
-  const { t } = useI18n();
-  const [target, setTarget] = useState('agent'); // 'agent' | 'flow'
-  const [selectedAgent, setSelectedAgent] = useState('');
-  const [selectedFlow, setSelectedFlow] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const selection = target === 'flow' ? selectedFlow : selectedAgent;
-
-  const handleAssign = async () => {
-    if (!selection) return;
-    setLoading(true);
-    setError('');
-    try {
-      if (target === 'flow') {
-        await runFlow(selectedFlow, { task_id: task.id, workspace: task.workspace });
-      } else {
-        await assignAgent(task.id, { agent_id: selectedAgent });
-      }
-      onAssigned();
-      onClose();
-    } catch (e) {
-      setError(e.response?.data?.detail || e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const tabClass = (id) => `flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-    target === id ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-  }`;
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-sm w-full p-6 shadow-xl">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-gray-800">{t('taskBoard.assignToTask')}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
-        </div>
-        <p className="text-sm text-gray-600 mb-4 truncate">{t('taskBoard.task')} <span className="font-medium">{task.title}</span></p>
-
-        {/* Agent / Flow toggle */}
-        <div className="flex items-center bg-gray-100 rounded-lg p-1 mb-4">
-          <button type="button" onClick={() => { setTarget('agent'); setError(''); }} className={tabClass('agent')}>
-            <User className="w-4 h-4" />
-            {t('taskBoard.agent')}
-          </button>
-          <button type="button" onClick={() => { setTarget('flow'); setError(''); }} className={tabClass('flow')}>
-            <Workflow className="w-4 h-4" />
-            {t('taskBoard.flow')}
-          </button>
-        </div>
-
-        {target === 'agent' ? (
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('taskBoard.selectAgent')}</label>
-            <select
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-              value={selectedAgent}
-              onChange={e => setSelectedAgent(e.target.value)}
-            >
-              <option value="">{t('taskBoard.chooseAnAgent')}</option>
-              {agents.map(a => (
-                <option key={a.id} value={a.id}>{a.name || a.id}</option>
-              ))}
-            </select>
-          </div>
-        ) : (
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('taskBoard.selectFlow')}</label>
-            <select
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-              value={selectedFlow}
-              onChange={e => setSelectedFlow(e.target.value)}
-            >
-              <option value="">{t('taskBoard.chooseAFlow')}</option>
-              {flows.map(f => (
-                <option key={f.id} value={f.id}>{f.name || f.id}</option>
-              ))}
-            </select>
-            {flows.length === 0 && (
-              <p className="text-xs text-gray-400 mt-1">{t('taskBoard.noFlowsAuthorizedForThis')}</p>
-            )}
-          </div>
-        )}
-
-        {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
-        <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">{t('taskBoard.cancel')}</button>
-          <button
-            onClick={handleAssign}
-            disabled={!selection || loading}
-            className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {loading ? t('taskBoard.assigning') : (target === 'flow' ? t('taskBoard.runFlow') : t('taskBoard.assign'))}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Reusable Task board (list + kanban) ──────────────────────────────────────
 // Renders the full task management UI (drag-and-drop kanban, list view, assign,
 // create, approve/reject, delete). Scope it with `workspace` and/or `projectId`.
 //
 // Props:
-//   workspace          – workspace name to fetch tasks/agents/flows for (or undefined for all)
+//   workspace          – workspace name to fetch tasks for (or undefined for all)
 //   projectId          – when set, only tasks of this project are shown / created
 //   showWorkspaceColumn – show the workspace column (list) and badge (kanban)
 //   selectedWorkspace  – workspace stored on newly created tasks + localStorage key
@@ -520,6 +451,7 @@ function AssignAgentModal({ task, agents, flows, onClose, onAssigned }) {
 //   title              – optional heading shown on the left of the toolbar
 //   toolbarTarget      – DOM node to portal the toolbar into (e.g. a tab row).
 //                        When provided, the inline header is not rendered.
+//   extraControls      – the page's own buttons, right after the search box
 export default function TaskBoard({
   workspace,
   projectId = null,
@@ -528,14 +460,14 @@ export default function TaskBoard({
   liveUpdates = false,
   title = null,
   toolbarTarget = undefined,
+  extraControls = null,
 }) {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const backState = projectTasksBack(projectId);
 
   const [allTasks, setAllTasks] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [agents, setAgents] = useState([]);
-  const [flows, setFlows] = useState([]);
   const [projects, setProjects] = useState([]);
   // Loading is derived from which scope the data was fetched for, so a scope
   // change shows the spinner without a synchronous setState in the effect.
@@ -544,6 +476,11 @@ export default function TaskBoard({
   const loading = loadedKey !== loadKey;
 
   const [viewMode, setViewMode] = useState('kanban'); // 'list' | 'kanban'
+  // Search over key, title and description; the project filter ('' all,
+  // NO_PROJECT tasks without one, else a project id) only on a board that is
+  // not already one project's.
+  const [query, setQuery] = useState('');
+  const [projectFilter, setProjectFilter] = useState('');
 
   // Persist showSubtasks per workspace in localStorage
   const _subtasksKey = `task_manager_show_subtasks_${selectedWorkspace || 'default'}`;
@@ -568,10 +505,8 @@ export default function TaskBoard({
   // Fetch everything
   const fetchData = async () => {
     try {
-      const [tasksResp, agentsResp, flowsResp, projectsResp] = await Promise.all([
+      const [tasksResp, projectsResp] = await Promise.all([
         getTasks(workspace),
-        getAgents(workspace).catch(() => ({ data: [] })),
-        listFlows(workspace).catch(() => ({ data: [] })),
         getProjects(workspace).catch(() => ({ data: [] })),
       ]);
 
@@ -582,8 +517,6 @@ export default function TaskBoard({
         raw = raw.filter(t => t.project_id === projectId || (t.parent_id && directIds.has(t.parent_id)));
       }
       setAllTasks(raw);
-      setAgents(agentsResp.data);
-      setFlows(flowsResp.data || []);
       setProjects(projectsResp.data || []);
 
       // Enhanced top-level tasks with subtask counts
@@ -627,6 +560,7 @@ export default function TaskBoard({
     if (newStatus === 'pending') return;
     const task = allTasks.find(t => t.id === taskId);
     if (!task || task.status === newStatus) return;
+    if (!confirmStatusChange(t, task, newStatus)) return;
     // Optimistic update
     setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
     try {
@@ -669,8 +603,21 @@ export default function TaskBoard({
   const projectNameForTask = (task) =>
     projectId ? null : ((task.project_id && projectsById[task.project_id]) || task.project || null);
 
+  // ── Search and project filter ─────────────────────────────────────────────
+  const needle = query.trim().toLowerCase();
+  const inProject = (task) => {
+    if (projectId || !projectFilter) return true;
+    if (projectFilter === NO_PROJECT) return !task.project_id && !task.project;
+    return task.project_id === projectFilter;
+  };
+  const matchesQuery = (task) => !needle || [task.key, task.title, task.description]
+    .some((v) => v && String(v).toLowerCase().includes(needle));
+  const visibleTasks = allTasks.filter((task) => inProject(task) && matchesQuery(task));
+  const filtering = !!needle || (!projectId && !!projectFilter);
+
   // ── Kanban: which tasks appear in each column ─────────────────────────────
-  const tasksForKanban = showSubtasks ? allTasks : allTasks.filter(t => !t.parent_id);
+  // A search shows the subtasks it finds even with subtasks hidden.
+  const tasksForKanban = showSubtasks || needle ? visibleTasks : visibleTasks.filter(t => !t.parent_id);
 
   const getColumnTasks = (column) => tasksForKanban.filter((t) => {
     // Human-interaction statuses live only in the Waiting column.
@@ -679,17 +626,49 @@ export default function TaskBoard({
   });
 
   // ── List view helpers ─────────────────────────────────────────────────────
-  const topLevelWithProgress = tasks.map(task => {
+  // A top-level task stays in the list when it or one of its subtasks matches.
+  const visibleIds = new Set(visibleTasks.map((task) => task.id));
+  const listedTasks = filtering
+    ? tasks.filter((task) => visibleIds.has(task.id)
+      || (inProject(task) && allTasks.some((s) => s.parent_id === task.id && visibleIds.has(s.id))))
+    : tasks;
+  const topLevelWithProgress = listedTasks.map(task => {
     const subs = allTasks.filter(s => s.parent_id === task.id);
     const done = subs.filter(s => s.status === 'done').length;
     return { ...task, subtasks: subs, doneSubtasks: done, progress: subs.length > 0 ? (done / subs.length) * 100 : (task.status === 'done' ? 100 : 0) };
   });
 
   // Toolbar: subtasks toggle (kanban only) + view switch + New Task button.
+  // It wraps when a tab row has put it on a line of its own that is still
+  // too narrow for it.
   const controls = (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-center justify-end gap-3">
+      <div className="relative">
+        <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('taskBoard.searchPlaceholder')}
+          aria-label={t('taskBoard.searchPlaceholder')}
+          className="w-56 border border-gray-300 rounded-md pl-8 pr-2 py-1.5 text-sm"
+        />
+      </div>
+      {extraControls}
+      {!projectId && (
+        <select
+          value={projectFilter}
+          onChange={(e) => setProjectFilter(e.target.value)}
+          aria-label={t('taskBoard.projectFilter')}
+          className="border border-gray-300 rounded-md px-2 py-1.5 text-sm max-w-[12rem]"
+        >
+          <option value="">{t('taskBoard.allProjects')}</option>
+          <option value={NO_PROJECT}>{t('taskBoard.withoutProject')}</option>
+          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      )}
       {viewMode === 'kanban' && (
-        <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+        <label className="flex items-center gap-2 text-sm text-gray-600 whitespace-nowrap cursor-pointer select-none">
           <input
             type="checkbox"
             className="h-4 w-4 text-indigo-600 border-gray-300 rounded"
@@ -736,6 +715,7 @@ export default function TaskBoard({
   );
 
   return (
+    <BackStateContext.Provider value={backState}>
     <div className="flex flex-col min-h-full">
       {/* Header — rendered inline, or portaled into the parent tab row when a
           `toolbarTarget` is provided (embedded in a detail page). */}
@@ -806,10 +786,10 @@ export default function TaskBoard({
                   <tr
                     key={task.id}
                     className="hover:bg-gray-50 cursor-pointer"
-                    onClick={() => navigate(`/tasks/${task.id}`)}
+                    onClick={() => navigate(`/tasks/${task.id}`, { state: backState })}
                     role="button"
                     tabIndex={0}
-                    onKeyDown={e => { if (e.key === 'Enter') navigate(`/tasks/${task.id}`); }}
+                    onKeyDown={e => { if (e.key === 'Enter') navigate(`/tasks/${task.id}`, { state: backState }); }}
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <StatusBadge status={task.status} />
@@ -826,6 +806,9 @@ export default function TaskBoard({
                         )}
                       </div>
                       <div className="text-xs text-gray-500 truncate max-w-xs">{task.description}</div>
+                      {task.depends?.length > 0 && (
+                        <DependencyChips ids={task.depends} byId={tasksByIdOf(allTasks)} linkState={backState} className="mt-1" />
+                      )}
                     </td>
                     {showWorkspaceColumn && (
                       <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-600">
@@ -887,6 +870,7 @@ export default function TaskBoard({
                         </button>
                         <Link
                           to={`/tasks/${task.id}`}
+                          state={backState}
                           className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded"
                           onClick={e => e.stopPropagation()}
                           title={t('taskBoard.openDetails')}
@@ -923,14 +907,13 @@ export default function TaskBoard({
         />
       )}
       {assignModal && (
-        <AssignAgentModal
+        <AssignExecutorModal
           task={assignModal}
-          agents={agents}
-          flows={flows}
           onClose={() => setAssignModal(null)}
           onAssigned={handleAssigned}
         />
       )}
     </div>
+    </BackStateContext.Provider>
   );
 }

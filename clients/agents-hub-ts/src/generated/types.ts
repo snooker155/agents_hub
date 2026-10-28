@@ -32,7 +32,7 @@ export type AgentCloneToWorkspace = {
 };
 
 export type AgentCreateCustom = {
-  "id": string;
+  "id"?: string;
   "name": string;
   "description"?: string;
   "domain"?: string;
@@ -161,6 +161,7 @@ export type AgentModelUpdate = {
   "max_tokens"?: number | null;
   "clear_temperature"?: boolean;
   "clear_max_tokens"?: boolean;
+  "effort"?: string | null;
   "clear_api_key"?: boolean;
 };
 
@@ -213,8 +214,16 @@ export type AgentSkillsConfigUpdate = {
   "skills_enabled": boolean;
 };
 
+export type AgentStreamingUpdate = {
+  "streaming"?: boolean;
+};
+
 export type AgentToolsUpdate = {
   "tools"?: string[];
+};
+
+export type AgentVersionPin = {
+  "version"?: number | string | null;
 };
 
 export type AgentWakeRequest = {
@@ -407,6 +416,9 @@ export type ChatRequest = {
   "agent_id"?: string | null;
   "flow_id"?: string | null;
   "team_id"?: string | null;
+  "flow_start_node"?: string | null;
+  "flow_rerun"?: Record<string, string> | null;
+  "flow_summary"?: boolean;
   "message": string;
   "workspace"?: string | null;
   "project_id"?: string | null;
@@ -417,12 +429,14 @@ export type ChatRequest = {
   "references"?: ChatReference[];
   "voice"?: boolean;
   "source"?: string | null;
+  "notice"?: Record<string, unknown> | null;
   "client_id"?: string | null;
   "client_turn_id"?: string | null;
   "view_id"?: string | null;
   "instance_id"?: string | null;
   "agent_version"?: number | null;
   "overrides"?: Record<string, unknown> | null;
+  "auto_approve"?: boolean;
 };
 
 export type CheckpointBody = {
@@ -439,6 +453,19 @@ export type ChunkBody = {
 
 export type ClaimSteeringBody = {
   "step"?: number;
+};
+
+export type ClientBody = {
+  "enabled": boolean;
+  "encrypted"?: boolean;
+  "encrypt_all"?: boolean | null;
+  "mappings"?: Record<string, unknown>[];
+};
+
+export type ClientKeyBody = {
+  "passphrase"?: string | null;
+  "generate"?: boolean;
+  "replace_unused"?: boolean;
 };
 
 export type CloseBody = {
@@ -620,6 +647,8 @@ export type DecomposeRequest = {
   "temperature"?: number | null;
   "max_tokens"?: number | null;
   "verbose"?: boolean;
+  "client_id"?: string | null;
+  "channel"?: string | null;
 };
 
 export type DefaultOutcomeUpdate = {
@@ -784,6 +813,7 @@ export type FirstRunOp = {
 export type FlowCreate = {
   "name": string;
   "description"?: string;
+  "workspace"?: string | null;
 };
 
 export type FlowDetail = {
@@ -824,6 +854,7 @@ export type FlowGenerateRequest = {
 export type FlowImport = {
   "yaml": string;
   "name"?: string | null;
+  "workspace"?: string | null;
 };
 
 export type FlowListItem = {
@@ -848,6 +879,11 @@ export type FlowPage = {
   [key: string]: unknown;
 };
 
+export type FlowRerun = {
+  "node_id": string;
+  "mode"?: string;
+};
+
 export type FlowResume = {
   "answer"?: string | null;
 };
@@ -856,12 +892,6 @@ export type FlowRun = {
   "workspace"?: string | null;
   "description"?: string | null;
   "task_id"?: string | null;
-};
-
-export type FlowRunNode = {
-  "node_id": string;
-  "workspace"?: string | null;
-  "description"?: string | null;
 };
 
 export type FlowSharingUpdate = {
@@ -890,6 +920,7 @@ export type FlowUpdate = {
   "on_error"?: string | null;
   "webhook_secret"?: string | null;
   "examples"?: string[] | Record<string, string[]> | null;
+  "ephemeral"?: boolean | null;
 };
 
 export type FromTemplateIn = {
@@ -1131,9 +1162,11 @@ export type JobCreate = {
   "catch_up"?: boolean;
   "workspace"?: string | null;
   "agent_id"?: string | null;
+  "use_agent_outcome"?: boolean;
   "flow_id"?: string | null;
   "seed"?: Record<string, unknown> | null;
   "max_concurrent"?: number;
+  "loop_id"?: string | null;
   "channels"?: string[] | null;
   "environment_id"?: string | null;
   "budget_usd"?: number | null;
@@ -1148,7 +1181,7 @@ export type JobCreate = {
   "consolidate_session_limit"?: number | null;
 };
 
-export type JobKind = "notification" | "agent_task" | "flow" | "loop" | "heartbeat" | "memory_consolidate";
+export type JobKind = "notification" | "agent_task" | "flow" | "loop" | "heartbeat" | "memory_consolidate" | "agent_run";
 
 export type JobUpdate = {
   "title"?: string | null;
@@ -1159,6 +1192,7 @@ export type JobUpdate = {
   "timezone"?: string | null;
   "catch_up"?: boolean | null;
   "agent_id"?: string | null;
+  "use_agent_outcome"?: boolean | null;
   "channels"?: string[] | null;
   "environment_id"?: string | null;
   "budget_usd"?: number | null;
@@ -1171,6 +1205,14 @@ export type JobUpdate = {
   "memory_access"?: string | null;
   "consolidate_pool_id"?: string | null;
   "consolidate_session_limit"?: number | null;
+};
+
+export type KeyBody = {
+  "key_id": string;
+  "kdf"?: string;
+  "salt": string;
+  "iterations": number;
+  "verifier": string;
 };
 
 export type KeyCreate = {
@@ -1354,6 +1396,8 @@ export type OpenBody = {
   "workspace"?: string | null;
   "conversation_id"?: string | null;
   "owner"?: string | null;
+  "flow_run_id"?: string | null;
+  "team_run_id"?: string | null;
   "timeout_s"?: number;
 };
 
@@ -1434,6 +1478,11 @@ export type PersonalNoteAdd = {
   "title": string;
   "content": string;
   "workspace"?: string | null;
+};
+
+export type PlanBody = {
+  "workspace"?: string;
+  "new_id"?: string | null;
 };
 
 export type PreviewRenewRequest = {
@@ -1538,8 +1587,17 @@ export type PullBody = {
   "name": string;
 };
 
+export type PushBody = {
+  "records"?: Record<string, unknown>[];
+};
+
 export type QueryRequest = {
   "sql": string;
+};
+
+export type RagSearchRequest = {
+  "query": string;
+  "top_k"?: number;
 };
 
 export type ReadySetBody = {
@@ -1585,6 +1643,8 @@ export type RepeatEvalIn = {
 export type ReplayRequest = {
   "provider"?: string | null;
   "model"?: string | null;
+  "client_id"?: string | null;
+  "channel"?: string | null;
 };
 
 export type RevertRequest = {
@@ -1785,6 +1845,10 @@ export type SetInboundSecret = {
   "secret"?: string | null;
 };
 
+export type SettingsBody = {
+  "enabled": boolean;
+};
+
 export type SettingsResponse = {
   "openai_api_key_masked": string;
   "anthropic_api_key_masked": string;
@@ -1821,6 +1885,8 @@ export type SettingsResponse = {
   "agent_streaming": boolean;
   "capability_guard": string;
   "capability_override_requires_container": boolean;
+  "egress_proxy"?: boolean;
+  "egress_proxy_running"?: boolean;
   "web_search_provider": string;
   "web_search_api_key_masked": string;
   "web_search_max_results": number;
@@ -1876,6 +1942,7 @@ export type SettingsUpdate = {
   "agent_streaming"?: boolean | null;
   "capability_guard"?: string | null;
   "capability_override_requires_container"?: boolean | null;
+  "egress_proxy"?: boolean | null;
   "web_search_provider"?: string | null;
   "web_search_api_key"?: string | null;
   "web_search_max_results"?: number | null;
@@ -1957,6 +2024,12 @@ export type SnippetVersionCreate = {
   "base"?: string | null;
 };
 
+export type SpaceBody = {
+  "encrypted"?: boolean;
+  "key_id"?: string | null;
+  "origin"?: string;
+};
+
 export type SpeakIn = {
   "run_id": string;
   "text"?: string;
@@ -2005,6 +2078,8 @@ export type TaskCreate = {
   "workspace"?: string | null;
   "project"?: string | null;
   "should_decompose"?: boolean;
+  "client_id"?: string | null;
+  "decompose_channel"?: string | null;
   "parent_id"?: string | null;
   "priority"?: string | null;
   "project_id"?: string | null;
@@ -2012,6 +2087,7 @@ export type TaskCreate = {
   "due_at"?: string | null;
   "agent_version"?: number | null;
   "outcome"?: Record<string, unknown> | null;
+  "use_agent_outcome"?: boolean | null;
   "file_ids"?: string[] | null;
 };
 
@@ -2097,6 +2173,7 @@ export type TaskUpdate = {
   "due_at"?: string | null;
   "agent_version"?: number | null;
   "outcome"?: Record<string, unknown> | null;
+  "use_agent_outcome"?: boolean | null;
   "file_ids"?: string[] | null;
 };
 
@@ -2205,6 +2282,12 @@ export type TriggerIn = {
   "sender"?: string;
 };
 
+export type TurnSummaryRequest = {
+  "turn_id": string;
+  "user_message"?: string;
+  "responses"?: Record<string, unknown>[];
+};
+
 export type UnloadBody = {
   "file": string;
 };
@@ -2265,6 +2348,10 @@ export type UpdateServer = {
   "capabilities"?: CapabilityClaim | null;
   "approval"?: unknown | null;
   "tool_allowlist"?: string[] | null;
+};
+
+export type UseAgentIn = {
+  "enabled": boolean;
 };
 
 export type UserCreate = {
@@ -2395,6 +2482,9 @@ export type WorkspaceListItem = {
   "name": string;
   "path": string;
   "tasks_count"?: number;
+  "agents_count"?: number;
+  "projects"?: string[];
+  "projects_count"?: number;
   "attached"?: boolean;
   "target"?: string | null;
   [key: string]: unknown;
@@ -2406,6 +2496,12 @@ export type WorkspacePersonalMemoryUpdate = {
 
 export type WorkspaceRoleUpdate = {
   "agent_id"?: string | null;
+};
+
+export type WorkspaceSyncBody = {
+  "synced": boolean;
+  "space"?: string | null;
+  "encrypted"?: boolean;
 };
 
 export type WorldGenerateIn = {
@@ -2456,6 +2552,8 @@ export type routes__loops__RunIn = {
   "workspace"?: string | null;
   "task_id"?: string | null;
   "seed"?: Record<string, unknown>;
+  "attachments"?: ChatAttachment[];
+  "references"?: ChatReference[];
 };
 
 export type routes__memory_consolidation__ApplyBody = {
@@ -2468,6 +2566,8 @@ export type routes__teams__RunIn = {
   "workspace"?: string | null;
   "task_id"?: string | null;
   "conversation_id"?: string | null;
+  "attachments"?: ChatAttachment[];
+  "references"?: ChatReference[];
 };
 
 export type routes__telegram__BindingCreate = {
@@ -2730,12 +2830,22 @@ export interface ApiPaths {
   "/api/agents/{agent_id}/skills/{skill_id}": {
     delete: { response: unknown };
   };
+  "/api/agents/{agent_id}/streaming": {
+    get: { response: unknown };
+    post: { body: AgentStreamingUpdate; response: unknown };
+  };
   "/api/agents/{agent_id}/tool-policy": {
     get: { response: unknown };
     put: { body: ToolPolicyUpdate; response: unknown };
   };
+  "/api/agents/{agent_id}/tool-visibility": {
+    get: { response: unknown };
+  };
   "/api/agents/{agent_id}/tools": {
     post: { body: AgentToolsUpdate; response: unknown };
+  };
+  "/api/agents/{agent_id}/version-pin": {
+    put: { body: AgentVersionPin; response: unknown };
   };
   "/api/agents/{agent_id}/versions": {
     get: { response: unknown };
@@ -2945,6 +3055,31 @@ export interface ApiPaths {
   "/api/browser/status": {
     get: { response: Record<string, unknown> };
   };
+  "/api/catalog/settings": {
+    get: { response: unknown };
+    put: { body: SettingsBody; response: unknown };
+  };
+  "/api/catalog/updates": {
+    get: { response: unknown };
+  };
+  "/api/catalog/{kind}": {
+    get: { response: unknown };
+  };
+  "/api/catalog/{kind}/{item_id}": {
+    get: { response: unknown };
+  };
+  "/api/catalog/{kind}/{item_id}/install": {
+    post: { body: PlanBody; response: unknown };
+  };
+  "/api/catalog/{kind}/{item_id}/plan": {
+    post: { body: PlanBody; response: unknown };
+  };
+  "/api/catalog/{kind}/{local_id}/diff": {
+    get: { response: unknown };
+  };
+  "/api/catalog/{kind}/{local_id}/update": {
+    post: { response: unknown };
+  };
   "/api/channels": {
     get: { response: unknown };
   };
@@ -3002,10 +3137,16 @@ export interface ApiPaths {
   "/api/chats/running": {
     get: { response: unknown };
   };
+  "/api/chats/search": {
+    get: { response: unknown };
+  };
   "/api/chats/{chat_id}": {
     get: { response: unknown };
     put: { body: ChatIn; response: unknown };
     delete: { response: unknown };
+  };
+  "/api/chats/{chat_id}/background": {
+    get: { response: unknown };
   };
   "/api/chats/{chat_id}/live": {
     get: { response: unknown };
@@ -3020,6 +3161,9 @@ export interface ApiPaths {
     delete: { response: unknown };
   };
   "/api/cluster/members/{member_id}/logs": {
+    get: { response: unknown };
+  };
+  "/api/cluster/stack": {
     get: { response: unknown };
   };
   "/api/connection-proposals": {
@@ -3150,6 +3294,9 @@ export interface ApiPaths {
     delete: { response: unknown };
   };
   "/api/deployment/members/{member_id}/logs": {
+    get: { response: unknown };
+  };
+  "/api/deployment/stack": {
     get: { response: unknown };
   };
   "/api/deployments/apps": {
@@ -3330,6 +3477,9 @@ export interface ApiPaths {
     get: { response: unknown };
     delete: { response: unknown };
   };
+  "/api/flow-runs/{flow_run_id}/tool-approvals": {
+    get: { response: unknown };
+  };
   "/api/flow-templates": {
     get: { response: unknown };
   };
@@ -3381,11 +3531,18 @@ export interface ApiPaths {
   "/api/flows/{flow_id}/run": {
     post: { body: FlowRun; response: unknown };
   };
-  "/api/flows/{flow_id}/run-node": {
-    post: { body: FlowRunNode; response: unknown };
-  };
   "/api/flows/{flow_id}/runs": {
     get: { response: unknown };
+  };
+  "/api/flows/{flow_id}/runs/{run_group}": {
+    get: { response: unknown };
+    delete: { response: unknown };
+  };
+  "/api/flows/{flow_id}/runs/{run_group}/rerun": {
+    post: { body: FlowRerun; response: unknown };
+  };
+  "/api/flows/{flow_id}/runs/{run_group}/summary": {
+    post: { body: TurnSummaryRequest; response: unknown };
   };
   "/api/flows/{flow_id}/sharing": {
     post: { body: FlowSharingUpdate; response: unknown };
@@ -3477,7 +3634,28 @@ export interface ApiPaths {
     put: { body: MirrorMemory; response: unknown };
   };
   "/api/hublink/sync": {
+    get: { response: unknown };
     post: { response: unknown };
+    put: { body: ClientBody; response: unknown };
+  };
+  "/api/hublink/sync/conflicts": {
+    get: { response: unknown };
+  };
+  "/api/hublink/sync/conflicts/{conflict_id}": {
+    get: { response: unknown };
+  };
+  "/api/hublink/sync/conflicts/{conflict_id}/resolve": {
+    post: { response: unknown };
+  };
+  "/api/hublink/sync/key": {
+    post: { body: ClientKeyBody; response: unknown };
+    delete: { response: unknown };
+  };
+  "/api/hublink/sync/run": {
+    post: { response: unknown };
+  };
+  "/api/hublink/sync/workspaces/{workspace}": {
+    put: { body: WorkspaceSyncBody; response: unknown };
   };
   "/api/ingest/runs": {
     post: { body: OpenRunRequest; response: unknown };
@@ -3589,8 +3767,12 @@ export interface ApiPaths {
   };
   "/api/loops/runs/{loop_run_id}": {
     get: { response: unknown };
+    delete: { response: unknown };
   };
   "/api/loops/runs/{loop_run_id}/iterations": {
+    get: { response: unknown };
+  };
+  "/api/loops/runs/{loop_run_id}/log": {
     get: { response: unknown };
   };
   "/api/loops/runs/{loop_run_id}/resume": {
@@ -3627,7 +3809,22 @@ export interface ApiPaths {
   "/api/marketplace/flows": {
     get: { response: unknown };
   };
+  "/api/marketplace/flows/{flow_id}": {
+    get: { response: unknown };
+  };
+  "/api/marketplace/loops": {
+    get: { response: unknown };
+  };
+  "/api/marketplace/loops/{loop_id}": {
+    get: { response: unknown };
+  };
   "/api/marketplace/skills": {
+    get: { response: unknown };
+  };
+  "/api/marketplace/teams": {
+    get: { response: unknown };
+  };
+  "/api/marketplace/teams/{team_id}": {
     get: { response: unknown };
   };
   "/api/mcp/servers": {
@@ -3692,6 +3889,9 @@ export interface ApiPaths {
   };
   "/api/messages/{run_id}/stop": {
     post: { response: unknown };
+  };
+  "/api/messages/{run_id}/trail": {
+    get: { response: unknown };
   };
   "/api/models": {
     get: { response: unknown };
@@ -3820,6 +4020,9 @@ export interface ApiPaths {
   };
   "/api/models/local/servers": {
     get: { response: Record<string, unknown> };
+  };
+  "/api/models/reasoning": {
+    get: { response: unknown };
   };
   "/api/models/serving/info": {
     get: { response: unknown };
@@ -4408,6 +4611,10 @@ export interface ApiPaths {
   "/api/settings/custom-backends/{backend_id}": {
     delete: { response: unknown };
   };
+  "/api/settings/member-menu": {
+    get: { response: unknown };
+    put: { body: Record<string, unknown>; response: unknown };
+  };
   "/api/settings/test-local-model": {
     post: { body: TestLocalModelRequest; response: unknown };
   };
@@ -4516,6 +4723,9 @@ export interface ApiPaths {
   "/api/shared-memory/{memory_id}/rag/reindex": {
     post: { response: unknown };
   };
+  "/api/shared-memory/{memory_id}/rag/search": {
+    post: { body: RagSearchRequest; response: unknown };
+  };
   "/api/shared-memory/{memory_id}/structured": {
     get: { response: unknown };
   };
@@ -4590,6 +4800,9 @@ export interface ApiPaths {
   "/api/stream/publish": {
     post: { body: PublishEvent; response: unknown };
   };
+  "/api/stream/replay": {
+    get: { response: unknown };
+  };
   "/api/stream/{client_id}/channels": {
     post: { body: ChannelUpdate; response: unknown };
   };
@@ -4597,6 +4810,35 @@ export interface ApiPaths {
     get: { response: unknown };
   };
   "/api/support/slo": {
+    get: { response: unknown };
+  };
+  "/api/sync/here": {
+    get: { response: unknown };
+  };
+  "/api/sync/keys": {
+    get: { response: unknown };
+    put: { body: KeyBody; response: unknown };
+  };
+  "/api/sync/keys/{key_id}": {
+    delete: { response: unknown };
+  };
+  "/api/sync/spaces": {
+    get: { response: unknown };
+  };
+  "/api/sync/spaces/{space}": {
+    put: { body: SpaceBody; response: unknown };
+    delete: { response: unknown };
+  };
+  "/api/sync/spaces/{space}/changes": {
+    get: { response: unknown };
+  };
+  "/api/sync/spaces/{space}/push": {
+    post: { body: PushBody; response: unknown };
+  };
+  "/api/sync/spaces/{space}/records": {
+    get: { response: unknown };
+  };
+  "/api/sync/spaces/{space}/records/{kind}/{record_id}": {
     get: { response: unknown };
   };
   "/api/system": {
@@ -4616,6 +4858,16 @@ export interface ApiPaths {
   };
   "/api/system/version": {
     get: { response: unknown };
+  };
+  "/api/task-planner/chat": {
+    get: { response: unknown };
+    delete: { response: unknown };
+  };
+  "/api/task-planner/generate": {
+    post: { body: ProjectTasksChat | null; response: unknown };
+  };
+  "/api/task-planner/stop": {
+    post: { response: unknown };
   };
   "/api/tasks": {
     get: { response: TaskListItem[] | TaskPage };
@@ -4645,6 +4897,7 @@ export interface ApiPaths {
     post: { body: AgentAssign; response: unknown };
   };
   "/api/tasks/{task_id}/decompose": {
+    get: { response: unknown };
     post: { body: DecomposeRequest | null; response: unknown };
   };
   "/api/tasks/{task_id}/execution-log": {
@@ -4666,6 +4919,9 @@ export interface ApiPaths {
   };
   "/api/tasks/{task_id}/outcome/grade": {
     post: { response: unknown };
+  };
+  "/api/tasks/{task_id}/outcome/use-agent": {
+    put: { body: UseAgentIn; response: unknown };
   };
   "/api/tasks/{task_id}/pause": {
     post: { response: unknown };
@@ -4692,6 +4948,9 @@ export interface ApiPaths {
   "/api/tasks/{task_id}/workspace-files": {
     get: { response: unknown };
   };
+  "/api/team-runs/{team_run_id}/tool-approvals": {
+    get: { response: unknown };
+  };
   "/api/teams": {
     get: { response: unknown };
     post: { body: TeamIn; response: unknown };
@@ -4704,6 +4963,7 @@ export interface ApiPaths {
   };
   "/api/teams/runs/{team_run_id}": {
     get: { response: unknown };
+    delete: { response: unknown };
   };
   "/api/teams/runs/{team_run_id}/messages": {
     get: { response: unknown };
@@ -4713,6 +4973,9 @@ export interface ApiPaths {
   };
   "/api/teams/runs/{team_run_id}/stop": {
     post: { response: unknown };
+  };
+  "/api/teams/runs/{team_run_id}/turns": {
+    get: { response: unknown };
   };
   "/api/teams/{team_id}": {
     get: { response: unknown };
@@ -5036,6 +5299,10 @@ export interface ApiPaths {
     delete: { response: unknown };
   };
   "/api/workspaces/{name}/model": {
+    get: { response: unknown };
+    put: { body: Record<string, unknown>; response: unknown };
+  };
+  "/api/workspaces/{name}/model-policy": {
     get: { response: unknown };
     put: { body: Record<string, unknown>; response: unknown };
   };

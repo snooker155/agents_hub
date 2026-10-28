@@ -1,10 +1,14 @@
 """`ah setup`: install and configure the whole service from the terminal.
 
-A guided first run in eight steps: how to run it (this checkout, Docker from
-the published images, Compose from the checkout, or a hub that already runs
-elsewhere), the database, who may sign in, the model providers and their
+A guided first run in ten steps: how to run it (this checkout, Docker from
+the published images, Compose from the checkout, Kubernetes with the Helm
+chart, or a hub that already runs elsewhere), how much load it carries (one
+backend, or the team topology with replicas, workers and worker hosts:
+deploy.py), the database, who may sign in, the model providers and their
 default models, the assistant's voice (speech and transcription models), a
-few features, a review, and then the work itself.
+few features, another hub to link to (catalog, two-way sync with or without
+end-to-end encryption, or its models and agents: link.py), a review, and then
+the work itself.
 
 Nothing is written until the review is confirmed. Every question is asked
 through :mod:`cli.onboard.ui`, so the same steps run from an answers file for
@@ -17,7 +21,8 @@ edits (``providers/catalog.py``), accounts through ``common/identity.py`` or,
 for a hub in Docker, through ``/api/auth/bootstrap`` and ``/api/auth/users``,
 and the ``default`` workspace's speech and transcription models (the Special
 models tab, ``providers/special.py``), with the engines and models of the
-hub's own runtime when the voice runs on this machine.
+hub's own runtime when the voice runs on this machine, and the hub link
+record with its sync settings (``hublink/store.py``, ``hubsync/client.py``).
 It holds no state of its own, so running it again is how a setting is changed
 later: every question then defaults to the value in force.
 """
@@ -42,6 +47,8 @@ from rich.columns import Columns
 from rich.table import Table
 from rich import box
 
+from cli.onboard import deploy as D
+from cli.onboard import link as L
 from cli.onboard import probe as P
 # The voice choices, shared with the assistant's guided setup in the hub.
 from cli.onboard.presets import HUB_LOCAL, VOICE_CLOUD, VOICE_LOCAL_SPEECH, VOICE_LOCAL_TRANSCRIPTION
@@ -49,12 +56,13 @@ from cli.onboard.ui import Asker, SetupError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 QUICKSTART = PROJECT_ROOT / "deploy" / "quickstart"
-STEPS = 8
+STEPS = 10
 
 SHAPES = [
     ("local", "This machine, from this checkout", "a virtualenv, `ah up`, the dashboard on :5173"),
     ("docker", "Docker, from the published images", "two files in a folder, dashboard on :8080, nothing to build"),
     ("compose", "Docker Compose, from this checkout", "built from source, plus Redis, the browser, local models"),
+    ("kubernetes", "Kubernetes, with the Helm chart", "writes values for deploy/helm/agents-hub; helm installs"),
     ("remote", "Connect to a hub that already runs", "this `ah` talks to it over its API"),
 ]
 
@@ -180,6 +188,7 @@ class Plan:
     admin: Optional[dict] = None
     users: list = field(default_factory=list)
     generated: list = field(default_factory=list)  # (label, value) shown once at the end
+    generated_notes: list = field(default_factory=list)  # warnings printed with them
     providers: dict = field(default_factory=dict)  # provider -> {model, models, presets}
     pip_extras: list = field(default_factory=list)
     remote: Optional[dict] = None
@@ -187,6 +196,26 @@ class Plan:
     # The assistant's voice: mode, the special model entries for the default
     # workspace, and what the hub's own runtime installs and downloads.
     voice: dict = field(default_factory=dict)
+    # Another hub this one links to (link.py): url, key, mode, sync mappings.
+    link: dict = field(default_factory=dict)
+    # Inside the setup container (`docker compose run --rm setup`): the folder
+    # it was started in, mounted at the same path as on the host.
+    in_docker: bool = False
+    workdir: Optional[Path] = None
+    # The production parts (deploy.py).
+    topology: str = "single"
+    api_replicas: int = 2
+    worker_replicas: int = 2
+    redis_kind: str = ""
+    blob_kind: str = ""
+    worker_hosts: list = field(default_factory=list)
+    shared_dir: str = ""
+    main_address: str = ""
+    sso: str = "none"
+    public_url: str = ""
+    keycloak: dict = field(default_factory=dict)
+    k8s: dict = field(default_factory=dict)
+    k8s_chart: Path = D.CHART
 
     def cur(self, key: str, default: str = "") -> str:
         """The value in force: what this run already decided, then the file."""
@@ -194,9 +223,33 @@ class Plan:
             return self.env[key]
         return "" if self.fresh else (self.current.get(key) or default)
 
+    def held(self, key: str) -> str:
+        """The value in force even when this run starts over from the template:
+        for what state outside the file was made with (the Postgres and
+        Keycloak volumes take their passwords on the first start only, stored
+        secrets are encrypted with the secret key), so a new value would
+        not reach that state but lock it out."""
+        return self.cur(key) or self.current.get(key) or ""
+
     @property
     def base_url(self) -> str:
-        return f"http://localhost:{self.web_port}"
+        """Where people open the hub."""
+        if self.public_url:
+            return self.public_url
+        domain = self.env.get("HUB_DOMAIN") if "https" in self.profiles else ""
+        return f"https://{domain}" if domain else f"http://localhost:{self.web_port}"
+
+    @property
+    def api_base(self) -> str:
+        """Where this process reaches the running stack: the published port,
+        through the host gateway from inside the setup container."""
+        return D.api_base(f"http://localhost:{self.web_port}", self.in_docker)
+
+    @property
+    def image_tag(self) -> str:
+        from common.version import app_version
+        version = app_version()
+        return self.cur("AGENTS_HUB_TAG") or (version if version[:1].isdigit() else "latest")
 
 
 # ---------------------------------------------------------------------------
@@ -207,33 +260,76 @@ class Plan:
 def step_install(a: Asker, plan: Plan, shape: Optional[str], directory: Optional[str],
                  advanced: bool) -> bool:
     """Returns False when the person cancels at the existing-config question."""
-    a.section(1, STEPS, "Install", "How this hub should run. Nothing is written before step 7.")
+    a.section(1, STEPS, "Install", "How this hub should run. Nothing is written before the review.")
+    shapes = SHAPES
+    if plan.in_docker:
+        # From the setup container only what it can write and start through the
+        # socket: the folder it was started in, as published images or, when
+        # that folder is a checkout, built from it; or a values file.
+        checkout = plan.workdir is not None and (plan.workdir / "Dockerfile").exists() \
+            and (plan.workdir / "dashboard").is_dir()
+        shapes = [s for s in SHAPES if s[0] in ("docker", "kubernetes") or (s[0] == "compose" and checkout)]
+    names = [s[0] for s in shapes]
     if shape:
-        if shape not in [s[0] for s in SHAPES]:
-            raise SetupError(f"--shape must be one of {', '.join(s[0] for s in SHAPES)}")
+        if shape not in names:
+            raise SetupError(f"--shape must be one of {', '.join(names)}")
         plan.shape = shape
         a.note(f"Shape: [bold]{dict((s[0], s[1]) for s in SHAPES)[shape]}[/bold]")
     else:
-        saved = _saved_remote()
-        plan.shape = a.choose("shape", "How should Agents Hub run?", SHAPES,
-                              default="remote" if saved else "local")
+        saved = {} if plan.in_docker else _saved_remote()
+        default = "remote" if saved else ("compose" if "compose" in names else "docker") if plan.in_docker \
+            else "local"
+        plan.shape = a.choose("shape", "How should Agents Hub run?", shapes, default=default)
 
     if plan.shape in ("docker", "compose") and not _has_docker():
         a.warn("No `docker` on PATH: the files will be written, and starting the stack is left to you.")
     if plan.shape == "remote":
         return True
 
-    plan.quick = not advanced and a.choose("flow", "How many questions?", [
+    plan.quick = plan.shape != "kubernetes" and not advanced and a.choose("flow", "How many questions?", [
         ("quick", "QuickStart", "only what cannot be guessed; the assistant sets up the rest with you"),
         ("advanced", "Advanced", "every choice: ports, SSO, execution, web search, RAG, extra services"),
     ], default="quick") == "quick"
 
+    if plan.shape == "kubernetes":
+        # Nothing is written to .env: what the hub needs goes into the values
+        # files, and an earlier run's files are the configuration in force.
+        plan.quick = False
+        default_dir = directory or str(plan.workdir or Path.cwd() / "agents-hub-k8s")
+        plan.target = Path(directory or (str(plan.workdir) if plan.in_docker else a.text(
+            "dir", "Folder for values.yaml and secrets.yaml", default=default_dir))).expanduser().resolve()
+        plan.env_file = plan.target / ".env.k8s"
+        plan.template = None
+        if plan.in_docker:
+            plan.k8s_chart = plan.target / D.CHART_DIR
+        existing = D.read_kubernetes(plan.target)
+        if existing is None:
+            plan.fresh = True
+            return True
+        # Read back so a rerun keeps the secret key (every stored secret is
+        # encrypted with it) and the API token, and offers the rest as defaults.
+        plan.current = existing["env"]
+        choice = _existing_choice(a, f"There are already values in {plan.target}.")
+        if choice == "cancel":
+            return False
+        plan.fresh = choice == "fresh"
+        if not plan.fresh:
+            plan.k8s = existing["k8s"]
+            plan.api_replicas, plan.worker_replicas = existing["api_replicas"], existing["worker_replicas"]
+        return True
     if plan.shape == "docker":
         default_dir = directory or str(Path.home() / "agents-hub")
-        plan.target = Path(directory or a.text("dir", "Folder for docker-compose.yml and .env",
-                                                default=default_dir)).expanduser().resolve()
+        if plan.in_docker:
+            plan.target = (Path(directory) if directory else plan.workdir).resolve()
+        else:
+            plan.target = Path(directory or a.text("dir", "Folder for docker-compose.yml and .env",
+                                                    default=default_dir)).expanduser().resolve()
         plan.env_file = plan.target / ".env"
         plan.template = QUICKSTART / "env.example"
+    elif plan.in_docker:
+        plan.target = plan.workdir
+        plan.env_file = plan.target / ".env"
+        plan.template = plan.target / ".env.example"
     else:
         plan.target = PROJECT_ROOT
         plan.env_file = PROJECT_ROOT / ".env"
@@ -248,19 +344,23 @@ def step_install(a: Asker, plan: Plan, shape: Optional[str], directory: Optional
 
     if plan.env_file.exists():
         plan.current = read_env(plan.env_file)
-        choice = a.choose("existing", f"There is already a configuration at {plan.env_file}.", [
-            ("update", "Update it", "every question defaults to the value in force"),
-            ("fresh", "Start over", "from the template; the old file is kept as a .bak copy"),
-            ("cancel", "Cancel", "change nothing"),
-        ], default="update")
+        choice = _existing_choice(a, f"There is already a configuration at {plan.env_file}.")
         if choice == "cancel":
             return False
         plan.fresh = choice == "fresh"
     return True
 
 
+def _existing_choice(a: Asker, question: str) -> str:
+    return a.choose("existing", question, [
+        ("update", "Update it", "every question defaults to the value in force"),
+        ("fresh", "Start over", "from the template; the old file is kept as a .bak copy"),
+        ("cancel", "Cancel", "change nothing"),
+    ], default="update")
+
+
 # ---------------------------------------------------------------------------
-# Step 2: the database
+# Step 3: the database (step 2, scale, is deploy.py)
 # ---------------------------------------------------------------------------
 
 
@@ -289,10 +389,13 @@ def _sqlite_has_state() -> bool:
 
 
 def step_database(a: Asker, plan: Plan) -> None:
-    a.section(2, STEPS, "Database", "Where accounts, runs, chats and the catalog are kept.")
+    a.section(3, STEPS, "Database", "Where accounts, runs, chats and the catalog are kept.")
     current_url = plan.cur("AGENTS_HUB_DATABASE_URL")
-    in_docker = plan.shape in ("docker", "compose")
-    if in_docker:
+    in_docker = plan.shape in ("docker", "compose", "kubernetes")
+    if plan.shape == "kubernetes":
+        options = [("postgres-url", "Your Postgres", "managed or in the cluster; the chart runs none")]
+        default = "postgres-url"
+    elif in_docker:
         options = [
             ("sqlite", "SQLite on the data volume", "one host, nothing else to run"),
             ("postgres-bundled", "Postgres in the same stack", "a postgres container beside the backend"),
@@ -300,19 +403,26 @@ def step_database(a: Asker, plan: Plan) -> None:
         ]
         default = ("postgres-bundled" if "@postgres:" in current_url
                    else "postgres-url" if current_url else "sqlite")
+        if plan.topology == "ha":
+            # Replicas on one SQLite file would contend for its lock; the ha
+            # profile needs a server.
+            options = options[1:]
+            default = "postgres-url" if default == "postgres-url" else "postgres-bundled"
     else:
         options = [("sqlite", "SQLite file in .agents_hub", "one machine, nothing else to run")]
         if _has_docker():
             options.append(("postgres-docker", "Postgres in a Docker container", "setup starts it for you"))
         options.append(("postgres-url", "A Postgres you already have", "managed or self-hosted, by URL"))
         default = "postgres-url" if current_url else "sqlite"
-    plan.db_kind = a.choose("database", "Which database?", options, default=default)
+    plan.db_kind = (options[0][0] if len(options) == 1 and not a.answered("database")
+                    else a.choose("database", "Which database?", options, default=default))
 
     if plan.db_kind == "sqlite":
         plan.db_url = ""
     elif plan.db_kind == "postgres-bundled":
-        plan.pg_password = plan.cur("POSTGRES_PASSWORD") if "@postgres:" in current_url else ""
-        plan.pg_password = plan.pg_password or _gen_password()
+        # Whatever the hub used before: the keycloak profile starts the same
+        # Postgres, and the server keeps the password its volume was made with.
+        plan.pg_password = plan.held("POSTGRES_PASSWORD") or _gen_password()
         plan.db_url = f"postgresql://agents_hub:{plan.pg_password}@postgres:5432/agents_hub"
         plan.env["POSTGRES_PASSWORD"] = plan.pg_password
         plan.profiles.append("postgres")
@@ -338,7 +448,7 @@ def step_database(a: Asker, plan: Plan) -> None:
             plan.db_url = a.text("database_url", "Postgres URL", default=current_url,
                                  required=True, validate=_pg_url_problem)
             if in_docker:
-                a.note("[dim]Not tested from here: the URL is the one the container will use.[/dim]")
+                a.note("[dim]Not tested from here: the URL is the one the hub will use.[/dim]")
                 break
             problem = _check_pg(plan.db_url)
             if problem is None:
@@ -370,7 +480,7 @@ def _container_exists(name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Step 3: who may use it
+# Step 4: who may use it
 # ---------------------------------------------------------------------------
 
 
@@ -413,9 +523,11 @@ def _existing_users(plan: Plan) -> Optional[int]:
             return identity.user_count()
         except Exception:  # noqa: BLE001 - unknown is a fine answer here
             return None
+    if plan.shape == "kubernetes":
+        return None
     import requests
     try:
-        r = requests.get(f"{plan.base_url}/api/auth/mode", timeout=2)
+        r = requests.get(f"{plan.api_base}/api/auth/mode", timeout=2)
         if r.ok and r.json().get("mode") == "multi":
             return 0 if r.json().get("bootstrap_required") else 1
     except (requests.RequestException, ValueError, AttributeError):
@@ -424,7 +536,7 @@ def _existing_users(plan: Plan) -> Optional[int]:
 
 
 def step_access(a: Asker, plan: Plan) -> None:
-    a.section(3, STEPS, "Access", "Who may use this hub (docs/identity.md).")
+    a.section(4, STEPS, "Access", "Who may use this hub (docs/identity.md).")
     current = (plan.cur("AUTH_MODE") or "single").lower()
     if current == "single" and plan.cur("AGENTS_HUB_API_TOKEN"):
         current = "token"
@@ -437,7 +549,7 @@ def step_access(a: Asker, plan: Plan) -> None:
 
     if plan.auth == "single":
         plan.env["AGENTS_HUB_API_TOKEN"] = ""
-        if plan.shape in ("docker", "compose"):
+        if plan.shape in ("docker", "compose", "kubernetes"):
             a.warn("Without sign-in, anyone who can reach the dashboard's port has full access to it.")
     elif plan.auth == "token":
         token = plan.cur("AGENTS_HUB_API_TOKEN")
@@ -450,7 +562,9 @@ def step_access(a: Asker, plan: Plan) -> None:
     else:
         plan.env["AGENTS_HUB_API_TOKEN"] = ""
         existing = _existing_users(plan)
-        if existing:
+        if plan.shape == "kubernetes":
+            a.note("The dashboard asks for the first administrator when it is first opened.")
+        elif existing:
             a.note("This hub already has accounts, so there is no first administrator to create. "
                    "Add people on the Accounts page or with `ah user create`.")
         else:
@@ -469,28 +583,21 @@ def step_access(a: Asker, plan: Plan) -> None:
                         ("admin", "Administrator", "everything, including accounts and settings"),
                     ], default="member")
                     plan.users.append(_ask_account(a, plan, "user", role, ""))
-        if not plan.quick and a.confirm("sso", "Set up single sign-on (OIDC: Keycloak, Entra ID, Google)?",
-                                        bool(plan.cur("AUTH_OIDC_ISSUER"))):
-            plan.env["AUTH_OIDC_ISSUER"] = a.text("oidc.issuer", "Issuer URL", default=plan.cur("AUTH_OIDC_ISSUER"),
-                                                  required=True)
-            plan.env["AUTH_OIDC_CLIENT_ID"] = a.text("oidc.client_id", "Client id",
-                                                     default=plan.cur("AUTH_OIDC_CLIENT_ID"), required=True)
-            plan.env["AUTH_OIDC_CLIENT_SECRET"] = a.secret("oidc.client_secret", "Client secret",
-                                                           current=plan.cur("AUTH_OIDC_CLIENT_SECRET"))
-            plan.env["AUTH_OIDC_PROVIDER_NAME"] = a.text("oidc.provider_name", "Name on the sign-in button",
-                                                         default=plan.cur("AUTH_OIDC_PROVIDER_NAME") or "Company SSO")
-            plan.env["AUTH_PUBLIC_URL"] = a.text("oidc.public_url", "URL people open the hub at",
-                                                 default=plan.cur("AUTH_PUBLIC_URL") or plan.base_url)
+        # Keycloak in force is asked about in QuickStart too: skipped, its
+        # profile would drop out of COMPOSE_PROFILES and sign-in go with it.
+        if (not plan.quick or plan.topology == "ha" or a.answered("sso")
+                or "keycloak" in _profiles_in_force(plan)):
+            D.step_sso(a, plan)
 
     # Encrypts workspace secrets and stored tokens at rest (docs/secrets.md).
-    # Generated once and never rotated by a re-run: changing it would make
-    # every stored secret unreadable.
+    # Generated once and never rotated by a re-run, Start over included:
+    # changing it would make every stored secret unreadable.
     if not plan.cur("AGENTS_HUB_SECRET_KEY"):
-        plan.env["AGENTS_HUB_SECRET_KEY"] = _gen_fernet_key()
+        plan.env["AGENTS_HUB_SECRET_KEY"] = plan.held("AGENTS_HUB_SECRET_KEY") or _gen_fernet_key()
 
 
 # ---------------------------------------------------------------------------
-# Step 4: providers and models
+# Step 5: providers and models
 # ---------------------------------------------------------------------------
 
 
@@ -594,7 +701,7 @@ def _configure_provider(a: Asker, plan: Plan, provider: str) -> Optional[dict]:
 
 
 def step_providers(a: Asker, plan: Plan) -> None:
-    a.section(4, STEPS, "Providers and models",
+    a.section(5, STEPS, "Providers and models",
               "The default model of each provider is the fallback every workspace inherits; "
               "the Models page curates the rest.")
     options = [(p, P.LABELS[p], "API key" if p in P.CLOUD else "a server on this machine") for p in P.PROVIDERS]
@@ -630,7 +737,7 @@ def step_providers(a: Asker, plan: Plan) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 5: the assistant's voice
+# Step 6: the assistant's voice
 # ---------------------------------------------------------------------------
 
 
@@ -643,9 +750,12 @@ def step_voice(a: Asker, plan: Plan) -> None:
     """The assistant listens and speaks with the ``default`` workspace's
     transcription and speech models; every personal workspace falls back to
     them. Saved once the hub's database (or, in Docker, its API) is there."""
-    a.section(5, STEPS, "Assistant voice",
+    a.section(6, STEPS, "Assistant voice",
               "What the assistant hears you with and reads its answers aloud with "
               "(the Special models tab of the Models page, default workspace).")
+    if plan.shape == "kubernetes":
+        a.note("Set once the hub runs: the assistant offers it, or the Models page, Special models tab.")
+        return
     if plan.quick and not a.answered("voice.mode"):
         a.note("Left to the assistant: it offers a voice on its first run in the dashboard, and the "
                "browser's own voice works until then.")
@@ -812,7 +922,7 @@ def _apply_voice_http(a: Asker, plan: Plan, session: Optional[str]) -> None:
     headers = {"Authorization": f"Bearer {token}"} if token and plan.auth != "single" else {}
 
     def call(method: str, path: str, **kw):
-        r = requests.request(method, f"{plan.base_url}{path}", headers=headers, timeout=60, **kw)
+        r = requests.request(method, f"{plan.api_base}{path}", headers=headers, timeout=60, **kw)
         if not r.ok:
             raise SetupError(f"{method} {path}: {r.status_code} {r.text[:200]}")
         return r.json() if r.content else {}
@@ -844,12 +954,35 @@ def _apply_voice_http(a: Asker, plan: Plan, session: Optional[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 6: features
+# Step 7: features
 # ---------------------------------------------------------------------------
 
 
+# Said before the execution question where agent containers cannot share the
+# hub's SQLite database with a hub run from this checkout (Docker Desktop).
+_DOCKER_DESKTOP_NOTE = (
+    "Docker mode on this machine: the hub runs from this checkout, so its database sits in a "
+    "folder Docker Desktop shares into its VM, and SQLite breaks across that boundary. Tasks, "
+    "flows, teams, loops and instances therefore run as local processes even in docker mode; "
+    "only the agents' shell commands go into containers.\n"
+    "For full isolation run the hub itself in Docker with its state on a volume:\n"
+    "  docker compose -f docker-compose.yml -f docker-compose.volume.yml up --build\n"
+    "Then:\n{how}"
+)
+
+
+def _containers_share_db() -> bool:
+    """Whether agent containers could share the database of a hub run from
+    this checkout (managers.container_manager.db_shared_with_containers)."""
+    try:
+        from managers.container_manager import db_shared_with_containers
+        return db_shared_with_containers()
+    except Exception:  # noqa: BLE001 - unknown reads as the cautious answer
+        return False
+
+
 def step_features(a: Asker, plan: Plan) -> None:
-    a.section(6, STEPS, "Features")
+    a.section(7, STEPS, "Features")
     if not plan.quick or a.answered("demo"):
         demo = a.confirm("demo", "Seed the demo workspace on the first start (four agents, chats, views)?",
                          plan.cur("DEMO_WORKSPACE") in ("1", "true", "True"))
@@ -858,6 +991,10 @@ def step_features(a: Asker, plan: Plan) -> None:
         a.note("Web search, the demo workspace, channels and the rest: the assistant offers them in the "
                "dashboard, one at a time.")
 
+    if plan.shape == "kubernetes":
+        _features_kubernetes(a, plan)
+        return
+
     if plan.shape in ("docker", "compose"):
         plan.web_port = plan.cur("WEB_PORT", "8080")
         if not plan.quick:
@@ -865,8 +1002,21 @@ def step_features(a: Asker, plan: Plan) -> None:
                                    validate=lambda v: None if v.isdigit() else "A port number")
         if plan.web_port != "8080" or plan.cur("WEB_PORT"):
             plan.env["WEB_PORT"] = plan.web_port
+    in_force = _profiles_in_force(plan)
+    if plan.shape == "docker" and (not plan.quick or plan.topology == "ha"):
+        # Caddy in the quickstart stack, with a Let's Encrypt certificate.
+        if a.confirm("https", "Serve it over HTTPS on a domain of yours (ports 80 and 443, DNS pointing here)?",
+                     "https" in in_force):
+            plan.env["HUB_DOMAIN"] = a.text("domain", "The domain", default=plan.cur("HUB_DOMAIN"), required=True)
+            plan.profiles.append("https")
+    elif plan.shape == "docker" and "https" in in_force:
+        # QuickStart on one backend does not ask, so HTTPS in force stays:
+        # COMPOSE_PROFILES is written whole, and without it Caddy would not start.
+        plan.env["HUB_DOMAIN"] = plan.cur("HUB_DOMAIN")
+        plan.profiles.append("https")
 
     if plan.quick:
+        _extra_services(a, plan, ask=False)
         return
 
     if plan.shape in ("local", "compose"):
@@ -874,6 +1024,32 @@ def step_features(a: Asker, plan: Plan) -> None:
             ("local", "As processes of the backend", "simplest"),
             ("docker", "Each in its own container", "needs a reachable Docker daemon"),
         ], default=plan.cur("AGENT_EXECUTION_MODE", "local"))
+
+    # Off by default in the service; offered on where runs are containers,
+    # since a run that is a host process can reach the network around it.
+    current = plan.cur("AGENTS_HUB_EGRESS_PROXY")
+    proxy_default = (current.lower() in ("1", "true", "yes", "on") if current
+                     else plan.env.get("AGENT_EXECUTION_MODE", plan.cur("AGENT_EXECUTION_MODE")) == "docker")
+    proxy = a.confirm("egress_proxy", "Send agents' network traffic through the hub's egress proxy? It "
+                      "enforces environment network policies, and a secret bound to hosts reaches a run "
+                      "only as a placeholder the proxy swaps for the real value", proxy_default)
+    plan.env["AGENTS_HUB_EGRESS_PROXY"] = "1" if proxy else "0"
+
+    search = a.choose("web_search", "Web search for the web_search tool", [
+        ("auto", "Automatic", "an Anthropic or OpenAI key searches through that provider; fetch_url always works"),
+        ("anthropic", "Anthropic", "its own search tool, on the model key"),
+        ("openai", "OpenAI", "its own search tool, on the model key"),
+        ("brave", "Brave Search", "API key"),
+        ("tavily", "Tavily", "API key"),
+        ("exa", "Exa", "API key"),
+    ], default=plan.cur("WEB_SEARCH_PROVIDER") or "auto")
+    if search in ("anthropic", "openai"):
+        plan.env.update({"WEB_SEARCH_PROVIDER": search})
+    elif search != "auto":
+        key = a.secret("web_search_key", "Its API key", current=plan.cur("WEB_SEARCH_API_KEY"))
+        plan.env.update({"WEB_SEARCH_PROVIDER": search, "WEB_SEARCH_API_KEY": key})
+    elif plan.cur("WEB_SEARCH_PROVIDER"):
+        plan.env.update({"WEB_SEARCH_PROVIDER": "", "WEB_SEARCH_API_KEY": ""})
 
     search = a.choose("web_search", "Web search for the web_search tool", [
         ("auto", "Automatic", "an Anthropic or OpenAI key searches through that provider; fetch_url always works"),
@@ -909,24 +1085,64 @@ def step_features(a: Asker, plan: Plan) -> None:
         plan.env["AGENTS_HUB_TAG"] = f"{tag}-rag" if rag else tag
         plan.env["RAG_VECTOR_DB"] = "chroma" if rag else "none"
 
-    if plan.shape == "compose":
-        extra = a.multi("services", "Extra services in the stack", [
-            ("browser", "Browser", "headless Chromium for the browser tools"),
-            ("scale", "Redis", "for more than one backend replica"),
-            # No entry for the model runtime: it is part of every stack (the
-            # `models` service, its token shared over its volume).
-        ], default=[p for p in ("browser", "scale")
-                    if p in (plan.cur("COMPOSE_PROFILES") or "").split(",")])
-        plan.profiles += extra
-        if "browser" in extra:
-            plan.env["AGENTS_HUB_BROWSER_URL"] = "http://browser:3000"
-            plan.env["AGENTS_HUB_BROWSER_TOKEN"] = plan.cur("AGENTS_HUB_BROWSER_TOKEN") or secrets.token_urlsafe(24)
-        if "scale" in extra:
-            plan.env["AGENTS_HUB_BROKER_URL"] = "redis://redis:6379/0"
+    _extra_services(a, plan, ask=True)
+    if plan.topology == "ha":
+        limit = a.text("rate_limit", "Requests per minute one person or API key may make (0 = no limit)",
+                       default=plan.cur("AGENTS_HUB_RATE_LIMIT_PER_MINUTE", "0"),
+                       validate=lambda v: None if v.isdigit() else "A number")
+        plan.env["AGENTS_HUB_RATE_LIMIT_PER_MINUTE"] = limit
+
+
+def _profiles_in_force(plan: Plan) -> list[str]:
+    return [p for p in (plan.cur("COMPOSE_PROFILES") or "").split(",") if p]
+
+
+def _extra_services(a: Asker, plan: Plan, ask: bool) -> None:
+    """The browser and Redis services beside the stack. QuickStart does not
+    ask (``ask`` false) and keeps the ones in force: step_review writes
+    COMPOSE_PROFILES whole, so a rerun that left them out stopped starting
+    them, and the backend kept a browser URL nothing answered."""
+    if plan.shape not in ("docker", "compose"):
+        return
+    services = [("browser", "Browser", "headless Chromium for the browser tools")]
+    if plan.shape == "compose" and plan.topology != "ha":
+        services.append(("scale", "Redis", "for more than one backend replica"))
+    in_force = [p for p, _, _ in services if p in _profiles_in_force(plan)]
+    extra = a.multi("services", "Extra services in the stack", services + [
+        # No entry for the model runtime: it is part of every stack (the
+        # `models` service, its token shared over its volume).
+    ], default=in_force) if ask else in_force
+    plan.profiles += extra
+    if "browser" in extra:
+        plan.env["AGENTS_HUB_BROWSER_URL"] = "http://browser:3000"
+        plan.env["AGENTS_HUB_BROWSER_TOKEN"] = plan.cur("AGENTS_HUB_BROWSER_TOKEN") or secrets.token_urlsafe(24)
+    if "scale" in extra:
+        # The same redis service: it asks for REDIS_PASSWORD whenever .env sets one.
+        password = plan.cur("REDIS_PASSWORD")
+        bundled = f"redis://:{password}@redis:6379/0" if password else "redis://redis:6379/0"
+        # Unasked, the URL in force stays as the person left it.
+        plan.env["AGENTS_HUB_BROKER_URL"] = bundled if ask else (plan.cur("AGENTS_HUB_BROKER_URL") or bundled)
+
+
+def _features_kubernetes(a: Asker, plan: Plan) -> None:
+    """A cluster runs agents as worker subprocesses (no host Docker socket
+    there), so no execution mode or egress proxy question; the rest as for
+    Docker, written into the values instead of .env."""
+    if a.confirm("rag", "Retrieval over workspace files (the -rag image, about 2 GB larger)?",
+                 (plan.k8s.get("tag") or "").endswith("-rag")):
+        plan.k8s["tag"] = (plan.k8s.get("tag") or plan.image_tag).removesuffix("-rag") + "-rag"
+        plan.env["RAG_VECTOR_DB"] = "chroma"
+    else:
+        plan.k8s["tag"] = (plan.k8s.get("tag") or "").removesuffix("-rag")
+        plan.env["RAG_VECTOR_DB"] = "none"
+    limit = a.text("rate_limit", "Requests per minute one person or API key may make (0 = no limit)",
+                   default=plan.cur("AGENTS_HUB_RATE_LIMIT_PER_MINUTE", "0"),
+                   validate=lambda v: None if v.isdigit() else "A number")
+    plan.env["AGENTS_HUB_RATE_LIMIT_PER_MINUTE"] = limit
 
 
 # ---------------------------------------------------------------------------
-# Step 7: review
+# Step 9: review (step 8, the linked hub, is link.py)
 # ---------------------------------------------------------------------------
 
 _SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
@@ -937,8 +1153,10 @@ def _shown(key: str, value: str) -> str:
         return "[dim](empty)[/dim]"
     if key.endswith(_SECRET_SUFFIXES):
         return P.mask(value)
-    if key == "AGENTS_HUB_DATABASE_URL":
-        return re.sub(r"://([^:@/]+):[^@]+@", r"://\1:****@", value)
+    if key.endswith("_URL"):
+        # Any URL may carry a password (the broker's has no user name before
+        # it): the review is printed before --yes or --dry-run is looked at.
+        return re.sub(r"://([^:@/]*):[^@]+@", r"://\1:****@", value)
     return value
 
 
@@ -950,9 +1168,29 @@ def actions(plan: Plan) -> list[str]:
         out.append(f"start {PG_IMAGE} as container {PG_CONTAINER} on 127.0.0.1:{plan.pg_port}")
     if plan.migrate_sqlite:
         out.append("copy the SQLite state into Postgres (ah db migrate)")
+    if plan.shape == "kubernetes":
+        out.append(f"write {plan.target / 'values.yaml'} and {plan.target / 'secrets.yaml'} (private)")
+        if plan.k8s_chart != D.CHART:
+            out.append(f"copy the chart to {plan.k8s_chart}")
+        out.append("then: " + " ".join(D.kubernetes_command(plan)))
+        return out
     if plan.shape == "docker":
         out.append(f"write {plan.target / 'docker-compose.yml'}")
     out.append(f"write {plan.env_file}" + (" (the current one is backed up)" if plan.env_file.exists() else ""))
+    if plan.topology == "ha":
+        out.append(f"write {plan.target / D.OVERLAY}: {plan.api_replicas} API and {plan.worker_replicas} worker "
+                   "replicas" + (", ports published for worker hosts" if plan.worker_hosts else ""))
+    if D.keycloak_behind_caddy(plan):
+        out.append(f"write {plan.target / 'caddy' / 'Caddyfile'}: Keycloak over HTTPS at "
+                   f"{plan.keycloak['public_url']}")
+    if plan.sso == "keycloak":
+        out.append(f"write {plan.target / 'keycloak' / 'realm.json'} (realm {D.REALM}, client {D.CLIENT_ID})")
+    for host in plan.worker_hosts:
+        out.append(f"write {plan.target / 'workers' / host['name']}: {host['replicas']} workers")
+    where, _copy = D.state_copy(plan)
+    if where:
+        out.append(f"leave the stack stopped: the hub's state has to be copied {where} first "
+                   "(the commands come at the end)")
     if plan.admin:
         names = ", ".join([plan.admin["username"] + " (admin)"] +
                           [f"{u['username']} ({u['role']})" for u in plan.users])
@@ -960,16 +1198,30 @@ def actions(plan: Plan) -> list[str]:
         out.append(f"create accounts {where}: {names}")
     if plan.shape == "local" and plan.providers:
         out.append("put the chosen models into the Models catalog, each provider's default starred")
+    if plan.sso == "keycloak" and plan.admin:
+        out.append("map the Keycloak group hub-admins to the administrator role, once the stack answers")
+    if plan.sso == "keycloak":
+        out.append(f"update the client {D.CLIENT_ID} in Keycloak (redirect URI, web origins, secret) through its "
+                   "admin API, once the stack answers")
     out += _voice_actions(plan)
+    out += L.actions(plan)
     return out
 
 
 def step_review(a: Asker, plan: Plan) -> None:
-    a.section(7, STEPS, "Review")
-    if plan.profiles:
+    a.section(9, STEPS, "Review")
+    if plan.shape == "kubernetes":
+        pass
+    elif plan.profiles:
         plan.env["COMPOSE_PROFILES"] = ",".join(dict.fromkeys(plan.profiles))
     elif plan.shape in ("docker", "compose") and plan.cur("COMPOSE_PROFILES"):
         plan.env["COMPOSE_PROFILES"] = ""
+    if plan.shape in ("docker", "compose"):
+        if D.needs_overlay(plan):
+            plan.env["COMPOSE_FILE"] = f"docker-compose.yml:{D.OVERLAY}"
+        elif plan.cur("COMPOSE_FILE"):
+            # Nothing to overlay any more: the file would still scale the stack.
+            plan.env["COMPOSE_FILE"] = "docker-compose.yml"
     table = Table(box=box.SIMPLE, show_header=True, pad_edge=False)
     table.add_column("setting", style="bold")
     table.add_column("value")
@@ -985,7 +1237,7 @@ def step_review(a: Asker, plan: Plan) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step 8: apply
+# Step 10: apply
 # ---------------------------------------------------------------------------
 
 
@@ -1074,11 +1326,11 @@ def _wait_healthy(a: Asker, base: str, seconds: int = 300) -> bool:
 def _bootstrap_http(a: Asker, plan: Plan) -> Optional[str]:
     """Create the accounts through the API; returns the admin's session token."""
     import requests
-    mode = requests.get(f"{plan.base_url}/api/auth/mode", timeout=10).json()
+    mode = requests.get(f"{plan.api_base}/api/auth/mode", timeout=10).json()
     if not mode.get("bootstrap_required"):
         a.note("The hub already has accounts; none were created.")
         return None
-    r = requests.post(f"{plan.base_url}/api/auth/bootstrap", timeout=20, json={
+    r = requests.post(f"{plan.api_base}/api/auth/bootstrap", timeout=20, json={
         "username": plan.admin["username"], "password": plan.admin["password"],
         "display_name": plan.admin["display_name"]})
     if not r.ok:
@@ -1087,7 +1339,7 @@ def _bootstrap_http(a: Asker, plan: Plan) -> Optional[str]:
     token = r.json().get("token")
     a.ok(f"Account {plan.admin['username']} (admin).")
     for u in plan.users:
-        r = requests.post(f"{plan.base_url}/api/auth/users", timeout=20,
+        r = requests.post(f"{plan.api_base}/api/auth/users", timeout=20,
                           headers={"Authorization": f"Bearer {token}"},
                           json={"username": u["username"], "password": u["password"], "role": u["role"],
                                 "display_name": u["display_name"]})
@@ -1096,6 +1348,20 @@ def _bootstrap_http(a: Asker, plan: Plan) -> Optional[str]:
         else:
             a.warn(f"{u['username']}: {r.text[:200]}")
     return token
+
+
+def _map_admin_group(a: Asker, plan: Plan, token: Optional[str]) -> None:
+    """People in the realm's hub-admins group sign in as administrators."""
+    import requests
+    if not token:
+        return
+    r = requests.post(f"{plan.api_base}/api/auth/group-mappings", timeout=20,
+                      headers={"Authorization": f"Bearer {token}"},
+                      json={"group_name": "hub-admins", "target": "role", "role": "admin"})
+    if r.ok:
+        a.ok("Keycloak group hub-admins signs in as administrators.")
+    else:
+        a.warn(f"Could not map the group hub-admins: {r.text[:200]}")
 
 
 def apply_local(a: Asker, plan: Plan) -> None:
@@ -1129,6 +1395,7 @@ def apply_local(a: Asker, plan: Plan) -> None:
     if plan.providers:
         _apply_catalog(a, plan)
     _apply_voice_local(a, plan)
+    L.apply_local(a, plan)
     if _saved_remote():
         _forget_remote()
         a.note("This `ah` no longer points at the remote hub saved earlier; it runs this checkout.")
@@ -1146,12 +1413,18 @@ def apply_docker(a: Asker, plan: Plan, start: bool) -> bool:
         a.ok(f"Wrote {compose}.")
     backup = write_env(plan.env_file, plan.template, plan.env, plan.fresh)
     a.ok(f"Wrote {plan.env_file}" + (f" (previous: {backup.name})" if backup else "") + ".")
+    D.write_compose_extras(a, plan)
     if not start:
         return False
     cmd = ["docker", "compose", "up", "-d"] + (["--build"] if plan.shape == "compose" else [])
-    _run(a, cmd, cwd=plan.target)
-    if not _wait_healthy(a, plan.base_url):
-        a.warn(f"{plan.base_url} did not answer in time; see `docker compose logs backend`.")
+    # docker-compose.yml resolves HOST_PROJECT_ROOT from $PWD, which compose
+    # takes from the environment, not from the directory it runs in; from the
+    # setup container that is /app, and agent containers would mount paths
+    # that do not exist on the host.
+    _run(a, cmd, cwd=plan.target, env={**os.environ, "PWD": str(plan.target)})
+    if not _wait_healthy(a, plan.api_base):
+        logs = "backend-api" if plan.topology == "ha" else "backend"
+        a.warn(f"{plan.base_url} did not answer in time; see `docker compose logs {logs}`.")
         return False
     a.ok(f"The hub answers at {plan.base_url}.")
     return True
@@ -1246,22 +1519,39 @@ def run_remote(a: Asker) -> None:
 def _farewell(a: Asker, plan: Plan, started: bool) -> None:
     if plan.generated:
         body = "\n".join(f"[bold]{label}:[/bold] {value}" for label, value in plan.generated)
+        body += "".join(f"\n[yellow]{note}[/yellow]" for note in plan.generated_notes)
         a.panel(body + "\n[dim]Shown once. Store them now.[/dim]", title="Generated credentials", style="yellow")
     lines = []
+    if plan.shape == "kubernetes":
+        if not started:
+            lines += [" ".join(D.kubernetes_command(plan))]
+        lines += [f"open {D.kubernetes_values(plan)[0]['env']['AUTH_PUBLIC_URL']}",
+                  f"kubectl -n {plan.k8s['namespace']} get pods",
+                  "ah setup --shape kubernetes      change any of this later"]
+        a.panel("\n".join(lines), title="Next", style="green")
+        return
+    lines += D.worker_host_notes(plan)
+    where, move = D.state_copy(plan) if not started else ("", [])
+    if move:
+        lines += [f"Copy the hub's state {where} before starting (it reads it from there now):"]
+        lines += [f"  {line}" for line in move]
+    if plan.sso == "keycloak":
+        lines += [f"Keycloak: {plan.keycloak['public_url']}/admin (user admin). Add people to the realm "
+                  f"{D.REALM}; the group hub-admins makes administrators."]
     if plan.shape == "local":
         lines += ["ah up                     backend on :8000, dashboard on :5173"]
     elif not started:
         lines += [f"cd {plan.target}", "docker compose up -d" + (" --build" if plan.shape == "compose" else "")]
     lines += [f"open {'http://localhost:5173' if plan.shape == 'local' else plan.base_url}",
               "ah doctor                 check every part" if plan.shape == "local" else
-              "docker compose logs -f backend",
+              "docker compose logs -f " + ("backend-api" if plan.topology == "ha" else "backend"),
               "ah setup                  change any of this later"]
     # From here the assistant leads (common/setup_guide.py): the welcome window
     # hands over to it, or asks for a model key first when none was given.
-    lines += ["", "In the dashboard, choose Talk or Type in the welcome window: the assistant takes you",
-              "through the rest of the setup (the default model, its voice, web search, channels, a first",
-              "agent and task)." if plan.providers else
-              "through the rest. It asks for a model key first, since none was given here."]
+    lines += ["", "In the dashboard, choose Talk or Type in the welcome window: the assistant takes you"]
+    lines += (["through the rest of the setup (the default model, its voice, web search, channels, a first",
+               "agent and task)."] if plan.providers else
+              ["through the rest. It asks for a model key first, since none was given here."])
     a.panel("\n".join(lines), title="Next", style="green")
 
 
@@ -1273,9 +1563,31 @@ def _banner(a: Asker) -> None:
 
 
 def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = None, advanced: bool = False,
-        dry_run: bool = False, yes: bool = False, no_start: bool = False) -> int:
+        dry_run: bool = False, yes: bool = False, no_start: bool = False, in_docker: bool = False,
+        workdir: Optional[str] = None) -> int:
     _banner(a)
-    plan = Plan()
+    plan = Plan(in_docker=in_docker, workdir=Path(workdir).resolve() if workdir else None)
+    if in_docker and plan.workdir is None:
+        raise SetupError("--in-docker needs --workdir, the folder the container was started in")
+    began = time.time()
+    try:
+        return _run_steps(a, plan, shape, directory, advanced, dry_run, yes, no_start)
+    finally:
+        if plan.in_docker:
+            D.hand_back(plan.target, began)
+
+
+def _step_scale(a: Asker, plan: Plan) -> None:
+    if plan.shape in ("docker", "compose", "kubernetes"):
+        D.step_scale(a, plan, 2, STEPS)
+        return
+    a.section(2, STEPS, "Scale")
+    a.note("One backend from this checkout. The team topology (replicas, workers, worker hosts) runs in "
+           "Docker: choose Docker or Compose in step 1.")
+
+
+def _run_steps(a: Asker, plan: Plan, shape: Optional[str], directory: Optional[str], advanced: bool,
+               dry_run: bool, yes: bool, no_start: bool) -> int:
     if not step_install(a, plan, shape, directory, advanced):
         a.note("Cancelled; nothing was changed.")
         return 0
@@ -1283,11 +1595,13 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
         run_remote(a)
         return 0
 
+    _step_scale(a, plan)
     step_database(a, plan)
     step_access(a, plan)
     step_providers(a, plan)
     step_voice(a, plan)
     step_features(a, plan)
+    L.step_link(a, plan, 8, STEPS)
     step_review(a, plan)
     if dry_run:
         a.note("[bold]Dry run[/bold]: nothing was written.")
@@ -1296,8 +1610,14 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
         a.note("Cancelled; nothing was changed.")
         return 0
 
-    a.section(8, STEPS, "Applying")
+    a.section(10, STEPS, "Applying")
     started = False
+    if plan.shape == "kubernetes":
+        run_helm = (not no_start and not plan.in_docker and shutil.which("helm") is not None
+                    and a.confirm("start", "Install it now (helm upgrade --install)?", True))
+        started = D.apply_kubernetes(a, plan, run_helm)
+        _farewell(a, plan, started)
+        return 0
     if plan.shape == "local":
         apply_local(a, plan)
         _farewell(a, plan, started)
@@ -1306,15 +1626,32 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
             os.execv(sys.executable, [sys.executable, "-m", "cli", "up"])
         return 0
 
-    start = (not no_start and _has_docker()
+    where, move = D.state_copy(plan)
+    if move and not no_start:
+        # Started now, the hub would open on a state without the one in use
+        # (a new, empty one in the shared directory, or the old one in its own
+        # volume), and copying it in afterwards would mix the two.
+        a.warn(f"Not starting the stack: the hub's state has to be copied {where} first "
+               "(the commands are below).")
+    start = (not no_start and not move and _has_docker()
              and a.confirm("start", "Start it now (docker compose up)?", True))
     started = apply_docker(a, plan, start)
     session = None
     if started and plan.admin:
         session = _bootstrap_http(a, plan)
+    if started and plan.sso == "keycloak":
+        _map_admin_group(a, plan, session)
+        D.sync_keycloak_client(a, plan)
+    elif D.keycloak_realm_changed(plan):
+        a.warn("Keycloak keeps the realm it imported first, so the client there still has the old "
+               "redirect URI or secret.")
+        for line in D.keycloak_manual_steps(plan):
+            a.note(line)
     if started:
         _apply_voice_http(a, plan, session)
-    if started and a.confirm("point_cli", "Point this `ah` at it, so commands go to the stack?", True):
+        L.apply_http(a, plan, session)
+    # The CLI inside the setup container is thrown away with it.
+    if started and not plan.in_docker and a.confirm("point_cli", "Point this `ah` at it, so commands go to the stack?", True):
         try:
             connect_remote(a, plan.base_url, session_token=session,
                            api_token=plan.env.get("AGENTS_HUB_API_TOKEN", ""))
@@ -1329,5 +1666,8 @@ def run(a: Asker, *, shape: Optional[str] = None, directory: Optional[str] = Non
     if not started and plan.voice.get("speech"):
         a.note("The assistant's voice is set once the stack runs: run `ah setup` again then, or add it on "
                "the Models page, Special models tab.")
+    if not started and plan.link:
+        a.note("The linked hub is set once the stack runs: run `ah setup` again then, or set it in "
+               "Settings, Remote hub.")
     _farewell(a, plan, started)
     return 0

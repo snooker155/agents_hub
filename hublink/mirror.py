@@ -24,6 +24,11 @@ to it. The drainer (:func:`drain`, run every few seconds by
 batches and deletes the markers that went through. A remote that is down
 costs nothing but a growing outbox, capped at :data:`MAX_OUTBOX`.
 
+While two-way sync is on (hubsync/), nothing is mirrored at all, runs
+included: sync carries those records itself, and a mirror in clear would
+send an encrypted space's runs to the remote as readable spans
+(``store.mirror_enabled`` says no, and the link store keeps the switches off).
+
 Nothing is read back, and nothing mirrored is mirrored again: a run the hub
 only reported in (``origin`` ``ingest``) and a chat that is itself a mirror
 (``origin`` ``mirror``) are skipped, so two hubs linked to each other do not
@@ -111,7 +116,9 @@ def on_run_finished(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -> None:
 
 def on_chat_saved(chat_id: str, origin: Optional[str] = None) -> None:
     try:
-        if not chat_id or str(origin or "") == "mirror":
+        # A mirror copy, or a chat another hub synced in (hubsync/): neither
+        # is this hub's to send on.
+        if not chat_id or str(origin or "") in ("mirror", "sync"):
             return
         if not store.mirror_enabled("chats"):
             return
@@ -172,7 +179,7 @@ def _send_chats(doc: Dict[str, Any], ids: List[str]) -> Dict[str, str]:
     chats = []
     for chat_id in ids:
         chat = _chat_doc(chat_id)
-        if chat is not None and str(chat.get("origin") or "") != "mirror":
+        if chat is not None and str(chat.get("origin") or "") not in ("mirror", "sync"):
             chats.append(chat)
     if not chats:
         return {}
@@ -235,7 +242,10 @@ def drain(*, force: bool = False, limit: int = BATCH) -> Dict[str, int]:
         sent = failed = skipped = 0
         for key, d in batch:
             kind = str(d.get("kind") or "")
-            if kind not in _SENDERS or not doc.get("mirror", {}).get(_KIND_SWITCH[kind]):
+            # mirror_enabled, not the raw switch: it also says no while
+            # two-way sync is on, so a marker queued before sync was turned
+            # on is dropped instead of sent.
+            if kind not in _SENDERS or not store.mirror_enabled(_KIND_SWITCH[kind], doc):
                 _outbox.delete(key)
                 skipped += 1
                 continue

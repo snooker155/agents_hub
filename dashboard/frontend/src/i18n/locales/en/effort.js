@@ -1,0 +1,33 @@
+// Reasoning effort (providers/reasoning_profile.py): the agent's Model tab,
+// the header's model picker and the Models page.
+export default {
+  label: 'Reasoning effort',
+  levels: {
+    off: 'Off',
+    none: 'None',
+    minimal: 'Minimal',
+    low: 'Low',
+    medium: 'Medium',
+    high: 'High',
+    xhigh: 'Extra high',
+    max: 'Max',
+  },
+  inherit: 'Inherit',
+  inheritValue: 'Inherit: {{value}} ({{source}})',
+  sources: {
+    agent: 'this agent',
+    workspace: 'header',
+    model: 'model default',
+    provider: 'provider default',
+  },
+  unsupported: 'This model takes no reasoning effort.',
+  clamped: '{{requested}} is not available on this model, so it runs at {{value}}.',
+  agentHint: 'How much the model reasons before it answers. Inherit takes the effort chosen in the header (when the model is inherited too), then the model’s default on the Models page, then the provider’s.',
+  headerTitle: 'Reasoning effort',
+  headerHint: 'For agents that inherit the model and set no effort of their own.',
+  headerAuto: 'Model',
+  headerDefault: 'Model default ({{value}})',
+  modelDefault: 'Provider ({{value}})',
+  modelHint: 'This model’s default reasoning effort. Empty = the provider’s default. The header’s choice and an agent’s own effort win over it. Off sends: {{off}}.',
+  offNothing: 'nothing',
+};

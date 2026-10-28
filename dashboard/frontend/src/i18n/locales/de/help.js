@@ -3,7 +3,7 @@ export default {
   open: 'Hilfe öffnen',
   openHint: 'Nicht sicher, wie es weitergeht? Hier fragen',
   title: 'Hilfe',
-  subtitle: 'Der Support Agent: was der Hub kann und was als Nächstes einzurichten ist',
+  subtitle: 'Der Support Agent',
   close: 'Hilfe schließen',
   widen: 'Breiter',
   narrow: 'Schmaler',

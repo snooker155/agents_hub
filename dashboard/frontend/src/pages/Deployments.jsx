@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import {
@@ -20,14 +20,17 @@ import {
   getWorkspaceSecrets,
 } from '../api';
 import { getAgentVersions } from '../api/agentVersions';
-import { listWorkspaceFiles, uploadWorkspaceFileObject } from '../api/files';
-import { Activity, AlertCircle, AlertTriangle, Bot, CheckCircle, Clock, History, Loader, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, RotateCw, Trash2, Upload, Workflow, X, XCircle, Zap } from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, Bot, CheckCircle, Clock, History, Loader, MessageSquare, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, RotateCw, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { DeployStatusPill } from '../components/projects/DeployPanel';
 import { listDeployedApps } from '../api';
 import { useI18n } from '../i18n';
 import CronHint from '../components/CronHint';
+import AgentPicker from '../components/chat/AgentPicker';
+import FileIdsField from '../components/files/FileIdsField';
+import { agentJobStats } from '../components/chat/agentPickerModel';
+import { describeRecurrence, RECURRENCE_OPTIONS } from '../lib/recurrenceText';
 
 // Project deployments (docs/project-deployments.md): the apps the hub runs
 // for projects of this workspace, each opening on its project's Deploy tab.
@@ -104,6 +107,7 @@ function StatusBadge({ status, pausedReason, t }) {
 }
 
 function KindIcon({ kind }) {
+  if (kind === 'agent_run') return <MessageSquare className="w-3.5 h-3.5" />;
   if (kind === 'flow') return <Workflow className="w-3.5 h-3.5" />;
   if (kind === 'loop') return <RotateCw className="w-3.5 h-3.5" />;
   // A proactive agent's pulse (docs/proactive.md): owned by the agent's
@@ -134,7 +138,6 @@ function isoToLocalInput(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const RECURRENCE_OPTIONS = ['none', 'hourly', 'daily', 'weekly', 'cron'];
 
 function browserTimezone() {
   try {
@@ -150,7 +153,8 @@ function targetLabel(job, agents, flows, loops) {
     return f?.name || job.flow_id || '—';
   }
   if (job.kind === 'loop') {
-    const l = loops.find((x) => x.id === job.loop_id);
+    // The loops API names a loop by loop_id, not id.
+    const l = loops.find((x) => (x.loop_id || x.id) === job.loop_id);
     return l?.name || job.loop_id || '—';
   }
   const a = agents.find((x) => x.id === job.agent_id);
@@ -161,11 +165,18 @@ function targetLabel(job, agents, flows, loops) {
 
 const NO_VERSIONS = [];
 
+// The kinds that run one agent: an agent run (a turn in a new conversation,
+// no task) and an agent task. Both take an agent, a version pin and the
+// deployment's resources.
+const AGENT_KINDS = ['agent_run', 'agent_task'];
 
-function DeploymentModal({ job, agents, flows, loops, environments, resources, workspace, onClose, onSaved }) {
+
+function DeploymentModal({ job, jobs, agents, flows, loops, environments, resources, workspace, onClose, onSaved }) {
   const { t } = useI18n();
+  const agentStats = useMemo(() => agentJobStats(jobs), [jobs]);
   const isEdit = !!job;
-  const [kind, setKind] = useState(job?.kind || 'agent_task');
+  const [kind, setKind] = useState(job?.kind || 'agent_run');
+  const agentKind = AGENT_KINDS.includes(kind);
   const [title, setTitle] = useState(job?.title || '');
   const [message, setMessage] = useState(job?.message || '');
   const [runAt, setRunAt] = useState(job ? isoToLocalInput(job.run_at) : '');
@@ -183,20 +194,15 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
   // change of agent never shows the last agent's list.
   const [versionsOf, setVersionsOf] = useState({ agentId: '', list: [] });
   const [autoPauseAfter, setAutoPauseAfter] = useState(job?.auto_pause_after ?? 3);
-  // The deployment's resources (agent_task only, docs/deployments.md
-  // "Resources"): copied onto every task the job creates, never onto the
-  // agent record.
+  // The deployment's resources (agent runs and tasks, docs/deployments.md
+  // "Resources"): copied onto every task the job creates, or handed to the
+  // turn an agent run starts; never onto the agent record.
   const [projectId, setProjectId] = useState(job?.project_id || '');
   const [fileIds, setFileIds] = useState(job?.file_ids || []);
   const [secretNames, setSecretNames] = useState(job?.secrets || []);
   const [newSecret, setNewSecret] = useState('');
   const [memoryPoolIds, setMemoryPoolIds] = useState(job?.memory_pool_ids || []);
   const [memoryAccess, setMemoryAccess] = useState(job?.memory_access || 'read');
-  const [fileQuery, setFileQuery] = useState('');
-  // Files uploaded from this form, on top of the workspace list the page
-  // loaded, so a fresh upload is selectable at once.
-  const [uploadedFiles, setUploadedFiles] = useState([]);
-  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -205,16 +211,16 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
   // still names it) — either way, the version list is this agent's own, so a
   // change of agent on create clears whatever version was picked for the last one.
   const pinnedAgentId = isEdit ? (job?.agent_id || '') : agentId;
-  const agentVersions = pinnedAgentId && kind === 'agent_task' && versionsOf.agentId === pinnedAgentId
+  const agentVersions = pinnedAgentId && agentKind && versionsOf.agentId === pinnedAgentId
     ? versionsOf.list : NO_VERSIONS;
   useEffect(() => {
-    if (!pinnedAgentId || kind !== 'agent_task') return undefined;
+    if (!pinnedAgentId || !agentKind) return undefined;
     let cancelled = false;
     getAgentVersions(pinnedAgentId)
       .then(({ data }) => { if (!cancelled) setVersionsOf({ agentId: pinnedAgentId, list: data?.versions || [] }); })
       .catch(() => { if (!cancelled) setVersionsOf({ agentId: pinnedAgentId, list: [] }); });
     return () => { cancelled = true; };
-  }, [pinnedAgentId, kind]);
+  }, [pinnedAgentId, agentKind]);
   // Another agent picked on create: the version chosen for the last one goes
   // (adjusted while rendering, not in an effect).
   const [seenAgentId, setSeenAgentId] = useState(agentId);
@@ -226,6 +232,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
   const handleSave = async () => {
     if (!title.trim()) { setError(t('deployments.errors.titleRequired')); return; }
     if (!runAt) { setError(t('deployments.errors.timeRequired')); return; }
+    if (kind === 'agent_run' && !agentId && !isEdit) { setError(t('deployments.errors.pickAgent')); return; }
     if (kind === 'flow' && !flowId) { setError(t('deployments.errors.pickFlow')); return; }
     if (kind === 'loop' && !loopId) { setError(t('deployments.errors.pickLoop')); return; }
     if (recurrence === 'cron' && !cron.trim()) { setError(t('deployments.errors.cronRequired')); return; }
@@ -242,16 +249,16 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
         catch_up: catchUp,
         environment_id: environmentId || null,
         budget_usd: budgetUsd === '' ? null : Number(budgetUsd),
-        // Only meaningful together with an agent_id, on an agent_task job.
-        agent_version: kind === 'agent_task' && agentVersion !== '' ? Number(agentVersion) : null,
+        // Only meaningful together with an agent_id, on a job that runs one agent.
+        agent_version: agentKind && agentVersion !== '' ? Number(agentVersion) : null,
         auto_pause_after: Number(autoPauseAfter) || 0,
-        // Resources apply to agent task jobs only; a flow or loop job sends
-        // them empty so the server has nothing to refuse.
-        project_id: kind === 'agent_task' ? (projectId || null) : null,
-        file_ids: kind === 'agent_task' ? fileIds : [],
-        secrets: kind === 'agent_task' ? secretNames : [],
-        memory_pool_ids: kind === 'agent_task' ? memoryPoolIds : [],
-        memory_access: kind === 'agent_task' ? memoryAccess : null,
+        // Resources apply to agent runs and tasks only; a flow or loop job
+        // sends them empty so the server has nothing to refuse.
+        project_id: agentKind ? (projectId || null) : null,
+        file_ids: agentKind ? fileIds : [],
+        secrets: agentKind ? secretNames : [],
+        memory_pool_ids: agentKind ? memoryPoolIds : [],
+        memory_access: agentKind ? memoryAccess : null,
       };
       if (isEdit) {
         await updatePlanJob(job.id, shared);
@@ -260,7 +267,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           kind,
           ...shared,
           workspace: workspace || null,
-          agent_id: kind === 'agent_task' ? (agentId || null) : null,
+          agent_id: agentKind ? (agentId || null) : null,
           flow_id: kind === 'flow' ? flowId : null,
           loop_id: kind === 'loop' ? loopId : null,
         });
@@ -286,6 +293,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
         {!isEdit && (
           <div className="flex gap-2">
             {[
+              { value: 'agent_run', label: t('deployments.kinds.agentRun'), icon: MessageSquare },
               { value: 'agent_task', label: t('deployments.kinds.agentTask'), icon: Bot },
               { value: 'flow', label: t('deployments.kinds.flow'), icon: Workflow },
               { value: 'loop', label: t('deployments.kinds.loop'), icon: RotateCw },
@@ -316,17 +324,30 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           />
         </div>
 
-        {!isEdit && kind === 'agent_task' && (
+        {!isEdit && agentKind && (
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.agent')}</label>
-            <select
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
+            {/* The same picker as the Plan form: search, domains, own and
+                system agents, the agents already deployed first. A task can
+                be left to the orchestrator; a run needs its agent. */}
+            <AgentPicker
+              variant="field"
+              agents={agents}
               value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
-            >
-              <option value="">{t('deployments.letTheOrchestratorDecide')}</option>
-              {agents.map((a) => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
-            </select>
+              onChange={setAgentId}
+              placeholder={t('deployments.selectAnAgent')}
+              noneOption={kind === 'agent_task'
+                ? { label: t('deployments.letTheOrchestratorDecide'), hint: t('plan.agentPicker.orchestratorHint') }
+                : null}
+              recent={agentStats.recent}
+              counts={agentStats.counts}
+              labels={{
+                recent: t('deployments.agentPicker.deployed'),
+                count: t('deployments.agentPicker.count'),
+                pick: t('plan.agentPicker.pick'),
+                current: t('plan.agentPicker.current'),
+              }}
+            />
           </div>
         )}
         {!isEdit && kind === 'flow' && (
@@ -351,13 +372,13 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
               onChange={(e) => setLoopId(e.target.value)}
             >
               <option value="">{t('deployments.selectALoop')}</option>
-              {(loops || []).map((l) => <option key={l.id} value={l.id}>{l.name || l.id}</option>)}
+              {(loops || []).map((l) => <option key={l.loop_id || l.id} value={l.loop_id || l.id}>{l.name || l.loop_id || l.id}</option>)}
             </select>
           </div>
         )}
 
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.message')}</label>
+          <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{kind === 'agent_run' ? t('deployments.runMessage') : t('deployments.message')}</label>
           <textarea
             rows={3}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
@@ -383,7 +404,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
               value={recurrence}
               onChange={(e) => setRecurrence(e.target.value)}
             >
-              {RECURRENCE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              {RECURRENCE_OPTIONS.map((r) => <option key={r} value={r}>{t(`components.recurrence.options.${r}`)}</option>)}
             </select>
           </div>
         </div>
@@ -466,7 +487,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           </div>
         </div>
 
-        {kind === 'agent_task' && (() => {
+        {agentKind && (() => {
           const toggleIn = (list, setList, id) => setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
           const SECRET_RE = /^[A-Z][A-Z0-9_]*$/;
           const addSecret = () => {
@@ -477,36 +498,12 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
             setNewSecret('');
           };
           const knownSecrets = [...new Set([...(resources?.secrets || []), ...secretNames])];
-          const q = fileQuery.trim().toLowerCase();
-          const known = new Set((resources?.files || []).map((f) => f.id));
-          const allFiles = [...uploadedFiles.filter((f) => !known.has(f.id)), ...(resources?.files || [])];
-          const files = allFiles.filter((f) => !q || (f.filename || f.name || f.id || '').toLowerCase().includes(q) || fileIds.includes(f.id));
-          const onUpload = async (e) => {
-            const picked = Array.from(e.target.files || []);
-            e.target.value = '';
-            if (!picked.length) return;
-            setUploading(true);
-            setError('');
-            try {
-              for (const file of picked) {
-                const { data } = await uploadWorkspaceFileObject(workspace || 'default', file, { source: 'deployment' });
-                if (data?.id) {
-                  setUploadedFiles((prev) => (prev.some((f) => f.id === data.id) ? prev : [data, ...prev]));
-                  setFileIds((prev) => (prev.includes(data.id) ? prev : [...prev, data.id]));
-                }
-              }
-            } catch (err) {
-              setError(err?.response?.data?.detail || t('deployments.errors.uploadFailed'));
-            } finally {
-              setUploading(false);
-            }
-          };
           const chipCls = (on) => `px-2.5 py-1 rounded-full text-xs font-semibold border ${on ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`;
           return (
             <div className="rounded-lg border border-gray-200 p-3 space-y-3" data-testid="deployment-resources">
               <div>
                 <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">{t('deployments.resources')}</div>
-                <p className="text-xs text-gray-500 mt-0.5">{t('deployments.resourcesHint')}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{kind === 'agent_run' ? t('deployments.resourcesHintRun') : t('deployments.resourcesHint')}</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.project')}</label>
@@ -521,33 +518,15 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
                 </select>
               </div>
               <div>
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <label className="block text-xs font-medium text-gray-500 uppercase tracking-wider">{t('deployments.files')} {fileIds.length ? `(${fileIds.length})` : ''}</label>
-                  <div className="flex items-center gap-2">
-                    {allFiles.length > 8 && (
-                      <input type="search" value={fileQuery} onChange={(e) => setFileQuery(e.target.value)} placeholder={t('deployments.filesSearch')}
-                        className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none" />
-                    )}
-                    {/* Upload straight from the form: the file lands in the
-                        workspace's file store and is selected here at once. */}
-                    <label className={`relative inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer ${uploading ? 'opacity-50 cursor-wait' : 'hover:bg-gray-50'} border-gray-200 text-gray-700`}>
-                      {uploading ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                      {t('deployments.uploadFile')}
-                      <input type="file" multiple className="sr-only" onChange={onUpload} disabled={uploading} aria-label={t('deployments.uploadFile')} />
-                    </label>
-                  </div>
-                </div>
-                {files.length === 0 ? (
-                  <p className="text-xs text-gray-400 italic">{t('deployments.noFiles')}</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                    {files.slice(0, 60).map((f) => (
-                      <button key={f.id} type="button" onClick={() => toggleIn(fileIds, setFileIds, f.id)} className={chipCls(fileIds.includes(f.id))} title={f.id}>
-                        {f.filename || f.name || f.id}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.files')} {fileIds.length ? `(${fileIds.length})` : ''}</label>
+                {/* The picked files as chips, and the workspace file dialog
+                    (search on the server, many at once, upload) to add more. */}
+                <FileIdsField
+                  workspace={workspace || 'default'}
+                  value={fileIds}
+                  onChange={setFileIds}
+                  uploadSource="deployment"
+                />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">{t('deployments.secrets')} {secretNames.length ? `(${secretNames.length})` : ''}</label>
@@ -600,7 +579,7 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
           );
         })()}
 
-        {kind === 'agent_task' && pinnedAgentId && agentVersions.length > 0 && (
+        {agentKind && pinnedAgentId && agentVersions.length > 0 && (
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wider">
               {t('agentVersionPin.jobFieldLabel')}
@@ -642,6 +621,16 @@ function DeploymentModal({ job, agents, flows, loops, environments, resources, w
 }
 
 // ---- firing journal drawer --------------------------------------------------
+
+// Where the work a firing started stands now (plans.service.fire_result).
+const RESULT_STYLES = {
+  running: 'text-blue-600',
+  waiting: 'text-amber-600',
+  completed: 'text-emerald-600',
+  failed: 'text-red-600',
+  stopped: 'text-gray-600',
+  missing: 'text-gray-400',
+};
 
 function JournalDrawer({ job, onClose }) {
   const { t } = useI18n();
@@ -702,9 +691,22 @@ function JournalDrawer({ job, onClose }) {
                     {f.error_type && <span className="text-red-500">{f.error_type}</span>}
                   </div>
                   {f.error && <div className="text-xs text-red-600 mt-0.5">{f.error}</div>}
+                  {f.result?.state && (
+                    <div className="text-xs mt-0.5" data-testid="fire-result">
+                      <span className={`font-medium ${RESULT_STYLES[f.result.state] || 'text-gray-500'}`}>
+                        {t(`deployments.resultState.${f.result.state}`, { defaultValue: f.result.state })}
+                      </span>
+                      {f.result.result && <span className="text-gray-500"> · {f.result.result.slice(0, 160)}</span>}
+                    </div>
+                  )}
                   {f.task_id && (
                     <Link to={`/tasks/${f.task_id}`} className="text-xs text-indigo-600 hover:underline mt-0.5 inline-block">
                       {t('deployments.viewTask')}
+                    </Link>
+                  )}
+                  {f.conversation_id && (
+                    <Link to={`/chat/${encodeURIComponent(f.conversation_id)}`} className="text-xs text-indigo-600 hover:underline mt-0.5 inline-block">
+                      {t('deployments.openConversation')}
                     </Link>
                   )}
                 </div>
@@ -723,7 +725,7 @@ function JournalDrawer({ job, onClose }) {
 // ---- main page ----------------------------------------------------------------
 
 export default function Deployments() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { workspaceFilter } = useWorkspace();
 
   const [jobs, setJobs] = useState([]);
@@ -731,14 +733,18 @@ export default function Deployments() {
   const [flows, setFlows] = useState([]);
   const [loops, setLoops] = useState([]);
   const [environments, setEnvironments] = useState([]);
-  // What a deployment may attach: the workspace's projects, files, secret
-  // names and memory pools. Any list that cannot be loaded (no access, no
+  // What a deployment may attach: the workspace's projects, secret names and
+  // memory pools (files are picked in their own dialog, FileIdsField). Any list that cannot be loaded (no access, no
   // store) is simply empty; the form still saves ids typed elsewhere.
-  const [resources, setResources] = useState({ projects: [], files: [], secrets: [], pools: [] });
+  const [resources, setResources] = useState({ projects: [], secrets: [], pools: [] });
   // The workspace filter the list was fetched for; loading is derived from it,
   // and the Refresh button swaps the rows in place.
   const [loadedFor, setLoadedFor] = useState(null);
-  const loading = loadedFor !== (workspaceFilter ?? '');
+  // And the one the agents, flows and loops were fetched for: the table
+  // waits for their names too, or it is drawn once with raw ids (a loop's
+  // uuid) and again with the names, every column moving between the two.
+  const [namesFor, setNamesFor] = useState(null);
+  const loading = loadedFor !== (workspaceFilter ?? '') || namesFor !== (workspaceFilter ?? '');
   const [showFinished, setShowFinished] = useState(false);
   const [modalJob, setModalJob] = useState(undefined); // undefined = closed, null = create, object = edit
   const [journalJob, setJournalJob] = useState(null);
@@ -746,7 +752,7 @@ export default function Deployments() {
 
   // A promise chain rather than an async body, so the effect below may call it
   // without a synchronous setState.
-  const fetchData = useCallback(() => getPlanJobs(workspaceFilter, undefined, ['agent_task', 'flow', 'loop', 'heartbeat'])
+  const fetchData = useCallback(() => getPlanJobs(workspaceFilter, undefined, ['agent_run', 'agent_task', 'flow', 'loop', 'heartbeat'])
     .then(({ data }) => setJobs(data || []))
     .catch((err) => { console.error('Failed to load deployments', err); })
     .finally(() => setLoadedFor(workspaceFilter ?? '')), [workspaceFilter]);
@@ -754,20 +760,20 @@ export default function Deployments() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   useEffect(() => {
-    getAgents(workspaceFilter).then((r) => setAgents(r.data || [])).catch(() => {});
-    listFlows(workspaceFilter).then((r) => setFlows(r.data || [])).catch(() => {});
-    getLoops(workspaceFilter).then((r) => setLoops(r.data || [])).catch(() => {});
-    getEnvironments(workspaceFilter).then((r) => setEnvironments(r.data || [])).catch(() => {});
+    Promise.allSettled([
+      getAgents(workspaceFilter).then((r) => setAgents(r.data || [])),
+      listFlows(workspaceFilter).then((r) => setFlows(r.data || [])),
+      getLoops(workspaceFilter).then((r) => setLoops(Array.isArray(r.data) ? r.data : (r.data?.loops || []))),
+      getEnvironments(workspaceFilter).then((r) => setEnvironments(r.data || [])),
+    ]).then(() => setNamesFor(workspaceFilter ?? ''));
     const ws = workspaceFilter || 'default';
     const quiet = (p) => Promise.resolve().then(() => p).catch(() => ({ data: null }));
     Promise.all([
       quiet(getProjects(workspaceFilter)),
-      quiet(listWorkspaceFiles(ws, { limit: 200 })),
       quiet(getWorkspaceSecrets(ws)),
       quiet(getSharedMemories(workspaceFilter)),
-    ]).then(([pr, fr, sr, mr]) => setResources({
+    ]).then(([pr, sr, mr]) => setResources({
       projects: Array.isArray(pr.data) ? pr.data : [],
-      files: Array.isArray(fr.data?.files) ? fr.data.files : [],
       secrets: [...new Set((Array.isArray(sr.data) ? sr.data : []).map((row) => row.name).filter(Boolean))],
       pools: Array.isArray(mr.data) ? mr.data : [],
     }));
@@ -848,6 +854,7 @@ export default function Deployments() {
                 const pending = ['scheduled', 'paused'].includes(job.status);
                 const busy = acting[job.id];
                 const env = environments.find((e) => e.id === job.environment_id);
+                const hidden = busy ? ' invisible' : '';
                 const upcoming = job.upcoming_runs_at || [];
                 return (
                   <tr key={job.id} className="hover:bg-gray-50 transition-colors">
@@ -870,7 +877,9 @@ export default function Deployments() {
                       {job.recurrence !== 'none' && (
                         <div className="text-gray-400 flex items-center gap-1 mt-0.5">
                           <Repeat className="w-3 h-3" />
-                          {job.recurrence === 'cron' ? (job.cron || 'cron') : job.recurrence}
+                          <span title={job.recurrence === 'cron' ? job.cron : undefined}>
+                            {describeRecurrence(job, t, language) || job.cron || job.recurrence}
+                          </span>
                           {job.timezone ? ` · ${job.timezone}` : ''}
                         </div>
                       )}
@@ -889,57 +898,65 @@ export default function Deployments() {
                       ) : <span className="text-gray-400">—</span>}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        {busy ? (
-                          <Loader className="w-4 h-4 animate-spin text-gray-400" />
-                        ) : (
-                          <>
-                            <button
-                              title={t('deployments.viewJournal')}
-                              onClick={() => setJournalJob(job)}
-                              className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"
-                            ><History className="w-4 h-4" /></button>
-                            <button
-                              title={t('deployments.runNow')}
-                              onClick={() => act(job.id, () => runPlanJobNow(job.id))}
-                              className="p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50"
-                            ><Zap className="w-4 h-4" /></button>
-                            {pending && (
-                              <button
-                                title={t('deployments.edit')}
-                                onClick={() => setModalJob(job)}
-                                className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"
-                              ><Pencil className="w-4 h-4" /></button>
-                            )}
-                            {pending && (job.status === 'scheduled' ? (
-                              <button
-                                title={t('deployments.pause')}
-                                onClick={() => act(job.id, () => pausePlanJob(job.id))}
-                                className="p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50"
-                              ><Pause className="w-4 h-4" /></button>
-                            ) : (
-                              <button
-                                title={t('deployments.resume')}
-                                onClick={() => act(job.id, () => resumePlanJob(job.id))}
-                                className="p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50"
-                              ><Play className="w-4 h-4" /></button>
-                            ))}
-                            {pending && (
-                              <button
-                                title={t('deployments.cancel')}
-                                onClick={() => act(job.id, () => cancelPlanJob(job.id))}
-                                className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
-                              ><X className="w-4 h-4" /></button>
-                            )}
-                            <button
-                              title={t('deployments.delete')}
-                              onClick={() => {
-                                if (window.confirm(t('deployments.confirmDelete', { name: job.title }))) act(job.id, () => deletePlanJob(job.id));
-                              }}
-                              className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
-                            ><Trash2 className="w-4 h-4" /></button>
-                          </>
+                      {/* While an action runs the buttons keep their place,
+                          hidden under the spinner, so the row keeps its width. */}
+                      <div className="relative flex items-center justify-end gap-1">
+                        {busy && (
+                          <span className="absolute inset-0 flex items-center justify-end pr-1.5">
+                            <Loader className="w-4 h-4 animate-spin text-gray-400" />
+                          </span>
                         )}
+                        <button
+                          disabled={busy}
+                          title={t('deployments.viewJournal')}
+                          onClick={() => setJournalJob(job)}
+                          className={`p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50${hidden}`}
+                        ><History className="w-4 h-4" /></button>
+                        <button
+                          disabled={busy}
+                          title={t('deployments.runNow')}
+                          onClick={() => act(job.id, () => runPlanJobNow(job.id))}
+                          className={`p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50${hidden}`}
+                        ><Zap className="w-4 h-4" /></button>
+                        {pending && (
+                          <button
+                            disabled={busy}
+                            title={t('deployments.edit')}
+                            onClick={() => setModalJob(job)}
+                            className={`p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50${hidden}`}
+                          ><Pencil className="w-4 h-4" /></button>
+                        )}
+                        {pending && (job.status === 'scheduled' ? (
+                          <button
+                            disabled={busy}
+                            title={t('deployments.pause')}
+                            onClick={() => act(job.id, () => pausePlanJob(job.id))}
+                            className={`p-1.5 rounded text-gray-400 hover:text-amber-600 hover:bg-amber-50${hidden}`}
+                          ><Pause className="w-4 h-4" /></button>
+                        ) : (
+                          <button
+                            disabled={busy}
+                            title={t('deployments.resume')}
+                            onClick={() => act(job.id, () => resumePlanJob(job.id))}
+                            className={`p-1.5 rounded text-gray-400 hover:text-green-600 hover:bg-green-50${hidden}`}
+                          ><Play className="w-4 h-4" /></button>
+                        ))}
+                        {pending && (
+                          <button
+                            disabled={busy}
+                            title={t('deployments.cancel')}
+                            onClick={() => act(job.id, () => cancelPlanJob(job.id))}
+                            className={`p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50${hidden}`}
+                          ><X className="w-4 h-4" /></button>
+                        )}
+                        <button
+                          disabled={busy}
+                          title={t('deployments.delete')}
+                          onClick={() => {
+                            if (window.confirm(t('deployments.confirmDelete', { name: job.title }))) act(job.id, () => deletePlanJob(job.id));
+                          }}
+                          className={`p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50${hidden}`}
+                        ><Trash2 className="w-4 h-4" /></button>
                       </div>
                     </td>
                   </tr>
@@ -953,6 +970,7 @@ export default function Deployments() {
       {modalJob !== undefined && (
         <DeploymentModal
           job={modalJob}
+          jobs={jobs}
           agents={agents}
           flows={flows}
           loops={loops}

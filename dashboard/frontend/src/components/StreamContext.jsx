@@ -23,17 +23,19 @@ import { API_ORIGIN, getAuthToken, mintAuthTicket } from '../api';
  * The hooks that read this provider live in ./stream.js.
  */
 
+// Resolves once the backend has the change (or failed to take it); null
+// when there is no connection yet to change.
 function postChannels(clientId, add, remove) {
-  if (!clientId) return;
+  if (!clientId) return null;
   const token = getAuthToken();
-  fetch(`${API_ORIGIN}/api/stream/${clientId}/channels`, {
+  return fetch(`${API_ORIGIN}/api/stream/${clientId}/channels`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ add, remove }),
-  }).catch(() => {});
+  }).then(() => undefined, () => undefined);
 }
 
 export function StreamProvider({ children }) {
@@ -56,6 +58,10 @@ export function StreamProvider({ children }) {
   const listenersRef = useRef(new Map());
   // dynamic channel → refcount (extra interest beyond server defaults)
   const channelsRef = useRef(new Map());
+  // Per channel acquired: when the backend started sending it to this tab.
+  // A page that reads what a channel already said (a run's replay) reads it
+  // after this, so nothing falls between the read and the first event.
+  const channelReadyRef = useRef(new Map());
   // Callbacks pages register to reload their own data after a gap the stream
   // itself cannot fill in (a failed resume, or events dropped for lagging).
   const refetchersRef = useRef(new Set());
@@ -155,7 +161,14 @@ export function StreamProvider({ children }) {
             // Re-register dynamic channels after a (re)connect. Harmless when
             // resumed: the backend already kept the same channel set.
             const chans = [...channelsRef.current.keys()];
-            if (chans.length) postChannels(ev.client_id, chans, []);
+            if (chans.length) {
+              const posted = postChannels(ev.client_id, chans, []);
+              for (const ch of chans) {
+                const waiting = channelReadyRef.current.get(ch);
+                if (waiting?.resolve) waiting.resolve(posted);
+                channelReadyRef.current.set(ch, { promise: posted });
+              }
+            }
             // A reconnect that could not be resumed, or one that starts fresh
             // with no prior history, has a gap the replay cannot fill.
             if (!ev.resumed) {
@@ -203,11 +216,22 @@ export function StreamProvider({ children }) {
     const m = channelsRef.current;
     const next = (m.get(channel) || 0) + 1;
     m.set(channel, next);
-    if (next === 1) postChannels(clientIdRef.current, [channel], []);
+    if (next === 1) {
+      const posted = postChannels(clientIdRef.current, [channel], []);
+      if (posted) {
+        channelReadyRef.current.set(channel, { promise: posted });
+      } else {
+        // Not connected yet: ready when the connection registers it.
+        let resolve;
+        const promise = new Promise((r) => { resolve = r; });
+        channelReadyRef.current.set(channel, { promise, resolve });
+      }
+    }
     return () => {
       const left = (m.get(channel) || 1) - 1;
       if (left <= 0) {
         m.delete(channel);
+        channelReadyRef.current.delete(channel);
         postChannels(clientIdRef.current, [], [channel]);
       } else {
         m.set(channel, left);
@@ -215,8 +239,14 @@ export function StreamProvider({ children }) {
     };
   }, []);
 
+  /** When `channel` (acquired) is being sent to this tab. */
+  const channelReady = useCallback(
+    (channel) => channelReadyRef.current.get(channel)?.promise || Promise.resolve(),
+    [],
+  );
+
   return (
-    <StreamContext.Provider value={{ connected, clientId, on, acquireChannel, onRefetch }}>
+    <StreamContext.Provider value={{ connected, clientId, on, acquireChannel, channelReady, onRefetch }}>
       {children}
     </StreamContext.Provider>
   );

@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import {
-  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw, Shield,
+  RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw, Shield, CheckSquare, UserRound,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
-import { MULTI, TOKEN, useAuth } from '../components/auth';
+import { MULTI, TOKEN, canAdminister, useAuth } from '../components/auth';
 import { getApiToken, setApiToken, API_ORIGIN } from '../api';
 import { getDemo, setDemo } from '../api/demo';
 
@@ -14,12 +14,14 @@ import { SectionCard, inputCls } from '../components/settingsUi';
 import { useI18n } from '../i18n';
 import {
   ProviderStatusBadge, SaveWorkspaceSettingsButton, WorkspaceSettingsStatus,
-  ProvidersSection, GlobalTemperatureSection, LocalServersSection, ExecutionSection, RagSection, ObservabilitySection, LoggingSection, WebSearchSection,
+  ProvidersSection, GlobalTemperatureSection, LocalServersSection, ExecutionSection, RagSection, ObservabilitySection, LoggingSection, WebAccessSection,
+  ToolPolicySection, TaskAssignmentSection,
 } from '../components/settings/WorkspaceSettingsSections';
 import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 import BrowserServiceSection from '../components/settings/BrowserServiceSection';
 import HubLinkSection from '../components/settings/HubLinkSection';
 import PageLoader from '../components/PageLoader';
+import { AccessNotice, EditLock } from '../components/access/EditLock';
 import FirstRunSettings from '../components/firstRun/FirstRunSettings';
 import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
 import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
@@ -31,10 +33,11 @@ const api = axios.create({ baseURL: 'http://localhost:8000' });
 // nine panels used to be nine tabs in a single row that ran off the page, with
 // model settings and connectors sitting side by side for no reason.
 //
-// `workspaceScoped` marks the sections whose fields are workspace overrides
-// (written by the page's Save button). They are drawn by
-// components/settings/WorkspaceSettingsSections.jsx, which the Settings tab of
-// a workspace renders too.
+// `workspaceScoped` marks the sections whose fields are overrides
+// of the workspace picked in the header (written by the page's Save button).
+// They are drawn by components/settings/WorkspaceSettingsSections.jsx. The
+// Settings tab of a workspace keeps only what has no global value: agent
+// roles, personal memory, secrets and the palette.
 //
 // Telegram, Git and Blender used to be a group here. They are connectors —
 // things you attach — and they now live under Connect → Connectors, which is
@@ -51,14 +54,24 @@ const GROUPS = [
     ],
   },
   {
-    key: 'system',
+    // The same names the workspace page once used for these: they are
+    // workspace overrides of the workspace picked in the header, so they live
+    // here only, and the workspace's own tab keeps what has no global value.
+    key: 'agents',
     items: [
       { id: 'execution',     key: 'execution',     icon: Wrench,     workspaceScoped: true },
+      { id: 'toolPolicy',    key: 'toolPolicy',    icon: Shield },
+      { id: 'webAccess',     key: 'webAccess',     icon: Globe },
+      { id: 'tasks',         key: 'tasks',         icon: CheckSquare, workspaceScoped: true },
       // The selected workspace's perimeter and data class: the same two cards as
       // the workspace's own Isolation tab, each saving itself (docs/isolation.md).
       { id: 'isolation',     key: 'isolation',     icon: Shield },
-      { id: 'webSearch',     key: 'webSearch',     icon: Globe },
       { id: 'browser',       key: 'browser',       icon: MonitorSmartphone },
+    ],
+  },
+  {
+    key: 'system',
+    items: [
       { id: 'rag',           key: 'rag',           icon: Database,   workspaceScoped: true },
       { id: 'observability', key: 'observability', icon: Activity,   workspaceScoped: true },
       { id: 'logging',       key: 'logging',       icon: ScrollText, workspaceScoped: true },
@@ -78,6 +91,22 @@ const SECTIONS = GROUPS.flatMap((group) => group.items);
 // bookmarks to them are out in the world, and falling back to the first section
 // would answer them by quietly showing something else.
 const MOVED_TO_CONNECTORS = ['telegram', 'git', 'blender'];
+
+// Sections that act at once (a backend added, the demo seeded, the first run
+// reset) rather than collecting changes for the page's Save button.
+const ACT_AT_ONCE = ['custom', 'demo', 'firstRun', 'apiAccess', 'browser', 'hubLink', 'isolation', 'observability'];
+// The sections whose changes the page's Save button stores, by id.
+const STAGED_SECTIONS = {
+  providers: ProvidersSection,
+  temperature: GlobalTemperatureSection,
+  local: LocalServersSection,
+  rag: RagSection,
+  logging: LoggingSection,
+  execution: ExecutionSection,
+  toolPolicy: ToolPolicySection,
+  tasks: TaskAssignmentSection,
+  webAccess: WebAccessSection,
+};
 
 
 // ── Custom backends tab ───────────────────────────────────────────────────────
@@ -490,7 +519,10 @@ export default function Settings() {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const activeWorkspace = selectedWorkspace || 'default';
-  const { mode } = useAuth();
+  const auth = useAuth();
+  const { mode } = auth;
+  // Members read this page; the server refuses their writes (docs/identity.md).
+  const readOnly = !canAdminister(auth);
   const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => !(i.singleOnly && mode === MULTI)) }));
 
   // The open section lives in the URL (/settings/:section) so a section can be
@@ -506,6 +538,14 @@ export default function Settings() {
   }, [section, navigate]);
 
   const ws = useWorkspaceSettings(activeWorkspace);
+
+  // The sections whose changes wait for the Save button above. A section once
+  // opened stays mounted (hidden when another is shown), so what was changed
+  // in it is still there, and still saved, after a look at another section.
+  // Custom backends, the demo and the first run act at once and are not kept.
+  const staged = !ACT_AT_ONCE.includes(active.id);
+  const [visited, setVisited] = useState(() => (staged ? [active.id] : []));
+  if (staged && !visited.includes(active.id)) setVisited([...visited, active.id]);
 
   if (ws.loading) {
     return (
@@ -531,7 +571,9 @@ export default function Settings() {
             {t('settings.fieldsMarkedBefore')} <span className="inline-flex items-center gap-0.5 text-amber-600"><Lock className="w-3 h-3" /> {t('settings.fromEnv')}</span> {t('settings.fieldsMarkedAfter')}
           </p>
         </>}
-        actions={active.workspaceScoped && <SaveWorkspaceSettingsButton s={ws} />}
+        // On the title line, right after the heading, rather than out at the
+        // far edge of the header away from the sections it saves.
+        badges={staged && !readOnly && <SaveWorkspaceSettingsButton s={ws} />}
       />
 
       <div className="flex min-h-0 flex-1 gap-6">
@@ -573,6 +615,18 @@ export default function Settings() {
               <Link2 className="mb-1 h-3.5 w-3.5" />
               {t('settings.connectorsMoved')}
             </Link>
+            {/* What has no global value stays on the workspace's own
+                Settings tab; say where, for the workspace picked in the header. */}
+            <p className="mx-1 mt-2 rounded-lg border border-dashed border-gray-200 px-3 py-2 text-[11px] leading-snug text-gray-500">
+              <UserRound className="mb-1 h-3.5 w-3.5" />
+              {t('settings.workspaceOnlyHint')}{' '}
+              <Link
+                to={`/workspaces/${encodeURIComponent(activeWorkspace)}?tab=settings&section=personalMemory`}
+                className="text-indigo-600 hover:text-indigo-800"
+              >
+                {t('settings.workspaceOnlyLink', { workspace: activeWorkspace })}
+              </Link>
+            </p>
           </div>
         </nav>
 
@@ -596,20 +650,26 @@ export default function Settings() {
               </select>
             </div>
 
+            {readOnly && <AccessNotice>{t('access.adminOnlyNotice')}</AccessNotice>}
+
             <WorkspaceSettingsStatus s={ws} />
 
-            {active.id === 'providers' && <ProvidersSection s={ws} />}
-            {active.id === 'temperature' && <GlobalTemperatureSection s={ws} />}
-            {active.id === 'local' && <LocalServersSection s={ws} />}
-            {active.id === 'observability' && <ObservabilitySection s={ws} />}
-            {active.id === 'rag' && <RagSection s={ws} />}
+            <EditLock locked={readOnly}>
+            {visited.map((id) => {
+              const Section = STAGED_SECTIONS[id];
+              if (!Section) return null;
+              return (
+                <div key={id} hidden={id !== active.id} className="space-y-5">
+                  <Section s={ws} />
+                </div>
+              );
+            })}
             {active.id === 'custom' && <CustomBackendsTab />}
             {active.id === 'demo' && <DemoWorkspaceTab />}
             {active.id === 'firstRun' && <FirstRunSettings />}
-            {active.id === 'logging' && <LoggingSection s={ws} />}
+            {/* Sections of this edition that save themselves. */}
+            {active.id === 'observability' && <ObservabilitySection s={ws} />}
             {active.id === 'apiAccess' && <ApiAccessTab />}
-            {active.id === 'execution' && <ExecutionSection s={ws} showGlobal />}
-            {active.id === 'webSearch' && <WebSearchSection s={ws} />}
             {active.id === 'browser' && <BrowserServiceSection />}
             {active.id === 'hubLink' && <HubLinkSection />}
             {active.id === 'isolation' && (
@@ -621,6 +681,7 @@ export default function Settings() {
                 <WorkspaceDataClass key={`dc-${activeWorkspace}`} workspace={activeWorkspace} />
               </>
             )}
+            </EditLock>
           </div>
         </div>
       </div>

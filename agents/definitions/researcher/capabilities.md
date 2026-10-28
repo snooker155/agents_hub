@@ -6,30 +6,21 @@ Workspace:
 Memory:
 - `read_memory` / `search_memory`: what was established in earlier work.
 
-The web, indirectly:
-- `run_agent_tool`: delegates to the Web Search Agent, which searches and reads pages and hands
-  back findings with URLs. This agent holds no web tools of its own.
-- `list_models_tool`: the catalog models a delegation can run on (`model` on `run_agent_tool`).
+The web:
+- `web_search`: titles, snippets and links from the configured search backend (Settings → Web
+  search). It returns what a search finds, never a page's full content.
 
 Computation:
 - `calculator`: exact arithmetic when figures matter.
 
 What this agent does NOT do:
-- Reach the web directly (it delegates)
+- Open or fetch a web page (for full pages, put the Web Search Agent before it in a flow)
 - Write, create, or modify any file
 - Send notifications or anything else outward
 - Run shell commands, tests, or external services
 - Modify or refactor source code
 
-The shape is deliberate. This agent reads private material and also handles text that came from
-the open web, so it is given no outbound channel at all: no fetching, no writing, no notifying.
-Untrusted input can mislead it, but it cannot carry anything out. The Web Search Agent holds the
-mirror-image restriction, reaching the web but holding no private data.
-
-The capability guard still flags this agent: reading the workspace and memory (private data) plus
-delegating to the Web Search Agent (ingest and exfiltrate) closes the trifecta on paper, one hop
-away. `capability_override` is set for this reason, reviewed and accepted: the Web Search Agent
-never sees this agent's conversation, only the self-contained request it is handed, so nothing this
-agent has read can travel out through that hop. `python -m agents.capability_guard` reports the
-combination regardless, by design, so the path stays visible in the audit even though it is
-allowed to run.
+The shape is deliberate. This agent reads private material and search results in one context,
+so it is given no outbound channel: no fetching by URL, no writing, no notifying. Search counts
+as ingesting untrusted text only, since the query goes to one fixed endpoint, so the capability
+guard passes this agent without an override.

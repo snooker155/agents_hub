@@ -1,0 +1,25 @@
+{
+  "passphrase": "ABCDE-FGHIJ-KLMNO",
+  "salt": "c3luYy10ZXN0LXNhbHQtMTY=",
+  "iterations": 1000,
+  "key_id": "9497e375644ebc3e",
+  "verifier": "{\"v\":2,\"alg\":\"A256GCM\",\"kid\":\"9497e375644ebc3e\",\"n\":\"FjaPBEeJWwMh1jkq\",\"c\":\"8Flec47nHEiBU7P3BDtECV0vuMYgj5dh07MO/3HSFWJ9NUoGGVUgZyVgHMg=\"}",
+  "kind": "chat",
+  "record_id": "chat-1",
+  "space": "personal",
+  "payload_encrypted": "{\"v\":2,\"alg\":\"A256GCM\",\"kid\":\"9497e375644ebc3e\",\"n\":\"OMxQ2DRbEirdlX4O\",\"c\":\"Nv5wHbIYDkSqxMTXXifLxa+nMuW8xFu7vqNzwr+EgqnwdFFwsMatmotCet2dlacnTF6Lo1/v8wq+4qbVqbBphYqp6JAKSrPWfIYpGsneDXWfh9Wdr86cYU3RqL0Y6y5xM2a/RjA5TrkyDYGBUDYUyuRxdt49TO9YRctfA7m1jES2byw=\"}",
+  "payload_plain": "H4sIAAAAAAAC/6tWSkksSVSyqlbKTS0uTkxPLVayiq5WSs7PK0nNK1GyUspIzcnJV9JRKsrPSQVyS4tTi5RqY2t1lDJTgNzkjMQSXUOgdHZmHowP5JVkloBVX5h/seHCjgubLmy92KRUCwDhdkNKbAAAAA==",
+  "doc": {
+    "kind": "chat",
+    "id": "chat-1",
+    "title": "Привет",
+    "data": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "hello"
+        }
+      ]
+    }
+  }
+}

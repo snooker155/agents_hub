@@ -200,6 +200,18 @@ describe('Artifacts page', () => {
     await waitFor(() => expect(screen.queryByTestId('file-preview-modal')).not.toBeInTheDocument());
   });
 
+  it('closes the file panel on a press outside it, not inside it or on a row', async () => {
+    localStorage.setItem('files.view', 'list');
+    show(`/artifacts?file=${REC.file_id}`);
+    const panel = await screen.findByTestId('file-panel');
+    fireEvent.pointerDown(panel);
+    expect(screen.getByTestId('file-panel')).toBeInTheDocument();
+    fireEvent.pointerDown(await screen.findByTestId('list-row'));
+    expect(screen.getByTestId('file-panel')).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByRole('textbox', { name: 'Search by name or id' }));
+    await waitFor(() => expect(screen.queryByTestId('file-panel')).not.toBeInTheDocument());
+  });
+
   it('opens the rendered file from a tree row without opening the panel', async () => {
     show();
     await waitFor(() => expect(screen.getByText('handbook.md')).toBeInTheDocument());
@@ -264,6 +276,18 @@ describe('Artifacts page', () => {
     fireEvent.click(screen.getByTestId('folder-card'));
     expect(screen.getByText('plan.md')).toBeInTheDocument();
     expect(screen.queryByText('main.py')).not.toBeInTheDocument();
+  });
+
+  it('closes the open file when another folder is opened', async () => {
+    listWorkspaceFiles.mockImplementation(() => ok({ workspace: 'acme', files: IN_FOLDER, usage_bytes: 30, limits: {} }));
+    show(`/artifacts?folder=proj&file=${IN_FOLDER[1].file_id}`);
+    await screen.findByTestId('file-panel');
+    const folder = await screen.findByTestId('folder-card');
+    // A press then a click, as in a browser: the click must not bring it back.
+    fireEvent.pointerDown(folder);
+    fireEvent.click(folder);
+    await waitFor(() => expect(screen.getByText('plan.md')).toBeInTheDocument());
+    expect(screen.queryByTestId('file-panel')).not.toBeInTheDocument();
   });
 
   it('filters to the views alone with the Views source', async () => {

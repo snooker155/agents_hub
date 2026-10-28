@@ -13,7 +13,7 @@ import { updateSettings } from '../../../api/models';
 import { setDemo } from '../../../api/demo';
 import { getWorkspacePersonalMemory, updateWorkspacePersonalMemory } from '../../../api/workspaces';
 import {
-  ChoiceCard, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
+  ChoiceCard, ConfiguredFrame, DoneNote, ErrorLine, LaterButton, Pills, PrimaryButton, StepFrame,
 } from '../ui';
 import { PROVIDER_LABELS, errorText, fieldCls } from '../firstRunModel';
 
@@ -43,8 +43,9 @@ const SEARCH = [
   { id: 'exa', label: 'Exa', page: 'https://dashboard.exa.ai/api-keys' },
 ];
 
-export function SearchStep({ ctx, refreshCtx, next }) {
+export function SearchStep({ ctx, refreshCtx, next, configured }) {
   const { t } = useI18n();
+  const [changing, setChanging] = useState(false);
   const { busy, error, run } = useSave(next);
   const [service, setService] = useState('brave');
   const [key, setKey] = useState('');
@@ -57,6 +58,19 @@ export function SearchStep({ ctx, refreshCtx, next }) {
     setKey('');
     await refreshCtx();
   });
+
+  const was = configured?.search;
+  if (was && !changing) {
+    const viaModel = was.source === 'model_key';
+    const label = viaModel
+      ? (PROVIDER_LABELS[was.provider] || was.provider)
+      : (SEARCH.find((s) => s.id === was.provider)?.label || was.provider);
+    return (
+      <ConfiguredFrame icon={Globe} title={t('firstRun.search.title')} subtitle={t('firstRun.search.subtitle')}
+        summary={label} detail={viaModel ? t('firstRun.search.viaModel', { provider: label }) : ''}
+        onContinue={() => next()} onChange={() => setChanging(true)} testId="first-run-search" t={t} />
+    );
+  }
 
   return (
     <StepFrame
@@ -145,8 +159,9 @@ export function MemoryStep({ next }) {
   );
 }
 
-export function DemoStep({ ctx, refreshCtx, next }) {
+export function DemoStep({ ctx, refreshCtx, next, configured }) {
   const { t } = useI18n();
+  const [changing, setChanging] = useState(false);
   const { busy, error, run } = useSave(next);
   const [add, setAdd] = useState(true);
   const present = Boolean(ctx?.demo);
@@ -157,6 +172,15 @@ export function DemoStep({ ctx, refreshCtx, next }) {
       await refreshCtx();
     }
   });
+
+  const was = configured?.demo;
+  if (was && !changing) {
+    return (
+      <ConfiguredFrame icon={LayoutGrid} title={t('firstRun.demo.title')} subtitle={t('firstRun.demo.subtitle')}
+        summary={was.enabled ? t('firstRun.demo.on') : t('firstRun.demo.off')}
+        onContinue={() => next()} onChange={() => setChanging(true)} testId="first-run-demo" t={t} />
+    );
+  }
 
   return (
     <StepFrame

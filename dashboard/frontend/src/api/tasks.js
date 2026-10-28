@@ -40,3 +40,4 @@ export const getTaskActivityLog = (taskId) => api.get(`/tasks/${taskId}/activity
 export const getTaskResult = (taskId) => api.get(`/tasks/${taskId}/result`);
 export const setTaskResult = (taskId, result) => api.put(`/tasks/${taskId}/result`, { result });
 export const runDecomposer = (taskId, payload) => api.post(`/tasks/${taskId}/decompose`, payload || {});
+export const getDecomposition = (taskId) => api.get(`/tasks/${taskId}/decompose`);

@@ -13,6 +13,7 @@ keeps the import graph acyclic).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -271,7 +272,16 @@ def _trail_marker(verdict: dict) -> str:
 
 
 class ChatStreamCallback(BaseCallbackHandler):
-    """Callback handler that forwards LLM/tool execution events to an asyncio queue."""
+    """Callback handler that forwards LLM/tool execution events to an asyncio queue.
+
+    It is also what records a run: the log lines of its steps, the tool calls,
+    the thoughts and the changed files that the run's record and trail are
+    built from. A run with no chat request behind it (a background flow
+    node, flow/task_driver.py; a team member's turn) passes no ``loop`` and
+    ``queue``: the run is recorded the same way, and its events go to
+    ``publish`` when given (common/run_stream.py, the run's live channels),
+    else nowhere.
+    """
 
     # Tell LangChain to propagate exceptions raised in callbacks instead of swallowing them.
     raise_error: bool = True
@@ -284,9 +294,11 @@ class ChatStreamCallback(BaseCallbackHandler):
         log_file: Path,
         session_id: str | None = None,
         run_id: str | None = None,
+        publish=None,
     ):
         self.loop = loop
         self.queue = queue
+        self.publish = publish
         self.log_lines = log_lines
         self.log_file = log_file
         self.session_id = session_id
@@ -365,6 +377,17 @@ class ChatStreamCallback(BaseCallbackHandler):
             raise InterruptedError("Run stopped by user")
 
     def _emit(self, payload: dict):
+        if self.queue is None:
+            # No chat request: the run's live channels, if it has any (see
+            # the class docstring).
+            if self.publish is not None:
+                if self.run_id:
+                    payload.setdefault("run_id", self.run_id)
+                try:
+                    self.publish(payload)
+                except Exception:  # noqa: BLE001 - a live view must never break the run
+                    log.debug("_emit: publish failed", exc_info=True)
+            return
         if self.run_id:
             payload.setdefault("run_id", self.run_id)
         # Forward to the local SSE queue for the active HTTP response.
@@ -817,7 +840,21 @@ class ChatStreamCallback(BaseCallbackHandler):
         self._emit({"type": "tool_end", "output": output_full, "status": status, **ids, **verdict,
                     **memory_target(ids.get("tool"), output)})
 
+    def _stopped(self, error: BaseException) -> bool:
+        """A stop, not a failure: the run's task was cancelled (the Stop
+        button) or this callback aborted it. The caller reports the stop on
+        its own, so the chat gets no error for it; the log notes it once."""
+        if not (isinstance(error, asyncio.CancelledError)
+                or (self.cancelled and isinstance(error, InterruptedError))):
+            return False
+        if not getattr(self, "_stop_logged", False):
+            self._stop_logged = True
+            append_log(self.log_lines, "[stopped] run stopped by user", self.log_file)
+        return True
+
     def on_llm_error(self, error, **kwargs):
+        if self._stopped(error):
+            return
         line = f"[llm_error] {type(error).__name__}: {error}"
         append_log(self.log_lines, line, self.log_file)
         self._emit({"type": "error", "source": "llm", "error": self._describe(error)})
@@ -845,6 +882,8 @@ class ChatStreamCallback(BaseCallbackHandler):
         self._emit({"type": "tool_error", "tool": tool_name, "error": str(error), "status": "error", **verdict})
 
     def on_chain_error(self, error, **kwargs):
+        if self._stopped(error):
+            return
         line = f"[chain_error] {type(error).__name__}: {error}"
         append_log(self.log_lines, line, self.log_file)
         self._emit({"type": "error", "source": "chain", "error": self._describe(error)})
@@ -852,7 +891,8 @@ class ChatStreamCallback(BaseCallbackHandler):
     def _describe(self, error: BaseException) -> str:
         return describe_llm_error(error, getattr(self, "bound_provider", ""), getattr(self, "bound_model", ""))
 
-    def record_artifact(self, op: str, path: str, before: str | None, after: str | None) -> None:
+    def record_artifact(self, op: str, path: str, before: str | None, after: str | None,
+                        url: str | None = None) -> None:
         """Receive a file change from the filesystem tools (via the artifact sink).
 
         Builds a diff record, stores it for the run's process payload, and emits
@@ -865,6 +905,9 @@ class ChatStreamCallback(BaseCallbackHandler):
         except Exception:  # noqa: BLE001 - a callback must never break the model run
             log.debug("record_artifact: ignored error", exc_info=True)
             return
+        if url:
+            # The file's page, so the chat links the file rather than its diff.
+            artifact["url"] = url
         self.artifact_history.append(artifact)
         line = f"[artifact] op={op} path={path} +{artifact.get('additions', 0)} -{artifact.get('deletions', 0)}"
         append_log(self.log_lines, line, self.log_file)

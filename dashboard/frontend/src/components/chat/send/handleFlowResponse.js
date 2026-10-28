@@ -4,6 +4,7 @@
  */
 import { genId } from '../turnState';
 import { stripUiBlock } from '../markdown';
+import { entityNodeText } from '../../flowEditor/runFormat';
 
 // Returns true when it handled `event`, so the caller knows not to try the
 // generic handler on the same event.
@@ -94,7 +95,9 @@ function handleFlowEvent(event, ctx) {
                   // tokens (see handleAgentResponse's `done` handling) to
                   // avoid repeating the answer when the model re-states it
                   // across LLM turns.
-                  content: (event.response || '').trim() || (event.response_obj ? '' : stripUiBlock(m.content)) || '',
+                  content: (event.response || '').trim() || (event.response_obj ? '' : stripUiBlock(m.content))
+                    // A node with no agent (a switch) says what it did.
+                    || (event.is_agent === false && event.ok ? entityNodeText(ctx.t, event) : '') || '',
                   entities: event.entities || m.entities || null,
                   // The node's cited sources, once node_done carries them.
                   citations: event.citations || m.citations || null,

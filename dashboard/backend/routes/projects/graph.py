@@ -36,8 +36,9 @@ async def get_project_graph(project_id: str, view: str = Query("architecture")):
     Serves a saved (hand-edited or AI-generated) graph when one exists;
     otherwise builds it deterministically. ``view=architecture`` is the technical
     structure (client → service → data/dependencies) inferred from config + a
-    shallow source scan; ``view=process`` is the business/process flow derived
-    from the project's task hierarchy and ordering. The response carries a
+    shallow source scan; ``view=process`` is the business/process flow, which
+    has no deterministic source (tasks are made from it, never read into it),
+    so its auto graph is empty. The response carries a
     ``source`` of ``auto`` | ``manual`` | ``generated``.
     """
     _validate_view(view)
@@ -55,9 +56,8 @@ async def get_project_graph(project_id: str, view: str = Query("architecture")):
     from projects.graph import build_project_graph
 
     root = _project_root_path(project)
-    tasks = _project_tasks_for(project_id) if view == "process" else None
     try:
-        graph = await asyncio.to_thread(build_project_graph, project, view, root, tasks)
+        graph = await asyncio.to_thread(build_project_graph, project, view, root)
         graph["source"] = "auto"
         return graph
     except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
@@ -96,6 +96,7 @@ async def reset_project_graph(project_id: str, view: str = Query("architecture")
     _validate_view(view)
     if not store().get(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
+    _migrate_graph_chat(project_id, view)  # the delete below would take an unmoved chat with it
     deleted = _graph_store.delete(project_id, view)
     return {"reset": deleted}
 
@@ -112,9 +113,8 @@ async def generate_project_graph(project_id: str, view: str = Query("architectur
     from projects.graph import generate_graph_via_llm
 
     root = _project_root_path(project)
-    tasks = _project_tasks_for(project_id) if view == "process" else None
     try:
-        graph = await asyncio.to_thread(generate_graph_via_llm, project, view, root, tasks)
+        graph = await asyncio.to_thread(generate_graph_via_llm, project, view, root)
     except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
 
@@ -174,6 +174,39 @@ def _register_run(project_id: str, slot: str, task: asyncio.Task) -> None:
     _ACTIVE_GRAPH_RUNS[key] = task
     task.add_done_callback(
         lambda _t, k=key: (_ACTIVE_GRAPH_RUNS.pop(k, None) if _ACTIVE_GRAPH_RUNS.get(k) is _t else None))
+
+
+def graph_run_active(project_id: str, view: str) -> bool:
+    """Is an architect-chat turn running for this project and view?"""
+    task = _ACTIVE_GRAPH_RUNS.get(f"{project_id}:{view}")
+    return bool(task and not task.done())
+
+
+_CHAT_KIND = "project_graph"
+
+
+def _chat_id(project_id: str, view: str) -> str:
+    return f"{project_id}:{view}"
+
+
+def _chats():
+    from common.entity_chat_store import entity_chat_store
+    return entity_chat_store()
+
+
+def _migrate_graph_chat(project_id: str, view: str) -> None:
+    """Move a chat kept on the graph document into the entity chat store, once."""
+    chats = _chats()
+    eid = _chat_id(project_id, view)
+    if chats.has_chat(_CHAT_KIND, eid):
+        return
+    doc = _graph_store.get(project_id, view) or {}
+    messages, trace = doc.get("messages") or [], doc.get("trace") or []
+    epoch = int(doc.get("session_epoch") or 0)
+    if not messages and not trace and not epoch:
+        return
+    if chats.import_thread(_CHAT_KIND, eid, messages, trace, epoch):
+        _graph_store.drop_chat(project_id, view)
 
 
 def _cancel_runs(project_id: str) -> int:
@@ -286,7 +319,6 @@ async def generate_project_graph_stream(project_id: str, view: str = Query("arch
         raise HTTPException(status_code=404, detail="Project not found")
 
     root = _project_root_path(project)
-    tasks = _project_tasks_for(project_id) if view == "process" else None
 
     async def event_stream():
         import tempfile
@@ -298,7 +330,7 @@ async def generate_project_graph_stream(project_id: str, view: str = Query("arch
 
         yield _sse({"type": "meta", "view": view})
 
-        prompt = build_generation_prompt(project, view, root, tasks)
+        prompt = build_generation_prompt(project, view, root)
         text = None
 
         if _ensure_architect_agent():
@@ -350,7 +382,7 @@ async def generate_project_graph_stream(project_id: str, view: str = Query("arch
         else:
             yield _sse(_error_event("registry", "architect agent unavailable"))
 
-        graph = await asyncio.to_thread(finalize_generated_output, text, project, view, root, tasks)
+        graph = await asyncio.to_thread(finalize_generated_output, text, project, view, root)
         saved = _graph_store.save(project_id, view, graph["nodes"], graph["edges"],
                                   source=graph.get("source", "generated"))
         yield _sse({"type": "graph", **saved})
@@ -370,24 +402,27 @@ async def get_graph_messages(project_id: str, view: str = Query("architecture"))
     _validate_view(view)
     if not store().get(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
+    _migrate_graph_chat(project_id, view)
+    eid = _chat_id(project_id, view)
     return {
-        "messages": _graph_store.get_messages(project_id, view),
-        "trace": _graph_store.get_trace(project_id, view),
+        "messages": _chats().get_messages(_CHAT_KIND, eid),
+        "trace": _chats().get_trace(_CHAT_KIND, eid),
+        "chat_ref": {"kind": _CHAT_KIND, "id": eid},
     }
 
 
 @router.delete("/{project_id}/graph/messages")
 async def clear_graph_messages(project_id: str, view: str = Query("architecture")):
-    """Clear the build chat transcript and start a fresh chat session.
+    """Start a new build chat; the current thread is filed in the history.
 
-    Wipes the conversation and advances the session epoch so the next turn opens
-    a new backend session (a clean run-thread in Messages). The graph itself is
-    left untouched.
+    Advances the session epoch so the next turn opens a new backend session (a
+    clean run-thread in Messages). The graph itself is left untouched.
     """
     _validate_view(view)
     if not store().get(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
-    epoch = _graph_store.clear_messages(project_id, view, new_session=True)
+    _migrate_graph_chat(project_id, view)
+    epoch = _chats().clear(_CHAT_KIND, _chat_id(project_id, view), new_session=True)
     return {"cleared": True, "session_epoch": epoch}
 
 
@@ -413,7 +448,6 @@ async def chat_project_graph(project_id: str, payload: ProjectGraphChat,
         raise HTTPException(status_code=400, detail="Empty message")
 
     root = _project_root_path(project)
-    tasks = _project_tasks_for(project_id) if view == "process" else None
 
     async def run_turn(queue: asyncio.Queue):
         from projects.graph import (
@@ -435,17 +469,19 @@ async def chat_project_graph(project_id: str, payload: ProjectGraphChat,
             await queue.put(payload)
 
         # Record the user turn, then build the prompt from the live graph + history.
-        _graph_store.append_message(project_id, view, "user", user_message)
-        history = _graph_store.get_messages(project_id, view)
+        _migrate_graph_chat(project_id, view)
+        chat_id = _chat_id(project_id, view)
+        _chats().append_message(_CHAT_KIND, chat_id, "user", user_message)
+        history = _chats().get_messages(_CHAT_KIND, chat_id)
         current = _graph_store.get(project_id, view) or {"nodes": [], "edges": []}
-        prompt = build_chat_turn_prompt(project, view, root, tasks, current, history, user_message)
+        prompt = build_chat_turn_prompt(project, view, root, current, history, user_message)
 
         # Open a run record so the turn appears in Messages, grouped per
         # project+view+session-epoch. The epoch lets "Clear chat" start a fresh
         # session (epoch 0 keeps the legacy un-suffixed id for continuity).
         run_id = _new_run_id()
         log_file = _run_log_path(run_id)
-        epoch = _graph_store.get_session_epoch(project_id, view)
+        epoch = _chats().get_session_epoch(_CHAT_KIND, chat_id)
         conv_id = f"projgraph:{project_id}:{view}" + (f":{epoch}" if epoch else "")
         session_id = None
         try:
@@ -608,7 +644,7 @@ async def chat_project_graph(project_id: str, payload: ProjectGraphChat,
             "error": err, "response": reply, "process": process_payload,
         })
 
-        _graph_store.append_message(project_id, view, "assistant", reply)
+        _chats().append_message(_CHAT_KIND, chat_id, "assistant", reply)
         await emit({"type": "message", "role": "assistant", "content": reply, "run_id": run_id})
         await emit({"type": "done", "run_id": run_id, "usage": usage})
 
@@ -625,7 +661,7 @@ async def chat_project_graph(project_id: str, payload: ProjectGraphChat,
             if item:
                 turn_items.append(item)
         try:
-            _graph_store.append_trace(project_id, view, turn_items)
+            _chats().append_trace(_CHAT_KIND, chat_id, turn_items)
         except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
             log.debug("emit: best-effort step failed", exc_info=True)
 

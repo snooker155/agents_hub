@@ -232,25 +232,48 @@ export default function InstanceList({
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
   }, [fetchPage, query]);
 
+  // A refetch asked for by deltas: one per window however many arrive.
+  const deltaRefetch = useRef(null);
+  useEffect(() => () => { if (deltaRefetch.current) clearTimeout(deltaRefetch.current); }, []);
+  const fetchPageRef = useRef(fetchPage);
+  useEffect(() => { fetchPageRef.current = fetchPage; }, [fetchPage]);
+  const scheduleRefetch = useCallback(() => {
+    if (deltaRefetch.current) return;
+    deltaRefetch.current = setTimeout(() => {
+      deltaRefetch.current = null;
+      fetchPageRef.current();
+    }, 1000);
+  }, []);
+
   // Per-row deltas: patch the line in place. A delta for a row we do not hold
-  // (a copy that was just created, or one that now matches the filter) falls
-  // through to the debounced refetch below.
+  // (a copy that was just created, or one that now matches the filter), or one
+  // that changes a row's state (the counts, the state filter and the `live`
+  // order all depend on it), also asks for a debounced refetch.
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
   useStreamEvent('app', 'instances.delta', useCallback((ev) => {
     if (!liveUpdates || !Array.isArray(ev.items)) return;
+    const held = new Map(itemsRef.current.map((i) => [i.instance_id, i]));
+    const relevant = ev.items.filter((d) => !(agentId && d.agent_id && d.agent_id !== agentId)
+      && !(workspace && d.workspace && d.workspace !== workspace));
+    if (!relevant.length) return;
+    if (relevant.some((d) => {
+      const current = held.get(d.instance_id);
+      return !current || (d.state && d.state !== current.state);
+    })) scheduleRefetch();
     setItems((prev) => {
       if (!prev.length) return prev;
       const byId = new Map(prev.map((i) => [i.instance_id, i]));
       let touched = false;
-      for (const delta of ev.items) {
+      for (const delta of relevant) {
         const current = byId.get(delta.instance_id);
         if (!current) continue;
-        if (agentId && delta.agent_id && delta.agent_id !== agentId) continue;
         byId.set(delta.instance_id, { ...current, ...delta });
         touched = true;
       }
       return touched ? prev.map((i) => byId.get(i.instance_id) || i) : prev;
     });
-  }, [liveUpdates, agentId]));
+  }, [liveUpdates, agentId, workspace, scheduleRefetch]));
 
   useLiveRefetch(() => fetchPage(), {
     type: 'instances.changed', enabled: liveUpdates,

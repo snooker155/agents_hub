@@ -24,16 +24,18 @@ same rows, so watching live and reading it back look the same.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from teams import store
 from teams.models import MAX_MEMBERS, MODES, Team
 from teams.prompts import suggest_manifest, team_system_prompt
 from teams.runner import estimate_cost, stop_run
+from common import record_access
 from chat.entity_chat import EntityChatSpec
+from chat.models import ChatAttachment, ChatReference, ChatRequest
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
 
 router = APIRouter(prefix="/api/teams", tags=["teams"])
@@ -76,6 +78,34 @@ class RunIn(BaseModel):
     workspace: Optional[str] = None
     task_id: Optional[str] = None
     conversation_id: Optional[str] = None
+    # What the request box carried besides the text, as the chat sends it:
+    # files and hub records (chat/models.py).
+    attachments: List[ChatAttachment] = []
+    references: List[ChatReference] = []
+
+
+def _attached_context(data: RunIn, team: Team, workspace: Optional[str]) -> tuple[str, List[Dict[str, str]], Optional[str]]:
+    """The files and records attached to a run, the way a chat turn reads
+    them: ``(prompt blocks, [{kind, label}], task id)``. An attached task is
+    the one the team works on, unless the request names one itself; nothing
+    attached makes no task."""
+    if not data.attachments and not data.references:
+        return "", [], data.task_id
+    from chat.attachments import materialize_attachments
+    from chat.context import build_attachment_lines
+    from chat.references import build_reference_lines, resolve_references
+    req = ChatRequest(message=data.goal or "", team_id=team.team_id, workspace=workspace,
+                      attachments=data.attachments, references=data.references)
+    materialize_attachments(req)
+    resolve_references(req, workspace=workspace)
+    lines: List[str] = []
+    for group in (build_reference_lines(req.references), build_attachment_lines(req.attachments)):
+        if group:
+            lines += ["", *group]
+    attached = ([{"kind": "file", "label": a.filename} for a in req.attachments]
+                + [{"kind": r.kind, "label": r.label or r.id} for r in req.references])
+    task_id = data.task_id or next((r.id for r in req.references if r.kind == "task"), None)
+    return "\n".join(lines).strip(), attached, task_id
 
 
 def _team_from_in(data: TeamIn, existing: Optional[Team] = None) -> Team:
@@ -151,12 +181,18 @@ def _enrich(team: Team) -> Dict[str, Any]:
 # ── Definitions ──────────────────────────────────────────────────────────────
 
 @router.get("")
-async def list_teams(workspace: Optional[str] = None):
-    return {"teams": [_enrich(t) for t in store.list_teams(workspace)]}
+async def list_teams(workspace: Optional[str] = None, request: Request = cast(Request, None)):
+    teams = store.list_teams(workspace)
+    if not workspace:
+        # A member asking for no workspace sees their own workspaces' teams.
+        names = record_access.visible_names(request)
+        teams = [t for t in teams if record_access.visible(names, t.workspace)]
+    return {"teams": [_enrich(t) for t in teams]}
 
 
 @router.post("")
-async def create_team(data: TeamIn):
+async def create_team(data: TeamIn, request: Request = cast(Request, None)):
+    record_access.require_in_workspace(request, data.workspace)
     _validate(data)
     return _enrich(store.save_team(_team_from_in(data)))
 
@@ -173,8 +209,11 @@ async def manifest_suggestion(agent_id: str):
 
 
 @router.get("/runs")
-async def list_runs(team_id: Optional[str] = None, limit: int = 50):
-    return {"runs": [r.to_dict() for r in store.list_runs(team_id, limit)]}
+async def list_runs(team_id: Optional[str] = None, limit: int = 50,
+                    request: Request = cast(Request, None)):
+    names = record_access.visible_names(request)
+    return {"runs": [r.to_dict() for r in store.list_runs(team_id, limit)
+                     if record_access.visible(names, r.workspace)]}
 
 
 @router.get("/runs/{team_run_id}")
@@ -216,6 +255,45 @@ async def get_messages(team_run_id: str, since: int = 0):
     }
 
 
+@router.get("/runs/{team_run_id}/turns")
+async def get_turns(team_run_id: str):
+    """The member turns of a run, oldest first, each one an agent run of its
+    own: who spoke, whether it is still working, and how it ended. The page's
+    participants and run log read them; a turn's steps are its trail."""
+    from common import db
+
+    if not store.get_run(team_run_id):
+        raise HTTPException(status_code=404, detail="Team run not found")
+    rows = db.get_conn().execute(
+        "SELECT run_id, agent_id, status, error, started_at, finished_at, duration_ms, "
+        "total_tokens, extra FROM runs WHERE parent_run_id = ? "
+        "ORDER BY COALESCE(started_at, created_at, ''), run_id", (team_run_id,)).fetchall()
+    turns = []
+    for r in rows:
+        extra = db.loads(r["extra"], {}) or {}
+        turns.append({
+            "run_id": r["run_id"], "agent_id": r["agent_id"],
+            "speaker": extra.get("team_member") or r["agent_id"],
+            "status": r["status"], "error": r["error"],
+            "started_at": r["started_at"], "finished_at": r["finished_at"],
+            "duration_ms": r["duration_ms"], "tokens": r["total_tokens"],
+        })
+    return {"team_run_id": team_run_id, "turns": turns}
+
+
+@router.delete("/runs/{team_run_id}")
+async def delete_run(team_run_id: str):
+    """Drop one run from the team's history, with its board. Anything still
+    going is refused: its next turn would write the board back."""
+    run = store.get_run(team_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Team run not found")
+    if str(run.status) in ("pending", "running", "stopping"):
+        raise HTTPException(status_code=409, detail="The run is still going; stop it first")
+    store.delete_run(team_run_id)
+    return {"deleted": True}
+
+
 @router.post("/runs/{team_run_id}/stop")
 async def stop_team_run(team_run_id: str):
     """Stop a running team now.
@@ -255,10 +333,12 @@ async def get_team(team_id: str):
 
 
 @router.put("/{team_id}")
-async def update_team(team_id: str, data: TeamIn):
+async def update_team(team_id: str, data: TeamIn, request: Request = cast(Request, None)):
     existing = store.get_team(team_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Team not found")
+    if data.workspace and data.workspace != existing.workspace:
+        record_access.require_in_workspace(request, data.workspace)
     _validate(data)
     return _enrich(store.save_team(_team_from_in(data, existing)))
 
@@ -321,10 +401,13 @@ async def start_run(team_id: str, data: RunIn):
             detail="a team run needs a goal — give it the request to work on",
         )
 
+    workspace = data.workspace or team.workspace
+    context, attached, task_id = _attached_context(data, team, workspace)
     try:
         run = start_team_run(
-            team_id, goal, workspace=data.workspace or team.workspace,
-            task_id=data.task_id, conversation_id=data.conversation_id,
+            team_id, goal, workspace=workspace,
+            task_id=task_id, conversation_id=data.conversation_id,
+            context=context, attached=attached,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

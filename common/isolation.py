@@ -68,7 +68,7 @@ _INSIDE_TOOLS = frozenset({
     # other agents of this workspace (each child runs isolated in turn)
     "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "get_agent_status_tool",
     "assign_agent_tool", "start_agent_tool", "stop_agent_tool", "reject_assignment_tool",
-    "list_agents_tool", "list_flows_tool", "run_flow_tool", "list_models_tool",
+    "list_agents_tool", "list_flows_tool", "run_flow_tool", "run_new_flow_tool", "list_models_tool",
     "handoff_to_agent", "consult_advisor",
     # the workspace's flows, teams, loops, scenarios and their runs
     "create_flow_tool", "get_flow_tool", "modify_flow_tool", "delete_flow_tool", "validate_flow_tool",

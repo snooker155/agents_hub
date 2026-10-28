@@ -1,15 +1,17 @@
 """Agent list, details, tool catalog and workspace capacities."""
 
-from fastapi import APIRouter, HTTPException
-from typing import Any, Dict, List, Optional, Union
+from fastapi import APIRouter, HTTPException, Request
+from typing import Any, Dict, List, Optional, Union, cast
 
 from agents import registry
+from agents import versions as agent_versions
 from tools.registry import get_all_tools
 from agents.capability_guard import (
     guard_mode,
 )
 from models import AgentToolsUpdate, AgentListItem, AgentDetail, AgentPage
 from workspace import system_agent_ids
+from common import record_access
 
 
 
@@ -17,24 +19,15 @@ from ._common import (package, get_factory, _agent_visible_in_workspace, _apply_
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
-@router.get("", response_model=Union[List[AgentListItem], AgentPage])
-async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = None,
-                      offset: Optional[int] = None):
-    """List all available agents from registry and factory definitions.
+def visible_agents(workspace: Optional[str]) -> List[Any]:
+    """The agents the Agents page lists in ``workspace``, cheap shape only.
 
-    Agents are assembled in memory from the registry and factory definitions
-    (not a queryable store), so ``limit``/``offset`` slice the assembled list
-    rather than being pushed into a query. With neither given, the response is
-    the full list exactly as before; with either, it is one page:
-    ``{items, total, limit, offset}``.
-
-    Visibility filtering (workspace ownership, ``allowed_agents``,
-    ``default_workspace_only``) runs over cheap fields for every candidate, since
-    it decides ``total``; building the full agent dict and annotating it with
-    live node status and the workspace's memory overrides only happens for the
-    agents in the requested page.
+    Registry entries first (as AgentSpec, their full dict deferred), then the
+    factory-only definitions (already dicts), filtered by workspace ownership,
+    ``allowed_agents`` and ``default_workspace_only`` (see ``_agent_visible_in_workspace``).
+    ``GET /api/agents`` pages over this list; ``GET /api/workspaces`` counts it
+    per workspace, so both agree on what "the agents in a workspace" are.
     """
-    # Get agents from existing registry
     registry_agents = registry.list_agents()
     reg_ids = {a.id for a in registry_agents}
 
@@ -80,6 +73,33 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
         if fa["id"] not in reg_ids and _visible(fa)
     )
 
+    return visible
+
+
+@router.get("", response_model=Union[List[AgentListItem], AgentPage])
+async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = None,
+                      offset: Optional[int] = None, request: Request = cast(Request, None)):
+    """List all available agents from registry and factory definitions.
+
+    Agents are assembled in memory from the registry and factory definitions
+    (not a queryable store), so ``limit``/``offset`` slice the assembled list
+    rather than being pushed into a query. With neither given, the response is
+    the full list exactly as before; with either, it is one page:
+    ``{items, total, limit, offset}``.
+
+    Visibility filtering (workspace ownership, ``allowed_agents``,
+    ``default_workspace_only``) runs over cheap fields for every candidate, since
+    it decides ``total``; building the full agent dict and annotating it with
+    live node status and the workspace's memory overrides only happens for the
+    agents in the requested page.
+    """
+    visible = visible_agents(workspace)
+    if not workspace and not record_access.visible(record_access.visible_names(request), None):
+        # No workspace named lists the default one's agents; a member who is
+        # not in it gets none of them (the middleware checks a named one).
+        visible = []
+    _SYS_IDS = system_agent_ids()
+
     total = len(visible)
     if limit is None and offset is None:
         page_items = visible
@@ -122,6 +142,8 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
         agent.setdefault("extends", None)
         agent.setdefault("extends_version", None)
         agent["children_count"] = _children_count.get(agent["id"], 0)
+        # The version it runs on (agents/versions.py): its pin, else the live state.
+        agent.update(agent_versions.version_state(agent["id"]))
         page.append(agent)
 
     if limit is None and offset is None:
@@ -209,6 +231,7 @@ async def get_agent_details(agent_id: str, workspace: Optional[str] = None):
     data.setdefault("extends", None)
     data.setdefault("extends_version", None)
     data["children"] = registry.children_of(spec.id)
+    data.update(agent_versions.version_state(agent_id))
     ws = (workspace or "default").strip() or "default"
     _apply_workspace_memory(data, ws, _workspace_memory_overrides(ws))
     return data

@@ -10,6 +10,7 @@ import {
 import {
   getDoctor, getSystem, syncSystem, setSystemSchedule, pruneSystemBranches, getSystemBranches,
 } from '../api/system';
+import { getClusterStack } from '../api/services';
 import { getSlo, getSupportBundle } from '../api/support';
 import { saveBlobAs } from '../api/files';
 import EntityChat from '../components/EntityChat';
@@ -180,6 +181,26 @@ function detailValue(t, language, key, value) {
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
+// The skills check lists flagged skills from every workspace; each one opens
+// on the Skills page in its own workspace rather than printing as JSON.
+const SKILL_LIST_KEYS = new Set(['attached_high', 'catalog_high']);
+
+function SkillLinks({ rows }) {
+  return (
+    <span className="flex flex-col items-end gap-0.5">
+      {rows.map((r) => (
+        <Link
+          key={r.id}
+          to={`/skills?${new URLSearchParams({ workspace: r.workspace, skill: r.id })}`}
+          className="text-indigo-600 hover:text-indigo-800 font-sans"
+        >
+          {r.name} ({r.workspace})
+        </Link>
+      ))}
+    </span>
+  );
+}
+
 // One self check, expandable to its detail map. `doc`/`anchor` point at the
 // service-health doc's matching section rather than duplicating the
 // explanation here, so the two never drift apart.
@@ -230,7 +251,9 @@ function CheckRow({ check }) {
                 {t(`health.doctor.detail.${key}`, { defaultValue: key })}
               </span>
               <span className="text-gray-700 font-mono break-all text-right">
-                {detailValue(t, language, key, value)}
+                {SKILL_LIST_KEYS.has(key) && Array.isArray(value) && value.length > 0
+                  ? <SkillLinks rows={value} />
+                  : detailValue(t, language, key, value)}
               </span>
             </div>
           ))}
@@ -605,6 +628,59 @@ function SystemWorkspaceCard() {
   );
 }
 
+/**
+ * The shared services around the hub (common/stack.py): database, Redis,
+ * object store, identity provider, browser service, model runtime, egress
+ * proxy. Loaded on its own, not with the snapshot, because the probes reach
+ * the network and a slow one must not hold the rest of the page back. The
+ * Cluster page draws the same rows as a map.
+ */
+const STACK_DOT = {
+  ok: 'bg-green-500', warn: 'bg-amber-500', fail: 'bg-red-500',
+  off: 'bg-gray-300', unknown: 'border-2 border-gray-400 bg-transparent',
+};
+
+function StackCard() {
+  const { t } = useI18n();
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getClusterStack()
+      .then(({ data }) => { if (!cancelled) setRows(data?.components || []); })
+      .catch(() => { if (!cancelled) setRows([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <Card icon={Server} title={t('health.stack.title')}
+          actions={<Link to="/cluster" className="text-xs font-semibold text-indigo-600 hover:underline">{t('health.stack.openMap')}</Link>}>
+      {rows === null ? (
+        <p className="text-sm text-gray-500">{t('health.stack.loading')}</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-gray-500">{t('health.stack.none')}</p>
+      ) : rows.map((c) => {
+        const unit = c.unit ? t(`cluster.units.${c.unit}`) : '';
+        const hasLoad = c.load !== null && c.load !== undefined;
+        const load = hasLoad ? `${unit} ${c.load}${c.capacity ? `/${c.capacity}` : ''}`.trim() : '';
+        return (
+          <div key={c.id} className="flex items-start justify-between gap-3 py-1.5 text-sm" data-testid={`stack-${c.id}`}>
+            <span className="flex min-w-0 items-start gap-2">
+              <span className={`mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${STACK_DOT[c.status] || STACK_DOT.unknown}`}
+                    title={t(`cluster.stack.status.${c.status}`)} />
+              <span className="min-w-0">
+                <span className="font-semibold text-gray-900">{t(`cluster.stack.names.${c.id}`, { defaultValue: c.label })}</span>
+                <span className="block text-xs text-gray-500 break-words">{c.summary}</span>
+              </span>
+            </span>
+            {load && <span className="shrink-0 text-xs tabular-nums text-gray-600">{load}</span>}
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
 export default function Health() {
   const { t } = useI18n();
   const toast = useToast();
@@ -729,6 +805,7 @@ export default function Health() {
       <div className={`grid grid-cols-1 gap-4 items-start ${chat.open ? '2xl:grid-cols-2' : 'lg:grid-cols-2'}`}>
         <div className="space-y-4 min-w-0">
           <DiagnosticsSection />
+          <StackCard />
           {!loading && (
             <Card icon={Database} title={t('health.database')} tone={db.reachable ? 'default' : 'bad'}>
               {db.reachable ? (

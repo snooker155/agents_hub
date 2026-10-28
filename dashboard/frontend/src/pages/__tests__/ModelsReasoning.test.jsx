@@ -4,10 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { I18nProvider } from '../../i18n';
 import Models from '../Models';
 
-// The catalog's temperature and reasoning columns: a model's own temperature
-// (empty = the global default), disabled where the model rejects one, and the
-// reasoning effort the provider applies by default next to what thinking
-// level off sends.
+// The catalog's temperature and reasoning effort columns: a model's own
+// temperature (empty = the global default), disabled where the model rejects
+// one, and its own default effort (empty = the provider's, named in the empty
+// choice), picked from the efforts the model accepts.
 
 const ok = (data) => Promise.resolve({ data });
 
@@ -40,8 +40,10 @@ const CATALOG = {
     openai: {
       default: 'gpt-5',
       models: [
-        model('gpt-5', { reasoning: { default: 'medium', off: 'minimal', temperature: 'never' } }),
-        model('gpt-5.4', { temperature: 0.7, reasoning: { default: 'none', off: 'none', temperature: 'when_off' } }),
+        model('gpt-5', { reasoning: { default: 'medium', off: 'minimal', temperature: 'never',
+          efforts: ['minimal', 'low', 'medium', 'high'] } }),
+        model('gpt-5.4', { temperature: 0.7, effort: 'xhigh', reasoning: { default: 'none', off: 'none',
+          temperature: 'when_off', efforts: ['none', 'low', 'medium', 'high', 'xhigh'] } }),
         model('gpt-4o', { reasoning: null }),
       ],
     },
@@ -81,17 +83,24 @@ async function renderCatalog() {
 }
 
 describe('Models catalog: temperature and reasoning', () => {
-  it('shows the default effort and what off sends', async () => {
+  it('offers the model\'s own efforts, names the provider default, and saves a choice', async () => {
     await renderCatalog();
-    const gpt5 = within(row('gpt-5'));
-    expect(gpt5.getByText('medium')).toBeInTheDocument();
-    expect(gpt5.getByText('off → minimal')).toBeInTheDocument();
-    // Default and off coincide: nothing to add under it.
-    const gpt54 = within(row('gpt-5.4'));
-    expect(gpt54.getByText('none')).toBeInTheDocument();
-    expect(gpt54.queryByText(/off →/)).toBeNull();
+    const effort = (id) => within(row(id)).getByRole('combobox', { name: 'Reasoning effort' });
+    const gpt5 = effort('gpt-5');
+    expect(gpt5).toHaveValue('');
+    expect(within(gpt5).getAllByRole('option').map((o) => o.textContent)).toEqual(
+      ['Provider (Medium)', 'Minimal', 'Low', 'Medium', 'High']);
+    expect(effort('gpt-5.4')).toHaveValue('xhigh');
     // No table for the model: a dash.
     expect(within(row('gpt-4o')).getByText('—')).toBeInTheDocument();
+
+    fireEvent.change(gpt5, { target: { value: 'high' } });
+    fireEvent.change(effort('gpt-5.4'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    const saved = put.mock.calls[0][1].providers.openai.models;
+    expect(saved.find((m) => m.id === 'gpt-5').effort).toBe('high');
+    expect(saved.find((m) => m.id === 'gpt-5.4').effort).toBeNull();
   });
 
   it('takes a temperature per model, falls back to the global one, and saves it', async () => {

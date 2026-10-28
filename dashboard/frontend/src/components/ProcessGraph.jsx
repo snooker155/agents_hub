@@ -84,7 +84,7 @@ function liveRun(d) {
 // A delegated run inside the run that asked for it: fetched when opened, and
 // drawn with the same graph, so a delegation nested in it opens the same way.
 // While the turn is live it is open and grows with each step the worker takes.
-function DelegatedRunNode({ tc }) {
+function DelegatedRunNode({ tc, flush = false }) {
   const { t } = useI18n();
   const live = tc.delegation || null;
   const [open, setOpen] = useState(Boolean(live?.running));
@@ -104,7 +104,7 @@ function DelegatedRunNode({ tc }) {
     return () => { cancelled = true; };
   }, [open, runId, runs, live, t]);
   return (
-    <div className="rounded-lg border border-indigo-200 bg-indigo-50/40">
+    <div className={`${flush ? 'border-y' : 'rounded-lg border'} border-indigo-200 bg-indigo-50/40`}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -129,16 +129,18 @@ function DelegatedRunNode({ tc }) {
           <span className="text-[11px] text-gray-500 truncate">{preview(output || tc.input)}</span>
         )}
       </button>
+      {/* The worker's graph fills the card to its sides and bottom; only the
+          plain text lines keep a padding. */}
       {open && (
-        <div className="px-2.5 pb-2.5 space-y-1.5">
+        <div className="space-y-1.5">
           {live ? (
             <ProcessGraph messageRuns={[liveRun(live)]} titleByAgent nested />
           ) : !runId ? (
-            <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">{tc.output || tc.input}</div>
+            <div className="px-2.5 pb-2.5 text-[11px] text-gray-700 whitespace-pre-wrap break-all">{tc.output || tc.input}</div>
           ) : error ? (
-            <div className="text-[11px] text-red-600">{error}</div>
+            <div className="px-2.5 pb-2.5 text-[11px] text-red-600">{error}</div>
           ) : runs === null ? (
-            <div className="text-[11px] text-gray-400 italic">{t('processGraph.loadingDelegatedRun')}</div>
+            <div className="px-2.5 pb-2.5 text-[11px] text-gray-400 italic">{t('processGraph.loadingDelegatedRun')}</div>
           ) : (
             <ProcessGraph messageRuns={runs} titleByAgent nested />
           )}
@@ -159,8 +161,11 @@ const RUN_STATUS_CLS = {
 // `nested`: the graph of a delegated run, drawn inside its parent's step. Its
 // runs hang off that step, not off a timeline of their own, so they have no
 // timeline dot or connector.
+// `newestFirst`: the latest step on top (the task page), each step keeping
+// its number in the run order.
 export default function ProcessGraph({
   messageRuns = [], showDetailsLink = true, titleByAgent = false, evalCaseWorkspace = undefined, nested = false,
+  followLast = true, newestFirst = false,
 }) {
   const { t } = useI18n();
   // "To eval case" is offered where the host passes a workspace for it (the
@@ -188,19 +193,21 @@ export default function ProcessGraph({
     setExpandedNodes(new Set());
   }, []);
 
+  // `followLast`: bring the newest step into view as steps arrive (the chat
+  // panel); the task page leaves the scroll where the reader put it.
   useEffect(() => {
-    if (!messageRuns.length || nested) return;
+    if (!messageRuns.length || nested || !followLast) return;
     const isFirst = prevLengthRef.current === null;
     prevLengthRef.current = messageRuns.length;
     lastNodeRef.current?.scrollIntoView({ behavior: isFirst ? 'instant' : 'smooth', block: 'nearest' });
-  }, [messageRuns.length, nested]);
+  }, [messageRuns.length, nested, followLast]);
 
   if (!messageRuns.length) {
     return <p className="text-xs text-gray-500 italic">{t('processGraph.noProcessMessageDataYet')}</p>;
   }
   return (
     <div className="space-y-2">
-      {messageRuns.length > 1 && (
+      {messageRuns.length > 1 && !nested && (
         <div className="flex items-center gap-2 pb-1">
           <button
             onClick={expandAll}
@@ -217,10 +224,13 @@ export default function ProcessGraph({
           </button>
         </div>
       )}
-      {messageRuns.map((mr, idx) => {
+      {(newestFirst ? [...messageRuns].reverse() : messageRuns).map((mr, pos) => {
+        const idx = newestFirst ? messageRuns.length - 1 - pos : pos;
         const key = mr.message_id || idx;
-        const isExpanded = expandedNodes.has(idx);
-        const hasNext = idx < messageRuns.length - 1;
+        // A delegated run's block always shows its steps: the delegation card
+        // around it is what folds.
+        const isExpanded = nested || expandedNodes.has(idx);
+        const hasNext = pos < messageRuns.length - 1;
         const tools = mr.tools || [];
         const toolCount = Number(mr.tool_calls || tools.length || 0);
         const toolNames = Array.from(
@@ -238,12 +248,18 @@ export default function ProcessGraph({
           >
             {hasNext && !nested && <div className="absolute left-[7px] top-4 bottom-[-16px] w-px bg-gray-200" />}
             {!nested && <div className="absolute left-0 top-2 w-3 h-3 rounded-full bg-indigo-500" />}
+            {/* Inside a delegation card the block and its steps run edge to
+                edge, with no side lines or rounded corners. */}
             <div
-              role="button"
-              tabIndex={0}
-              onClick={() => toggleNode(idx)}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleNode(idx); } }}
-              className="w-full text-left rounded-lg border border-indigo-100 bg-indigo-50 hover:bg-indigo-100 transition-colors p-3 cursor-pointer"
+              {...(nested ? {} : {
+                role: 'button',
+                tabIndex: 0,
+                onClick: () => toggleNode(idx),
+                onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleNode(idx); } },
+              })}
+              className={`w-full text-left border-indigo-100 bg-indigo-50 p-3 ${
+                nested ? 'border-y' : 'rounded-lg border hover:bg-indigo-100 transition-colors cursor-pointer'
+              }`}
             >
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -258,6 +274,12 @@ export default function ProcessGraph({
                       {shortText(mr.input || 'Message', 100)}
                     </div>
                   )}
+                  {/* A run made on a subtask, shown on its parent's flow. */}
+                  {mr.subtask && (
+                    <span className="text-xs text-indigo-700 truncate min-w-0" title={mr.subtask.title}>
+                      {mr.subtask.key ? `${mr.subtask.key} · ` : ''}{mr.subtask.title}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {mr.status && (
@@ -271,7 +293,7 @@ export default function ProcessGraph({
                     </span>
                   )}
                   <span className="text-[10px] text-indigo-600">{fmtTimestamp(mr.timestamp)}</span>
-                  {isExpanded ? (
+                  {nested ? null : isExpanded ? (
                     <ChevronUp className="w-3.5 h-3.5 text-indigo-500" />
                   ) : (
                     <ChevronDown className="w-3.5 h-3.5 text-indigo-500" />
@@ -334,15 +356,16 @@ export default function ProcessGraph({
                   );
                 })()}
               </div>
-              {/* Two rows: the tokens, then tool calls and time. The second row's
-                  pills never wrap apart; the links go under them when the
-                  panel is too narrow for both. */}
-              <div className="flex flex-wrap gap-1 mb-1" data-testid="run-stats-tokens">
-                <TokenPill label={t('processGraph.in')} value={mr.inbound_tokens} />
-                <TokenPill label={t('processGraph.out')} value={mr.outbound_tokens} />
-                <TokenPill label={t('processGraph.total')} value={mr.total_tokens} />
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+              {/* One line when it fits: the tokens, then tool calls and time,
+                  then the link on the right. On a narrow panel the groups
+                  wrap as wholes (tools and time never part); the link goes
+                  under them. */}
+              <div className="flex flex-wrap items-center gap-x-1 gap-y-1" data-testid="run-stats">
+                <div className="flex flex-wrap gap-1" data-testid="run-stats-tokens">
+                  <TokenPill label={t('processGraph.in')} value={mr.inbound_tokens} />
+                  <TokenPill label={t('processGraph.out')} value={mr.outbound_tokens} />
+                  <TokenPill label={t('processGraph.total')} value={mr.total_tokens} />
+                </div>
                 <div className="flex shrink-0 gap-1" data-testid="run-stats-run">
                   <TokenPill label={t('processGraph.tools2')} value={toolCount} />
                   <TokenPill label={t('processGraph.duration')} value={fmtDurationMs(mr.duration_ms)} />
@@ -373,8 +396,9 @@ export default function ProcessGraph({
               </div>
             </div>
             {isExpanded && (
-              <div className="ml-5 mt-2 space-y-2">
+              <div className={`mt-2 space-y-2 ${!nested ? 'ml-5' : !hasNext ? 'pb-2.5' : ''}`}>
                 <ProcessNode
+                  flush={nested}
                   label={t('processGraph.input')}
                   labelColor="text-blue-700"
                   borderColor="border-blue-200"
@@ -400,6 +424,7 @@ export default function ProcessGraph({
                       const r = entry.item;
                       return (
                         <ProcessNode
+                          flush={nested}
                           key={entry.key}
                           label={`Thought · step ${entry.thoughtNo}`}
                           labelColor="text-violet-700"
@@ -407,7 +432,7 @@ export default function ProcessGraph({
                           bgColor="bg-violet-50"
                           hint={preview(r.content)}
                         >
-                          <div className="text-[11px] text-violet-900 whitespace-pre-wrap break-words">
+                          <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-words">
                             {r.content || '(empty)'}
                           </div>
                         </ProcessNode>
@@ -415,11 +440,12 @@ export default function ProcessGraph({
                     }
                     const tc = entry.item;
                     if (DELEGATION_TOOLS.has(tc.tool)) {
-                      return <DelegatedRunNode key={entry.key} tc={tc} />;
+                      return <DelegatedRunNode key={entry.key} tc={tc} flush={nested} />;
                     }
                     if (tc.tool === SKILL_TOOL) {
                       return (
                         <ProcessNode
+                          flush={nested}
                           key={entry.key}
                           label={t('processGraph.skillRetrieved')}
                           labelColor="text-violet-800"
@@ -446,6 +472,7 @@ export default function ProcessGraph({
                     const isReasoningTool = tc.tool === 'think' || tc.tool === 'plan';
                     return (
                       <ProcessNode
+                        flush={nested}
                         key={entry.key}
                         label={`Tool: ${tc.tool || 'tool'}`}
                         labelColor="text-amber-700"
@@ -469,6 +496,7 @@ export default function ProcessGraph({
                   });
                 })()}
                 <ProcessNode
+                  flush={nested}
                   label={t('processGraph.output')}
                   labelColor="text-green-700"
                   borderColor="border-green-200"
@@ -478,6 +506,7 @@ export default function ProcessGraph({
                 </ProcessNode>
                 {mr.error && (
                   <ProcessNode
+                    flush={nested}
                     label={t('processGraph.error')}
                     labelColor="text-red-700"
                     borderColor="border-red-200"

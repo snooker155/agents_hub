@@ -20,7 +20,7 @@ on a resume, the checkpoint to pick up from.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from common.paths import AGENTS_HUB_ROOT
 from teams.models import TeamRun
@@ -53,8 +53,14 @@ def start_team_run(
     session_id: Optional[str] = None,
     conversation_id: Optional[str] = None,
     parent_run_id: Optional[str] = None,
+    context: str = "",
+    attached: Optional[List[Dict[str, str]]] = None,
+    origin: Optional[Dict[str, Any]] = None,
 ) -> TeamRun:
     """The database half of launching a team run.
+
+    ``origin`` is the chat that started it (chat/background_runs.py), told
+    when the run ends.
 
     Validates the team the same way ``teams.runner.run_team``'s own
     mint-a-record path does (``teams.runner._validate_for_run`` — one rule,
@@ -80,6 +86,7 @@ def start_team_run(
     goal = (goal or "").strip() or (team.description or "").strip()
 
     run = TeamRun(team_id=team_id, mode=team.mode, goal=goal,
+                  context=context or "", attached=list(attached or []),
                   conversation_id=conversation_id, parent_run_id=parent_run_id)
 
     ws_name, ws_path, task_id, session_id = _prepare_context(
@@ -89,6 +96,10 @@ def start_team_run(
     run.log_file = _log_path(run.team_run_id)
 
     store.save_run(run)
+    if origin:
+        from common import entity_runs
+        from chat.background_runs import ORIGIN_KEY
+        entity_runs.update(run.team_run_id, {ORIGIN_KEY: origin}, notify=False)
     # The task is claimed before the process exists, exactly as the old
     # in-process path did: the user picked this team and pressed run, so
     # there is nobody left to approve the assignment (see _claim_task's own

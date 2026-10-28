@@ -67,19 +67,34 @@ describe('WorkspaceSecrets', () => {
     await screen.findByText('GITHUB_TOKEN');
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'deploy_key' } });
     fireEvent.change(screen.getByLabelText('Value'), { target: { value: 's3cr3t-value' } });
-    fireEvent.change(screen.getByLabelText('Any agent'), { target: { value: 'writer' } });
+    // The agent picker's list, without the card on the right.
+    fireEvent.click(screen.getByTestId('agent-picker'));
+    expect(screen.queryByTestId('agent-picker-details')).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: /writer/ }));
     fireEvent.click(screen.getByText('Save secret'));
     await waitFor(() => expect(setWorkspaceSecret).toHaveBeenCalledWith(
       'alpha', 'DEPLOY_KEY', { value: 's3cr3t-value', agent_id: 'writer' }));
     expect(screen.getByLabelText('Value').getAttribute('type')).toBe('password');
   });
 
+  it('asks before deleting and keeps the secret on a no', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    show();
+    await screen.findByText('GITHUB_TOKEN');
+    fireEvent.click(screen.getByLabelText('Delete secret GITHUB_TOKEN'));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('GITHUB_TOKEN (Agent publisher)'));
+    expect(deleteWorkspaceSecret).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
   it('deletes at exactly the row scope', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     show();
     await screen.findByText('GITHUB_TOKEN');
     fireEvent.click(screen.getByLabelText('Delete secret GITHUB_TOKEN'));
     await waitFor(() => expect(deleteWorkspaceSecret).toHaveBeenCalledWith(
       'alpha', 'GITHUB_TOKEN', { agent_id: 'publisher' }));
+    confirm.mockRestore();
   });
 
   it('explains the missing key when the backend refuses to store', async () => {

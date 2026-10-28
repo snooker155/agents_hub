@@ -38,6 +38,24 @@ def _chat(chat_id: str, **over):
 
 # ── store ────────────────────────────────────────────────────────────────────
 
+def test_search_finds_a_title_or_a_message_in_any_case_with_the_text_around_it():
+    from common import chat_store
+
+    chat_store.save_chat(_chat("t1", title="Тренды кофе 2026"))
+    chat_store.save_chat(_chat("m1", title="Другое", messages=[
+        {"id": "a", "role": "user", "content": "Собери отчёт про КОФЕЙНЫЕ тренды в Германии"},
+    ]))
+    chat_store.save_chat(_chat("n1", title="Nothing here"))
+
+    hits = chat_store.search_chats("кофе")["items"]
+    assert {h["id"] for h in hits} == {"t1", "m1"}
+    by_id = {h["id"]: h for h in hits}
+    assert "match" not in by_id["t1"]
+    assert "КОФЕЙНЫЕ" in by_id["m1"]["match"] and by_id["m1"]["messages"] == []
+    assert chat_store.search_chats("  ")["items"] == []
+    assert [h["id"] for h in chat_store.search_chats("кофе", workspace="other")["items"]] == []
+
+
 def test_saved_chat_round_trips_with_its_transcript():
     from common import chat_store
 
@@ -135,6 +153,46 @@ def test_import_is_additive_and_never_overwrites_a_stored_chat():
     assert result == {"imported": 1, "skipped": 2}
     assert chat_store.get_chat("kept")["title"] == "server copy"
     assert chat_store.get_chat("brought-in") is not None
+
+
+def test_a_stopped_turn_is_marked_on_the_reply_holding_its_run():
+    from common import chat_store
+
+    chat_store.save_chat(_chat("s1"))
+    assert chat_store.mark_stopped("s1", run_id="r1", user_message="hello") is True
+    messages = chat_store.get_chat("s1")["messages"]
+    assert [m["id"] for m in messages] == ["m1", "m2"]
+    assert messages[1]["stopped"] is True and messages[1]["content"] == "hi"
+    # A second mark changes nothing.
+    assert chat_store.mark_stopped("s1", run_id="r1", user_message="hello") is False
+
+
+def test_a_turn_stopped_before_its_run_was_named_marks_the_reply_after_its_message():
+    from common import chat_store
+
+    chat_store.save_chat(_chat("s2", messages=[
+        {"id": "m1", "role": "user", "content": "hello"},
+        {"id": "m2", "role": "agent", "content": "hi", "run_id": "r1"},
+        {"id": "m3", "role": "user", "content": "and now?"},
+        {"id": "m4", "role": "agent", "content": ""},
+    ]))
+    chat_store.mark_stopped("s2", run_id="r2", user_message="and now?")
+    messages = chat_store.get_chat("s2")["messages"]
+    assert [m["id"] for m in messages] == ["m1", "m2", "m3", "m4"]
+    assert messages[3]["stopped"] is True and messages[3]["run_id"] == "r2"
+    assert not messages[1].get("stopped")
+
+
+def test_a_stopped_turn_the_transcript_never_held_is_added():
+    from common import chat_store
+
+    chat_store.save_chat(_chat("s3"))
+    chat_store.mark_stopped("s3", run_id="r9", user_message="something new", agent_id="assistant")
+    messages = chat_store.get_chat("s3")["messages"]
+    assert [m["role"] for m in messages] == ["user", "agent", "user", "agent"]
+    assert messages[2]["content"] == "something new"
+    assert messages[3] == {**messages[3], "stopped": True, "run_id": "r9", "content": ""}
+    assert chat_store.mark_stopped("missing", run_id="r9", user_message="x") is False
 
 
 def test_saving_without_an_id_is_refused():

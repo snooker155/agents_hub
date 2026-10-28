@@ -12,11 +12,12 @@ These routes intentionally expose only definition-level information about an
 agent (prompt markdown, tools, commands, skills, model) — never user- or
 workspace-related data such as sessions, memories, runs or tasks.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from typing import Any, Dict, List, Optional
 
 from agents import registry, prompt_assembly
 from agents.agent_factory import get_factory
+from common.marketplace_names import is_marketplace_agent, is_marketplace_flow
 from flow import store as flow_store
 from tools.registry import get_all_tools
 from workspace import is_system_agent, get_workspace_metadata
@@ -27,24 +28,10 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketplace", tags=["marketplace"])
 
 
-def _is_marketplace_agent(spec: registry.AgentSpec) -> bool:
-    """An agent is listed on the marketplace when explicitly published.
-
-    When the hub requires review (``AGENTS_HUB_REGISTRY_REQUIRE_REVIEW``,
-    agents/registry.py), a shared agent still needs ``review_status ==
-    "approved"`` to appear here; with the toggle off, sharing alone is enough,
-    exactly as before this feature existed — an install that never turns the
-    toggle on sees no change to what the marketplace lists.
-    """
-    if is_system_agent(spec.id):
-        return False
-    if spec.default_workspace_only:
-        return False
-    if not spec.shared:
-        return False
-    if registry.registry_review_required() and spec.review_status != "approved":
-        return False
-    return True
+# What "published" means lives with the one-name-per-kind rule
+# (common/marketplace_names.py), the review requirement included.
+_is_marketplace_agent = is_marketplace_agent
+_is_marketplace_flow = is_marketplace_flow
 
 
 def _agent_in_workspace(spec: registry.AgentSpec, workspace: Optional[str]) -> bool:
@@ -99,18 +86,6 @@ async def list_marketplace_agents(workspace: Optional[str] = None):
         })
     items.sort(key=lambda a: a["name"].lower())
     return items
-
-
-def _is_marketplace_flow(flow: Dict[str, Any]) -> bool:
-    """A flow is listed on the marketplace when shared and, if the hub
-    requires review (``AGENTS_HUB_REGISTRY_REQUIRE_REVIEW``, common/review.py,
-    shared with agents and skills), also approved. Off, sharing alone is
-    enough, exactly as before this feature existed."""
-    if not flow.get("shared"):
-        return False
-    if registry.registry_review_required() and flow.get("review_status") != "approved":
-        return False
-    return True
 
 
 def _flow_in_workspace(
@@ -295,3 +270,153 @@ async def get_marketplace_agent(agent_id: str, workspace: Optional[str] = None):
         "reasoning": dict(spec.reasoning or {}),
         "in_workspace": _agent_in_workspace(spec, workspace),
     }
+
+
+# ── flow detail, teams and loops ─────────────────────────────────────────────
+# Read by a linked hub in "catalog only" mode (hublink/catalog.py): it browses
+# these and installs copies. Teams and loops carry no ``shared`` flag, so
+# nothing marks one as meant for other people. Serving whatever the calling
+# key can see would hand every private team and loop of its workspaces to a
+# linked hub, which in turn shows the catalog to all of its own users. So
+# they are served to an administrator's key only (still cut to the key's
+# scope): an administrator linking two hubs of their own is the case this
+# exists for. The definitions hold agent and flow ids only, never keys or run
+# data.
+
+def _admin_caller(request: Request) -> bool:
+    """Whether the caller may read unpublished teams, loops and flows: an
+    administrator in ``multi`` mode, the one operator in any other mode."""
+    from common import identity
+    if identity.current_mode() != identity.MULTI:
+        return True
+    principal = identity.request_principal(request)
+    return bool(principal and principal.is_admin)
+
+
+def _admin_sees(request: Request, workspace: Optional[str]) -> bool:
+    from common import access, identity
+    return _admin_caller(request) and access.can_see_workspace(identity.request_principal(request), workspace)
+
+def _agent_ref(agent_id: str) -> Dict[str, Any]:
+    spec = registry.get_agent(agent_id)
+    return {
+        "id": agent_id,
+        "name": spec.name if spec else agent_id,
+        "domain": spec.domain if spec else "",
+        "system": is_system_agent(agent_id),
+        "on_marketplace": bool(spec and _is_marketplace_agent(spec)),
+    }
+
+
+def _flow_servable(flow: Dict[str, Any], request: Request) -> bool:
+    """A published flow, for anyone; an unpublished one only for the key that
+    may read the loops using it (a loop's flow is rarely published)."""
+    if _is_marketplace_flow(flow):
+        return True
+    return _admin_sees(request, flow.get("workspace"))
+
+
+@router.get("/flows/{flow_id}")
+async def get_marketplace_flow(flow_id: str, request: Request):
+    """One flow with its portable YAML (the logic skeleton) and the agents it
+    uses: a published one, or, for an administrator's key, any flow it can
+    see (a loop installed from here needs its flow). ``published`` tells the
+    linked hub which is which, so it can keep unpublished flows from people
+    who are not its administrators."""
+    flow = flow_store.get_flow(flow_id)
+    if not flow or not _flow_servable(flow, request):
+        raise HTTPException(status_code=404, detail="Flow not found on the marketplace")
+    return {
+        "id": flow.get("id"),
+        "published": _is_marketplace_flow(flow),
+        "name": flow.get("name") or flow.get("id"),
+        "description": flow.get("description", ""),
+        "owner_workspace": flow.get("workspace"),
+        "updated_at": flow.get("updated_at"),
+        "agents": [_agent_ref(a) for a in flow_store.flow_agent_ids(flow)],
+        "yaml": flow_store.export_flow_yaml(flow_id) or "",
+    }
+
+
+def _team_agent_ids(team: Any) -> List[str]:
+    ids: List[str] = []
+    for aid in [m.agent_id for m in team.members] + [team.leader_agent_id, team.entry_agent_id]:
+        if aid and aid not in ids:
+            ids.append(aid)
+    return ids
+
+
+def _team_card(team: Any) -> Dict[str, Any]:
+    return {
+        "id": team.team_id,
+        "name": team.name or team.team_id,
+        "description": team.description,
+        "mode": team.mode,
+        "owner_workspace": team.workspace,
+        "members_count": len(team.members),
+        "agents": [_agent_ref(a) for a in _team_agent_ids(team)],
+        "updated_at": team.updated_at,
+    }
+
+
+@router.get("/teams")
+async def list_marketplace_teams(request: Request):
+    """Teams in the workspaces the caller can see, for an administrator's key
+    only (teams have no publishing flag; see the note above)."""
+    from teams import store as teams_store
+
+    if not _admin_caller(request):
+        return []
+    items = [_team_card(t) for t in teams_store.list_teams() if _admin_sees(request, t.workspace)]
+    items.sort(key=lambda t: (t["name"] or "").lower())
+    return items
+
+
+@router.get("/teams/{team_id}")
+async def get_marketplace_team(team_id: str, request: Request):
+    from teams import store as teams_store
+
+    team = teams_store.get_team(team_id)
+    if not team or not _admin_sees(request, team.workspace):
+        raise HTTPException(status_code=404, detail="Team not found")
+    return {**_team_card(team), "definition": team.to_dict()}
+
+
+def _loop_card(loop: Any, request: Request) -> Dict[str, Any]:
+    flow = flow_store.get_flow(loop.flow_id) if loop.flow_id else None
+    agent_ids: List[str] = []
+    if loop.evaluator_agent_id:
+        agent_ids.append(loop.evaluator_agent_id)
+    return {
+        "id": loop.loop_id,
+        "name": loop.name or loop.loop_id,
+        "description": loop.description,
+        "owner_workspace": loop.workspace,
+        "flow": {"id": loop.flow_id, "name": (flow or {}).get("name") or loop.flow_id,
+                 "on_marketplace": bool(flow and _flow_servable(flow, request))},
+        "agents": [_agent_ref(a) for a in agent_ids],
+        "updated_at": loop.updated_at,
+    }
+
+
+@router.get("/loops")
+async def list_marketplace_loops(request: Request):
+    """Loops in the workspaces the caller can see, for an administrator's key
+    only (loops have no publishing flag; see the note above)."""
+    from loops import store as loops_store
+
+    if not _admin_caller(request):
+        return []
+    items = [_loop_card(l, request) for l in loops_store.list_loops() if _admin_sees(request, l.workspace)]
+    items.sort(key=lambda l: (l["name"] or "").lower())
+    return items
+
+
+@router.get("/loops/{loop_id}")
+async def get_marketplace_loop(loop_id: str, request: Request):
+    from loops import store as loops_store
+
+    loop = loops_store.get_loop(loop_id)
+    if not loop or not _admin_sees(request, loop.workspace):
+        raise HTTPException(status_code=404, detail="Loop not found")
+    return {**_loop_card(loop, request), "definition": loop.to_dict()}

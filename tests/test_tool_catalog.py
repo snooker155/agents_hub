@@ -65,7 +65,7 @@ def _tool_objects_by_id() -> dict:
         block_task, set_task_dependencies, create_sequence, get_task_result,
     )
     from tools.langchain_tools import (
-        list_agents_tool, assign_agent_tool, start_agent_tool, run_agent_tool,
+        list_agents_tool, assign_agent_tool, assign_flow_tool, start_agent_tool, run_agent_tool,
         list_flows_tool, run_flow_tool, reject_assignment_tool, stop_agent_tool,
         get_agent_status_tool, wait_for_agent_tool, create_agent_tool,
         get_agent_tool, modify_agent_tool, delete_agent_tool,
@@ -73,7 +73,7 @@ def _tool_objects_by_id() -> dict:
     from tools.delegation import delegate_task_tool, list_models_tool
     from tools.flow_management import (
         create_flow_tool, get_flow_tool, modify_flow_tool, delete_flow_tool,
-        validate_flow_tool,
+        validate_flow_tool, run_new_flow_tool,
     )
     from tools.scenario_management import SCENARIO_MANAGEMENT_TOOLS
     from tools.world_management import WORLD_MANAGEMENT_TOOLS
@@ -88,8 +88,10 @@ def _tool_objects_by_id() -> dict:
     from tools.docs_tool import DOCS_TOOLS
     from tools.eval_ops import EVAL_TOOLS
     from tools.schedule_management import (
-        schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled, wake_agent,
+        schedule_notification, schedule_task, schedule_agent_run, schedule_flow, schedule_loop,
+        schedule_memory_consolidation,
+        notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
+        pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,
     )
     from tools.web import WEB_TOOLS
     from tools.browser import BROWSER_TOOLS
@@ -118,19 +120,21 @@ def _tool_objects_by_id() -> dict:
         *GRAPH_BUILDER_TOOLS,
         create_task, add_subtask, get_task, list_tasks, update_task, stop_task,
         block_task, set_task_dependencies, create_sequence, get_task_result,
-        list_agents_tool, assign_agent_tool, start_agent_tool, run_agent_tool,
+        list_agents_tool, assign_agent_tool, assign_flow_tool, start_agent_tool, run_agent_tool,
         list_flows_tool, run_flow_tool, reject_assignment_tool, stop_agent_tool,
         get_agent_status_tool, wait_for_agent_tool, create_agent_tool,
         get_agent_tool, modify_agent_tool, delete_agent_tool,
         delegate_task_tool, list_models_tool,
         create_flow_tool, get_flow_tool, modify_flow_tool, delete_flow_tool,
-        validate_flow_tool,
+        validate_flow_tool, run_new_flow_tool,
         *SCENARIO_MANAGEMENT_TOOLS, *WORLD_MANAGEMENT_TOOLS,
         *TEAM_MANAGEMENT_TOOLS, *LOOP_MANAGEMENT_TOOLS,
         *PROJECT_MANAGEMENT_TOOLS,
         *ENTITY_RUN_TOOLS, *GIT_PUBLISH_TOOLS, *PROJECT_DEPLOY_TOOLS, *SERVICE_OPS_TOOLS, *SYSTEM_OPS_TOOLS, *DOCS_TOOLS, *EVAL_TOOLS,
-        schedule_notification, schedule_task, notify_user, list_scheduled,
-        cancel_scheduled, update_scheduled, wake_agent,
+        schedule_notification, schedule_task, schedule_agent_run, schedule_flow, schedule_loop,
+        schedule_memory_consolidation,
+        notify_user, list_scheduled, get_scheduled, cancel_scheduled, update_scheduled,
+        pause_scheduled, resume_scheduled, run_scheduled_now, wake_agent,
         *WEB_TOOLS, *BROWSER_TOOLS, run_code, map_on_nodes,
         read_memory_tool, write_memory_tool, search_memory_tool,
         read_structured_memory_tool, write_structured_memory_tool,

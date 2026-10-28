@@ -17,6 +17,8 @@
  * editor's live preview without side effects.
  */
 
+import { BRAND_DARK, BRAND_DARK_VARS, NEUTRAL_DARK, DARK_TOKENS } from './darkShape.js';
+
 // ── sRGB <-> linear <-> OKLab <-> OKLCH ─────────────────────────────────────
 
 function srgbToLinear(c) {
@@ -160,46 +162,85 @@ export function rampFromColor(hex, { mode = 'light' } = {}) {
   return ramp;
 }
 
-// ── the three dark-mode "roles" (bg / text / border) a ramp is split into
-//    for the generated utility matrix (scripts/gen-theme.mjs's darkVarValue),
-//    the same shape as its hand-tuned BRAND_DARK / NEUTRAL_DARK defaults. ──
+// ── dark mode: the shipped shape, recolored ────────────────────────────────
+//
+// The dark theme is not a light-to-dark ramp read at some shade: a panel
+// written as `bg-white` or `bg-gray-50` must stay a deep surface, `bg-gray-800`
+// deeper still, and `text-gray-300` a readable pale label. src/lib/darkShape.js
+// holds the hand-tuned tables the stylesheet ships with; a palette keeps each
+// entry's *lightness* and only moves the hue (and a tapered chroma) to the
+// chosen color. Reading the ramp at the shade number instead put the card
+// surface at L 0.34 and `bg-gray-300` at L 0.77: grey slabs on a dark page.
 
-const BG_TRANSLUCENT_ALPHA = { 50: 0.16, 100: 0.26, 200: 0.34 };
-const BORDER_TRANSLUCENT_ALPHA = { 50: 0.22, 100: 0.30, 200: 0.40, 300: 0.52 };
-// text[N] reads from a lighter shade of the same ramp as N grows, mirroring
-// the shipped tables (dark-mode text gets paler, not darker, as its "weight"
-// goes up): 300 borrows the ramp's 700, 950 borrows its 100.
-const TEXT_SOURCE_SHADE = { 300: 700, 400: 600, 500: 500, 600: 500, 700: 400, 800: 300, 900: 200, 950: 100 };
+// Chroma taper by lightness, the CHROMA_SCALE table interpolated over the
+// lightness its shades sit at, so a recolored dark entry gets the same
+// chroma the ramp would give a shade of that lightness.
+const TAPER_POINTS = SHADES
+  .map((s) => [LIGHTNESS_STEPS[s], CHROMA_SCALE[s]])
+  .sort((a, b) => a[0] - b[0]);
 
-function deriveDarkRoles(hex) {
-  const ramp = rampFromColor(hex, { mode: 'dark' });
-  const triple = rgb01ToTriple(hexToRgb01(ramp[600]) || [0, 0, 0]);
-  const bg = {};
-  for (const shade of SHADES) {
-    bg[shade] = shade in BG_TRANSLUCENT_ALPHA
-      ? `rgba(${triple}, ${BG_TRANSLUCENT_ALPHA[shade]})`
-      : ramp[shade];
+function chromaScaleAt(L) {
+  if (L <= TAPER_POINTS[0][0]) return TAPER_POINTS[0][1];
+  for (let i = 1; i < TAPER_POINTS.length; i += 1) {
+    const [l0, c0] = TAPER_POINTS[i - 1];
+    const [l1, c1] = TAPER_POINTS[i];
+    if (L <= l1) return c0 + ((L - l0) / (l1 - l0)) * (c1 - c0);
   }
-  const text = {};
-  for (const shade of Object.keys(TEXT_SOURCE_SHADE)) {
-    text[shade] = ramp[TEXT_SOURCE_SHADE[shade]];
+  return TAPER_POINTS[TAPER_POINTS.length - 1][1];
+}
+
+/** A shipped dark value (hex, or `rgba(r, g, b, a)`) recolored to the
+ * `{ C, H, triple }` of a palette color: same lightness and alpha, the
+ * palette's hue. */
+function reshade(value, tint) {
+  if (value.startsWith('rgba(')) {
+    const alpha = value.slice(value.lastIndexOf(',') + 1, -1).trim();
+    return `rgba(${tint.triple}, ${alpha})`;
   }
-  const border = {};
-  for (const shade of SHADES) {
-    if (shade === 950) continue; // BRAND_DARK.border has no 950; keep both roles the same shape
-    border[shade] = shade in BORDER_TRANSLUCENT_ALPHA
-      ? `rgba(${triple}, ${BORDER_TRANSLUCENT_ALPHA[shade]})`
-      : ramp[shade];
-  }
-  return { bg, text, border };
+  const parsed = hexToOklch(value);
+  if (!parsed) return value;
+  const L = parsed[0];
+  return oklchToHex([L, tint.C * chromaScaleAt(L) * DARK_CHROMA_BOOST, tint.H]);
+}
+
+/** The hue and chroma of `hex`, plus the rgb triple its translucent dark
+ * entries use (the solid 500 fill of the shipped shape, recolored). */
+function darkTint(hex, shape) {
+  const oklch = hexToOklch(hex);
+  if (!oklch) return null;
+  const tint = { C: oklch[1], H: oklch[2], triple: '0, 0, 0' };
+  const solid = reshade(shape.bg[500], tint);
+  tint.triple = rgb01ToTriple(hexToRgb01(solid) || [0, 0, 0]);
+  return tint;
+}
+
+function reshadeTable(table, tint) {
+  const out = {};
+  for (const [key, value] of Object.entries(table)) out[key] = reshade(value, tint);
+  return out;
+}
+
+/** The dark-mode roles (bg / text / border per shade) for one base color,
+ * the shipped shape (BRAND_DARK or NEUTRAL_DARK) recolored. Null when the
+ * color cannot be parsed. */
+function deriveDarkRoles(hex, shape) {
+  const tint = darkTint(hex, shape);
+  if (!tint) return null;
+  return {
+    bg: reshadeTable(shape.bg, tint),
+    text: reshadeTable(shape.text, tint),
+    border: reshadeTable(shape.border, tint),
+    tint,
+  };
 }
 
 // ── mirroring the neutral tint into the semantic tokens ────────────────────
 
-// Which shade of the neutral ramp feeds each semantic token, by mode. Chosen
-// to land on the same shade the shipped literal defaults already sit at
-// (NEUTRAL_LIGHT is Tailwind's slate scale, and the default --text-primary
-// etc. are exactly slate-900, slate-700, ... — see scripts/gen-theme.mjs).
+// Light mode: which shade of the neutral ramp feeds each semantic token.
+// Chosen to land on the same shade the shipped literal defaults already sit
+// at (NEUTRAL_LIGHT is Tailwind's slate scale, and the default
+// --text-primary etc. are exactly slate-900, slate-700, ... — see
+// scripts/gen-theme.mjs). Dark mode recolors DARK_TOKENS instead.
 const LIGHT_TOKEN_SHADE = {
   '--surface-page': 50, '--surface-sunken': 50, '--surface-raised': 100,
   '--surface-hover': 100, '--surface-inverse': 900,
@@ -207,21 +248,17 @@ const LIGHT_TOKEN_SHADE = {
   '--text-faint': 400, '--text-inverse': 50,
   '--border-subtle': 50, '--border-default': 200, '--border-strong': 300,
 };
-const DARK_TOKEN_SHADE = {
-  '--surface-page': 950, '--surface-sunken': 900, '--surface-card': 800,
-  '--surface-raised': 700, '--surface-hover': 600, '--surface-inverse': 50,
-  '--text-primary': 50, '--text-secondary': 200, '--text-muted': 400,
-  '--text-faint': 500, '--text-inverse': 900,
-  '--border-subtle': 800, '--border-default': 700, '--border-strong': 600,
-};
 
 function surfaceTokensFromNeutral(hex, mode) {
+  if (mode === 'dark') {
+    const tint = darkTint(hex, NEUTRAL_DARK);
+    return tint ? reshadeTable(DARK_TOKENS, tint) : { ...DARK_TOKENS };
+  }
   const ramp = rampFromColor(hex, { mode });
-  const map = mode === 'dark' ? DARK_TOKEN_SHADE : LIGHT_TOKEN_SHADE;
   const tokens = {};
-  for (const [name, shade] of Object.entries(map)) tokens[name] = ramp[shade];
+  for (const [name, shade] of Object.entries(LIGHT_TOKEN_SHADE)) tokens[name] = ramp[shade];
   // Light mode keeps a true white card: only the tint around it moves.
-  if (mode !== 'dark') tokens['--surface-card'] = '#ffffff';
+  tokens['--surface-card'] = '#ffffff';
   return tokens;
 }
 
@@ -243,14 +280,16 @@ function hueTokensFromAccent(hex, mode) {
 
 // ── presets ──────────────────────────────────────────────────────────────
 
-// Four starting points plus "Custom" (any set of colors that isn't one of
+// Five starting points plus "Custom" (any set of colors that isn't one of
 // these, including a partial one — the palette editor decides that by
-// comparison, this module just ships the four). Navy matches the shipped
+// comparison, this module just ships the five). Navy matches the shipped
 // default almost exactly, so picking it back after customizing is a safe
 // "undo".
-export const PRESET_ORDER = ['navy', 'forest', 'slate', 'sunset'];
+export const PRESET_ORDER = ['navy', 'magenta', 'forest', 'slate', 'sunset'];
 export const PRESETS = {
   navy: { brand: '#3f66d8', neutral: '#64748b', ok: '#16a34a', danger: '#dc2626' },
+  // Telekom magenta on a graphite neutral: the palette the zerno workspace runs on.
+  magenta: { brand: '#e20074', neutral: '#484f56', ok: '#16a34a', danger: '#dc2626' },
   forest: { brand: '#166534', neutral: '#57534e', ok: '#65a30d', danger: '#b91c1c' },
   slate: { brand: '#334155', neutral: '#64748b', ok: '#059669', danger: '#e11d48' },
   sunset: { brand: '#c2410c', neutral: '#78716c', ok: '#16a34a', danger: '#be123c' },
@@ -279,16 +318,24 @@ function setVar(root, name, value) {
   else root.style.setProperty(name, value);
 }
 
+function setRoles(root, prefix, roles) {
+  for (const role of ['bg', 'text', 'border']) {
+    for (const [s, value] of Object.entries(roles[role])) setVar(root, `--${prefix}-${role}-${s}`, value);
+  }
+}
+
 /** Every custom property applyPalette() may set — clearPalette() removes
  * exactly these, so an unmentioned base color's override never lingers. */
 function allPropertyNames() {
   const names = [];
   for (const s of SHADES) names.push(`--brand-${s}`, `--neutral-${s}`);
   names.push('--brand', '--brand-rgb');
-  for (const s of SHADES) names.push(`--brand-bg-${s}`, `--neutral-bg-${s}`);
-  for (const s of Object.keys(TEXT_SOURCE_SHADE)) names.push(`--brand-text-${s}`, `--neutral-text-${s}`);
-  for (const s of SHADES) if (s !== 950) names.push(`--brand-border-${s}`, `--neutral-border-${s}`);
+  for (const role of ['bg', 'text', 'border']) {
+    for (const s of Object.keys(BRAND_DARK[role])) names.push(`--brand-${role}-${s}`);
+    for (const s of Object.keys(NEUTRAL_DARK[role])) names.push(`--neutral-${role}-${s}`);
+  }
   for (const name of Object.keys(LIGHT_TOKEN_SHADE)) names.push(name);
+  for (const name of Object.keys(DARK_TOKENS)) if (!names.includes(name)) names.push(name);
   names.push('--surface-card');
   for (const hue of ['green', 'red']) names.push(`--hue-${hue}-rgb`, `--hue-${hue}-400`, `--hue-${hue}-300`);
   names.push('--ok', '--ok-surface', '--danger', '--danger-surface');
@@ -308,24 +355,25 @@ export function applyPalette(palette, mode = 'light') {
   const { brand, neutral, ok, danger } = palette || {};
 
   if (brand) {
-    const ramp = rampFromColor(brand, { mode });
+    const roles = deriveDarkRoles(brand, BRAND_DARK);
+    // var(--brand-N) read inline: the light ramp in light mode, the shipped
+    // inverted dark ramp (50 deepest) recolored in dark mode. The accent is
+    // the light ramp's 600 or the dark one's 500, as in the stylesheet.
+    const ramp = mode === 'dark' && roles
+      ? reshadeTable(BRAND_DARK_VARS, roles.tint)
+      : rampFromColor(brand, { mode });
     for (const s of SHADES) setVar(root, `--brand-${s}`, ramp[s]);
-    const accentShade = mode === 'dark' ? 500 : 600;
-    setVar(root, '--brand', ramp[accentShade]);
-    setVar(root, '--brand-rgb', rgb01ToTriple(hexToRgb01(ramp[accentShade]) || [0, 0, 0]));
-    const roles = deriveDarkRoles(brand);
-    for (const s of SHADES) setVar(root, `--brand-bg-${s}`, roles.bg[s]);
-    for (const s of Object.keys(TEXT_SOURCE_SHADE)) setVar(root, `--brand-text-${s}`, roles.text[s]);
-    for (const s of SHADES) if (s !== 950) setVar(root, `--brand-border-${s}`, roles.border[s]);
+    const accent = ramp[mode === 'dark' ? 500 : 600];
+    setVar(root, '--brand', accent);
+    setVar(root, '--brand-rgb', rgb01ToTriple(hexToRgb01(accent) || [0, 0, 0]));
+    if (roles) setRoles(root, 'brand', roles);
   }
 
   if (neutral) {
     const ramp = rampFromColor(neutral, { mode });
     for (const s of SHADES) setVar(root, `--neutral-${s}`, ramp[s]);
-    const roles = deriveDarkRoles(neutral);
-    for (const s of SHADES) setVar(root, `--neutral-bg-${s}`, roles.bg[s]);
-    for (const s of Object.keys(TEXT_SOURCE_SHADE)) setVar(root, `--neutral-text-${s}`, roles.text[s]);
-    for (const s of SHADES) if (s !== 950) setVar(root, `--neutral-border-${s}`, roles.border[s]);
+    const roles = deriveDarkRoles(neutral, NEUTRAL_DARK);
+    if (roles) setRoles(root, 'neutral', roles);
     const tokens = surfaceTokensFromNeutral(neutral, mode);
     for (const [name, value] of Object.entries(tokens)) setVar(root, name, value);
   }

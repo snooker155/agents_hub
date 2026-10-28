@@ -7,7 +7,7 @@
  */
 
 const FIELDS = ['approval_id', 'run_id', 'tool', 'input', 'reason', 'by', 'status',
-  'created_at', 'expires_at', 'note', 'decided_by_name', 'decided_at'];
+  'created_at', 'expires_at', 'note', 'decided_by_name', 'decided_at', 'auto'];
 
 function pick(event) {
   const out = {};

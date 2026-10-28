@@ -67,6 +67,21 @@ def test_list_orders_live_stale_stopped_and_prune_forgets_old_rows():
     assert members.forget("api-stopped") is True
 
 
+def test_rows_never_registered_are_hidden_and_pruned_and_a_start_prunes():
+    with db.transaction() as conn:
+        if not db.is_postgres():
+            # SQLite takes a NULL in a TEXT primary key; Postgres refuses the row.
+            conn.execute("INSERT INTO members (member_id, role, host) VALUES (NULL, '2026-03-21T01:22:44+00:00', '688')")
+        conn.execute("INSERT INTO members (member_id, role, host) VALUES ('ghost', 'x', '1')")
+    members.register("worker", member_id="w-old")
+    _age("w-old", members.FORGET_AFTER_SECONDS + 60)
+    assert [m["member_id"] for m in members.list_members()] == ["w-old"]
+    members.register("api", member_id="api-new")
+    assert [m["member_id"] for m in members.list_members()] == ["api-new"]
+    count = db.get_conn().execute("SELECT COUNT(*) AS n FROM members").fetchone()
+    assert (count["n"] if hasattr(count, "keys") else count[0]) == 1
+
+
 def test_the_member_log_file_and_its_tail(tmp_path):
     path = members.attach_log_file()
     assert path and path.parent == tmp_path / "service_logs"

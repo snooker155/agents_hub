@@ -5,11 +5,13 @@ import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, AlertCircle, Clock, Database, Save, Trash2, FileCode, Play, Square, Loader, X, FileText, BrainCircuit, Eye, EyeOff, Link2, Layers, Hash, Copy, FileSearch, Zap, BarChart2, Wifi, MessageSquare, BookOpen, Plus, ChevronDown, ChevronUp, Tag, Globe, Lock, Share2, HelpCircle, Repeat, AlertTriangle, Users, Rocket, SlidersHorizontal, ShieldCheck, FlaskConical, GitBranch } from 'lucide-react';
 import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
+import { toolCategoryLabel, toolLabel } from '../lib/toolText';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
 import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getServices, getAgentDefinition, updateAgentDefinition, restoreShippedDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
 import EntityChat from '../components/EntityChat';
 import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
+import { TabRow } from '../components/PageTabs';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -37,6 +39,8 @@ import CommandsTab from '../components/agent/CommandsTab';
 import ConfigTab from '../components/agent/ConfigTab';
 import VersionsTab from '../components/agent/VersionsTab';
 import ModelTab from '../components/agent/ModelTab';
+import { AccessNotice, EditLock } from '../components/access/EditLock';
+import { canAdminister, useAuth } from '../components/auth';
 import DockerTab from '../components/agent/DockerTab';
 import SkillsTab from '../components/agent/SkillsTab';
 import HandoffsCard from '../components/agent/HandoffsCard';
@@ -61,9 +65,10 @@ const AgentDetails = () => {
   const toast = useToast();
   const { id } = useParams();
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
+  const auth = useAuth();
   // The definition chat sits beside the Config tab, folded away by default:
   // most visits to this page are to read, not to rewrite.
-  const defChat = useChatColumn(false);
+  const defChat = useChatColumn(false, { wide: true });
   // Only the Config tab has a chat beside it, so only that tab turns the page
   // into a bounded flex column — the other twelve keep scrolling normally.
   const [agent, setAgent] = useState(null);
@@ -152,10 +157,6 @@ const AgentDetails = () => {
   const MEMORY_TOOLS = ['read_memory', 'write_memory'];
   const THINK_MODES = ['standard', 'deep', 'analytical'].map((value) => ({
     value, label: t(`agentDetails.thinkModes.${value}.label`), desc: t(`agentDetails.thinkModes.${value}.desc`),
-  }));
-  // Native model reasoning level — a model parameter, separate from the think tool.
-  const THINKING_LEVELS = ['off', 'low', 'medium', 'high'].map((value) => ({
-    value, label: t(`agentDetails.thinkingLevels.${value}.label`), desc: t(`agentDetails.thinkingLevels.${value}.desc`),
   }));
   const PLAN_FORMATS = ['structured', 'bullet', 'numbered', 'freeform'].map((value) => ({
     value, label: t(`agentDetails.planFormats.${value}.label`), desc: t(`agentDetails.planFormats.${value}.desc`),
@@ -304,8 +305,8 @@ const AgentDetails = () => {
   // Three tabs own enough state to be their own concern; each loads on the tab
   // opening and hands the page back what its tab renders.
   const docker = useAgentDocker({ id, activeTab, t, toast });
-  const model = useAgentModel({ id, t });
-  const skills = useAgentSkills({ id, agent, activeTab, selectedWorkspace, t, toast });
+  const model = useAgentModel({ id, t, workspace: selectedWorkspace || undefined });
+  const agentSkills = useAgentSkills({ id, agent, activeTab, selectedWorkspace, t, toast });
   const versions = useAgentVersions({ id, activeTab, onRolledBack: fetchData, t });
   usePageChat(definitionChat);
 
@@ -329,7 +330,6 @@ const AgentDetails = () => {
       .then(r => setReasoningSettings({
         thinkEnabled: !!r.data.think_enabled,
         thinkMode: r.data.think_mode || 'standard',
-        thinkingLevel: r.data.thinking_level || 'off',
         planEnabled: !!r.data.plan_enabled,
         planFormat: r.data.plan_format || 'structured',
       }))
@@ -544,9 +544,10 @@ const AgentDetails = () => {
     }
   };
 
-  // Load shared memory pools when the memory tab opens
+  // Load shared memory pools when the memory tab opens, and on the overview,
+  // whose memory card names the agent's pools.
   useEffect(() => {
-    if (activeTab !== 'memory') return;
+    if (activeTab !== 'memory' && activeTab !== 'overview') return;
     getSharedMemories(workspaceFilter).then(r => setSharedMemories(r.data || [])).catch(() => {});
   }, [activeTab, workspaceFilter]);
 
@@ -736,6 +737,11 @@ const AgentDetails = () => {
   if (loading) return <PageLoader size="lg" label={t('agentDetails.loadingAgentDetails')} />;
   if (!agent) return <div className="text-center py-10">{t('agentDetails.agentNotFound')}</div>;
 
+  // A system agent is changed by an administrator only; members keep to its
+  // memory, skills, pulse and clone (the server refuses the rest).
+  const readOnly = Boolean(agent.system) && !canAdminister(auth);
+  const lock = (node) => <EditLock locked={readOnly}>{node}</EditLock>;
+
   const activeRun = runs.items.find(r => r.status === 'running');
   const agentTools = Array.isArray(agent?.tools) ? agent.tools : [];
   const mergedTools = [...new Set([...agentTools])];
@@ -750,7 +756,8 @@ const AgentDetails = () => {
   // a global guard mode other than block (Settings, agent execution).
   const capabilitySoftened = capabilityOverride || (capabilityGuardInfo.guard_mode || 'block') !== 'block';
 
-  // Group regular (non-reasoning, non-memory) tools by category for the Tools tab.
+  // Group regular (non-reasoning, non-memory) tools by category for the Tools
+  // tab, groups and tools in the order of their names in the interface language.
   const regularToolIds = visibleToolIds.filter(t => !REASONING_TOOLS.includes(t) && !PLANNING_TOOLS.includes(t) && !MEMORY_TOOLS.includes(t));
   const toolCategories = (() => {
     const groups = {};
@@ -759,10 +766,12 @@ const AgentDetails = () => {
       (groups[cat] = groups[cat] || []).push(tid);
     });
     return Object.entries(groups)
-      .map(([category, ids]) => ({ category, ids: ids.sort() }))
-      .sort((a, b) => a.category.localeCompare(b.category));
+      .map(([category, ids]) => ({
+        category,
+        ids: ids.sort((a, b) => toolLabel(t, a, toolsMeta[a]?.label).localeCompare(toolLabel(t, b, toolsMeta[b]?.label))),
+      }))
+      .sort((a, b) => toolCategoryLabel(t, a.category).localeCompare(toolCategoryLabel(t, b.category)));
   })();
-  const formatCategory = (c) => c.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
   // Where the agent's copies live: its own services, else the workspace's
   // runner (created by the first Run). Copies and their limit come from
   // there; the workspace's number for the agent is how many services of it
@@ -792,8 +801,8 @@ const AgentDetails = () => {
 
   // Published once for the tabs and the overlays; see `agent/context.js`.
   const page = {
-    ...docker, ...model, ...skills, ...versions,
-    PLAN_FORMATS, THINKING_LEVELS, THINK_MODES, activeRun, addExtraPool, agent,
+    ...docker, ...model, ...agentSkills, ...versions,
+    PLAN_FORMATS, THINK_MODES, activeRun, addExtraPool, agent,
     agentDefinition, agentTasks, allAgents, availableTools,
     capabilityOverridden, capabilityViolation, capabilityOverride, capabilityOverrideSaving,
     capabilityGuardInfo, capabilitySoftened, handleToggleCapabilityOverride,
@@ -801,7 +810,7 @@ const AgentDetails = () => {
     customBackends, defChat, defDraft, defError, defSaving, defaultChatMessage,
     defaultChatSaving, definitionChat, delegates, delegatesDirty, markDelegatesDirty,
     markMemoryDraftDirty, delegatesMessage, delegatesSaving, descDraft, descSaving,
-    episodicEffective, episodicMode, episodicSaving, fetchData, formatCategory,
+    episodicEffective, episodicMode, episodicSaving, fetchData,
     handleDefinitionDraftChange, handleEraseMemory, handleResetDefinitionField,
     handleRestoreShippedDefinition, restoringShipped,
     handleSaveDefinitionField, handleSaveDelegates, handleSaveDescription, handleSaveTools,
@@ -816,7 +825,7 @@ const AgentDetails = () => {
     setMemoryType, setPrimaryPool, setReasoningSettings, setResponseFormat,
     setResponseFormatSaving, setSelectedTools, setSelfDelegation, setSelfDelegationSaving,
     setToolsSaving, setWsCapacityEdits, shared, sharedMemories, sharingMessage, sharingSaving,
-    skills, t, tasks, toast, toggleDelegate, toggleTool, toolCategories, toolsDirty,
+    t, tasks, toast, toggleDelegate, toggleTool, toolCategories, toolsDirty,
     toolsMessage, toolsMeta, toolsSaving, workspaceFilter, workspaces, wsCapacities,
     wsCapacityEdits, wsCapacitySaving, wsServiceLimit,
   };
@@ -832,6 +841,20 @@ const AgentDetails = () => {
         backLabel={t('agentDetails.agents')}
         actions={(
           <div className="flex items-center gap-2">
+            {/* The definition chat opens beside the Config tab: from another
+                tab its toggle opens Config with the chat. */}
+            {!readOnly && (
+              <ChatToggle
+                open={activeTab === 'config' && defChat.open}
+                onToggle={() => {
+                  if (activeTab === 'config') { defChat.toggle(); return; }
+                  setActiveTab('config');
+                  defChat.setOpen(true);
+                }}
+                label={t('agentDetails.definitionChat')}
+              />
+            )}
+            {/* Run: one copy of your own to talk to. */}
             {/* Deploy: keep the agent running as replicas of a service, which
                 is also where its chat turns go (docs/services.md). Run: one
                 copy of your own to talk to. */}
@@ -856,6 +879,8 @@ const AgentDetails = () => {
           </div>
         )}
       />
+
+      {readOnly && <AccessNotice testId="system-agent-notice">{t('access.systemAgentNotice')}</AccessNotice>}
 
       <InheritanceHeaderLine agent={agent} onManage={() => setActiveTab('inheritance')} />
 
@@ -924,9 +949,8 @@ const AgentDetails = () => {
         </div>
       </div>
 
-      <div className="border-b border-gray-200 flex items-end justify-between gap-4">
-        <nav className="flex flex-wrap gap-2 -mb-px">
-          {[
+      <TabRow
+        tabs={[
             { id: 'overview', label: t('agentDetails.tabs.overview'), icon: Activity },
             { id: 'inheritance', label: t('agentDetails.tabs.inheritance'), icon: GitBranch },
             { id: 'config', label: t('agentDetails.tabs.config'), icon: FileCode },
@@ -967,16 +991,7 @@ const AgentDetails = () => {
               </button>
             );
           })}
-        </nav>
-        {/* The definition chat belongs to the Config tab only, so its toggle
-            rides beside the tabs and disappears with them. */}
-        {activeTab === 'config' && (
-          <div className="pb-2 shrink-0">
-            <ChatToggle open={defChat.open} onToggle={defChat.toggle}
-                        label={t('agentDetails.definitionChat')} />
-          </div>
-        )}
-      </div>
+      />
 
       {/* Live quality (online evals) sits under the overview; the experiment
           card sits under the version history it picks its arms from. */}
@@ -986,7 +1001,7 @@ const AgentDetails = () => {
           <LiveQualityCard agentId={id} />
         </>
       )}
-      {activeTab === 'inheritance' && (
+      {activeTab === 'inheritance' && lock(
         <InheritanceTab
           agentId={id}
           agent={agent}
@@ -998,7 +1013,7 @@ const AgentDetails = () => {
       {activeTab === 'sessions' && <SessionsTab />}
       {activeTab === 'runs' && <RunsTab />}
       {activeTab === 'memory' && <MemoryTab />}
-      {activeTab === 'tools' && (
+      {activeTab === 'tools' && lock(
         <>
           <ToolsTab />
           {/* An imported (remote) agent runs its own loop elsewhere: it has no
@@ -1006,11 +1021,11 @@ const AgentDetails = () => {
           {agent?.type !== 'remote' && <HandoffsCard agentId={id} agent={agent} onSaved={fetchData} />}
         </>
       )}
-      {activeTab === 'behavior' && <BehaviorTab />}
+      {activeTab === 'behavior' && lock(<BehaviorTab />)}
       {activeTab === 'tasks' && <TasksTab />}
-      {activeTab === 'commands' && <CommandsTab />}
-      {activeTab === 'config' && <ConfigTab />}
-      {activeTab === 'versions' && <VersionsTab />}
+      {activeTab === 'commands' && lock(<CommandsTab />)}
+      {activeTab === 'config' && lock(<ConfigTab />)}
+      {activeTab === 'versions' && lock(<VersionsTab />)}
       {/* The agent's pulse: an imported agent runs elsewhere and is not
           scheduled from here. */}
       {activeTab === 'pulse' && (
@@ -1018,15 +1033,15 @@ const AgentDetails = () => {
           ? <ProactiveCard agentId={id} onSaved={fetchData} />
           : <p className="text-sm text-gray-500 mt-6">{t('agentDetails.pulseRemote')}</p>
       )}
-      {activeTab === 'guardrails' && <AgentGuardrailsCard agentId={id} agent={agent} onSaved={fetchData} />}
-      {activeTab === 'experiments' && <ExperimentCard agentId={id} />}
-      {activeTab === 'model' && (
+      {activeTab === 'guardrails' && lock(<AgentGuardrailsCard agentId={id} agent={agent} onSaved={fetchData} />)}
+      {activeTab === 'experiments' && lock(<ExperimentCard agentId={id} />)}
+      {activeTab === 'model' && lock(
         <>
           <ModelTab />
           <LoopSettingsCard agentId={id} agent={agent} onSaved={fetchData} />
         </>
       )}
-      {activeTab === 'docker' && <DockerTab />}
+      {activeTab === 'docker' && lock(<DockerTab />)}
       {activeTab === 'skills' && <SkillsTab />}
 
       <AgentModals />
@@ -1036,6 +1051,7 @@ const AgentDetails = () => {
         open={showStartInstance}
         onClose={() => setShowStartInstance(false)}
         agentId={id}
+        agentName={agent?.name || ''}
         defaultWorkspace={selectedWorkspace}
       />
       <DeployServiceModal

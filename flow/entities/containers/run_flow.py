@@ -73,27 +73,18 @@ def run(state: Any, config: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
     def _launch() -> str:
         from flow import store as flow_store
         from flow.launcher import start_flow_run
-        from tasks import service as _ts
 
         flow = flow_store.get_flow(flow_id)
         if not flow:
             raise _nested.NestedRunError(f"Flow not found: {flow_id}")
-        name = flow.get("name") or flow_id
-        task = _ts.create_task(
-            title=f"Flow: {name}",
-            description=goal or flow.get("description", "") or "",
-            workspace=workspace, status=_ts.TaskStatus.in_progress,
-        )
-        params: Dict[str, Any] = {"flow_id": flow_id, "description": goal}
+        # A nested run is part of the run it executes inside: no task of its own.
+        params: Dict[str, Any] = {"flow_id": flow_id, "description": goal,
+                                  "title": f"Flow: {flow.get('name') or flow_id}"}
         if workspace:
             params["workspace"] = workspace
         if seed:
             params["seed"] = seed
-        run_id, _session = start_flow_run(str(task.id), flow_id, params, parent_run_id=parent_id)
-        try:
-            _ts.assign_executor(task.id, {"kind": "flow", "id": flow_id}, params, run_id=run_id)
-        except Exception:  # noqa: BLE001 - the run is already going; the task page just shows no executor
-            log.debug("executor assignment failed", exc_info=True)
+        run_id, _session = start_flow_run(None, flow_id, params, parent_run_id=parent_id)
         return run_id
 
     def _resume(child_id: str) -> Any:

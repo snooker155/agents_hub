@@ -100,6 +100,8 @@ export default {
     cancel: 'Отмена',
     uploadNew: 'Загрузить новый файл',
     alreadyAdded: 'Уже добавлен',
+    pickFolder: 'Выбрать все файлы папки',
+    pickFolderNamed: 'Выбрать все файлы в {{name}}',
   },
   field: {
     label: 'Файлы',
@@ -111,6 +113,8 @@ export default {
   task: {
     title: 'Файлы',
     hint: 'Копируются в рабочий каталог каждого запуска (task_files/) и перечисляются в промпте. Подзадачи получают их тоже.',
+    add: 'Добавить файлы',
+    about: 'О файлах задачи',
     saveFailed: 'Не удалось сохранить файлы задачи',
   },
   evalCase: {

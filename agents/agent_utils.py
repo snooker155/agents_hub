@@ -29,25 +29,31 @@ def openai_reasoning_param(effort: str, api_key=None, base_url=None) -> dict:
 ReasoningChatOpenAI = OpenAIChatModel
 
 
-# ── Native reasoning (thinking_level → model API) ─────────────────────────────
-# An agent's ``thinking_level`` is a model parameter (decoupled from the think
-# scratchpad tool) that turns on the provider's native reasoning so capable
-# models think in the API itself. The mapping is best-effort: providers/models
-# without a reasoning knob are left untouched.
+# ── Native reasoning (effort → model API) ─────────────────────────────────────
+# An agent's effort (``thinking_level`` down here, the name the model stack has
+# always used) is a model parameter, separate from the think scratchpad tool:
+# it sets how much the provider's model reasons in the API itself. Any value of
+# providers.reasoning_profile.EFFORT_ORDER may arrive; each provider gets it
+# clamped to what its model accepts. Models without a reasoning knob are left
+# untouched.
 
-# thinking_level → OpenAI-style effort level (also used to size Anthropic
-# budgets). "off" / None disable native reasoning entirely.
-_LEVEL_EFFORT = {"low": "low", "medium": "medium", "high": "high"}
+# The levels a gateway or local server is passed as they are: those servers
+# ignore reasoning_effort where it is not supported, the OpenAI API answers 400.
+_LENIENT_LEVELS = ("low", "medium", "high")
 
-# OpenAI models that accept `reasoning_effort`; other models 400 on the param.
-_OPENAI_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+# Efforts at which an OpenAI model reasons little enough that no summary is
+# asked for.
+_NO_SUMMARY = ("none", "minimal")
 
 
 def is_openai_reasoning_model(model: Optional[str]) -> bool:
-    """True for an OpenAI reasoning model. The ``*-chat-latest`` aliases of
-    gpt-5 are chat models and reject any reasoning parameter."""
+    """True for an OpenAI reasoning model (o-series, gpt-5 and later). The
+    ``*-chat-latest`` aliases of gpt-5 are chat models and reject any
+    reasoning parameter."""
+    from providers.reasoning_profile import _openai_profile
+
     mdl = (model or "").lower()
-    return mdl.startswith(_OPENAI_REASONING_PREFIXES) and "-chat" not in mdl
+    return mdl.startswith(("o1", "o3", "o4", "gpt-")) and _openai_profile(mdl) is not None
 
 
 def openai_reasoning_kwargs(
@@ -61,52 +67,91 @@ def openai_reasoning_kwargs(
 ) -> dict:
     """Endpoint, reasoning and temperature kwargs for an OpenAI-protocol model.
 
-    - A thinking level on a reasoning model asks for a summary of the
-      reasoning, which only the Responses API returns; a model served by a
-      gateway (``base_url``) stays on chat completions, which may be all the
-      gateway serves.
-    - Level ``off`` sends the lowest effort the model accepts: with nothing
-      sent, OpenAI applies its own default, ``medium`` on most families
-      (``providers.reasoning_profile``). At effort ``none`` the model takes a
-      temperature again.
+    - The effort is clamped to what the model accepts
+      (providers.reasoning_profile): ``xhigh`` asked of gpt-5 is sent as
+      ``high``, ``off`` as the model's lowest. With nothing sent, OpenAI
+      applies its own default, ``medium`` on most families.
+    - An effort the model reasons at asks for a summary of the reasoning,
+      which only the Responses API returns; a model served by a gateway
+      (``base_url``) stays on chat completions, which may be all the gateway
+      serves.
+    - At effort ``none`` the model takes a temperature again.
     - No level (a utility call that never chose one) sends nothing, and the
       model keeps its provider default.
 
-    ``lenient`` passes a positive level on for any model: OpenAI-compatible
-    servers ignore ``reasoning_effort`` where it is not supported, while the
-    OpenAI API itself answers 400.
+    ``lenient`` passes low/medium/high on for any model the OpenAI table does
+    not know: OpenAI-compatible servers ignore ``reasoning_effort`` where it is
+    not supported, while the OpenAI API itself answers 400.
     """
-    from providers.reasoning_profile import openai_off_effort
+    from providers.reasoning_profile import _openai_profile, clamp_effort
 
     level = (thinking_level or "").lower()
-    effort = _LEVEL_EFFORT.get(level)
-    reasoning_model = is_openai_reasoning_model(model)
-    sends_effort = bool(effort) and (lenient or reasoning_model)
-    off = openai_off_effort(model) if level == "off" else None
-    responses = needs_responses_api(model) or (
-        sends_effort and reasoning_model and not base_url)
+    profile = _openai_profile(model or "")
+    effort = clamp_effort(profile, level) if profile else None
+    if not profile and lenient and level in _LENIENT_LEVELS:
+        effort = level
+    # Off is the model held to its lowest, not reasoning to be shown.
+    summary = (bool(effort) and effort not in _NO_SUMMARY and level != "off"
+               and profile is not None)
+    responses = needs_responses_api(model) or (summary and not base_url)
     out: dict = {}
     if responses:
         # The driver rewrites the whole request for that endpoint:
         # max_tokens → max_output_tokens, and the tool schemas into their
         # Responses shape.
         out["use_responses_api"] = True
-    if sends_effort:
-        # Reasoning models reject a custom temperature, so it is omitted.
+    if effort:
         if responses:
-            out["reasoning"] = openai_reasoning_param(effort, api_key, base_url)
+            out["reasoning"] = (openai_reasoning_param(effort, api_key, base_url)
+                                if summary else {"effort": effort})
         else:
             out["reasoning_effort"] = effort
-    elif off:
-        if responses:
-            out["reasoning"] = {"effort": off}
-        else:
-            out["reasoning_effort"] = off
-        if off == "none" and temperature is not None:
+        # A reasoning model rejects a custom temperature, except at effort
+        # none, so it is omitted.
+        if effort == "none" and temperature is not None:
             out["forced_temperature"] = temperature
     else:
         out["temperature"] = temperature
     return out
+
+
+def default_model_for(provider: Optional[str]) -> Optional[str]:
+    """The model build_chat_model falls back to for ``provider`` when none is
+    named (the global default from Settings / the Models page)."""
+    prov = (provider or "").lower()
+    if prov == "anthropic":
+        return os.environ.get("ANTHROPIC_MODEL") or "claude-opus-4-6"
+    if prov == "google":
+        return os.environ.get("GOOGLE_MODEL") or "gemini-2.0-flash"
+    if prov == "ollama":
+        return os.environ.get("OLLAMA_MODEL") or settings.ollama_model or None
+    if prov == "lmstudio":
+        return os.environ.get("LMSTUDIO_MODEL") or settings.lmstudio_model or None
+    if prov in ("", "openai"):
+        return os.environ.get("OPENAI_MODEL") or settings.model
+    try:
+        from providers import get_backend
+        backend = get_backend(prov)
+        return (backend or {}).get("default_model") or None
+    except Exception:  # noqa: BLE001 - an unknown backend names no model
+        return None
+
+
+def resolve_inherited_effort(provider: Optional[str], model: Optional[str],
+                             level: Optional[str]) -> Optional[str]:
+    """``level``, with ``"inherit"`` (an agent that set no effort of its own)
+    replaced by the model's default on the Models page, else its provider's
+    (providers.reasoning_profile), else None (nothing sent)."""
+    if (level or "").strip().lower() != "inherit":
+        return level
+    from providers.catalog import model_effort
+    from providers.reasoning_profile import reasoning_profile
+    own = model_effort(provider, model)
+    if own:
+        return own
+    profile = reasoning_profile(provider, model)
+    return profile["default"] if profile else None
+
 
 # Models that reason by default and reject that combined with function tools on
 # /v1/chat/completions ("use /v1/responses or set reasoning_effort to 'none'").
@@ -115,7 +160,9 @@ def openai_reasoning_kwargs(
 # here is a tool-calling agent, and the Responses API is the endpoint that
 # serves them. Turning reasoning off wholesale is the alternative, and a
 # reasoning model with its reasoning disabled is the worse trade.
-_OPENAI_RESPONSES_ONLY_PREFIXES = ("gpt-5.6",)
+# gpt-5.6 is the first such family; every later one (gpt-6-luna and on) is
+# assumed to keep the rule.
+_OPENAI_RESPONSES_ONLY_FROM = (5, 6)
 
 
 def needs_responses_api(model: Optional[str]) -> bool:
@@ -124,13 +171,14 @@ def needs_responses_api(model: Optional[str]) -> bool:
     Gateways publish the same model vendor-prefixed ("openai/gpt-5.6-sol"), so
     the id is matched after its vendor segment as well as whole.
     """
-    mdl = (model or "").lower()
-    return (mdl.startswith(_OPENAI_RESPONSES_ONLY_PREFIXES)
-            or mdl.rpartition("/")[2].startswith(_OPENAI_RESPONSES_ONLY_PREFIXES))
+    from providers.reasoning_profile import openai_gpt_version
 
-# Ollama models known to support think mode; Ollama errors on `think=true`
-# for models without it, so anything unrecognised keeps the default behavior.
-_OLLAMA_REASONING_MARKERS = ("qwen3", "deepseek-r1", "qwq", "gpt-oss", "magistral")
+    mdl = (model or "").lower()
+    if "-chat" in mdl:
+        return False
+    version = openai_gpt_version(mdl)
+    return bool(version) and version >= _OPENAI_RESPONSES_ONLY_FROM
+
 
 # Anthropic models on the adaptive-thinking API (budget_tokens is rejected
 # there); older models still need `enabled` + an explicit token budget.
@@ -156,11 +204,12 @@ def build_chat_model(
     provider: 'openai' | 'anthropic' | 'google' | 'ollama' | 'lmstudio' | None/'inherit'
     Falls back to the global DEFAULT_PROVIDER env setting when not supplied.
 
-    thinking_level: native model reasoning level ('low' | 'medium' | 'high'),
-    'off' to hold the model to its lowest reasoning, or None to leave the
-    provider's default (utility calls that never chose a level). When active, it is mapped to the provider's native
-    reasoning parameter (Anthropic thinking budget, OpenAI/LM Studio
-    reasoning_effort, Ollama think mode) where the model supports it.
+    thinking_level: the effort, any value of
+    providers.reasoning_profile.EFFORT_ORDER ('off' holds the model to its
+    lowest reasoning), or None to leave the provider's default (utility calls
+    that never chose one). It is clamped to what the model accepts and mapped
+    to the provider's native parameter (Anthropic output_config.effort or
+    thinking budget, OpenAI/LM Studio reasoning effort, Ollama think mode).
     """
     # Resolve provider: None / 'inherit' → use global DEFAULT_PROVIDER.
     # Read .env directly so already-running subprocesses pick up UI changes
@@ -189,7 +238,16 @@ def build_chat_model(
         return own if own is not None else settings.temperature
 
     tok = max_tokens if max_tokens is not None else settings.max_tokens
-    effort = _LEVEL_EFFORT.get((thinking_level or "").lower())
+    from providers.reasoning_profile import clamp_effort, reasoning_profile
+
+    def _level(mdl: Optional[str]) -> Optional[str]:
+        return resolve_inherited_effort(provider, mdl, thinking_level)
+
+    def _effort(mdl: Optional[str]) -> Optional[str]:
+        # The level as this provider's model can take it; "off" and "none"
+        # mean no reasoning asked for.
+        eff = clamp_effort(reasoning_profile(provider, mdl), _level(mdl))
+        return None if eff in (None, "off", "none") else eff
     # Per-request timeout so a hung backend fails the run instead of blocking
     # it forever (0 or negative disables it).
     req_timeout = settings.llm_request_timeout if settings.llm_request_timeout > 0 else None
@@ -207,7 +265,7 @@ def build_chat_model(
                 temperature=_temp(model or _backend.get("default_model")),
                 max_tokens=max_tokens,
                 streaming=streaming,
-                thinking_level=thinking_level,
+                thinking_level=_level(model or _backend.get("default_model")),
             )
 
     if provider == "ollama":
@@ -221,9 +279,7 @@ def build_chat_model(
         # `reasoning_content` (which native_reasoning extraction picks up).
         # Ollama rejects think mode on models without it, so only opt in for
         # known reasoning families; None keeps the model's default behavior.
-        reasoning = True if (
-            effort and any(m in mdl.lower() for m in _OLLAMA_REASONING_MARKERS)
-        ) else None
+        reasoning = True if _effort(mdl) else None
         return ChatOllama(
             model=mdl, base_url=url, temperature=_temp(mdl), reasoning=reasoning,
             client_kwargs={"timeout": req_timeout} if req_timeout else None,
@@ -246,7 +302,7 @@ def build_chat_model(
             temperature=_temp(mdl),
             max_tokens=tok,
             streaming=streaming,
-            reasoning_effort=effort,
+            reasoning_effort=_effort(mdl),
             timeout=req_timeout,
         )
 
@@ -254,9 +310,12 @@ def build_chat_model(
         from providers.anthropic_driver import AnthropicChatModel
         key = api_key or os.environ.get("ANTHROPIC_API_KEY") or settings.anthropic_api_key
         mdl = model or os.environ.get("ANTHROPIC_MODEL") or "claude-opus-4-6"
+        effort = _effort(mdl)
         if effort:
+            extra = {}
             if any(m in mdl.lower() for m in _ANTHROPIC_ADAPTIVE_MARKERS):
                 thinking = {"type": "adaptive"}
+                extra["model_kwargs"] = {"output_config": {"effort": effort}}
             else:
                 # Older models: explicit budget, which must stay below max_tokens.
                 budget = 8192 if effort == "high" else 4096
@@ -266,7 +325,7 @@ def build_chat_model(
             # (and rejects temperature entirely on Opus 4.7+), so omit it.
             return AnthropicChatModel(model=mdl, api_key=key, max_tokens=tok, thinking=thinking,
                                       streaming=streaming,
-                                      default_request_timeout=req_timeout)
+                                      default_request_timeout=req_timeout, **extra)
         if any(m in mdl.lower() for m in _ANTHROPIC_NO_SAMPLING_MARKERS):
             return AnthropicChatModel(model=mdl, api_key=key, max_tokens=tok, streaming=streaming,
                                       default_request_timeout=req_timeout)
@@ -301,7 +360,7 @@ def build_chat_model(
     # an empty ``OPENAI_BASE_URL`` the backend's .env seeding leaves behind.
     gateway = common["base_url"]
     common.update(openai_reasoning_kwargs(
-        mdl, thinking_level, _temp(mdl),
+        mdl, _level(mdl), _temp(mdl),
         api_key=common["api_key"], base_url=gateway))
     return OpenAIChatModel(**common)
 

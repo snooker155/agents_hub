@@ -34,6 +34,7 @@ vi.mock('../../api', () => ({
 
 import WorkspaceRoles from '../workspace/WorkspaceRoles';
 import WorkspaceSpecialModels from '../workspace/WorkspaceSpecialModels';
+import { AuthContext, DEFAULT_AUTH } from '../auth';
 
 const wrap = (node) => render(<MemoryRouter><I18nProvider>{node}</I18nProvider></MemoryRouter>);
 
@@ -201,5 +202,22 @@ describe('WorkspaceSpecialModels', () => {
     await waitFor(() => expect(updateWorkspaceSpecialModels).toHaveBeenCalled());
     expect(updateWorkspaceSpecialModels.mock.calls[0][1].custom[0].headers)
       .toEqual({ Authorization: '********', 'X-Org': '${ORG}' });
+  });
+});
+
+describe('WorkspaceSpecialModels under a model policy', () => {
+  it('is read only for a member when the policy locks special models', async () => {
+    getWorkspaceSpecialModels.mockReturnValue(ok({ workspace: 'alpha', own: {}, effective: {}, options, locked: true }));
+    const member = { ...DEFAULT_AUTH, mode: 'multi', user: { role: 'member' } };
+    wrap(<AuthContext.Provider value={member}><WorkspaceSpecialModels workspace="alpha" /></AuthContext.Provider>);
+    expect(await screen.findByTestId('special-models-locked')).toBeTruthy();
+    expect(screen.getByTestId('edit-lock').disabled).toBe(true);
+  });
+
+  it('stays editable for an administrator', async () => {
+    getWorkspaceSpecialModels.mockReturnValue(ok({ workspace: 'alpha', own: {}, effective: {}, options, locked: true }));
+    wrap(<WorkspaceSpecialModels workspace="alpha" />);
+    expect(await screen.findByRole('button', { name: /Save/ })).toBeTruthy();
+    expect(screen.queryByTestId('special-models-locked')).toBeNull();
   });
 });

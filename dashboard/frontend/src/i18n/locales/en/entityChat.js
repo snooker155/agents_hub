@@ -20,6 +20,7 @@ export default {
   working: 'working…',
   stopping: 'stopping…',
   placeholder: 'Describe what to change…',
+  enterToSend: 'Enter to send · Shift+Enter for a new line',
   emptyHint: 'Describe what you want and the agent will edit it here — the panel updates as it works.',
   loadFailed: 'Could not load the conversation',
   turnFailed: 'The turn failed',

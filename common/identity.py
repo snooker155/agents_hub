@@ -1091,7 +1091,50 @@ def authorize_request(request) -> tuple[bool, Optional[Principal]]:
             role = membership_role(workspace, principal.id)
     allowed = authorize(mode, principal=principal, method=method, path=path,
                         workspace=workspace, membership_role=role)
+    if not allowed and principal is not None and mode == MULTI and not principal.is_admin:
+        from common.auth import admin_only
+        if admin_only(method, path):
+            _refusal(request, "Administrator access required")
+    if allowed and mode == MULTI and principal is not None and principal.kind == "user" \
+            and not principal.is_admin:
+        # A route naming a record by id (an agent, flow, team, loop or one of
+        # their runs) is checked against the record's own workspace, whatever
+        # workspace the request names (common/record_access.py).
+        from common import record_access
+        roles: Dict[str, Optional[str]] = {}
+
+        def role_in(name: str) -> Optional[str]:
+            if not principal.reaches(name):
+                return None
+            if name not in roles:
+                roles[name] = membership_role(name, principal.id)
+            return roles[name]
+
+        reason = record_access.check(method=method, path=path,
+                                     named_workspace=workspace, role_in=role_in)
+        if reason:
+            _refusal(request, reason)
+            return False, principal
     return allowed, principal
+
+
+def _refusal(request, detail: str) -> None:
+    """Leave why a request was refused where the middleware reads it, so the
+    403 says more than "not a member" when that is not the reason."""
+    state = getattr(request, "state", None)
+    if state is not None:
+        try:
+            state.auth_detail = detail
+        except (AttributeError, TypeError):
+            # A stand-in request whose state takes no attributes: the 403
+            # falls back to the default reason.
+            log.debug("could not record the refusal reason on the request state")
+
+
+def refusal_detail(request, default: str = "Not a member of this workspace") -> str:
+    """The reason :func:`authorize_request` left for a refused request."""
+    state = getattr(request, "state", None)
+    return str(getattr(state, "auth_detail", "") or default) if state is not None else default
 
 
 def require_role(principal: Optional[Principal], *, admin: bool = False,

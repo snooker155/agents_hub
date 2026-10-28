@@ -2,11 +2,13 @@
 
 Connections, skills, MCP servers, the embeddable widget, the registry
 (published agents, flows, skills and the MCP allowlist, with their review
-state) and the person's own account. The registry and the marketplace are
-the one place this module treats something as visible beyond the person's
-own workspaces: an item that has been shared is, by the app's own design,
-meant to be seen from anywhere, exactly like the Marketplace page already
-shows it to everyone.
+state), what was installed from the linked hub's catalog, the person's sync
+spaces with this hub's own sync status, and the person's own account. The
+registry and the marketplace are the one place this module treats something
+as visible beyond the person's own workspaces: an item that has been shared
+is, by the app's own design, meant to be seen from anywhere, exactly like the
+Marketplace page already shows it to everyone. (This hub's own sync status is
+one per hub too, but its mappings are cut to the workspaces a lookup reads.)
 """
 from __future__ import annotations
 
@@ -538,3 +540,196 @@ def _account_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, An
 lookup.register(lookup.LookupKind(
     "account", "the person's own account: role, workspaces, spend, personal API keys, sessions, preferences",
     _list_account, _account_card, ("/account",)))
+
+
+# ── what was installed from the linked hub's catalog (hublink/catalog.py) ───
+# Read from the provenance store alone: the remote's name for an item and
+# whether it moved on both need a call to the linked hub, which a lookup never
+# makes, so those stay on the Catalog page's Updates tab. A row's id is the
+# store's own key, "<kind>:<local id>", because a skill and an agent may share
+# a local id.
+
+def _link_url(url: Any) -> str:
+    """The remote's address without anything a person might have typed into
+    its userinfo: the API key travels in a header, but a URL is free text."""
+    from urllib.parse import urlparse
+    text = str(url or "")
+    try:
+        parts = urlparse(text)
+    except ValueError:
+        return ""
+    if not parts.scheme or not parts.hostname:
+        return ""
+    port = f":{parts.port}" if parts.port else ""
+    return f"{parts.scheme}://{parts.hostname}{port}{parts.path or ''}"
+
+
+def _catalog_installs(ctx: SimpleNamespace) -> List[Dict[str, Any]]:
+    from hublink import catalog as hub_catalog
+    return [rec for rec in hub_catalog.installed()
+            if rec.get("kind") and rec.get("local_id") and lookup.visible(ctx, rec.get("workspace"))]
+
+
+def _list_catalog_installs(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for rec in _catalog_installs(ctx):
+        kind, local_id = str(rec["kind"]), str(rec["local_id"])
+        if not lookup.matches(query, local_id, kind, rec.get("remote_id")):
+            continue
+        rows.append(lookup.row(
+            f"{kind}:{local_id}", local_id,
+            " · ".join(x for x in [kind.rstrip("s"), f"from {rec.get('remote_id')}",
+                                   lookup.short_time(rec.get("updated_at") or rec.get("installed_at"))] if x),
+            "/catalog", workspace=(rec.get("workspace") or "default") if ctx.workspace is None else None,
+            at=rec.get("updated_at") or rec.get("installed_at"),
+        ))
+    rows.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
+    return rows[:limit]
+
+
+def _catalog_install_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
+    from hublink import catalog as hub_catalog
+    wanted = str(entity_id or "").strip()
+    kind, sep, local_id = wanted.partition(":")
+    found = [rec for rec in _catalog_installs(ctx)
+             if (sep and rec["kind"] == kind and rec["local_id"] == local_id)
+             or (not sep and rec["local_id"] == wanted)]
+    if len(found) != 1:
+        return None
+    rec = found[0]
+    # Local only: the copy here against the hash written at install time
+    # (the same comparison the Updates tab makes before it asks the remote).
+    local = hub_catalog._local_portable(rec["kind"], rec["local_id"])
+    fields = {
+        "id": f"{rec['kind']}:{rec['local_id']}", "kind": rec["kind"], "local_id": rec["local_id"],
+        "workspace": rec.get("workspace") or "default", "remote": _link_url(rec.get("remote_url")) or None,
+        "remote_id": rec.get("remote_id"), "installed_at": rec.get("installed_at"),
+        "updated_at": rec.get("updated_at"), "local_missing": local is None,
+        "locally_modified": local is not None and hub_catalog.digest(local) != rec.get("local_hash"),
+        "dependencies": {k: dict(v) for k, v in (rec.get("deps") or {}).items() if isinstance(v, dict) and v},
+        "note": "Whether the linked hub has a newer version is on the Catalog page's Updates tab.",
+    }
+    return {"title": rec["local_id"], "fields": fields, "url": "/catalog"}
+
+
+lookup.register(lookup.LookupKind(
+    "catalog_install", "agents, skills, flows, teams and loops installed here from the linked hub's catalog, "
+    "where they came from and whether the copy was changed here",
+    _list_catalog_installs, _catalog_install_card, ("/catalog",), aliases=("catalog",)))
+
+
+# ── sync spaces (hubsync/) ───────────────────────────────────────────────────
+# Two sides of the same feature, both on the Vault page. As the vault, this
+# hub holds the caller's own spaces, one per workspace name, and only ever
+# the caller's: the owner is the principal, exactly as routes/sync.py does,
+# so nobody counts another person's records. As a client, this hub pushes to
+# the hub it is linked to; that status is one per hub and readable by anyone
+# signed in (the header shows it to everyone).
+#
+# Only the clear columns of the vault (hubsync/vault.py): counts, sizes,
+# times, whether a key sealed the records. Never a payload, which is the
+# person's content and, when encrypted, not this hub's to read; never the
+# key's id, only whether there is one; never the sync key, the passphrase or
+# the link's API key. The client row has the id "this-hub/client": a
+# workspace name is one path component, so no space can take that id.
+
+_CLIENT_ID = "this-hub/client"
+
+
+def _sync_owner(ctx: SimpleNamespace) -> str:
+    from common.auth import LOCAL_OPERATOR_ID
+    return str(getattr(ctx.principal, "id", "") or LOCAL_OPERATOR_ID)
+
+
+def _vault_spaces(ctx: SimpleNamespace) -> List[Dict[str, Any]]:
+    from hubsync import vault
+    return [s for s in vault.list_spaces(_sync_owner(ctx)) if lookup.visible(ctx, s.get("space"))]
+
+
+def _space_url(name: str) -> str:
+    from urllib.parse import quote
+    return f"/vault?space={quote(name, safe='')}"
+
+
+def _space_fields(space: Dict[str, Any]) -> Dict[str, Any]:
+    counts = space.get("counts") or {}
+    return {
+        "space": space.get("space"), "encrypted": bool(space.get("encrypted")),
+        "key_set": bool(space.get("key_id")), "records": int(counts.get("total") or 0),
+        "encrypted_records": int(counts.get("encrypted") or 0), "bytes": int(counts.get("bytes") or 0),
+        "by_kind": dict(counts.get("by_kind") or {}), "created_at": space.get("created_at"),
+        "last_push_at": space.get("last_push_at"),
+    }
+
+
+def _client_status(ctx: SimpleNamespace) -> Optional[Dict[str, Any]]:
+    """This hub's own sync status trimmed to what the lookup may show, or
+    None when the hub is not linked. The mappings are cut to the workspaces
+    this lookup reads, the error to whether there is one (it is the remote's
+    own words, like an MCP server's)."""
+    from hubsync import client as sync_client
+    status = sync_client.status()
+    if not status.get("linked"):
+        return None
+    mappings = [{"workspace": m.get("workspace"), "space": m.get("space"), "encrypted": bool(m.get("encrypted"))}
+                for m in status.get("mappings") or []
+                if isinstance(m, dict) and lookup.visible(ctx, m.get("workspace"))]
+    result = status.get("last_result") or {}
+    return {
+        "remote": _link_url(status.get("remote")) or None, "remote_name": status.get("remote_name") or None,
+        "enabled": bool(status.get("enabled")), "encrypted": bool(status.get("encrypted")),
+        "key_set": bool(status.get("key_set")), "key_unlocked": bool(status.get("key_unlocked")),
+        "mappings": mappings, "last_pass_at": status.get("last_pass_at"),
+        "last_result": {k: v for k, v in result.items() if isinstance(v, (int, float)) and not isinstance(v, bool)},
+        "has_error": bool(status.get("last_error")), "open_conflicts": int(status.get("conflicts") or 0),
+    }
+
+
+def _list_synced(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    client = _client_status(ctx)
+    if client is not None and lookup.matches(query, "client", "this hub", client.get("remote_name"),
+                                             *[m.get("workspace") for m in client["mappings"]]):
+        state = "on" if client["enabled"] else "off"
+        rows.append(lookup.row(
+            _CLIENT_ID, f"This hub's sync to {client.get('remote_name') or client.get('remote') or 'the linked hub'}",
+            " · ".join(x for x in [state, "encrypted" if client["encrypted"] else "",
+                                   f"{len(client['mappings'])} mapped",
+                                   f"{client['open_conflicts']} conflicts" if client["open_conflicts"] else "",
+                                   "failing" if client["has_error"] else "",
+                                   lookup.short_time(client.get("last_pass_at"))] if x),
+            "/vault",
+        ))
+    spaces = []
+    for space in _vault_spaces(ctx):
+        name = str(space.get("space") or "")
+        if not lookup.matches(query, name, *(space.get("counts") or {}).get("by_kind", {}).keys()):
+            continue
+        fields = _space_fields(space)
+        spaces.append(lookup.row(
+            name, name,
+            " · ".join(x for x in [f"{fields['records']} records", "encrypted" if fields["encrypted"] else "",
+                                   lookup.short_time(fields["last_push_at"])] if x),
+            _space_url(name), at=fields["last_push_at"] or fields["created_at"],
+        ))
+    spaces.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
+    return (rows + spaces)[:limit]
+
+
+def _synced_card(ctx: SimpleNamespace, entity_id: str) -> Optional[Dict[str, Any]]:
+    wanted = str(entity_id or "").strip()
+    if wanted == _CLIENT_ID:
+        client = _client_status(ctx)
+        if client is None:
+            return None
+        return {"title": "This hub's sync", "fields": client, "url": "/vault"}
+    for space in _vault_spaces(ctx):
+        if space.get("space") == wanted:
+            return {"title": f"Sync space {wanted}", "fields": _space_fields(space), "url": _space_url(wanted)}
+    return None
+
+
+lookup.register(lookup.LookupKind(
+    "synced", "the person's sync spaces on this hub (record counts, encryption, last push) and this hub's "
+    f"own sync to the linked hub (id {_CLIENT_ID}: on or off, mappings, last pass, open conflicts)",
+    _list_synced, _synced_card, ("/vault",), aliases=("sync", "vault")))

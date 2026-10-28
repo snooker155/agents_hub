@@ -20,9 +20,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AudioLines, Eraser, Keyboard, Loader2, MessageSquarePlus, Mic, PanelRightClose, PanelRightOpen,
-  Phone, PhoneOff, Play, Send, Settings2, Square, StopCircle, Volume2, VolumeX,
+  Phone, PhoneOff, Play, Send, Settings2, Square, StopCircle, Volume2, VolumeX, Zap,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { loadWorkspaceSummary } from '../api/workspaceSummary';
 import LiveMark from '../components/liveMark/LiveMark';
 import ChatMarkdown from '../components/chat/ChatMarkdown';
 import { FeedItem } from '../components/flow/ChatFeed';
@@ -179,6 +180,16 @@ export default function Assistant() {
   });
   const canListen = (serverStt && recorder.supported) || browserRec.available;
   const workspace = (meta?.workspaces || []).includes(selectedWorkspace) ? selectedWorkspace : (meta?.home || '');
+  // Auto mode, where the turn's workspace allows it (its summary says).
+  const [autoAllowed, setAutoAllowed] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    loadWorkspaceSummary(workspace || 'default')
+      .then((summary) => { if (alive) setAutoAllowed(summary?.auto_approve_allowed !== false); })
+      .catch(() => { if (alive) setAutoAllowed(true); });
+    return () => { alive = false; };
+  }, [workspace]);
+  const autoOn = autoAllowed && Boolean(prefs.autoApprove);
   const pending = cards.some((c) => c.status === 'pending');
 
   // ── the thread ─────────────────────────────────────────────────────────────
@@ -264,7 +275,10 @@ export default function Assistant() {
     abortRef.current = ac;
     try {
       await streamAssistantTurn({
-        body: { message: text, workspace: workspace || undefined, mode, voice: spoken },
+        body: {
+          message: text, workspace: workspace || undefined, mode, voice: spoken,
+          ...(autoOn ? { auto_approve: true } : {}),
+        },
         signal: ac.signal,
         onEvent: (ev) => {
           setFeed((f) => applyTurnEvent(f, ev));
@@ -371,7 +385,7 @@ export default function Assistant() {
       }
       bumpSessions();
     }
-  }, [busy, bumpSessions, load, mode, openScreen, prefs.muted, prefs.voiceOnly, saySentence, sayLocal, speaker, t, wide, workspace]);
+  }, [autoOn, busy, bumpSessions, load, mode, openScreen, prefs.muted, prefs.voiceOnly, saySentence, sayLocal, speaker, t, wide, workspace]);
 
   /** A spoken yes or no while a card waits: answered by the hub, no turn. */
   const answerByVoice = useCallback(async (text) => {
@@ -871,6 +885,15 @@ export default function Assistant() {
               ))}
             </div>
           )}
+          <button type="button" role="switch" aria-checked={autoOn} disabled={!autoAllowed}
+            onClick={() => setPrefs({ autoApprove: !prefs.autoApprove })}
+            title={autoAllowed ? t('chat.autoMode.toggleHint') : t('chat.autoMode.disabledByAdmin')}
+            data-testid="assistant-auto-mode"
+            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium disabled:opacity-40 ${autoOn
+              ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'text-gray-500 hover:bg-gray-100'}`}>
+            <Zap className="w-4 h-4" />
+            <span className="hidden sm:inline">{autoOn ? t('chat.autoMode.on') : t('chat.autoMode.off')}</span>
+          </button>
           <button type="button" onClick={() => setPrefs({ muted: !prefs.muted })}
             title={prefs.muted ? t('assistant.unmute') : t('assistant.mute')}
             aria-label={prefs.muted ? t('assistant.unmute') : t('assistant.mute')} aria-pressed={prefs.muted}
@@ -955,7 +978,6 @@ export default function Assistant() {
             </button>
           )}
         </header>
-
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-6 px-4 sm:px-8 py-8">
           {loadError && <div className="text-sm text-red-600">{loadError}</div>}
           <div className="flex flex-col items-center gap-2">
@@ -1102,7 +1124,7 @@ export default function Assistant() {
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); } }}
                 placeholder={t('assistant.placeholder')}
                 disabled={busy}
-                className="flex-1 resize-none text-sm leading-5 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none disabled:bg-gray-50"
+                className={`flex-1 resize-none text-sm leading-5 border rounded-lg px-3 py-2 focus:outline-none disabled:bg-gray-50 ${autoOn ? 'border-amber-400' : 'border-gray-300'}`}
               />
               <button type="button" onClick={onSend} disabled={busy || !input.trim()}
                 title={t('assistant.send')} aria-label={t('assistant.send')}

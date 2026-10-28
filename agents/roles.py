@@ -29,7 +29,7 @@ import contextlib
 import logging
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +56,9 @@ ROLES: Tuple[Role, ...] = (
     Role("reviewer", "code_reviewer",
          "reviews code changes for correctness, style and tests"),
     Role("planner", "planner",
-         "turns a project's plans and structure into a task tree"),
+         "schedules work for later: reminders, recurring agent work, flows, loops, deployments"),
+    Role("task_manager", "task_manager",
+         "keeps the task tracker: turns plans into a task tree, splits and orders tasks"),
     Role("researcher", "researcher",
          "answers questions that need the workspace, memory and the open web together"),
     Role("web_search", "web_searcher",
@@ -371,9 +373,18 @@ def describe(workspace: Optional[str]) -> List[Dict[str, Any]]:
 
 # ── what an agent is told ────────────────────────────────────────────────────
 
-def prompt_section(spec: Any, workspace: Optional[str]) -> str:
+#: The tools that take a role reference as the agent id.
+_ROLE_TOOLS = ("run_agent_tool", "delegate_task_tool", "assign_agent_tool", "handoff_to_agent")
+
+
+def prompt_section(spec: Any, workspace: Optional[str],
+                   tool_names: Optional[Sequence[str]] = None) -> str:
     """The roles an agent reaches, for its system prompt: which agent holds
-    each one here and how to call it. Empty when it reaches none."""
+    each one here and how to call it. Empty when it reaches none.
+
+    ``tool_names``, when given, are the agent's built tools: the section then
+    names only the role-taking tools it has, so the model is not pointed at
+    one it cannot call."""
     if spec is None:
         return ""
     named = [*(getattr(spec, "delegates", None) or []), *(getattr(spec, "handoffs", None) or [])]
@@ -393,12 +404,14 @@ def prompt_section(spec: Any, workspace: Optional[str]) -> str:
         lines.append(f"- `@{rid}` ({role.summary}): `{aid}` in this workspace")
     if not lines:
         return ""
+    have = set(tool_names) if tool_names is not None else set(_ROLE_TOOLS)
+    via = [t for t in _ROLE_TOOLS if t in have]
+    how = f" ({', '.join(via)})" if via else ""
     return (
         "## Roles in this workspace\n"
         "Some of the agents you hand work to are named by role. The workspace decides which "
         "agent holds each role, so call the role, not a particular agent: pass `@<role>` as "
-        "the agent id (run_agent_tool, delegate_task_tool, assign_agent_tool, "
-        "handoff_to_agent). Where your instructions name the product's own agent for a "
+        f"the agent id{how}. Where your instructions name the product's own agent for a "
         "role (for example swe_agent for code), use the role instead.\n" + "\n".join(lines)
     )
 

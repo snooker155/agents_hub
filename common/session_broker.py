@@ -68,6 +68,7 @@ re-fetching everything.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
 import os
 import threading
@@ -189,6 +190,11 @@ class SessionBroker:
         awaitable returning the id to use, or None to fall back to this
         client's own counter for that one event."""
         self._id_provider = provider
+
+    @property
+    def loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        """The backend's event loop, None outside the backend process."""
+        return self._loop
 
     # ── publish ──────────────────────────────────────────────────────────────
 
@@ -531,6 +537,8 @@ APP_CHANNEL = "app"
 # fire it directly rather than reaching into the Timer for its function.
 _relay_timers: Dict[str, Tuple[threading.Timer, Any]] = {}
 _relay_lock = threading.Lock()
+# Set once the first relay of this process registered its exit flush.
+_relay_flush_registered = False
 _RELAY_DEBOUNCE = 0.25  # seconds — coalesce bursts of subprocess events
 
 
@@ -562,7 +570,15 @@ def _relay_notify(resource: str, meta: dict, *, delta: bool = False,
         except Exception:  # noqa: BLE001 - best-effort same-machine relay, must not break the caller
             log.debug("relay notify failed for %s", resource, exc_info=True)
 
+    global _relay_flush_registered
     with _relay_lock:
+        # An agent subprocess finalizes its task and exits right after, well
+        # inside the debounce window, and the daemon timer dies with it: the
+        # last status change never reached an open tab. Flushing on exit sends
+        # whatever is still waiting.
+        if not _relay_flush_registered:
+            atexit.register(flush_relayed_notifications)
+            _relay_flush_registered = True
         existing = _relay_timers.get(key)
         if existing:
             existing[0].cancel()
@@ -640,7 +656,10 @@ def publish_event(channel: str, event: dict) -> None:
     """
     loop = broker._loop
     if loop is not None and loop.is_running():
-        broker.publish_threadsafe(channel, event)
+        # A run's live channel keeps what went past, for a page that opens
+        # in the middle of it (common/run_replay.py).
+        from common import run_replay
+        broker.publish_threadsafe(channel, run_replay.record(channel, event))
     else:
         _relay_publish(channel, event)
 
@@ -658,8 +677,20 @@ def notify_change(resource: str, **meta) -> None:
     loop = broker._loop
     if loop is not None and loop.is_running():
         broker.publish_threadsafe(APP_CHANNEL, {"type": f"{resource}.changed", **meta})
+        if resource in _RUN_RESOURCES:
+            # A flow, loop or team run changed: one started from a chat may
+            # have ended, and that chat is told (chat/background_runs.py).
+            try:
+                from chat.background_runs import poke
+                poke(resource)
+            except Exception:  # noqa: BLE001 - the change is published either way
+                log.debug("background run poke failed", exc_info=True)
     else:
         _relay_notify(resource, meta)
+
+
+#: The resources of the run kinds a chat can start in the background.
+_RUN_RESOURCES = frozenset({"flow_runs", "loop_runs", "team_runs"})
 
 
 # ── Row deltas ───────────────────────────────────────────────────────────────

@@ -14,6 +14,14 @@ from cli.openapi import render_result
 agent_app = typer.Typer(help="Agent management commands.", no_args_is_help=True)
 
 
+def _kind(agent: dict) -> str:
+    """What the dashboard shows as the agent's badge: a system agent ships
+    with the product and is present in every workspace; every other one is
+    the person's own. Domains are gone from the agent page and card, so they
+    are not printed here either."""
+    return "system" if agent.get("system") else "own"
+
+
 @agent_app.command("list")
 def agent_list(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Defaults to the selected workspace."),
@@ -25,15 +33,13 @@ def agent_list(
     table = Table(title="Agents", box=box.ROUNDED, show_lines=False)
     table.add_column("ID", style="bold cyan", no_wrap=True)
     table.add_column("Name")
-    table.add_column("Domain")
-    table.add_column("Type")
+    table.add_column("Kind")
 
     for a in agents:
         table.add_row(
             a.get("id", ""),
             a.get("name", ""),
-            a.get("domain", ""),
-            a.get("type", ""),
+            _kind(a),
         )
 
     console.print(table)
@@ -49,8 +55,7 @@ def agent_get(agent_id: str = typer.Argument(..., help="Agent ID.")):
         "\n".join([
             f"[bold]ID:[/bold]          {a.get('id')}",
             f"[bold]Name:[/bold]        {a.get('name')}",
-            f"[bold]Domain:[/bold]      {a.get('domain', '-')}",
-            f"[bold]Type:[/bold]        {a.get('type', '-')}",
+            f"[bold]Kind:[/bold]        {_kind(a)}",
             f"[bold]Description:[/bold] {a.get('description', '-')}",
             f"[bold]Capacity:[/bold]    {a.get('capacity', '-')}",
             f"[bold]Memory:[/bold]      {a.get('memory_type', '-')}",

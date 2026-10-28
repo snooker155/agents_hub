@@ -12,14 +12,17 @@ Each node execution:
   3. Runs the agent in-process so output is available to successor nodes
   4. Closes its run record (close_run)
 
-When the DAG finishes, the task is finalized directly via finalize_flow_task,
-which sets the task status to resolved (single mode) or in_progress (continuous).
+A run works on a task only when it was given one (``--task-id``). When the
+DAG finishes, that task is finalized directly via finalize_flow_task, which
+sets its status to resolved (single mode) or in_progress (continuous); a run
+without a task just ends.
 
 Two endings are not "finished":
 
 * ``--resume-from <flow_run_id>`` starts from the checkpoint the engine wrote
   after the last node that completed, replays those nodes and runs the rest.
-* a ``human_interrupt`` node parks the task in ``awaiting_input`` and exits with
+* a ``human_interrupt`` node parks the run (and its task, if any; else the
+  question goes to the bell) in ``awaiting_input`` and exits with
   :data:`EXIT_AWAITING_INPUT`, so the caller can tell "waiting for a person"
   from "failed". Answering resumes the run through ``flow.launcher.resume_flow_run``.
 """
@@ -31,7 +34,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 # This module is launched as a script (``python runtime/flow_run.py``) by flow.launcher,
@@ -62,6 +65,7 @@ log = marker_logger(__name__)
 # run records, flow-log writes, stop check) lives in flow.task_driver. run.py is
 # now just the subprocess entry point: preflight + drive the engine.
 from flow.engine import run_flow_engine
+from flow.rerun import node_label
 from flow.task_driver import (
     log_flow,
     _resolve_agent_id,
@@ -80,8 +84,14 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _finalize_task(task_id: Optional[str], status: str, exit_code: int, *, error: Optional[str] = None) -> None:
+    """Close the task the run worked on, when it worked on one."""
+    if task_id:
+        finalize_flow_task(task_id, status, exit_code, error=error)
+
+
 def _park_on_interrupt(
-    *, flow: Dict, flow_id: str, run_id: str, task_id: str, session_id: str,
+    *, flow: Dict, flow_id: str, run_id: str, task_id: Optional[str], session_id: str,
     interrupt: Dict, checkpoint: Dict,
 ) -> None:
     """Park the flow on a human_interrupt node and end this process.
@@ -121,15 +131,31 @@ def _park_on_interrupt(
         "status": "awaiting_input",
         "heartbeat_at": _utc_now_iso(),
     })
-    try:
-        park_task_awaiting_input(
-            node_run_id,
-            {"question": question, "choices": list(interrupt.get("choices") or []),
-             "node": node_id},
-            agent_id=INTERRUPT_AGENT_ID,
-        )
-    except Exception as e:  # noqa: BLE001
-        log.info(f"[flow_interrupt] could not park the task: {e}")
+    if task_id:
+        try:
+            park_task_awaiting_input(
+                node_run_id,
+                {"question": question, "choices": list(interrupt.get("choices") or []),
+                 "node": node_id},
+                agent_id=INTERRUPT_AGENT_ID,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.info(f"[flow_interrupt] could not park the task: {e}")
+    else:
+        # No task to wait on: the question goes to the bell, pointing at the
+        # run, and is answered from the flow page's History.
+        try:
+            from plans.service import create_notification
+            rec = run_store.get_flow_run(run_id) or {}
+            create_notification(
+                title=f"{flow.get('name') or flow_id} is waiting for an answer",
+                body=question,
+                severity="warning",
+                source={"flow_id": flow_id, "flow_run_id": run_id, "node_id": node_id},
+                workspace=rec.get("workspace"),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.info(f"[flow_interrupt] could not raise the notification: {e}")
 
     log_flow(flow_id, run_id, {
         "timestamp": _utc_now_iso(),
@@ -146,12 +172,12 @@ def _park_on_interrupt(
 
 # ── Preflight ───────────────────────────────────────────────────────────────
 
-def _fail_preflight(flow_id: str, run_id: str, task_id: str, stage: str, detail: str) -> None:
+def _fail_preflight(flow_id: str, run_id: str, task_id: Optional[str], stage: str, detail: str) -> None:
     """Mark the flow run failed (flow-run record, task status, log) and exit."""
     msg = f"Flow preflight {stage} failed: {detail}"
     run_store.close_flow_run(run_id, status="failed", exit_code=1, error=msg)
     _set_flow_running(flow_id, False)
-    finalize_flow_task(task_id, "failed", 1, error=msg)
+    _finalize_task(task_id, "failed", 1, error=msg)
     log_flow(flow_id, run_id, {
         "timestamp": _utc_now_iso(),
         "type": "flow_error",
@@ -168,13 +194,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run an agent flow DAG")
     parser.add_argument("--flow-id", required=True, help="Flow ID (from .agents_hub/flows/)")
     parser.add_argument("--workspace", required=True, help="Absolute workspace path")
-    parser.add_argument("--task-id", required=True, help="Task ID this flow run is for")
+    parser.add_argument("--task-id", default="", help="Task this flow run works on, when it works on one")
     parser.add_argument("--run-id", required=True, help="Meta run ID created by flow_launcher")
     parser.add_argument("--session-id", required=True, help="Shared session ID for all node runs")
     parser.add_argument("--desc", default="", help="Shared context / description override")
     parser.add_argument("--seed", default="", help="JSON seed state merged into the flow's initial state (scheduled/webhook triggers)")
     parser.add_argument("--resume-from", default="", help="Flow run id whose checkpoint this run continues")
+    # runtime.entity_launch appends it to every containerized entity command.
+    parser.add_argument("--write-stdout-to-log", action="store_true",
+                        help="Mirror stdout/stderr into the run's log file (Docker execution mode)")
     args = parser.parse_args()
+
+    if args.write_stdout_to_log:
+        log_file = os.environ.get("AGENT_LOG_FILE")
+        if log_file:
+            from runtime.loop_run import _tee_stdout_to_log
+            _tee_stdout_to_log(log_file)
 
     # No load_dotenv() here: like runtime/agent_run.py, this subprocess inherits
     # the launcher's already-populated environment (.env is loaded once by the
@@ -186,7 +221,7 @@ def main() -> None:
 
     flow_id = args.flow_id
     run_id = args.run_id or str(uuid4())
-    task_id = args.task_id
+    task_id = args.task_id or None
 
     from flow import store as flow_store
     flow = flow_store.get_flow(flow_id)
@@ -194,7 +229,7 @@ def main() -> None:
         msg = f"Flow '{flow_id}' not found in .agents_hub/flows/"
         run_store.close_flow_run(run_id, status="failed", exit_code=1, error=msg)
         _set_flow_running(flow_id, False)
-        finalize_flow_task(task_id, "failed", 1, error=msg)
+        _finalize_task(task_id, "failed", 1, error=msg)
         log.error(f"[flow_error] {msg}")
         sys.exit(1)
 
@@ -245,7 +280,12 @@ def main() -> None:
         shared_context = build_task_instruction(task_id, shared_context, work_dir=args.workspace)
 
     _task = _ts.get_task(task_id) if task_id else None
-    task_title = (getattr(_task, "title", "") or "").strip()
+    task_title = (getattr(_task, "title", "") or (run_store.get_flow_run(run_id) or {}).get("title") or "").strip()
+    # What was asked, without the run's working rules: the task's title and
+    # description, else what the flow was started with. It is the run's
+    # ``user_request`` state value (flow/engine.py).
+    task_desc = (getattr(_task, "description", "") or "").strip()
+    request_text = "\n\n".join(p for p in (task_title, task_desc) if p) or "\n\n".join(p for p in parts if p)
 
     session_id = args.session_id
     _port = int(os.environ.get("DASHBOARD_PORT", "8000"))
@@ -271,10 +311,16 @@ def main() -> None:
         if resume_cp:
             _done = len(resume_cp.get("done") or [])
             log.info(f"[flow_resume] resuming {args.resume_from} from checkpoint ({_done} node(s) already done)")
+            # A run from one node of an earlier run (flow/rerun.py) says so.
+            _again = _rec.get("rerun_node")
             log_flow(flow_id, run_id, {
                 "timestamp": _utc_now_iso(), "type": "flow_resume",
-                "content": f"Resuming from checkpoint ({_done} node(s) already done)",
+                "content": (f"Running again from node {_again} ({_done} node(s) taken from the earlier run)"
+                            if _again else f"Resuming from checkpoint ({_done} node(s) already done)"),
                 "status": "running",
+                **({"rerun": {"node_id": _again, "label": node_label(flow, _again),
+                               "mode": _rec.get("rerun_mode") or "rest",
+                               "of": _rec.get("rerun_of")}} if _again else {}),
             })
         else:
             log.info(f"[flow_resume] {args.resume_from} has no checkpoint — running from the start")
@@ -293,9 +339,19 @@ def main() -> None:
         except ValueError as e:
             log.info(f"[flow_seed] failed to parse --seed JSON: {e}")
 
+    # The workspace the run works in, for the agents it may run: the one the
+    # --workspace folder belongs to, else the flow's own.
+    from common.workspace_context import workspace_name_from_path
+    from workspace import get_workspace_folder
+    run_workspace = workspace_name_from_path(args.workspace)
+    if not (run_workspace and get_workspace_folder(run_workspace)):
+        run_workspace = flow.get("workspace")
+
     async def _drive() -> dict:
         final: dict = {}
-        async for ev in run_flow_engine(flow, flow_id=flow_id, shared_context=shared_context, driver=driver, seed_state=seed_state, resume=resume_cp):
+        async for ev in run_flow_engine(flow, flow_id=flow_id, shared_context=shared_context, driver=driver,
+                                        seed_state=seed_state, resume=resume_cp, request=request_text,
+                                        workspace=run_workspace):
             if ev["type"] == "flow_finish":
                 final = ev
         return final
@@ -331,7 +387,7 @@ def main() -> None:
     })
 
     # Save flow output as task result
-    if combined_output:
+    if combined_output and task_id:
         persist_task_result(
             args.task_id, args.run_id, combined_output, agent_id="flow-custom-graph",
         )
@@ -341,11 +397,24 @@ def main() -> None:
     # node failures are reflected in exit_code and the task status.
     fr_status = "failed" if any_node_failed else "completed"
     fr_exit = 1 if any_node_failed else 0
+    # What the run produced stays on its record: the chat that started it is
+    # told the result when it ends (chat/background_runs.py).
+    if combined_output:
+        run_store.update_flow_run(args.run_id, {"output": combined_output[:OUTPUT_KEEP_CHARS]})
     run_store.close_flow_run(args.run_id, status=fr_status, exit_code=fr_exit)
+    from common import run_stream
+    run_stream.publish([run_stream.run_channel(args.run_id)], {
+        "type": "done", "ok": not any_node_failed, "flow_id": args.flow_id,
+        "flow_run_id": args.run_id, "status": fr_status,
+    })
     _set_flow_running(args.flow_id, False)
-    finalize_flow_task(args.task_id, "completed" if not any_node_failed else "failed", fr_exit)
+    _finalize_task(task_id, "completed" if not any_node_failed else "failed", fr_exit)
     log.info(f"[flow_done] flow_id={args.flow_id} nodes_completed={len(node_outputs)}"
              f" nodes_failed={sum(1 for n in nodes if n.get('id') not in node_outputs and _resolve_agent_id(n))}")
+
+
+#: How much of a run's combined output its record keeps.
+OUTPUT_KEEP_CHARS = 20000
 
 
 if __name__ == "__main__":

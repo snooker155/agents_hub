@@ -1,14 +1,18 @@
 /**
- * Files tab of a task: changed-file tree with a preview pane.
+ * Files tab of a task: one list of its files, with a preview pane.
  */
 import { ChevronDown, ChevronRight, Code2, Eye, FileText, Folder, FolderOpen } from 'lucide-react';
 import { getTaskFileRawUrl } from '../../api';
+import TaskFilesCard from '../files/TaskFilesCard';
 import MarkdownRenderer from '../MarkdownRenderer';
 import PageLoader from '../PageLoader';
 import { isMarkdownPath, parentDirPaths } from './taskUtils';
 import { useI18n } from '../../i18n';
 
-export function TaskFilesTab({ expandedFolders, fileContentError, fileContentLoading, fileTree, id, loadFileContent, mdViewMode, pdfViewMode, selectedFileContent, selectedFileIsPdf, selectedFilePath, selectedFileSize, setExpandedFolders, setMdViewMode, setPdfViewMode, toggleFolder, workspaceFiles }) {
+// One list for every file of the task: the header with the Add button and
+// the files attached to it, then the tree of the files in its working
+// directory. No split into input and changed files.
+export function TaskFilesTab({ task, onTaskChanged, expandedFolders, fileContentError, fileContentLoading, fileTree, id, loadFileContent, mdViewMode, pdfViewMode, selectedFileContent, selectedFileIsPdf, selectedFilePath, selectedFileSize, setExpandedFolders, setMdViewMode, setPdfViewMode, toggleFolder, workspaceFiles }) {
   const { t } = useI18n();
   const renderFileNodes = (nodes, depth = 0) => nodes.map((node) => {
     if (node.type === 'dir') {
@@ -57,18 +61,18 @@ export function TaskFilesTab({ expandedFolders, fileContentError, fileContentLoa
 
   return (
     <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
-      <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
-        <Folder className="w-5 h-5" /> {t('taskDetails.filesChangedByTask')}
-      </h3>
+      <TaskFilesCard task={task} onChanged={onTaskChanged} bare />
       {workspaceFiles.length ? (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[500px]">
+        // One block, as tall as its content (the page scrolls, not the tree
+        // or the preview): a narrow list, a divider, the file.
+        <div className="grid grid-cols-1 lg:grid-cols-12 mt-4 border border-gray-200 rounded-lg overflow-hidden">
           {/* Tree */}
-          <div className="lg:col-span-4 border border-gray-200 rounded-lg p-2 overflow-y-auto min-h-0">
+          <div className="lg:col-span-3 p-2 border-b lg:border-b-0 lg:border-r border-gray-200">
             {renderFileNodes(fileTree)}
           </div>
           {/* Preview */}
-          <div className="lg:col-span-8 border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-0">
-            <div className="px-4 py-2 border-b bg-gray-50 flex items-center justify-between gap-2 shrink-0">
+          <div className="lg:col-span-9 min-w-0 flex flex-col">
+            <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-2 shrink-0">
               <div className="min-w-0">
                 <div className="text-xs text-gray-500">{t('taskDetails.selectedFile')}</div>
                 <div className="text-sm text-gray-700 truncate flex items-center gap-2">
@@ -122,8 +126,13 @@ export function TaskFilesTab({ expandedFolders, fileContentError, fileContentLoa
                 )}
               </div>
             </div>
-            <div className={`${selectedFileIsPdf && pdfViewMode === 'render' ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
-              {fileContentLoading ? (
+            {/* Switching files keeps the last file in view, dimmed, until the
+                next one arrives: swapping it for the loader and back changed
+                the panel's height twice, and the whole page jumped with it.
+                The loader shows only before the first file is in. */}
+            <div className={`${selectedFileIsPdf && pdfViewMode === 'render' ? '' : 'p-4'} overflow-x-auto transition-opacity ${
+              fileContentLoading ? 'opacity-50' : ''}`} aria-busy={fileContentLoading || undefined} data-testid="file-preview">
+              {fileContentLoading && !selectedFileContent && !selectedFileIsPdf ? (
                 <PageLoader size="sm" label={t('taskDetails.loadingFileContent')} />
               ) : fileContentError ? (
                 <p className="text-sm text-red-600 p-4">{fileContentError}</p>
@@ -131,7 +140,7 @@ export function TaskFilesTab({ expandedFolders, fileContentError, fileContentLoa
                 <iframe
                   title={selectedFilePath}
                   src={getTaskFileRawUrl(id, selectedFilePath)}
-                  className="w-full h-full border-0"
+                  className="w-full h-[80vh] border-0 block"
                 />
               ) : selectedFilePath && isMarkdownPath(selectedFilePath) && mdViewMode === 'rendered' ? (
                 <MarkdownRenderer content={selectedFileContent} />
@@ -143,8 +152,8 @@ export function TaskFilesTab({ expandedFolders, fileContentError, fileContentLoa
             </div>
           </div>
         </div>
-      ) : (
-        <p className="text-sm text-gray-400 italic">{t('taskDetails.noFilesWereCreatedOr')}</p>
+      ) : !task?.file_ids?.length && (
+        <p className="text-sm text-gray-400 italic mt-3">{t('taskDetails.noFiles')}</p>
       )}
     </div>
   );

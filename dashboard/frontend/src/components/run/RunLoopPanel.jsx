@@ -1,8 +1,8 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import {
-  History, Bot, Layers, MessageSquareText, Wrench,
-  ShieldCheck, ShieldAlert, FileJson, KeySquare, Cpu, ScrollText, FileOutput, Box, Repeat,
+  History, Bot, Layers, MessageSquareText,
+  ShieldCheck, ShieldAlert, FileJson, Cpu, ScrollText, FileOutput, Box, Repeat,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import AgentVersion from './AgentVersion';
@@ -20,6 +20,9 @@ import AgentVersion from './AgentVersion';
  * or the version pin has neither, and the panel renders nothing at all in
  * that case; a run with only one or two sections shows only those.
  */
+
+// Loop keys the run page shows on tabs of their own instead.
+const OWN_TABS = ['loaded_tools', 'tool_decisions'];
 
 function Section({ icon: Icon, title, children }) {
   return (
@@ -53,7 +56,9 @@ export default function RunLoopPanel({ run, onChanged, showVersion = true }) {
   })();
   const hasContainerProfile = containerHours != null && (containerSize || containerCpus);
 
-  const hasLoop = !!loop && Object.keys(loop).length > 0;
+  // The loaded tools and the tool policy decisions have tabs of their own on
+  // the run page (LoadedTools, ToolDecisions).
+  const hasLoop = !!loop && Object.keys(loop).some((k) => !OWN_TABS.includes(k));
   if (!hasVersion && !hasLoop && !hasContainerProfile) return null;
 
   return (
@@ -169,18 +174,6 @@ export default function RunLoopPanel({ run, onChanged, showVersion = true }) {
         </Section>
       )}
 
-      {hasLoop && loop.loaded_tools?.length > 0 && (
-        <Section icon={Wrench} title={t('runLoop.loadedTools')}>
-          <div className="flex flex-wrap gap-1.5">
-            {loop.loaded_tools.map((name) => (
-              <span key={name} className="text-xs font-mono px-2 py-0.5 rounded bg-gray-100 text-gray-700">
-                {name}
-              </span>
-            ))}
-          </div>
-        </Section>
-      )}
-
       {hasLoop && loop.guardrails?.length > 0 && (
         <Section icon={ShieldCheck} title={t('runLoop.guardrails')}>
           <ul className="space-y-1">
@@ -217,20 +210,6 @@ export default function RunLoopPanel({ run, onChanged, showVersion = true }) {
               ))}
             </ul>
           )}
-        </Section>
-      )}
-
-      {hasLoop && loop.tool_decisions?.length > 0 && (
-        <Section icon={KeySquare} title={t('runLoop.toolDecisions')}>
-          <ul className="space-y-1">
-            {loop.tool_decisions.map((d, i) => (
-              <li key={i} className="text-sm text-gray-700 flex items-center gap-2 flex-wrap">
-                <span className="font-mono text-xs">{d.tool}</span>
-                <span className="text-xs text-gray-500">{d.mode} → {d.decision}</span>
-                {d.reason && <span className="text-xs text-gray-400">{d.reason}</span>}
-              </li>
-            ))}
-          </ul>
         </Section>
       )}
 

@@ -156,6 +156,8 @@ export const DEFAULT_PREFS = {
   // hold | conversation | wake (LISTEN_MODES); the wake phrase ('' = "assistant"
   // in any interface language); a spoken stop while the assistant works.
   listen: 'hold', wakePhrase: '', voiceStop: true,
+  // Auto mode (common/auto_mode.py): every confirmation accepted without a card.
+  autoApprove: false,
 };
 
 export function readPrefs(storage = globalThis.localStorage) {

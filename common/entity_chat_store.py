@@ -289,6 +289,26 @@ class EntityChatStore:
             entry["updated_at"] = _now()
             self.docs.put(key, entry)
 
+    def import_thread(self, kind: str, entity_id: str, messages: List[dict],
+                      trace: List[dict], session_epoch: int = 0) -> bool:
+        """Adopt a chat kept elsewhere as the live thread, epoch included.
+
+        Only when this key has no chat yet, so a move from an older store runs
+        once and never overwrites what the new one already holds.
+        """
+        key = self._key(kind, entity_id)
+        with self.docs.transaction():
+            if self.docs.get(key):
+                return False
+            entry = self._blank(kind)
+            entry["messages"] = list(messages or [])
+            entry["trace"] = list(trace or [])
+            entry["session_epoch"] = int(session_epoch or 0)
+            entry["epoch_high"] = int(session_epoch or 0)
+            entry["updated_at"] = _now()
+            self.docs.put(key, entry)
+            return True
+
     def clear(self, kind: str, entity_id: str, new_session: bool = True,
               timeout: float = 10.0, archive: bool = True) -> int:
         """Start a fresh thread; returns the (possibly bumped) session epoch.

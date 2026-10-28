@@ -304,6 +304,10 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
             return json.dumps({"ok": False, "error": f"view {vid} is a {view.get('kind')} view, not slides"})
         from views.slides_pptx import build_pptx, pptx_filename
         rel = str(path or "").strip() or f"presentations/{pptx_filename(view.get('title') or 'slides')}"
+        if rel.lower().endswith(".pdf"):
+            return json.dumps({"ok": False, "error": (
+                "slides_export writes only .pptx; a PDF is downloaded by the user from the view "
+                "(the PDF button). Export to a .pptx path or leave path empty.")})
         if not rel.lower().endswith(".pptx"):
             rel += ".pptx"
         dest = (ws_abs / rel).resolve()
@@ -1081,6 +1085,11 @@ class SlidesAddInput(JsonArgsModel):
         "stats/cards/timeline only: a JSON array of {\"icon\": emoji, \"title\": str, "
         "\"text\": markdown, \"value\": big number or date}."))
     columns: str = Field("", description="two_column only: a JSON array of exactly two markdown strings.")
+    chart: str = Field("", description=(
+        "chart layout only: a JSON object {\"type\": bar|line|area|pie, \"categories\": [labels, 1 to 24], "
+        "\"series\": [{\"name\": str, \"values\": [number or null, one per category]}] (1 to 6; pie exactly 1), "
+        "\"stacked\": bool (bar/area), \"horizontal\": bool (bar), \"x_label\": str, \"y_label\": str, "
+        "\"unit\": short suffix such as % (optional)}. body is an optional short takeaway beside the chart."))
     image: str = Field("", description="image_* layouts: 'asset://name' from view_add_asset, or an https URL.")
     caption: str = Field("", description="Optional caption under the image.")
     accent: str = Field("", description="Optional #rrggbb accent for this slide only.")
@@ -1106,7 +1115,7 @@ class DocumentSetInput(JsonArgsModel):
 
 @tool("slides_add", args_schema=SlidesAddInput)
 def slides_add(title: str, body: str = "", layout: str = "content", subtitle: str = "",
-               icon: str = "", items: str = "", columns: str = "", image: str = "",
+               icon: str = "", items: str = "", columns: str = "", chart: str = "", image: str = "",
                caption: str = "", accent: str = "", notes: str = "", slide_id: str = "",
                view_id: str = "") -> str:
     """Add one slide to a live slides view, or replace the slide with ``slide_id``.
@@ -1115,7 +1124,8 @@ def slides_add(title: str, body: str = "", layout: str = "content", subtitle: st
     layout per slide so the deck is not a wall of bullets: a ``title`` cover, a
     ``section`` divider between parts, ``stats`` for numbers, ``cards`` for a set
     of features, ``timeline`` for steps or releases, ``two_column`` to compare,
-    ``quote`` for a quotation, ``image_*`` around a picture. A slide is refused
+    ``quote`` for a quotation, ``chart`` for numbers over categories or time (pass
+    ``chart``, never describe a chart in words), ``image_*`` around a picture. A slide is refused
     with the reason when its layout is missing what it draws.
     """
     vid = _resolve_vid(view_id)
@@ -1158,6 +1168,11 @@ def slides_add(title: str, body: str = "", layout: str = "content", subtitle: st
         if not isinstance(parsed_cols, list):
             return json.dumps({"ok": False, "error": "columns must be a JSON array of two markdown strings"})
         slide["columns"] = [str(c) for c in parsed_cols]
+    parsed_chart = _loads(chart, None)
+    if parsed_chart:
+        if not isinstance(parsed_chart, dict):
+            return json.dumps({"ok": False, "error": "chart must be a JSON object {type, categories, series}"})
+        slide["chart"] = parsed_chart
     ops.append({"op": "add", "path": f"spec.slides.{sid}", "value": slide})
     out = json.loads(_apply(vid, ops))
     if out.get("ok"):

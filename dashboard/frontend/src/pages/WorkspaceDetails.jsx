@@ -3,7 +3,8 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert, Sparkles, Repeat } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert, Sparkles, Repeat, Cpu } from 'lucide-react';
+import { isHtmlFile } from '../lib/fileKind';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
 import ProjectCard from '../components/projects/ProjectCard';
@@ -13,20 +14,18 @@ import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
 import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMemory';
 import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
 import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
+import WorkspaceHubSync from '../components/workspace/WorkspaceHubSync';
 import WorkspaceRoles from '../components/workspace/WorkspaceRoles';
+import ModelPolicyCard from '../components/workspace/ModelPolicyCard';
 import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialModels';
 import { useAuth, isAdmin, isMultiUser } from '../components/auth';
 import { useTheme, resolvePalette } from '../components/theme';
 import { invalidateWorkspaceSummary } from '../api/workspaceSummary';
 import { PRESET_ORDER, PRESETS, SHADES, checkPalette, matchPreset, rampFromColor } from '../lib/palette';
 import { inputCls } from '../components/settingsUi';
-import {
-  SaveWorkspaceSettingsButton, WorkspaceSettingsStatus,
-  ExecutionModeSection, ToolPolicySection, TaskAssignmentSection, WorkspaceDomainPolicyCard,
-} from '../components/settings/WorkspaceSettingsSections';
-import { useWorkspaceSettings } from '../components/settings/useWorkspaceSettings';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { TabRow } from '../components/PageTabs';
 import PageLoader from '../components/PageLoader';
 import { useI18n } from '../i18n';
 // Tab ids the page can open, so a ?tab= deep-link can be validated before use.
@@ -602,9 +601,9 @@ const WorkspaceDetails = () => {
         }
       />
 
-      <div className="border-b border-gray-200 shrink-0 flex items-end justify-between gap-3">
-        <nav className="flex flex-wrap gap-2 -mb-px">
-          {tabs.map((tab) => {
+      <TabRow
+        className="shrink-0"
+        tabs={tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
@@ -624,9 +623,8 @@ const WorkspaceDetails = () => {
               </button>
             );
           })}
-        </nav>
-        {activeTab === 'tasks' && <div ref={setTaskToolbar} className="flex items-center shrink-0" />}
-      </div>
+        actions={activeTab === 'tasks' && <div ref={setTaskToolbar} className="flex items-center" />}
+      />
 
       {activeTab === 'tasks' && (
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -858,15 +856,16 @@ const WorkspaceDetails = () => {
             </button>
           </div>
           {(files.length || folders.length) ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-1 min-h-0">
-              {/* The tree is a picker; the file is the thing being read. Two
-                  of twelve columns is enough for names, and the other ten stop
-                  wrapping every other line of the file beside it. */}
-              <div className="lg:col-span-2 border border-gray-200 rounded-lg p-2 overflow-auto min-h-0">
+            <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border border-gray-200 rounded-lg overflow-hidden">
+              {/* One block: the tree, a divider, the file. The tree is a
+                  picker; the file is the thing being read. Two of twelve
+                  columns is enough for names, and the other ten stop wrapping
+                  every other line of the file beside it. */}
+              <div className="lg:col-span-2 p-2 overflow-auto min-h-0 border-b lg:border-b-0 lg:border-r border-gray-200">
                 {renderFileNodes(fileTree)}
               </div>
-              <div className="lg:col-span-10 border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-0">
-                <div className="px-4 py-2 border-b bg-gray-50 flex items-center justify-between gap-2 shrink-0">
+              <div className="lg:col-span-10 min-w-0 flex flex-col min-h-0">
+                <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-2 shrink-0">
                   <div className="min-w-0">
                     <div className="text-xs text-gray-500">{t('workspaceDetails.selectedFile')}</div>
                     <div className="text-sm text-gray-700 truncate flex items-center gap-2">
@@ -900,7 +899,7 @@ const WorkspaceDetails = () => {
                         </button>
                       </div>
                     )}
-                    {!selectedFileIsPdf && isMarkdownPath(selectedFilePath) && (
+                    {!selectedFileIsPdf && (isMarkdownPath(selectedFilePath) || isHtmlFile({ name: selectedFilePath })) && (
                       <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
                         <button
                           type="button"
@@ -930,7 +929,7 @@ const WorkspaceDetails = () => {
                     </button>
                   </div>
                 </div>
-                <div className={`${selectedFileIsPdf && pdfViewMode === 'render' ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
+                <div className={`${(selectedFileIsPdf && pdfViewMode === 'render') || (isHtmlFile({ name: selectedFilePath }) && mdViewMode === 'rendered') ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
                   {fileContentLoading ? (
                     <p className="text-sm text-gray-500 p-4">{t('workspaceDetails.loadingFileContent')}</p>
                   ) : fileContentError ? (
@@ -943,6 +942,15 @@ const WorkspaceDetails = () => {
                     />
                   ) : selectedFilePath && isMarkdownPath(selectedFilePath) && mdViewMode === 'rendered' ? (
                     <MarkdownRenderer content={selectedFileContent} />
+                  ) : selectedFilePath && isHtmlFile({ name: selectedFilePath }) && mdViewMode === 'rendered' ? (
+                    // The page as a browser shows it, sandboxed (no scripts),
+                    // like an HTML file on a project's Files tab.
+                    <iframe
+                      title={selectedFilePath}
+                      srcDoc={selectedFileContent}
+                      sandbox=""
+                      className="w-full h-full min-h-[60vh] border-0 bg-white block"
+                    />
                   ) : selectedFilePath ? (
                     <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words">{selectedFileContent}</pre>
                   ) : (
@@ -1155,7 +1163,11 @@ const WorkspaceDetails = () => {
       {activeTab === 'agents' && <WorkspaceMembers workspace={name} />}
 
       {activeTab === 'settings' && (
-        <WorkspaceSettingsTab workspace={name} agents={ws?.metadata?.allowed_agents || []} />
+        <WorkspaceSettingsTab
+          workspace={name}
+          agents={allowedAgentIds}
+          agentRecords={allowedAgentIds.map((id) => agentById.get(id) || { id })}
+        />
       )}
 
       {activeTab === 'instructions' && (
@@ -1208,46 +1220,44 @@ const WorkspaceDetails = () => {
 
 // ── settings tab ─────────────────────────────────────────────────────────────
 
-// What is configured per workspace, laid out the way the Settings page lays
-// out its sections: a left-hand menu and one content column. Provider keys,
-// RAG, observability and logging are not here: they are not a property of a
-// workspace, so they live on the Settings page only. `saves` marks the
-// sections whose fields ride on the Save button; the others save themselves.
+// What only a workspace has, laid out the way the Settings page lays out its
+// sections: a left-hand menu and one content column. Execution, tool policy,
+// web access and task assignment are workspace overrides too, but they sit
+// beside their global values on the Settings page (for the workspace picked
+// in the header), so they are not repeated here. Isolation and the special
+// models stay here, with personal memory, secrets and the palette. `saves`
+// marks the sections whose fields ride on the Save button; the others save themselves.
 const SETTINGS_GROUPS = [
   {
     key: 'agents',
     items: [
-      { id: 'execution', icon: Server, saves: true },
       { id: 'roles', icon: Repeat },
       { id: 'specialModels', icon: Sparkles },
-      { id: 'toolPolicy', icon: Shield },
-      { id: 'webPolicy', icon: Globe },
+      { id: 'modelPolicy', icon: Cpu, label: 'modelPolicy.section' },
       { id: 'personalMemory', icon: UserRound },
       { id: 'isolation', icon: ShieldAlert },
-      { id: 'tasks', icon: CheckSquare, saves: true },
     ],
   },
   {
     key: 'workspace',
     items: [
       { id: 'secrets', icon: Lock },
+      // Sync with the linked hub and its encryption, this workspace's row of
+      // the list under Settings → Remote hub (docs/hub-sync.md).
+      { id: 'remoteSync', icon: RefreshCw },
       { id: 'palette', icon: PaletteIcon, adminOnly: true },
     ],
   },
 ];
 
 /**
- * The workspace's own settings. The override fields are drawn by the shared
- * components/settings/WorkspaceSettingsSections.jsx, the same ones the
- * Settings page shows for the workspace picked in the header, so the two
- * never drift. The open section lives in the URL (?tab=settings&section=…).
+ * The workspace's own settings: agent roles, personal memory, secrets and the
+ * default palette. The open section lives in the URL (?tab=settings&section=…).
  */
-function WorkspaceSettingsTab({ workspace, agents }) {
+function WorkspaceSettingsTab({ workspace, agents, agentRecords }) {
   const { t } = useI18n();
   const auth = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const s = useWorkspaceSettings(workspace);
-
   // The palette card renders nothing for a non-admin in multi mode, so its
   // menu entry would lead to an empty page.
   const canSeePalette = !isMultiUser(auth) || isAdmin(auth);
@@ -1290,7 +1300,7 @@ function WorkspaceSettingsTab({ workspace, agents }) {
                     aria-current={isActive ? 'page' : undefined}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
-                    {t(`workspaceDetails.settingsTab.sections.${item.id}`)}
+                    {(item.label ? t(item.label) : t(`workspaceDetails.settingsTab.sections.${item.id}`))}
                   </button>
                 );
               })}
@@ -1315,34 +1325,15 @@ function WorkspaceSettingsTab({ workspace, agents }) {
               {groups.map((group) => (
                 <optgroup key={group.key} label={t(`workspaceDetails.settingsTab.groups.${group.key}`)}>
                   {group.items.map((item) => (
-                    <option key={item.id} value={item.id}>{t(`workspaceDetails.settingsTab.sections.${item.id}`)}</option>
+                    <option key={item.id} value={item.id}>{(item.label ? t(item.label) : t(`workspaceDetails.settingsTab.sections.${item.id}`))}</option>
                   ))}
                 </optgroup>
               ))}
             </select>
           </div>
 
-          {active.saves && (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-gray-500 max-w-xl">{t('workspaceDetails.settingsTab.description')}</p>
-              <SaveWorkspaceSettingsButton s={s} />
-            </div>
-          )}
-          <WorkspaceSettingsStatus s={s} />
-
-          {s.loading && (active.saves || active.id === 'toolPolicy') ? (
-            <p className="text-sm text-gray-500 flex items-center gap-2">
-              <Loader className="w-4 h-4 animate-spin" /> {t('common.loading')}
-            </p>
-          ) : (
-            <>
-              {active.id === 'execution' && <ExecutionModeSection s={s} />}
-              {active.id === 'toolPolicy' && <ToolPolicySection s={s} />}
-              {active.id === 'tasks' && <TaskAssignmentSection s={s} />}
-            </>
-          )}
-          {active.id === 'webPolicy' && <WorkspaceDomainPolicyCard key={workspace} workspace={workspace} />}
           {active.id === 'roles' && <WorkspaceRoles key={workspace} workspace={workspace} />}
+          {active.id === 'modelPolicy' && <ModelPolicyCard key={workspace} workspace={workspace} />}
           {active.id === 'specialModels' && <WorkspaceSpecialModels key={workspace} workspace={workspace} />}
           {active.id === 'personalMemory' && <WorkspacePersonalMemory workspace={workspace} agents={agents} />}
           {active.id === 'isolation' && (
@@ -1351,7 +1342,8 @@ function WorkspaceSettingsTab({ workspace, agents }) {
               <WorkspaceDataClass key={`dc-${workspace}`} workspace={workspace} />
             </div>
           )}
-          {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agents} />}
+          {active.id === 'secrets' && <WorkspaceSecrets workspace={workspace} agents={agentRecords} />}
+          {active.id === 'remoteSync' && <WorkspaceHubSync key={workspace} workspace={workspace} />}
           {/* This workspace's default palette (docs/settings.md "Palette"). */}
           {active.id === 'palette' && <WorkspacePaletteDefault workspace={workspace} />}
         </div>

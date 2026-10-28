@@ -23,15 +23,14 @@
         "assign_agent_tool",
         "get_scenario_run_tool",
         "stop_scenario_run_tool",
+        "assign_flow_tool",
         "get_team_run_tool",
         "stop_team_run_tool",
         "get_loop_run_tool",
         "stop_loop_run_tool",
         "list_flows_tool",
-        "run_agent_tool",
         "delegate_task_tool",
         "list_models_tool",
-        "run_flow_tool",
         "search_docs",
         "read_doc",
         "schedule_notification",
@@ -48,7 +47,9 @@
       "default_workspace_only": false,
       "temperature": 0.0,
       "max_tokens": 15000,
+      "effort": "none",
       "verbose": false,
+      "capability_override": true,
       "delegates": [
         "agent_creator",
         "decomposer",
@@ -56,9 +57,15 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
+        "@researcher",
+        "@analyst",
+        "@writer",
+        "@verifier",
+        "screener",
         "main-agent",
         "universal_agent",
         "prompt-engineer",
@@ -112,7 +119,8 @@
       "capacity": 1,
       "memory_type": "none",
       "memory_data": null,
-      "default_workspace_only": false
+      "default_workspace_only": false,
+      "effort": "none"
     },
     {
       "id": "decomposer",
@@ -156,6 +164,7 @@
       "memory_data": null,
       "temperature": 0.2,
       "max_tokens": 15000,
+      "effort": "none",
       "verbose": false
     },
     {
@@ -183,7 +192,8 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "memory_extractor",
@@ -208,7 +218,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "architect_agent",
@@ -239,16 +250,59 @@
       "shared": false,
       "temperature": 0.0,
       "skills_enabled": false,
-      "reasoning": {
-        "thinking_level": "medium"
-      }
+      "effort": "none"
     },
     {
       "id": "planner",
       "name": "Planner Agent",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Turns a project's plans and structure into an actionable task tree. Reads the project's architecture and process views and any documentation, then creates, sequences, and maintains tasks and subtasks in the shared tracker — without doing the implementation work itself.",
+      "description": "Plans when work runs. Owns the workspace's Plan and its deployments: reminders, agent work, flows, loops and memory consolidation at a set time or on a recurrence, with their resources, auto pause and firing journal. It schedules work; it does not do it, and it does not manage tracker tasks (that is the Task Manager).",
+      "domain": "System",
+      "system": true,
+      "tools": [
+        "calculator",
+        "search_docs",
+        "read_doc",
+        "schedule_notification",
+        "schedule_task",
+        "schedule_agent_run",
+        "schedule_flow",
+        "schedule_loop",
+        "schedule_memory_consolidation",
+        "list_scheduled",
+        "get_scheduled",
+        "update_scheduled",
+        "cancel_scheduled",
+        "pause_scheduled",
+        "resume_scheduled",
+        "run_scheduled_now",
+        "list_agents_tool",
+        "list_flows_tool",
+        "list_loops_tool"
+      ],
+      "commands": [
+        {
+          "name": "/schedule",
+          "description": "Schedule a reminder, agent work, a flow or a memory consolidation",
+          "template": "/schedule "
+        }
+      ],
+      "capacity": 1,
+      "memory_type": "none",
+      "memory_data": null,
+      "default_workspace_only": false,
+      "shared": false,
+      "temperature": 0.2,
+      "skills_enabled": false,
+      "effort": "none"
+    },
+    {
+      "id": "task_manager",
+      "name": "Task Manager",
+      "type": "langchain",
+      "entrypoint": "agents.agent_factory:build_agent_executor",
+      "description": "Keeps the workspace's task tracker: turns a project's plans and structure into an actionable task tree, splits work into subtasks, sets the order with dependencies and keeps the tree current. It organizes the tasks; it does not do them, and it does not schedule anything (that is the Planner).",
       "domain": "System",
       "system": true,
       "tools": [
@@ -261,6 +315,7 @@
         "block_task",
         "set_task_dependencies",
         "get_task_result",
+        "list_agents_tool",
         "calculator",
         "search_docs",
         "read_doc"
@@ -283,7 +338,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.2,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "visualizer",
@@ -344,7 +400,8 @@
       "handoffs": [
         "modeler_3d",
         "web_view_builder"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "modeler_3d",
@@ -397,7 +454,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "web_view_builder",
@@ -435,7 +493,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "swe_agent",
@@ -453,6 +512,7 @@
         "search_text",
         "apply_unified_diff",
         "create_file",
+        "run_shell",
         "read_memory",
         "search_docs",
         "read_doc"
@@ -500,7 +560,12 @@
       "default_workspace_only": false,
       "shared": true,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "capability_override": true,
+      "tool_policy": {
+        "run_shell": "always_ask"
+      },
+      "effort": "none"
     },
     {
       "id": "code_reviewer",
@@ -528,7 +593,8 @@
       "default_workspace_only": false,
       "shared": true,
       "temperature": 0.1,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "eval_agent",
@@ -560,14 +626,15 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "researcher",
       "name": "Researcher",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
-      "description": "Synthesis agent: combines the workspace, shared memory, and the open web (delegated to the Web Search Agent) into a reasoned answer with sources. Reads widely and writes nothing.",
+      "description": "Synthesis agent: combines the workspace, shared memory and web search results into a reasoned answer with sources. Reads widely and writes nothing.",
       "domain": "research",
       "system": true,
       "tools": [
@@ -577,8 +644,7 @@
         "read_memory",
         "search_memory",
         "calculator",
-        "run_agent_tool",
-        "list_models_tool",
+        "web_search",
         "search_docs",
         "read_doc"
       ],
@@ -608,16 +674,12 @@
       "skills_enabled": false,
       "reasoning": {
         "think_enabled": false,
-        "thinking_level": "high",
         "plan_enabled": false,
         "think_mode": "deep"
       },
       "response_format": "buttons",
       "clarify_gate": true,
-      "delegates": [
-        "@web_search"
-      ],
-      "capability_override": true
+      "effort": "none"
     },
     {
       "id": "web_searcher",
@@ -643,7 +705,8 @@
       "temperature": 0.3,
       "skills_enabled": false,
       "response_format": "buttons",
-      "clarify_gate": true
+      "clarify_gate": true,
+      "effort": "none"
     },
     {
       "id": "main-agent",
@@ -660,18 +723,13 @@
         "write_file",
         "delete_file",
         "run_flow_tool",
+        "run_new_flow_tool",
         "run_agent_tool",
-        "delegate_task_tool",
         "list_models_tool",
         "list_flows_tool",
         "list_agents_tool",
         "get_flow_tool",
-        "cancel_scheduled",
-        "list_scheduled",
         "notify_user",
-        "schedule_notification",
-        "schedule_task",
-        "update_scheduled",
         "get_task",
         "list_tasks",
         "create_task",
@@ -707,6 +765,8 @@
         "transcribe_audio",
         "ask_special_model"
       ],
+      "capability_override": true,
+      "tool_policy": {},
       "commands": [],
       "capacity": 1,
       "memory_type": "none",
@@ -722,9 +782,15 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
+        "@researcher",
+        "@analyst",
+        "@writer",
+        "@verifier",
+        "screener",
         "universal_agent",
         "prompt-engineer",
         "plot-manager",
@@ -733,7 +799,8 @@
         "loop_creator",
         "team_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "universal_agent",
@@ -748,6 +815,7 @@
         "write_memory",
         "list_flows_tool",
         "run_flow_tool",
+        "run_new_flow_tool",
         "run_agent_tool",
         "calculator",
         "ask_user",
@@ -789,6 +857,7 @@
       "shared": true,
       "skills_enabled": false,
       "allow_self_delegation": true,
+      "capability_override": true,
       "delegates": [
         "orchestrator",
         "agent_creator",
@@ -797,9 +866,15 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
+        "@researcher",
+        "@analyst",
+        "@writer",
+        "@verifier",
+        "screener",
         "main-agent",
         "prompt-engineer",
         "plot-manager",
@@ -808,7 +883,8 @@
         "loop_creator",
         "team_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "service_agent",
@@ -848,7 +924,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "prompt-engineer",
@@ -872,7 +949,8 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "plot-manager",
@@ -899,7 +977,8 @@
       "skills_enabled": false,
       "reasoning": {
         "think_enabled": false
-      }
+      },
+      "effort": "none"
     },
     {
       "id": "world_builder",
@@ -926,10 +1005,12 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "scenario_creator",
+      "capability_override": true,
       "name": "Scenario Creator",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
@@ -967,6 +1048,7 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
@@ -978,7 +1060,8 @@
         "loop_creator",
         "team_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "loop_creator",
@@ -1011,6 +1094,7 @@
       "default_workspace_only": false,
       "shared": false,
       "skills_enabled": false,
+      "capability_override": true,
       "delegates": [
         "orchestrator",
         "agent_creator",
@@ -1019,9 +1103,15 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
+        "@researcher",
+        "@analyst",
+        "@writer",
+        "@verifier",
+        "screener",
         "main-agent",
         "universal_agent",
         "prompt-engineer",
@@ -1030,7 +1120,8 @@
         "scenario_creator",
         "team_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "team_creator",
@@ -1060,6 +1151,7 @@
       "default_workspace_only": false,
       "shared": false,
       "skills_enabled": false,
+      "capability_override": true,
       "delegates": [
         "orchestrator",
         "agent_creator",
@@ -1068,9 +1160,15 @@
         "memory_extractor",
         "architect_agent",
         "@planner",
+        "@task_manager",
         "@visualizer",
         "@coder",
         "@reviewer",
+        "@researcher",
+        "@analyst",
+        "@writer",
+        "@verifier",
+        "screener",
         "main-agent",
         "universal_agent",
         "prompt-engineer",
@@ -1079,7 +1177,8 @@
         "scenario_creator",
         "loop_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "project_manager",
@@ -1106,7 +1205,8 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "system_doctor",
@@ -1134,7 +1234,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "system_engineer",
@@ -1172,7 +1273,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "support",
@@ -1206,7 +1308,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.2,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "verifier",
@@ -1245,7 +1348,8 @@
       "delegates": [
         "@web_search"
       ],
-      "capability_override": true
+      "capability_override": true,
+      "effort": "none"
     },
     {
       "id": "analyst",
@@ -1279,7 +1383,8 @@
       "skills_enabled": false,
       "delegates": [
         "@visualizer"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "writer",
@@ -1312,7 +1417,8 @@
       "skills_enabled": false,
       "handoffs": [
         "@verifier"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "sourcer",
@@ -1343,7 +1449,8 @@
       ],
       "handoffs": [
         "screener"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "screener",
@@ -1372,10 +1479,12 @@
       "default_workspace_only": false,
       "shared": true,
       "temperature": 0.1,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "assistant",
+      "capability_override": true,
       "name": "Assistant",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
@@ -1416,7 +1525,8 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     }
   ]
 }

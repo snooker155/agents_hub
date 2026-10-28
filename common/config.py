@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Annotated, Any, Tuple, List, Optional, Union, Literal
@@ -297,6 +298,10 @@ class Settings(BaseSettings):
     # it on; the client secret may be empty for a public client.
     auth_oidc_issuer: str = Field(
         default="", validation_alias=AliasChoices("AUTH_OIDC_ISSUER", "auth_oidc_issuer"))
+    # Server-to-server address of the provider when browsers use a public one
+    # (the bundled Keycloak: http://keycloak:8080). Empty = use the issuer.
+    auth_oidc_internal_url: str = Field(
+        default="", validation_alias=AliasChoices("AUTH_OIDC_INTERNAL_URL", "auth_oidc_internal_url"))
     auth_oidc_client_id: str = Field(
         default="", validation_alias=AliasChoices("AUTH_OIDC_CLIENT_ID", "auth_oidc_client_id"))
     auth_oidc_client_secret: str = Field(
@@ -407,13 +412,13 @@ class Settings(BaseSettings):
     )
     # Hardened posture. When true, a per-agent ``capability_override`` is only
     # honoured at build time for agents that run container-isolated on a
-    # no-network container. On by default now that the run sandbox exists:
-    # an override with no real isolation behind it is not a deliberate,
-    # bounded exception, it is the guard turned off. Set to false only for a
-    # deployment that runs every agent in-process and still needs an override
-    # to work everywhere.
+    # no-network container. Off by default: a chat turn runs on the hub, not in
+    # a container, and the shipped exceptions (the SWE agent's run_shell, the
+    # orchestrator's and the entity creators' delegation) must hold there,
+    # each bounded by a tool policy that asks before the call. Turn it on to
+    # honour an override only for container runs.
     capability_override_requires_container: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices(
             "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER", "capability_override_requires_container"
         ),
@@ -852,15 +857,35 @@ def blob_url() -> str:
     return live_setting("AGENTS_HUB_BLOB_URL", settings.blob_url)
 
 
-def agent_execution_mode() -> str:
+def agent_execution_mode(workspace: Optional[str] = None) -> str:
     """How agents are launched: "local" subprocess or "docker" container.
+
+    ``workspace`` names whose own override to honour first (Settings →
+    workspace → agent_mode, stored as ``settings.agent_mode`` on its
+    metadata); without one, or when it sets none, the global setting answers.
+    Every launcher and run_shell resolve the mode here, so a workspace
+    switched to docker is docker for its task runs, instances, teams, flows,
+    loops and commands alike. Inside an agent container it is always local.
 
     Resolved live, so flipping the mode on the Settings page takes effect on
     the next node start rather than on the next restart. Anything unrecognised
     (a typo, a half-written file) reads as local: the mode that needs no Docker
     daemon is the safe one to fall back to.
     """
-    mode = live_setting("AGENT_EXECUTION_MODE", settings.agent_mode).lower()
+    # Inside an agent container (the container manager stamps every one with
+    # its network) everything runs right here: a container never starts
+    # containers, and a workspace override read from the database must not
+    # make a nested launch try.
+    if os.environ.get("AGENTS_HUB_RUN_NETWORK"):
+        return "local"
+    mode = ""
+    if workspace:
+        try:
+            from workspace import get_workspace_metadata
+            mode = str((get_workspace_metadata(workspace).get("settings") or {}).get("agent_mode") or "")
+        except Exception:  # noqa: BLE001 - an unreadable workspace falls back to the global setting
+            logging.getLogger(__name__).debug("workspace agent_mode unreadable for %s", workspace, exc_info=True)
+    mode = (mode.strip() or live_setting("AGENT_EXECUTION_MODE", settings.agent_mode)).lower()
     return mode if mode in ("local", "docker") else "local"
 
 
@@ -872,6 +897,22 @@ def chat_execution() -> str:
     run in process whatever this says: a worker, and the replica itself."""
     mode = live_setting("AGENTS_HUB_CHAT_EXECUTION", settings.chat_execution).lower()
     return mode if mode in ("instances", "inprocess") else "instances"
+
+
+def run_execution_mode(workspace: Optional[str] = None) -> str:
+    """How a hub process that opens the database itself (a task run, an
+    instance, a team, flow or loop run) is launched: ``agent_execution_mode``,
+    except ``local`` where a container cannot share the SQLite database with
+    the hub (Docker Desktop on macOS or Windows, the hub on the host or not, see
+    managers.container_manager.db_shared_with_containers). Shell commands
+    (run_shell) follow ``agent_execution_mode`` alone: their container never
+    sees the database."""
+    mode = agent_execution_mode(workspace)
+    if mode == "docker":
+        from managers.container_manager import db_shared_with_containers
+        if not db_shared_with_containers():
+            return "local"
+    return mode
 
 
 def run_state_transport() -> str:

@@ -146,7 +146,7 @@ const Orchestrator = () => {
     setSaving(true);
     try {
       const newMode = settings.execution_mode === 'node' ? 'subprocess' : 'node';
-      const newSettings = { ...settings, execution_mode: newMode, ...(newMode === 'subprocess' ? { enabled: false } : {}) };
+      const newSettings = { ...settings, execution_mode: newMode };
       await updateOrchestratorSettings(newSettings, settingsWorkspace);
       setSettings(newSettings);
     } catch {
@@ -195,8 +195,8 @@ const Orchestrator = () => {
 
   // Agent lookup map
   const agentMap = Object.fromEntries(agents.map(a => [a.id, a]));
-  // A resident instance only counts here when it also takes tasks: that is
-  // the flag execution_mode 'node' actually waits on (instances/carrier.py).
+  // A resident instance only counts here when it also takes tasks: only then
+  // does it sweep the board (runtime/instance_run.py), in either execution mode.
   const runningOrchestratorInstances = orchestratorInstances.filter((i) => i.take_tasks);
   const hasRunningOrchestratorNode = runningOrchestratorInstances.length > 0;
 
@@ -319,40 +319,43 @@ const Orchestrator = () => {
             </button>
           </div>
 
-          {/* Auto-orchestration toggle — only relevant in node execution mode */}
-          <div className={`flex items-center justify-between mb-8 pb-8 border-b border-gray-50 ${settings.execution_mode !== 'node' ? 'opacity-40 pointer-events-none' : ''}`}>
+          {/* Auto-orchestration toggle. The orchestrator instance that takes
+              tasks does the routing in either execution mode; the mode only
+              decides where the agents it picks run. */}
+          <div className="flex items-center justify-between mb-8 pb-8 border-b border-gray-50">
             <div className="flex items-center space-x-4">
-              <div className={`p-4 rounded-2xl ${settings.enabled && settings.execution_mode === 'node' ? 'bg-green-50 text-green-600' : 'bg-gray-50 text-gray-400'}`}>
-                <Zap className={`w-8 h-8 ${settings.enabled && settings.execution_mode === 'node' ? 'fill-current' : ''}`} />
+              <div className={`p-4 rounded-2xl ${settings.enabled ? 'bg-green-50 text-green-600' : 'bg-gray-50 text-gray-400'}`}>
+                <Zap className={`w-8 h-8 ${settings.enabled ? 'fill-current' : ''}`} />
               </div>
               <div>
                 <h3 className="text-xl font-bold text-gray-900">
                   {settings.enabled ? t('orchestrator.autoActive') : t('orchestrator.autoPaused')}
                 </h3>
                 <p className="text-gray-500 text-sm max-w-md">
-                  {settings.execution_mode !== 'node'
-                    ? t('orchestrator.switchToNodeMode')
-                    : t('orchestrator.autoHint')
-                  }
+                  {t('orchestrator.autoHint')}
+                  {' '}
+                  {settings.execution_mode === 'node'
+                    ? t('orchestrator.autoHintNode')
+                    : t('orchestrator.autoHintSubprocess')}
                 </p>
               </div>
             </div>
             <button
               onClick={handleToggle}
-              disabled={saving || settings.execution_mode !== 'node' || (!settings.enabled && !hasRunningOrchestratorNode)}
+              disabled={saving || (!settings.enabled && !hasRunningOrchestratorNode)}
               className={`relative inline-flex h-10 w-20 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
-                settings.enabled && settings.execution_mode === 'node' ? 'bg-indigo-600' : 'bg-gray-200'
+                settings.enabled ? 'bg-indigo-600' : 'bg-gray-200'
               }`}
             >
               <span className="sr-only">{t('orchestrator.toggleOrchestrator')}</span>
               <span
                 className={`inline-block h-8 w-8 transform rounded-full bg-white transition-transform shadow-sm ${
-                  settings.enabled && settings.execution_mode === 'node' ? 'translate-x-11' : 'translate-x-1'
+                  settings.enabled ? 'translate-x-11' : 'translate-x-1'
                 }`}
               />
             </button>
           </div>
-          {settings.execution_mode === 'node' && !settings.enabled && !hasRunningOrchestratorNode && (
+          {!settings.enabled && !hasRunningOrchestratorNode && (
             <p className="text-xs text-amber-700 -mt-5 mb-6">
               {t('orchestrator.enableIsBlockedUntilAn')}
             </p>
@@ -493,10 +496,14 @@ const Orchestrator = () => {
           {(() => {
             return (
               <div className="mb-8 pb-8 border-b border-gray-50 space-y-3">
-                <div className="flex items-start gap-3 bg-gray-50 border border-gray-100 rounded-xl p-4">
-                  <Info className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
-                  <div className="w-full">
-                    <p className="text-xs font-semibold text-gray-600 mb-2">{t('orchestrator.recommendedModeCombinations')}</p>
+                <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
+                  {/* The icon sits in the heading line, so the two cards start
+                      at the box's edge rather than under an indent. */}
+                  <div>
+                    <p className="flex items-center gap-2 text-xs font-semibold text-gray-600 mb-2">
+                      <Info className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                      {t('orchestrator.recommendedModeCombinations')}
+                    </p>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div className={`rounded-lg p-3 border ${!settings.wait_for_completion && settings.followup_mode === 'continuous' ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100'}`}>
                         <p className="font-semibold text-gray-700 mb-1">{t('orchestrator.fireAndChain')}</p>

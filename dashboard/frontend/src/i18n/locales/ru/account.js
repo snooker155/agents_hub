@@ -44,6 +44,7 @@ export default {
     preview: 'Предпросмотр',
     presets: {
       navy: 'Тёмно-синий',
+      magenta: 'Маджента',
       forest: 'Лесной',
       slate: 'Сланцевый',
       sunset: 'Закат',

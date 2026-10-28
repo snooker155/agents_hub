@@ -57,6 +57,13 @@ LOOP_MODES = (MODE_INJECT, MODE_SYSTEM, MODE_SWITCH_MODEL)
 #: never handed back to a chat as its next turn.
 OPERATOR_MODES = (MODE_SYSTEM, MODE_SWITCH_MODEL)
 
+
+def handed_back(msg: Dict[str, Any]) -> bool:
+    """Whether a message no run took goes back to a chat as its next turn:
+    only the person's own words do. A system message or a model switch is
+    the operator's instruction to one run and simply expires with it."""
+    return str(msg.get("mode") or MODE_INJECT) in (MODE_INJECT, MODE_INTERRUPT)
+
 STATUS_PENDING = "pending"
 STATUS_DELIVERED = "delivered"
 STATUS_EXPIRED = "expired"
@@ -322,5 +329,5 @@ __all__ = [
     "STATUS_PENDING", "STATUS_DELIVERED", "STATUS_EXPIRED", "STATUS_INTERRUPTED",
     "STATUS_FAILED",
     "post", "get", "pending_count", "claim_pending", "delivered", "list_for_run",
-    "undelivered", "mark_expired", "mark",
+    "undelivered", "mark_expired", "mark", "handed_back",
 ]

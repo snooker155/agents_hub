@@ -11,7 +11,7 @@ some tools have always carried (see the end of this page).
 
 ## In the dashboard
 
-**Settings → Tool policy** is where you configure both. The approval gate toggle (`require_tool_approval`) switches the gate on for a workspace; **Wait in chat, seconds** sets how long a call held in a chat turn waits for an answer (`tool_approval_timeout`, see "In chat" below); the hooks editor below them holds the JSON-formatted hook configuration. Edits reach the agent process immediately, so a change applies to the next run without a restart.
+**Settings → Tool policy** is where you configure both. The approval gate toggle (`require_tool_approval`) switches the gate on for a workspace; **Wait in chat, seconds** sets how long a call held in a chat turn waits for an answer (`tool_approval_timeout`, see "In chat" below); **Wait in a background flow, loop or team, seconds** does the same for a background flow node or a team member's turn (`tool_approval_background_timeout`, see "In a background flow, loop or team"); the hooks editor below them holds the JSON-formatted hook configuration. Edits reach the agent process immediately, so a change applies to the next run without a restart.
 
 ## Hooks
 
@@ -256,6 +256,83 @@ API: `GET /api/runs/{run_id}/tool-approvals` (`?status=pending`),
 `GET /api/tool-approvals/{id}`, and `POST /api/tool-approvals/{id}` with
 `{"decision": "approve" | "deny", "note": "..."}` (409 once the call no longer
 waits).
+
+### In a background flow, loop or team
+
+A flow that runs in the background (on a task, started from a chat or by a
+schedule), every pass of a loop and every member's turn in a team have nobody
+in a chat to show a card to, and most of them have no task to park. A call
+that needs a person waits where it was made instead: the agent stops at that
+call, and the rest of the flow goes on only as far as it does not depend on
+that node (in a team, the other members of the round go on).
+
+- The flow run's page, the loop's page (its running pass), the team's page
+  and the chat that started the run show the card with **Approve** and
+  **Deny**, read from the server, so a page opened hours later still has it.
+- A notification lands in the bell (and on the Plan page's Notifications
+  tab) with **Approve**, **Deny** and a link to the run. It is marked read
+  once the call no longer waits.
+- **Approve** runs the call, and the node or the turn carries on from there.
+- **Deny** hands the refusal back as the tool's output; the agent finishes the
+  node or the turn without the call and says so in its output.
+- Nobody answering within the timeout refuses the call the same way. The
+  timeout is a day, or `settings.tool_approval_background_timeout` in the
+  workspace, or `AGENTS_HUB_BACKGROUND_TOOL_APPROVAL_TIMEOUT`. A node's own
+  `timeout_seconds` still applies and counts the wait. A team's turn timeout
+  and its wall clock leave the wait out: the turn's clock starts again once
+  the person answered.
+- Stopping the flow, the loop or the team ends the wait; the call does not run.
+
+A loop's judge waits the same way when it is an agent (the flow's last
+agent, or the one the loop names) and calls a tool that needs a person, say
+`run_shell` to run the tests before it scores: the card is on the loop's page
+under the pass being judged, and the judge scores once the call ran or was
+refused. An agent judge's run is a run record of its own (the node `judge`
+of the pass's flow run): it is on the Messages list with its steps, can be
+stopped there, and its cost counts in the pass's run group. A model or
+rubric judge has no tools.
+
+A flow or a team on a task waits the same way: before this, the call parked
+the task and the flow took the parked node for a finished one (a team posted
+"waiting for your approval" to its board as the member's reply).
+
+API: `GET /api/flow-runs/{flow_run_id}/tool-approvals` and
+`GET /api/team-runs/{team_run_id}/tool-approvals` (`?status=pending`) list
+the calls of a flow run's nodes and of a team run's members; they are
+answered with the same `POST /api/tool-approvals/{id}`.
+
+## Auto mode
+
+A person can accept every confirmation of a conversation in advance: the
+**Auto** toggle under the chat's input box (or Shift+Tab in the box), and the
+same button in the [assistant](assistant.md)'s header. While it is on, an amber
+banner above the conversation says so, with **Turn off**, and every turn of the
+conversation carries `auto_approve`:
+
+- A call the gate would hold for a card is approved at once. The card is still
+  recorded and shown, already resolved, marked "approved automatically"; its
+  row is decided by `auto mode`, and the policy trail and the `tool.policy`
+  audit row carry `auto_mode_approved`.
+- A tool gated by its own `user_approved` argument (`run_flow_tool`,
+  `run_new_flow_tool`, `run_team_tool`, `run_loop_tool`, `run_scenario_tool`,
+  `run_eval_tool`, `stop_run`, `stop_instance`, `restart_instance`,
+  `stop_container`, `prune_run_logs`, `system_prune_branches`) runs as approved,
+  and leaves the same resolved card.
+- The agent is told auto mode is on, so it does not stop to ask whether to go
+  ahead.
+
+What it does not change: a call a rule refuses (a hook that denies, a
+guardrail, the capability guard, a budget) is still refused, since a refusal is
+not a confirmation; and a connection card still waits, because its secret is
+yours to type.
+
+It is honoured only from the Chat page and the assistant's thread. Telegram,
+the widget, channels and `/v1` ignore it. An admin can turn it off for a
+workspace (Settings, Tool policy, **Allow auto mode in chat**, or
+`PUT /api/workspaces/{name}/policy` with `{"allow_auto_approve": false}`); the
+toggle is then disabled and the server drops the flag. The flag is checked per
+turn on the server, and written on the run record (`auto_approve`) so a run on
+a service replica or a run container reads the same answer.
 
 ## What stays advisory
 

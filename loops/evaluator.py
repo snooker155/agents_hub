@@ -24,10 +24,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from loops.models import Verdict
+from loops.models import Verdict, utc_iso
 
 log = logging.getLogger(__name__)
 
@@ -254,10 +256,14 @@ def evaluate(
     state: Optional[Dict[str, Any]] = None,
     workspace: Optional[str] = None,
     run_id: Optional[str] = None,
+    record: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Verdict, float]:
     """Judge one iteration. Returns ``(verdict, cost_usd)``. Never raises: a
     failed evaluation is a "continue" with the error recorded, because a broken
     judge must not silently end a loop as if the work were accepted.
+
+    ``record``, with ``run_id``, makes an agent judge's run a run record of its
+    own (:func:`_open_judge_run`): what it fields are laid on the record.
 
     A loop with a ``rubric`` is graded per criterion instead
     (:func:`evaluate_with_rubric`); without one the evaluator path below is
@@ -274,7 +280,7 @@ def evaluate(
 
     if mode in ("final_agent", "agent") and agent_id:
         verdict, cost = _evaluate_with_agent(
-            agent_id, prompt, workspace=workspace, run_id=run_id,
+            agent_id, prompt, workspace=workspace, run_id=run_id, record=record,
         )
         verdict.agent = agent_id
         return verdict, cost
@@ -290,21 +296,38 @@ def evaluate(
 
 def _evaluate_with_agent(
     agent_id: str, prompt: str, *, workspace: Optional[str], run_id: Optional[str],
+    record: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Verdict, float]:
     """Run the judgement through a real agent, so it can use its tools (read the
-    file it just wrote, run the tests) before scoring."""
-    try:
-        from agents.agent_factory import create_agent
-        from agents.agent_invoke import invoke_agent
+    file it just wrote, run the tests) before scoring.
 
+    With ``run_id`` and ``record`` the judge's run is a run record like a
+    node's: on the Messages list, with its log and steps, its cost in the
+    pass's run group and the accounting."""
+    from agents.agent_factory import create_agent
+    from agents.agent_invoke import invoke_agent
+
+    try:
         agent = create_agent(agent_id, workspace=workspace)
-        inv = invoke_agent(agent, prompt, run_id=run_id)
     except Exception as e:  # noqa: BLE001
         v = Verdict(verdict="continue", error=f"{type(e).__name__}: {e}")
         v.reason = "the evaluator could not be run"
         return v, 0.0
 
+    judge = _open_judge_run(agent, agent_id, prompt, run_id, record) if run_id and record is not None else None
+    try:
+        inv = invoke_agent(agent, prompt, run_id=run_id,
+                           extra_callbacks=_judge_callbacks(judge, run_id))
+    except Exception as e:  # noqa: BLE001
+        if judge:
+            _close_judge_run(judge, None, None, error=f"{type(e).__name__}: {e}")
+        v = Verdict(verdict="continue", error=f"{type(e).__name__}: {e}")
+        v.reason = "the evaluator could not be run"
+        return v, 0.0
+
     result = inv.result
+    if judge:
+        _close_judge_run(judge, result, inv)
     text = str(getattr(result, "agent_output", "") or "")
     verdict = parse_verdict(text)
     if not getattr(result, "ok", False) and not text:
@@ -317,6 +340,88 @@ def _evaluate_with_agent(
         int(usage.get("inbound_tokens") or 0), int(usage.get("outbound_tokens") or 0),
     )
     return verdict, cost
+
+
+def _judge_callbacks(judge: Optional[Dict[str, Any]], run_id: Optional[str]) -> List[Any]:
+    """The recorded judge's watcher, and its stop from the Messages list."""
+    if not judge or not run_id:
+        return []
+    from agents.callbacks import RunStopCallback
+    return [judge["watcher"], RunStopCallback(run_id)]
+
+
+def _open_judge_run(agent: Any, agent_id: str, prompt: str, run_id: str,
+                    record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Open the judge's run record and its log, watched by the chat callback
+    as a flow node is (flow/task_driver.py). ``record`` carries the fields
+    that place it: the pass's ``flow_id`` and ``flow_run_id``, the node
+    ``judge``, the workspace, task and session, a title. None when the record
+    could not be opened: the judge still runs, unrecorded as before."""
+    try:
+        from agents.callbacks import ChatStreamCallback, write_log
+        from flow.node_log import node_log_header
+        from managers.run_manager import open_run, run_log_path
+
+        log_path = run_log_path(run_id)
+        open_run(
+            run_id, agent_id, pid=os.getpid(), session_type="task", channel="loop",
+            log_file=str(log_path), link_to_session=False, input=prompt,
+            # It runs on the loop's thread, in whatever process runs the loop
+            # (the API server's own, often): a stop marks the record and the
+            # run's stop callback ends it, nothing signals the pid.
+            in_process=True,
+            provider=getattr(agent, "provider", "") or "", model=getattr(agent, "model", "") or "",
+            **{k: v for k, v in record.items() if v not in (None, "")},
+        )
+        started = utc_iso()
+        msg_id = uuid.uuid4().hex[:8]
+        log_lines = node_log_header(meta=[
+            f"=== Loop judge run  run_id={run_id} ===",
+            f"Started   : {started}",
+            f"Agent     : {agent_id}",
+            f"Flow run  : {record.get('flow_run_id') or '—'}",
+        ], started=started, msg_id=msg_id, agent_id=agent_id, user_message=prompt)
+        write_log(log_path, log_lines)
+        watcher = ChatStreamCallback(None, None, log_lines, log_path, run_id=run_id)
+        watcher.bind_model(getattr(agent, "provider", "") or "", getattr(agent, "model", "") or "")
+        return {"run_id": run_id, "watcher": watcher, "log_lines": log_lines, "log_path": log_path,
+                "msg_id": msg_id, "prompt": prompt}
+    except Exception:  # noqa: BLE001 - the record is bookkeeping; the judge runs without it
+        log.debug("loop judge: could not open run %s", run_id, exc_info=True)
+        return None
+
+
+def _close_judge_run(judge: Dict[str, Any], result: Any, inv: Any, *, error: str = "") -> None:
+    """Close the judge's run record with its log ending and process record."""
+    try:
+        from agents.callbacks import append_log, write_log
+        from chat.streaming import build_process_payload
+        from flow.node_log import node_log_ending, node_summary_line
+        from managers.run_manager import close_run, close_run_from_result
+
+        watcher, log_lines, log_path = judge["watcher"], judge["log_lines"], judge["log_path"]
+        duration_ms = int(getattr(inv, "duration_ms", 0) or 0)
+        if error or result is None:
+            append_log(log_lines, f"(error: {error or 'no result'})", log_path)
+            write_log(log_path, log_lines + node_log_ending("failed", utc_iso()))
+            close_run(judge["run_id"], status="failed", exit_code=1, error=error or "no result")
+            return
+        output = str(getattr(result, "agent_output", "") or "")
+        if output:
+            append_log(log_lines, output, log_path)
+        append_log(log_lines, node_summary_line(watcher, judge["msg_id"], duration_ms), log_path)
+        status = "completed" if getattr(result, "ok", False) else "failed"
+        write_log(log_path, log_lines + node_log_ending(status, utc_iso()))
+        usage = (getattr(inv, "process", None) or {}).get("token_usage") or {}
+        process = dict(getattr(inv, "process", None) or {})
+        process.update(build_process_payload(
+            watcher, full_prompt=judge["prompt"], final_response=output,
+            response_obj=getattr(result, "response", None),
+            usage={**usage, **watcher.context_usage()}, duration_ms=duration_ms,
+        ))
+        close_run_from_result(judge["run_id"], result, process=process)
+    except Exception:  # noqa: BLE001 - bookkeeping never changes the verdict
+        log.debug("loop judge: could not close run %s", judge.get("run_id"), exc_info=True)
 
 
 def _evaluate_with_model(

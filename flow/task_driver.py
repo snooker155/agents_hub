@@ -18,24 +18,28 @@ import asyncio
 import os
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from langchain_core.callbacks import BaseCallbackHandler
 
 from agents.callbacks import (
-    NodeFileCallback as _NodeFileCallback,
+    ChatStreamCallback,
     SessionPublishCallback as _SessionPublishCallback,
+    append_log,
+    write_log,
 )
 from agents.agent_lifecycle import run_agent_lifecycle
 from managers.run_manager import open_run, close_run, update_run, run_log_path
 from flow import run_store
 from flow.engine import (
+    SKIP_REASON_TEXT,
     _node_value,
     build_agent_input as _build_agent_input,
     FlowEngineDriver,
 )
 from flow.state import RunContext, StateMutationError
 from flow.dispatch import DispatchResult
+from flow.node_log import node_files, node_log_header, node_log_ending, node_step_stats, node_summary_line
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +97,16 @@ def log_flow(flow_id, run_id, payload: Dict[str, Any]) -> None:
     run_store.log_flow_event(flow_id, run_id, payload, kind="task")
 
 
+def _agent_name(agent_id: str) -> str:
+    """The agent's name, for a node without a label of its own."""
+    try:
+        from agents.registry import get_agent
+        spec = get_agent(agent_id)
+    except Exception:  # noqa: BLE001 - the id names it well enough
+        return agent_id
+    return (getattr(spec, "name", "") or "").strip() or agent_id
+
+
 def _resolve_agent_id(node: Dict[str, Any]) -> Optional[str]:
     """The agent a node runs, taken from its explicit ``agent_id``.
 
@@ -143,6 +157,10 @@ def _run_agent_node(
     agent_overrides: Dict[str, Any],
     port: int,
     outcome: Any = None,
+    stream_channels: Optional[list] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+    flow_name: str = "",
+    approval_link: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Execute an agent node in-process: open a run record, run the LLM agent
     with callbacks against the prebuilt ``prompt``, write its output to flow
@@ -155,13 +173,20 @@ def _run_agent_node(
     ``stop_event`` rides along as an extra callback: it is how
     ``_stop_agent_node`` actually reaches into this call from the engine's
     side once the node's ``timeout_seconds`` has passed.
+
+    A tool call that needs a person waits in this node
+    (common/tool_approvals.py ``background_scope``): the card goes out on the
+    run's channels, a notification lands in the bell, and the wait ends with
+    an answer, the node's timeout, ``should_stop`` (the flow's or the loop's
+    stop) or the background approval timeout. ``approval_link`` is what the
+    notification links to besides the flow run (a loop's ids).
     """
     from uuid import uuid4
 
     agent_id = _resolve_agent_id(node)
     if not agent_id:
         return DispatchResult(ok=False, error="node has no agent assigned")
-    label = _node_value(node, "label") or agent_id
+    label = _node_value(node, "label") or _agent_name(agent_id)
 
     run_id = str(uuid4())
     # Publish the run id on the outcome as soon as it exists: a node that hits
@@ -204,32 +229,94 @@ def _run_agent_node(
     except Exception:  # noqa: BLE001 - recording the input is best effort
         log.debug("run input update failed", exc_info=True)
 
-    with open(log_path, "w", encoding="utf-8") as _f:
-        _f.write(f"--- Node run started at {_utc_now_iso()} ---\nAgent: {agent_id}\n\n=== EXECUTION ===\n")
-    file_cb = _NodeFileCallback(log_path)
+    # The node is watched by the chat callback, as a flow chat's node is
+    # (chat/flow_driver.py): the same log, the same record of its tool calls,
+    # thoughts, changed files, touched records and cited sources. Its events
+    # stream on the run's channels (common/run_stream.py) in the flow chat's
+    # vocabulary, tagged with the node, so every page that shows the run
+    # follows it live; the session publisher below feeds the session page.
+    started = _utc_now_iso()
+    msg_id = str(uuid4())[:8]
+    log_lines = node_log_header(meta=[
+        f"=== Flow node run  run_id={run_id} ===",
+        f"Started   : {started}",
+        f"Agent     : {agent_id}",
+        f"Flow run  : {args.run_id} ({args.flow_id})",
+        f"Session ID: {args.session_id or '—'}",
+        f"Node      : {node_id} / {label}",
+    ], started=started, msg_id=msg_id, agent_id=agent_id, user_message=prompt)
+    write_log(log_path, log_lines)
+    from common.run_stream import ChannelRelay
+    relay = ChannelRelay(stream_channels or [], {
+        "node_id": node_id, "agent_id": agent_id, "agent_label": label,
+        "flow_run_id": args.run_id,
+    })
+    callback = ChatStreamCallback(None, None, log_lines, log_path,
+                                  session_id=args.session_id, run_id=run_id, publish=relay)
     pub_cb = _SessionPublishCallback(args.session_id, run_id, agent_id, port)
     pub_cb._post({"type": "meta", "run_id": run_id, "session_id": args.session_id,
                   "agent_id": agent_id, "continuation": True})
 
-    def _finalize(duration_ms: int, *, output: str = "", error: str = ""):
+    from common import artifact_sink, citation_sink as citation_sink_mod, entity_sink as entity_sink_mod
+    node_entities = entity_sink_mod.EntitySink()
+    node_citations = citation_sink_mod.CitationSink()
+
+    def _record(inv: Any, response_text: str, response_obj: Any = None) -> Dict[str, Any]:
+        """The node run's process record, as the chat builds one, and its
+        links kept at the top of the run record where the run page reads them."""
+        from chat.streaming import build_process_payload
+        entities: list = []
+        if node_entities:
+            try:
+                from common.entity_links import entity_payloads
+                entities = entity_payloads(node_entities.records())
+            except Exception:  # noqa: BLE001 - links to touched records are a nicety
+                log.debug("node entity payloads failed", exc_info=True)
+        citations = node_citations.payloads()
+        links = {k: v for k, v in (("entities", entities), ("citations", citations)) if v}
+        if links:
+            try:
+                update_run(run_id, links)
+            except Exception:  # noqa: BLE001 - the process record still carries them
+                log.debug("could not store the links of run %s", run_id, exc_info=True)
+        usage = {
+            "inbound_tokens": callback.prompt_tokens,
+            "outbound_tokens": callback.completion_tokens,
+            "total_tokens": callback.total_tokens,
+            "cached_tokens": callback.cached_prompt_tokens,
+            **callback.context_usage(),
+        }
+        return build_process_payload(
+            callback, full_prompt=prompt, final_response=response_text, response_obj=response_obj,
+            entities=entities, citations=citations, usage=usage,
+            duration_ms=int(getattr(inv, "duration_ms", 0) or 0),
+        )
+
+    def _end_log(status: str, duration_ms: int, *, output: str = "", error: str = "") -> None:
         if error:
-            file_cb._w(f"\n=== ERROR ===\n{error}\n--- duration_ms={duration_ms} ---")
-        else:
-            file_cb._w(f"\n=== OUTPUT ===\n{output}\n--- duration_ms={duration_ms} ---")
-        file_cb.close()
+            append_log(log_lines, f"(error: {error})", log_path)
+        elif output:
+            append_log(log_lines, output, log_path)
+        append_log(log_lines, node_summary_line(callback, msg_id, duration_ms), log_path)
+        write_log(log_path, log_lines + node_log_ending(status, _utc_now_iso()))
+
+    def _extras() -> Dict[str, Any]:
+        # What the node's line in the flow log says about its steps and files.
+        return {"stats": node_step_stats(callback, log_lines), "files": node_files(callback)}
 
     def _on_build_error(error_msg: str) -> Any:
         # create_agent never started running, so there is no duration/process.
-        _finalize(0, error=error_msg)
+        _end_log("failed", 0, error=error_msg)
         _close_node_run(args.task_id, run_id, agent_id, status="failed", exit_code=1, error=error_msg)
         return DispatchResult(ok=False, error=error_msg, run_id=run_id, duration_ms=0)
 
     def _on_failure(error_msg: str, inv: Any) -> Any:
         pub_cb.publish_done(inv.result, inv)
-        _finalize(inv.duration_ms, error=error_msg)
+        _end_log("failed", inv.duration_ms, error=error_msg)
         _close_node_run(args.task_id, run_id, agent_id, status="failed", exit_code=1,
-                        error=error_msg, process=inv.process)
-        return DispatchResult(ok=False, error=error_msg, run_id=run_id, duration_ms=inv.duration_ms)
+                        error=error_msg, process=_record(inv, ""))
+        return DispatchResult(ok=False, error=error_msg, run_id=run_id, duration_ms=inv.duration_ms,
+                              extras=_extras())
 
     def _on_success(result: Any, inv: Any) -> Any:
         output = result.agent_output or ""
@@ -244,28 +331,51 @@ def _run_agent_node(
         # Close the node's live block only once the state writes succeeded — a
         # mutation error routes to _on_failure, which publishes its own `done`.
         pub_cb.publish_done(result, inv)
-        _finalize(inv.duration_ms, output=output)
+        _end_log("completed", inv.duration_ms, output=output)
         _close_node_run(args.task_id, run_id, agent_id, status="completed", exit_code=0,
-                        output=output, process=inv.process)
+                        output=output, process=_record(inv, output, getattr(result, "response", None)))
         return DispatchResult(
             ok=True, text=f"Completed {label}", output=output,
-            written=written, run_id=run_id, duration_ms=inv.duration_ms,
+            written=written, run_id=run_id, duration_ms=inv.duration_ms, extras=_extras(),
         )
 
     # Watches outcome.stop_event, so a node the engine has already timed out
     # actually stops here at its next LLM/tool call instead of running to
     # completion unobserved on this worker thread — see _StopFlagGuard and
     # _stop_agent_node below.
-    extra_callbacks = [file_cb, pub_cb]
+    extra_callbacks = [callback, pub_cb]
     if outcome is not None:
         extra_callbacks.append(_StopFlagGuard(outcome.stop_event))
 
-    return run_agent_lifecycle(
-        agent_id, args.workspace, prompt,
-        overrides=agent_overrides,
-        extra_callbacks=extra_callbacks, catch_invoke_exceptions=True,
-        on_build_error=_on_build_error, on_success=_on_success, on_failure=_on_failure,
-    )
+    # The node's own sinks, as the flow chat sets them per node, so each
+    # node's changes, records and sources are its own.
+    artifact_token = artifact_sink.set_recorder(callback.record_artifact)
+    entity_token = entity_sink_mod.set_sink(node_entities)
+    citation_token = citation_sink_mod.set_sink(node_citations)
+    def _stop_wanted() -> bool:
+        if outcome is not None and outcome.stop_event.is_set():
+            return True
+        return bool(should_stop and should_stop())
+
+    from common import tool_approvals
+    try:
+        with tool_approvals.background_scope(
+                kind=tool_approvals.KIND_FLOW, group_run_id=args.run_id, entity_id=args.flow_id,
+                entity_name=flow_name, seat_id=node_id, seat_label=label,
+                emitter=relay, should_stop=_stop_wanted, link=approval_link):
+            return run_agent_lifecycle(
+                agent_id, args.workspace, prompt,
+                overrides=agent_overrides,
+                extra_callbacks=extra_callbacks, catch_invoke_exceptions=True,
+                after_build=lambda agent: callback.bind_model(getattr(agent, "provider", "") or "",
+                                                              getattr(agent, "model", "") or ""),
+                on_build_error=_on_build_error, on_success=_on_success, on_failure=_on_failure,
+            )
+    finally:
+        relay.flush()
+        artifact_sink.reset_recorder(artifact_token)
+        entity_sink_mod.reset_sink(entity_token)
+        citation_sink_mod.reset_sink(citation_token)
 
 
 def build_task_driver(
@@ -280,6 +390,8 @@ def build_task_driver(
     node_run_ids: Dict[str, str],
     port: int,
     agent_overrides: Optional[Dict[str, Any]] = None,
+    stream_channels: Optional[list] = None,
+    approval_link: Optional[Dict[str, Any]] = None,
 ) -> FlowEngineDriver:
     """Build the task-surface :class:`FlowEngineDriver`.
 
@@ -289,10 +401,35 @@ def build_task_driver(
     the stop check reads the live flow-run record. The checkpoint and heartbeat
     hooks write to the same record, which is what lets a killed run be resumed
     instead of failed.
+
+    The run streams live on ``run:<run_id>`` and on ``stream_channels`` (a
+    loop's own channel for its pass): the flow chat's events, ``flow_meta``,
+    ``node_start``, the agent's steps tagged with their node, ``node_skip``
+    and ``node_done``, so a page shows a background run as it shows its own.
+
+    A tool call that waits for a person in a node ends its wait when the
+    driver's ``should_stop`` says so, read at the time: a loop replaces that
+    hook after this returns, and its stop counts too.
     """
-    agent_overrides = agent_overrides or {}
+    from common import run_stream
+    channels = [run_stream.run_channel(run_id), *(stream_channels or [])]
+    # The driver this returns, for a node's stop check (see above).
+    driver_box: list = []
+
+    def _stream(event: Dict[str, Any]) -> None:
+        run_stream.publish(channels, {**event, "flow_id": flow_id, "flow_run_id": run_id})
+    # Every agent node is built as a flow step (agents/agent_factory.py):
+    # it answers the next node, not a person.
+    agent_overrides = {**(agent_overrides or {}), "flow_step": True}
+
+    # What each agent node was given, for its line in the run log (the
+    # History and a loop's pass log show it above the node's steps).
+    node_inputs: Dict[str, str] = {}
+    # Each agent node's step counts and changed files, for the same line.
+    node_extras: Dict[str, Dict[str, Any]] = {}
 
     async def _run_agent_node_async(node, node_id, label, prompt, outcome, flow_state):
+        node_inputs[node_id] = prompt
         # _run_agent_node is synchronous (sync invoke_agent); run it off the loop.
         # It yields no streaming events — agent output reaches the UI via the
         # SessionPublishCallback HTTP posts inside _run_agent_node itself.
@@ -301,8 +438,12 @@ def build_task_driver(
         dr = await asyncio.to_thread(
             _run_agent_node, node, node_id, prompt,
             args=args, flow_state=flow_state, agent_overrides=agent_overrides,
-            port=port, outcome=outcome,
+            port=port, outcome=outcome, stream_channels=channels,
+            should_stop=lambda: bool(driver_box) and driver_box[0].should_stop(),
+            flow_name=str(flow.get("name") or ""), approval_link=approval_link,
         )
+        if dr.extras:
+            node_extras[node_id] = dr.extras
         outcome.ok = dr.ok
         outcome.output = dr.output
         outcome.text = dr.text
@@ -387,6 +528,12 @@ def build_task_driver(
         return bool(_fr and _fr.get("status") in ("stop", "stopping", "stopped"))
 
     def _on_node_start(ev: dict) -> None:
+        _stream({
+            "type": "node_start", "node_id": ev["node_id"],
+            "agent_id": ev.get("entity_id"), "agent_label": ev.get("label"),
+            "session_id": session_id,
+            **({"input": ev.get("prompt") or ""} if ev.get("is_agent") else {}),
+        })
         if ev.get("is_agent"):
             log_flow(flow_id, run_id, {
                 "timestamp": _utc_now_iso(), "type": "agent_start",
@@ -396,23 +543,16 @@ def build_task_driver(
             })
 
     #: Why a node was not executed, in the words the history tab shows.
-    _SKIP_REASONS = {
-        "branch_not_selected": "not on the selected branch",
-        "predecessor_failed": "a node it depends on failed",
-        "branch_isolated": "its branch was isolated after a failure",
-        "cancelled_after_failure": "the run stopped at the first failure",
-        "already_done": "already completed before this run resumed",
-        "already_skipped": "already skipped before this run resumed",
-    }
-
     def _on_node_skip(ev: dict) -> None:
         reason = ev.get("reason") or ""
         print(f"[node_skip] node={ev['node_id']} reason={reason}")
+        _stream({"type": "node_skip", "node_id": ev["node_id"], "reason": reason,
+                 "session_id": session_id})
         log_flow(flow_id, run_id, {
             "timestamp": _utc_now_iso(), "type": "node_skip", "node_id": ev["node_id"],
             "content": f"Skipping node '{ev['node_id']}': "
-                       + _SKIP_REASONS.get(reason, reason or "not on the selected branch"),
-            "status": "skipped",
+                       + SKIP_REASON_TEXT.get(reason, reason or "not on the selected branch"),
+            "reason": reason, "status": "skipped",
         })
 
     def _on_node_done(ev: dict) -> None:
@@ -420,6 +560,26 @@ def build_task_driver(
         if ev.get("run_id"):
             node_run_ids[node_id] = ev["run_id"]
         is_agent = ev.get("is_agent")
+        # The branch a switch or condition chose, with the steps' names, as
+        # the flow chat words it (chat/flow_driver.py): the page says which
+        # step it went to by name, not by id.
+        route = None
+        if not is_agent and ev.get("ok") and ev.get("goto") is not None:
+            from flow.branching import node_route
+            route = node_route(ev, flow)
+        # The flow chat's node_done (chat/pipelines.py), so a page folds it alike.
+        _stream({
+            "type": "node_done", "node_id": node_id,
+            "agent_id": ev.get("entity_id"), "agent_label": ev.get("label"),
+            "run_id": ev.get("run_id"), "ok": ev.get("ok"),
+            "response": ("Stopped by user" if ev.get("stopped")
+                         else (ev.get("output") or ev.get("text") or "") if ev.get("ok")
+                         else f"Error: {ev.get('error') or 'unknown error'}"),
+            "error": ev.get("error"), "duration_ms": ev.get("duration_ms", 0),
+            "state": ev.get("state"), "session_id": session_id,
+            **({} if is_agent else {"is_agent": False, "summary": ev.get("text") or ""}),
+            **({"route": route} if route else {}),
+        })
         if ev.get("ok"):
             if ev.get("goto") is not None:
                 print(f"[branch] node={node_id} selected={ev['goto']}")
@@ -435,6 +595,10 @@ def build_task_driver(
                 "status": "completed",
                 "output": ev.get("output") or ev.get("text"),
                 "state": ev.get("state"),
+                **({"input": node_inputs.pop(node_id)} if node_id in node_inputs else {}),
+                **node_extras.pop(node_id, {}),
+                **({"run_id": ev["run_id"]} if ev.get("run_id") else {}),
+                **({"route": route} if route else {}),
             })
         else:
             print(f"[node_error] node={node_id} label={ev.get('label')} error={ev.get('error')}")
@@ -444,9 +608,18 @@ def build_task_driver(
                 "agent_name": ev.get("label"), "tag": ev.get("category"),
                 "content": f"{ev.get('label')} failed: {ev.get('error')}",
                 "status": "failed", "output": ev.get("error"),
+                **({"input": node_inputs.pop(node_id)} if node_id in node_inputs else {}),
+                **node_extras.pop(node_id, {}),
+                **({"run_id": ev["run_id"]} if ev.get("run_id") else {}),
             })
 
     def _on_flow_start(ev: dict) -> None:
+        _stream({
+            "type": "flow_meta", "flow_name": flow.get("name") or flow_id,
+            "session_id": session_id, "state": ev.get("state"),
+            "nodes": [{"node_id": n.get("node_id"), "agent_id": n.get("entity_id"),
+                       "agent_label": n.get("label")} for n in ev.get("nodes") or []],
+        })
         log_flow(flow_id, run_id, {
             "timestamp": _utc_now_iso(), "type": "flow_start",
             "content": f"Starting flow: {flow.get('name', flow_id)}", "status": "running",
@@ -455,7 +628,7 @@ def build_task_driver(
             "state": ev.get("state"),
         })
 
-    return FlowEngineDriver(
+    driver = FlowEngineDriver(
         build_agent_prompt=_build_agent_input,
         run_agent_node=_run_agent_node_async,
         make_run_context=_make_run_context,
@@ -472,3 +645,5 @@ def build_task_driver(
         # human_interrupt node work here and not in flow chat.
         supports_interrupt=True,
     )
+    driver_box.append(driver)
+    return driver

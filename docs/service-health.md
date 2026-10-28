@@ -156,7 +156,10 @@ dashboard's origins, comma separated.
 The settings the hardening list in `SECURITY.md` (repository root) asks for,
 read together. A warning for each of: `CAPABILITY_GUARD` set to
 anything but `block`; secrets stored while `AGENTS_HUB_SECRET_KEY` is empty
-(runs then receive none of them); `token` or `multi` mode with
+(runs then receive none of them); secrets bound to hosts while
+`AGENTS_HUB_EGRESS_PROXY` is off (runs that declare them refuse to start, or,
+with `AGENTS_HUB_SECRET_PLAINTEXT_FALLBACK=1`, receive the real values);
+`token` or `multi` mode with
 `AGENT_EXECUTION_MODE=local`, where every person's runs have the host's own
 permissions. `single` mode with local runs is the one person laptop case and
 reads ok. Fix: the setting the warning names, in `.env` or on the Settings
@@ -181,6 +184,32 @@ over 5 minutes, and no worker is alive. Fix: start a worker (`ah worker`, see
 Outbound notifications not yet delivered. Warn when any was given up on after
 every retry, or more than 100 wait. Fix: check the notification endpoints'
 URLs and credentials; the outbox lease holder delivers them.
+
+### Check: broker
+
+The Redis broker that carries live events between replicas answers a PING.
+Skip when `AGENTS_HUB_BROKER_URL` is not set; fail when it is set and the
+bridge is not connected or Redis does not answer. Fix: check the URL, that
+Redis is running (`docker compose ps redis`) and that the `redis` package is
+installed. The Cluster page's service map shows its latency and connected
+clients.
+
+### Check: blob store
+
+The object store takes a real round trip: a small object under `.health/` is
+written, read back and deleted. Skip when `AGENTS_HUB_BLOB_URL` is not set;
+fail when any step errors. Fix: check the bucket name, `AGENTS_HUB_BLOB_ENDPOINT`
+(MinIO or another S3-compatible server) and the access keys, and that the
+credentials may write, read and delete.
+
+### Check: oidc
+
+The identity provider's discovery document answers, asked at
+`AUTH_OIDC_INTERNAL_URL` when that is set, else at the issuer. Skip unless
+single sign-on is configured (multi mode with an issuer and a client id); fail
+when the provider cannot be reached or its document lacks an endpoint. Fix:
+check the issuer and the internal URL, and that Keycloak (or your provider) is
+up; nobody can sign in while this fails.
 
 ### Check: disk
 

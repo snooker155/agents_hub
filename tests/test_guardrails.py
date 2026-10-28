@@ -304,6 +304,18 @@ def test_runtime_block_trips_and_warn_does_not():
     assert "message" in trip2
 
 
+def test_runtime_workspace_guardrail_applies_to_a_run_given_the_workspace_path():
+    # A chat run's agent holds its operating path, not the workspace name.
+    from workspace import WORKSPACES_ROOT
+    g = service.create_guardrail({"name": "no-cards", "workspace": "zerno", "kind": "pii",
+                                  "config": {"detectors": ["credit_card"]}, "action": "block"})
+    agent = _Agent(workspace=str(Path(WORKSPACES_ROOT) / "zerno"))
+    trip = runtime.check_input(agent, _state(agent.workspace), "card 4111 1111 1111 1111")
+    assert trip is not None and trip["guardrail_id"] == g.id
+    events = store.list_events(run_id="r1")
+    assert events and all(e.get("workspace") == "zerno" for e in events)
+
+
 def test_runtime_rules_run_before_judges_and_a_block_skips_the_judge(monkeypatch):
     called = []
     monkeypatch.setattr(checks, "check_judge", lambda *a, **kw: (called.append(1), (None, None))[1])
@@ -445,6 +457,34 @@ def test_standard_agent_output_trip_after_the_loop():
     assert agent._executor.invoked is True
 
 
+def test_a_trip_reaches_the_chat_as_a_refusal_without_the_matched_text():
+    # The chat says what was found in the person's language from this data,
+    # so it carries the kind and what matched, never the card number itself.
+    from chat.refusals import guardrail_refusal
+    service.create_guardrail({"name": "no-cards", "kind": "pii",
+                              "config": {"detectors": ["credit_card", "email"]}, "action": "block"})
+    agent = _build_agent()
+    result = agent.run("card 4111 1111 1111 1111 please", run_id="run-c")
+    refusal = guardrail_refusal(result.guardrail)
+    assert refusal["code"] == "guardrail" and refusal["name"] == "no-cards"
+    assert refusal["stage"] == "input" and refusal["kind"] == "pii"
+    assert refusal["detail"] == {"detectors": ["credit_card"]}
+    assert "4111" not in str(refusal)
+
+
+def test_a_warn_lets_the_run_go_on_and_reaches_the_chat_as_a_warning():
+    from chat.refusals import guardrail_warnings
+    service.create_guardrail({"name": "cards-warn", "kind": "pii",
+                              "config": {"detectors": ["credit_card"]}, "action": "warn"})
+    agent = _build_agent()
+    result = agent.run("card 4111 1111 1111 1111 please", run_id="run-w")
+    assert result.status == "done"
+    [warning] = guardrail_warnings(result.loop)
+    assert warning["name"] == "cards-warn" and warning["stage"] == "input"
+    assert warning["detail"] == {"detectors": ["credit_card"]}
+    assert "4111" not in str(warning)
+
+
 def test_standard_agent_clean_run_passes_through():
     agent = _build_agent(executor_output="all good")
     result = agent.run("a clean instruction", run_id="run-z")
@@ -504,7 +544,7 @@ def test_routes_test_endpoint(client):
     assert r2.json()["applies"] is False
 
     # A dry run writes no event.
-    assert client.get("/api/guardrails/events").json() == []
+    assert client.get("/api/guardrails/events").json() == {"items": [], "total": 0}
 
 
 def test_routes_events(client):
@@ -513,7 +553,29 @@ def test_routes_events(client):
     state = _state()
     runtime.check_input(_Agent(), state, "this is bad")
     events = client.get("/api/guardrails/events", params={"guardrail_id": g["id"]}).json()
-    assert len(events) == 1 and events[0]["guardrail_id"] == g["id"]
+    assert events["total"] == 1 and events["items"][0]["guardrail_id"] == g["id"]
+
+
+def test_routes_events_load_more_and_filters(client):
+    kw = client.post("/api/guardrails", json={
+        "name": "kw", "kind": "keywords", "config": {"keywords": ["bad"]}, "action": "warn"}).json()
+    pii = client.post("/api/guardrails", json={
+        "name": "cards", "kind": "pii", "config": {"detectors": ["credit_card"]}}).json()
+    for _ in range(3):
+        runtime.check_input(_Agent(), _state(), "this is bad")
+    runtime.check_input(_Agent(), _state(), "card 4111 1111 1111 1111")
+
+    first = client.get("/api/guardrails/events", params={"limit": 2}).json()
+    assert first["total"] == 4 and len(first["items"]) == 2
+    more = client.get("/api/guardrails/events", params={"limit": 4}).json()
+    assert len(more["items"]) == 4
+
+    only_pii = client.get("/api/guardrails/events", params={"guardrail_id": pii["id"]}).json()
+    assert only_pii["total"] == 1 and only_pii["items"][0]["action"] == "block"
+    warns = client.get("/api/guardrails/events", params={"action": "warn"}).json()
+    assert warns["total"] == 3 and {e["guardrail_id"] for e in warns["items"]} == {kw["id"]}
+    by_name = client.get("/api/guardrails/events", params={"sort": "guardrail", "order": "asc"}).json()
+    assert [e["guardrail_name"] for e in by_name["items"]] == ["cards", "kw", "kw", "kw"]
 
 
 def test_routes_audit_writes(client):

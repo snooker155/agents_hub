@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { KeyRound, Loader, Plus, X } from 'lucide-react';
+import { AlertTriangle, KeyRound, Loader, Plus, X } from 'lucide-react';
 import { getAgentSecrets, getWorkspaceSecrets, updateAgentSecrets } from '../../api';
 import { useWorkspace } from '../workspace';
 import { useI18n } from '../../i18n';
+import CapabilityBanner from './CapabilityBanner';
+import { capabilityFooter } from '../../lib/capabilities';
 
 const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 
@@ -18,8 +20,15 @@ const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
  * The names the current workspace actually holds are offered as one-click
  * suggestions, but any valid name may be declared: a workspace that does not
  * hold it yet simply hands out nothing for it.
+ *
+ * A system agent is one record serving every workspace, so a name declared on
+ * it is declared everywhere, and a workspace that does not hold the secret
+ * hands out the default workspace's value (common/secrets.py). The card says
+ * so, and offers the default workspace's names as well.
  */
-export default function AgentSecretsCard({ agentId, readOnly = false }) {
+const SHARED_WORKSPACE = 'default';
+
+export default function AgentSecretsCard({ agentId, readOnly = false, system = false }) {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const [names, setNames] = useState([]);
@@ -37,6 +46,14 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  // What the guard makes of the saved list: the combination it still forms,
+  // the guard's mode and this agent's own exemption (routes/secrets.py).
+  const [guard, setGuard] = useState({ warning: null, mode: 'block', override: false });
+  const takeGuard = (data) => setGuard({
+    warning: data?.capability_warning || null,
+    mode: data?.guard_mode || 'block',
+    override: Boolean(data?.capability_override),
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +66,7 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
         const who = data?.github_identity === 'user' ? 'user' : 'app';
         setIdentity(who);
         setSavedIdentity(who);
+        takeGuard(data);
       })
       .catch(() => { if (!cancelled) { setNames([]); setSaved([]); } })
       .finally(() => { if (!cancelled) setLoadedFor(agentId); });
@@ -56,14 +74,13 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
   }, [agentId]);
 
   useEffect(() => {
-    const workspace = selectedWorkspace || 'default';
-    getWorkspaceSecrets(workspace)
-      .then(({ data }) => {
-        const items = Array.isArray(data) ? data : (data?.secrets || []);
-        setAvailable([...new Set(items.map((s) => s.name).filter(Boolean))]);
-      })
+    const workspace = selectedWorkspace || SHARED_WORKSPACE;
+    const sources = system && workspace !== SHARED_WORKSPACE ? [workspace, SHARED_WORKSPACE] : [workspace];
+    const namesOf = ({ data }) => (Array.isArray(data) ? data : (data?.secrets || [])).map((s) => s.name);
+    Promise.all(sources.map((ws) => getWorkspaceSecrets(ws).then(namesOf).catch(() => [])))
+      .then((lists) => setAvailable([...new Set(lists.flat().filter(Boolean))]))
       .catch(() => setAvailable([]));
-  }, [selectedWorkspace]);
+  }, [selectedWorkspace, system]);
 
   const dirty = useMemo(
     () => names.length !== saved.length || names.some((n, i) => n !== saved[i])
@@ -97,6 +114,7 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
       const who = data?.github_identity === 'user' ? 'user' : identity;
       setIdentity(who);
       setSavedIdentity(who);
+      takeGuard(data);
       setMessage(t('agentDetails.secretsSaved'));
     } catch (err) {
       setError(err?.response?.data?.detail || t('agentDetails.secretsSaveFailed'));
@@ -130,6 +148,16 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
         )}
       </div>
       <p className="text-sm text-gray-600 mb-4">{t('agentDetails.secretsIntro')}</p>
+      {system && (
+        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4"
+          data-testid="agent-secrets-system">
+          <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-amber-900">{t('agentDetails.secretsSystemTitle')}</p>
+            <p className="text-xs text-amber-800 mt-1 leading-relaxed">{t('agentDetails.secretsSystemNote')}</p>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <Loader className="w-4 h-4 animate-spin text-gray-400" />
@@ -197,6 +225,18 @@ export default function AgentSecretsCard({ agentId, readOnly = false }) {
                   {name}
                 </button>
               ))}
+            </div>
+          )}
+
+          {guard.warning && !dirty && (
+            <div className="mt-3" data-testid="agent-secrets-guard">
+              <CapabilityBanner
+                violation={guard.warning}
+                softened={guard.override || guard.mode !== 'block'}
+                overrideActive={guard.override}
+                t={t}
+                footer={capabilityFooter(guard.warning, { overridden: guard.override, guardMode: guard.mode }, t)}
+              />
             </div>
           )}
 

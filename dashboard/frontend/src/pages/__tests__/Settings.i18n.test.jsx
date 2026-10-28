@@ -1,4 +1,4 @@
-import { render, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Settings from '../Settings';
@@ -114,9 +114,17 @@ describe('Settings', () => {
     });
   }
 
-  it('shows the workspace Save button only on workspace-scoped sections', async () => {
+  it('shows the workspace Save button only on workspace-scoped sections, and only once a field changed', async () => {
     const scoped = renderAt('/settings/providers');
+    await waitFor(() => expect(scoped.container.querySelector('input')).not.toBeNull());
+    // Always there, inactive until a field differs from what is stored.
+    expect(screen.getByTestId('settings-save')).toBeDisabled();
+    const field = scoped.container.querySelector('input[type="password"], input[type="text"]');
+    fireEvent.change(field, { target: { value: 'sk-changed-1234' } });
     await waitFor(() => expect(scoped.container.textContent).toMatch(/Save "default" settings/));
+    expect(screen.getByTestId('settings-save')).toBeEnabled();
+    fireEvent.change(field, { target: { value: '' } });
+    await waitFor(() => expect(screen.getByTestId('settings-save')).toBeDisabled());
     scoped.unmount();
 
     // Custom backends save through their own endpoints, like the connectors
@@ -124,6 +132,7 @@ describe('Settings', () => {
     const unscoped = renderAt('/settings/custom');
     await waitFor(() => expect(unscoped.container.textContent.length).toBeGreaterThan(200));
     expect(unscoped.container.textContent).not.toMatch(/Save "default" settings/);
+    expect(screen.queryByTestId('settings-save')).toBeNull();
     unscoped.unmount();
   });
 

@@ -10,7 +10,7 @@ export default {
   },
   settingsTab: {
     description: 'Overrides for this workspace only. An empty field inherits the global value.',
-    globalHint: 'Provider keys, RAG, observability and logging are not per workspace.',
+    globalHint: 'Execution, tool policy, web access, task assignment, provider keys, RAG and logging are set in the general Settings.',
     openSettings: 'Open Settings →',
     groups: {
       agents: 'Agents',
@@ -26,6 +26,7 @@ export default {
       isolation: 'Isolation',
       tasks: 'Task assignment',
       secrets: 'Secrets',
+      remoteSync: 'Remote hub sync',
       palette: 'Palette',
     },
   },
@@ -117,6 +118,7 @@ export default {
     preview: 'Preview',
     presets: {
       navy: 'Navy',
+      magenta: 'Magenta',
       forest: 'Forest',
       slate: 'Slate',
       sunset: 'Sunset',
@@ -164,14 +166,15 @@ export default {
     loadFailed: 'Could not load the roles',
     saveFailed: 'Could not change the role',
     names: {
-      coder: 'Coder', reviewer: 'Code reviewer', planner: 'Planner', researcher: 'Researcher',
-      web_search: 'Web search', analyst: 'Analyst', writer: 'Writer', verifier: 'Verifier',
-      visualizer: 'Visualizer',
+      coder: 'Coder', reviewer: 'Code reviewer', planner: 'Planner', task_manager: 'Task manager', researcher: 'Researcher',
+      analyst: 'Analyst', writer: 'Writer', verifier: 'Verifier',
+      visualizer: 'Visualizer', web_search: 'Web search',
     },
     summaries: {
       coder: 'Writes and changes code and files in the workspace\'s projects.',
       reviewer: 'Reviews code changes for correctness, style and tests.',
-      planner: 'Turns a project\'s plans and structure into a task tree.',
+      planner: 'Schedules work for later: reminders, recurring agent work, flows, loops, deployments.',
+      task_manager: 'Keeps the task tracker: turns plans into a task tree, splits and orders tasks.',
       researcher: 'Answers questions that need the workspace, memory and the open web together.',
       web_search: 'Searches the open web and reads the pages it finds.',
       analyst: 'Answers questions from the workspace\'s data.',

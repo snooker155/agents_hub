@@ -76,7 +76,7 @@ _PASSPHRASE_SALT = b"agents-hub/secrets/v1"
 _PASSPHRASE_ITERATIONS = 200_000
 
 NO_KEY_MESSAGE = ("no secret key is configured: set AGENTS_HUB_SECRET_KEY, "
-                  "generate one with ah secrets keygen")
+                  "save one to .env with ah secrets keygen --write")
 
 
 class SecretsError(ValueError):
@@ -562,14 +562,44 @@ def resolve_bound(workspace: str, agent_id: Optional[str], user_id: Optional[str
     return backend().resolve_bound(workspace, agent_id, user_id, allowed_names)
 
 
+#: The workspace whose secrets a system agent falls back to (see
+#: :func:`_resolve_with_hosts`).
+SHARED_WORKSPACE = "default"
+
+
+def _falls_back_to_shared(workspace: str, agent_id: Optional[str]) -> bool:
+    """Whether a run of ``agent_id`` in ``workspace`` may take a declared
+    secret from the default workspace when its own workspace has none: only
+    a system agent, which is one record serving every workspace, so an
+    operator can declare one secret on it and store the value once."""
+    if not agent_id or str(workspace or "").strip() in ("", SHARED_WORKSPACE):
+        return False
+    try:
+        from agents.registry import get_agent
+        spec = get_agent(str(agent_id))
+    except Exception:  # noqa: BLE001 - an unreadable registry means no fallback, never more secrets
+        log.debug("secrets: could not read agent %s for the shared fallback", agent_id, exc_info=True)
+        return False
+    return bool(spec is not None and getattr(spec, "system", False))
+
+
 def _resolve_with_hosts(workspace: str, agent_id: Optional[str], user_id: Optional[str],
                         allowed: List[str]) -> Dict[str, Tuple[str, List[str]]]:
     """``{name: (value, hosts)}`` for a run: the values through
     :func:`resolve_for_run` (the one seam callers and tests replace), the
-    hosts from the winning rows' metadata."""
+    hosts from the winning rows' metadata.
+
+    A system agent's declared name that its run's workspace does not hold is
+    looked up in the default workspace (:data:`SHARED_WORKSPACE`): one value
+    stored there serves the agent in every workspace, and a workspace that
+    stores its own value under that name overrides it for its runs."""
     values = resolve_for_run(workspace, agent_id, user_id, allowed)
     hosts = backend().bound_hosts(workspace, agent_id, user_id, list(values)) if values else {}
-    return {name: (value, hosts.get(name, [])) for name, value in values.items()}
+    out = {name: (value, hosts.get(name, [])) for name, value in values.items()}
+    missing = [n for n in allowed if n not in out]
+    if missing and _falls_back_to_shared(workspace, agent_id):
+        out.update(_resolve_with_hosts(SHARED_WORKSPACE, agent_id, user_id, missing))
+    return out
 
 
 def set_secret_hosts(workspace: str, name: str, allowed_hosts: Iterable[str], *,

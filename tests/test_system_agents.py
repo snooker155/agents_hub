@@ -409,16 +409,12 @@ def test_sync_prefers_the_seed_over_a_merge_that_would_be_blocked():
     form a blocked capability combination — reading private data alongside web
     access is the case this exists for. The seed wins and the extra is dropped.
 
-    Uses swe_agent rather than researcher: researcher's seed now
-    carries ``capability_override`` (its own tools read private data and it
-    delegates to the web searcher, a reviewed, deliberate combination — see
-    agents/definitions/researcher/capabilities.md), which would skip the
-    very check this test is pinning down. swe_agent has no override and reads
-    private data (read_file, list_files, search_text) the same way."""
+    Uses code_reviewer, which has no ``capability_override`` and reads private
+    data (read_file, list_files, search_text)."""
     from common.bootstrap import _sync_system_agents
     from tools.capabilities import check_combination
 
-    seed = next(a for a in _seed_system_agents() if a["id"] == "swe_agent")
+    seed = next(a for a in _seed_system_agents() if a["id"] == "code_reviewer")
     assert not seed.get("capability_override"), "precondition: this agent is not overridden"
     live = dict(seed)
     live["tools"] = list(seed["tools"]) + ["web_search", "fetch_url"]
@@ -427,7 +423,7 @@ def test_sync_prefers_the_seed_over_a_merge_that_would_be_blocked():
 
     _sync_system_agents()
 
-    after = _read_registry()["swe_agent"]["tools"]
+    after = _read_registry()["code_reviewer"]["tools"]
     assert set(after) == set(seed["tools"])
     assert check_combination(after) is None or not check_combination(after).blocking
 
@@ -449,6 +445,79 @@ def test_the_web_agent_holds_no_private_data():
     assert combined is not None and combined.blocking, (
         "the split is pointless if one agent could hold both tool sets"
     )
+
+
+def test_swe_agent_ships_run_shell_behind_an_override_and_an_approval():
+    """The SWE agent runs shell commands; the main agent does not. run_shell is
+    the whole trifecta, so the seed carries the override that lets it through
+    the guard and a policy that asks for a yes on every call."""
+    seeds = {a["id"]: a for a in _seed_system_agents()}
+    swe = seeds["swe_agent"]
+    assert "run_shell" in swe["tools"]
+    assert swe["capability_override"] is True
+    assert swe["tool_policy"] == {"run_shell": "always_ask"}
+    assert "run_shell" not in seeds["main-agent"]["tools"]
+
+
+def test_swe_agent_builds_with_run_shell_in_block_mode(monkeypatch):
+    from agents.capability_guard import enforce_built_tools
+    from common.config import settings
+
+    monkeypatch.setattr(settings, "capability_guard", "block")
+    monkeypatch.setattr(settings, "capability_override_requires_container", False)
+    monkeypatch.setattr("common.config.live_setting", lambda name, default="": default)
+    seed = next(a for a in _seed_system_agents() if a["id"] == "swe_agent")
+
+    enforce_built_tools("swe_agent", seed["tools"], override=True, delegates=seed.get("delegates"))
+
+
+def test_sync_gives_an_unedited_swe_agent_its_shell():
+    """An install from before the change holds swe_agent without run_shell,
+    the override or the policy; the sync brings all three together, so the
+    tool never arrives without the approval that bounds it."""
+    from common.bootstrap import _sync_system_agents
+
+    seed = next(a for a in _seed_system_agents() if a["id"] == "swe_agent")
+    stale = {k: v for k, v in seed.items() if k not in ("capability_override", "tool_policy")}
+    stale["tools"] = [t for t in seed["tools"] if t != "run_shell"]
+    _write_registry([stale])
+
+    assert "swe_agent" in _sync_system_agents()
+
+    after = _read_registry()["swe_agent"]
+    assert "run_shell" in after["tools"]
+    assert after["capability_override"] is True
+    assert after["tool_policy"] == {"run_shell": "always_ask"}
+
+
+def test_sync_takes_the_shell_back_from_an_unedited_main_agent():
+    """The main agent used to ship run_shell and delegate_task_tool. The merge
+    never drops a tool on its own, so the withdrawn ones are named: an unedited
+    record loses them, together with the shell's approval policy."""
+    from common.bootstrap import _sync_system_agents
+
+    seed = next(a for a in _seed_system_agents() if a["id"] == "main-agent")
+    stale = dict(seed, tools=list(seed["tools"]) + ["run_shell", "delegate_task_tool"],
+                 tool_policy={"run_shell": "always_ask"})
+    _write_registry([stale])
+
+    assert "main-agent" in _sync_system_agents()
+
+    after = _read_registry()["main-agent"]
+    assert "run_shell" not in after["tools"] and "delegate_task_tool" not in after["tools"]
+    assert after["tool_policy"] == {}
+
+
+def test_sync_leaves_the_shell_on_an_edited_main_agent():
+    from common.bootstrap import _sync_system_agents
+
+    seed = next(a for a in _seed_system_agents() if a["id"] == "main-agent")
+    edited = dict(seed, tools=list(seed["tools"]) + ["run_shell"], user_modified=True)
+    _write_registry([edited])
+
+    _sync_system_agents()
+
+    assert "run_shell" in _read_registry()["main-agent"]["tools"]
 
 
 def test_sync_is_idempotent(seeded_system_agent):

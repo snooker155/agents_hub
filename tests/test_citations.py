@@ -2,7 +2,8 @@
 are cited by, and the places they travel to (the chat ``done`` event, the run
 record the run page reads, a flow node's run).
 
-No model and no vector store: RAG is forced to BM25 over the chunk store, and
+No model and no vector store: RAG is on with the embedding stubbed out, so
+the search is BM25 over the chunk store, and
 the agent in the pipeline tests is a stand-in whose ``arun`` calls the real
 memory tool, the way a model's tool call would.
 """
@@ -27,8 +28,13 @@ from common.citation_sink import CitationSink, record_citation  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _no_vectors(monkeypatch):
-    monkeypatch.setenv("RAG_VECTOR_DB", "none")
-    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "none")
+    # RAG on, so recall and search_memory reach the passages; the embedding is
+    # stubbed out, which leaves the search to BM25 over the chunk store.
+    monkeypatch.setenv("RAG_VECTOR_DB", "chroma")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "sentence-transformers")
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake-model")
+    import memory.rag_query as rag_query
+    monkeypatch.setattr(rag_query, "embed_query", lambda text: None)
     from rag import bm25
     bm25.clear_cache()
     yield
@@ -142,7 +148,7 @@ def test_recall_cites_passages_too(sink):
     assert out["found"] and "citations" in out
     assert any(r.get("layer") == "rag" and r.get("cite") for r in out["results"])
     rag_trace = next(t for t in out["trace"] if t["layer"] == "rag")
-    assert rag_trace["hits"] >= 1 and rag_trace["vector"] is False
+    assert rag_trace["hits"] >= 1 and rag_trace["status"] == "ok"
 
 
 # ── where they travel ────────────────────────────────────────────────────────
@@ -276,8 +282,24 @@ def test_a_flow_node_keeps_its_own_citations(monkeypatch):
         return [event async for event in pipelines._run_chat_flow_pipeline(request)]
 
     events = asyncio.run(_drive())
+    # The live node_start carries what the node is given, as its flow-log line does.
+    node_start = next(e for e in events if e["type"] == "node_start")
+    assert "How much leave?" in node_start["input"]
     node_done = next(e for e in events if e["type"] == "node_done")
     assert node_done["ok"]
     meta = seen["state"].node_meta["n1"]
     assert meta["citations"] and meta["citations"][0]["n"] == 1
     assert run_manager.get_run_by_id(node_done["run_id"])["citations"] == meta["citations"]
+
+
+def test_with_rag_off_recall_skips_the_documents_and_still_answers(monkeypatch):
+    monkeypatch.setenv("RAG_VECTOR_DB", "none")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "none")
+    from memory.tool import create_memory_tools
+
+    mem = _pool_with_handbook()
+    tools = {t.name: t for t in create_memory_tools(str(mem.id), [])}
+    out = json.loads(tools["recall"].invoke({"query": "leave days carry over"}))
+    assert out["found"] and not any(r.get("layer") == "rag" for r in out["results"])
+    assert any(r.get("layer") == "note" for r in out["results"])
+    assert next(t for t in out["trace"] if t["layer"] == "rag") == {"layer": "rag", "hits": 0, "status": "off"}

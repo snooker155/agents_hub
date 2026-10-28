@@ -45,8 +45,8 @@ def test_start_team_run_creates_a_pending_record_and_dispatches_a_team_spec(no_r
     assert run.team_id == team.team_id
     assert run.goal == "ship the page"
     assert run.log_file and "team_run_" in run.log_file
-    # The task is claimed before any process exists (teams.runner._claim_task).
-    assert run.task_id
+    # A run is not a task: none is made for it.
+    assert run.task_id is None
 
     assert len(no_real_spawn) == 1
     spec = no_real_spawn[0]

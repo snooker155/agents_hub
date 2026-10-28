@@ -22,7 +22,9 @@ export default {
     guardrail_deny: 'eine Reihenfolge-Regel hat ihn abgelehnt',
     guardrail_ask: 'eine Reihenfolge-Regel hat einen Menschen gefragt',
     human_approved: 'eine Person hat diesen Aufruf freigegeben',
+    auto_mode_approved: 'automatisch freigegeben: Automodus ist an',
     human_denied: 'eine Person hat ihn abgelehnt, oder niemand hat rechtzeitig geantwortet',
     think_required: 'abgelehnt, bis der Agent zuerst nachdenkt',
+    domain_policy: 'die Adresse liegt außerhalb der Domain-Richtlinie',
   },
 };

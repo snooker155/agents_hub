@@ -239,7 +239,10 @@ def test_delegation_creates_a_subtask_launches_on_the_model_and_returns_the_outp
 
     assert data["ok"] is True, data
     assert data["finished"] is True and data["status"] == "completed"
-    assert data["output"] == "42 files, all green"
+    # The delegate's words come back fenced as data (common/untrusted.py).
+    assert data["output"].startswith("<<<AGENT_OUTPUT ")
+    assert "source: agent worker, delegated run " in data["output"]
+    assert "\n42 files, all green\n<<<END_AGENT_OUTPUT " in data["output"]
     assert data["provider"] == "anthropic" and data["model"] == "claude-haiku-4-5"
 
     child = get_task(_uuid(data["task_id"]))
@@ -483,7 +486,7 @@ def test_inside_a_container_the_wait_polls_the_backend(registry, parent, monkeyp
 
     out = _call(agent_id="worker", input="do the part")
     assert out["ok"] is True and out["finished"] is True
-    assert out["output"] == "the answer" and out["model"] == "gpt-4o"
+    assert "\nthe answer\n<<<END_AGENT_OUTPUT " in out["output"] and out["model"] == "gpt-4o"
     polls = [c for c in backend.calls if "/delegation" in c["url"]]
     assert len(polls) == 2
     assert polls[0]["url"] == "http://host.docker.internal:8000/api/run-state/tasks/child-1/delegation?run_id=run-1"

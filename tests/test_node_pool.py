@@ -19,6 +19,20 @@ from common.config import settings
 from hublink import jobs, nodes, scheduler
 
 
+@pytest.fixture(autouse=True)
+def _drop_new_workspaces():
+    """Remove the workspace folders this test made. They live on disk under
+    the suite's one state root and outlive the per-test database, so a
+    leftover "team" turned a later test's "create it when missing" path
+    (test_setup_link.py) into a silent skip."""
+    from workspace import storage
+    before = {p.name for p in storage.list_workspace_folders()}
+    yield
+    for path in storage.list_workspace_folders():
+        if path.name not in before:
+            storage.delete_workspace_folder(path.name)
+
+
 @pytest.fixture
 def client():
     from fastapi.testclient import TestClient

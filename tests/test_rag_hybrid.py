@@ -70,6 +70,21 @@ def test_no_results_when_the_pool_has_no_chunks(monkeypatch):
     assert rag_query.search_rag("anything", "pool-nothing-here", top_k=5) == []
 
 
+def test_a_pool_with_no_chunks_never_embeds_the_query(monkeypatch):
+    """Embedding loads the model (torch, a download on first use) inside the
+    agent's recall call; a pool with nothing indexed must not pay for it
+    (found live: recall on a notes-only pool hung on the model download)."""
+    monkeypatch.setenv("RAG_VECTOR_DB", "chroma")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "sentence-transformers")
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake-model")
+
+    def boom(text):
+        raise AssertionError("embedded a query for a pool with no chunks")
+
+    monkeypatch.setattr(rag_query, "embed_query", boom)
+    assert rag_query.search_rag("anything", "pool-nothing-here", top_k=5) == []
+
+
 def test_embedding_call_failing_still_leaves_bm25_answering(monkeypatch):
     """RAG_VECTOR_DB configured, but the embedding call fails (missing
     package, unreachable provider, whatever) — search_rag degrades to BM25
@@ -204,3 +219,126 @@ def test_embedder_is_configured():
 
     assert backend_embeddings.Embedder("none", "").is_configured() is False
     assert backend_embeddings.Embedder("sentence-transformers", "m").is_configured() is True
+
+
+# ── the RAG service, as an agent's tools reach it ────────────────────────────
+
+def test_with_rag_off_the_service_is_not_asked(monkeypatch):
+    monkeypatch.setenv("RAG_VECTOR_DB", "none")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "none")
+    _seed("doc.md", ["falcons hunt at dawn"])
+
+    def boom(*a, **k):
+        raise AssertionError("asked the RAG service with RAG off")
+
+    monkeypatch.setattr(rag_query, "search_rag", boom)
+    import requests
+    monkeypatch.setattr(requests, "post", boom)
+    assert rag_query.search_rag_service("falcons", POOL) == ([], "off")
+
+
+def test_an_agent_process_asks_the_service_and_never_searches_itself(monkeypatch):
+    monkeypatch.setenv("RAG_VECTOR_DB", "chroma")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "sentence-transformers")
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake-model")
+    monkeypatch.setattr(rag_query, "_in_service_process", lambda: False)
+    monkeypatch.setattr(rag_query, "search_rag", lambda *a, **k: pytest.fail("searched in the agent"))
+    seen = {}
+
+    class _Resp:
+        ok = True
+
+        def json(self):
+            return {"available": True, "results": [{"text": "falcons", "file_id": f"{POOL}::doc.md"}]}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        seen.update(url=url, body=json, timeout=timeout)
+        return _Resp()
+
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+    hits, status = rag_query.search_rag_service("falcons", POOL, top_k=3)
+    assert status == "ok" and hits[0]["text"] == "falcons"
+    assert seen["url"].endswith(f"/api/shared-memory/{POOL}/rag/search")
+    assert seen["body"] == {"query": "falcons", "top_k": 3}
+    assert seen["timeout"] == (rag_query.SERVICE_CONNECT_TIMEOUT, rag_query.SERVICE_READ_TIMEOUT)
+
+
+@pytest.mark.parametrize("answer", ["raise", "unavailable", "error"])
+def test_a_service_that_does_not_answer_skips_the_step(monkeypatch, answer):
+    monkeypatch.setenv("RAG_VECTOR_DB", "chroma")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "sentence-transformers")
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake-model")
+    monkeypatch.setattr(rag_query, "_in_service_process", lambda: False)
+
+    class _Resp:
+        ok = answer != "error"
+
+        def json(self):
+            return {"available": False, "results": []}
+
+    def fake_post(*a, **k):
+        if answer == "raise":
+            raise ConnectionError("refused")
+        return _Resp()
+
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+    assert rag_query.search_rag_service("falcons", POOL) == ([], "unavailable")
+
+
+def test_a_local_model_not_loaded_yet_warms_in_the_background(monkeypatch):
+    """A search never waits for the weights: it answers from BM25 and the
+    model loads on a thread (found live: recall hung on the model download)."""
+    monkeypatch.setenv("RAG_VECTOR_DB", "chroma")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "sentence-transformers")
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "warm-test-model")
+    import threading
+    from rag import embeddings as backend_embeddings
+    loaded = threading.Event()
+
+    def fake_load(model):
+        loaded.wait(5)  # stands for a long load: the search must not wait for it
+        backend_embeddings._ST_MODELS[model] = object()
+        return backend_embeddings._ST_MODELS[model]
+
+    monkeypatch.setattr(backend_embeddings, "get_sentence_transformer", fake_load)
+    monkeypatch.setattr(backend_embeddings, "embed_sentence_transformers",
+                        lambda texts, model: pytest.fail("embedded with a model still loading"))
+    try:
+        assert rag_query.embed_query("falcons") is None
+        assert "warm-test-model" in backend_embeddings._ST_WARMING
+    finally:
+        loaded.set()
+    for _ in range(100):
+        if "warm-test-model" in backend_embeddings._ST_MODELS and not backend_embeddings._ST_WARMING:
+            break
+        import time
+        time.sleep(0.02)
+    assert "warm-test-model" in backend_embeddings._ST_MODELS
+    backend_embeddings._ST_MODELS.pop("warm-test-model", None)
+
+
+def test_the_search_route_answers_unavailable_with_rag_off(monkeypatch):
+    import asyncio
+    import uuid
+    monkeypatch.setenv("RAG_VECTOR_DB", "none")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "none")
+    from routes.memory import RagSearchRequest, search_rag_passages
+    out = asyncio.run(search_rag_passages(uuid.uuid4(), RagSearchRequest(query="x")))
+    assert out["available"] is False and out["results"] == []
+
+
+def test_the_search_route_searches_with_rag_on(monkeypatch):
+    import asyncio
+    import uuid
+    pool = uuid.uuid4()
+    monkeypatch.setenv("RAG_VECTOR_DB", "chroma")
+    monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "sentence-transformers")
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake-model")
+    monkeypatch.setattr(rag_query, "embed_query", lambda text: None)
+    chunks = [Chunk(text="owls hunt at night", heading_path=[], char_start=0, char_end=18)]
+    replace_file_chunks(str(pool), "doc.md", f"{pool}::doc.md", chunks, content_hash="h")
+    from routes.memory import RagSearchRequest, search_rag_passages
+    out = asyncio.run(search_rag_passages(pool, RagSearchRequest(query="owls", top_k=3)))
+    assert out["available"] is True and out["results"][0]["filename"] == "doc.md"

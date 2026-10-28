@@ -398,7 +398,7 @@ export default function Studio() {
         {/* The studio chat, folded away while the floating panel is showing
             it: same endpoint, same thread, drawn in one place at a time. */}
         {showChat && !panelHoldsChat && (
-          <div className="w-[28rem] border-l border-gray-200 dark:border-gray-700 flex-shrink-0 flex flex-col">
+          <div className="w-[28rem] 2xl:w-[32rem] border-l border-gray-200 dark:border-gray-700 flex-shrink-0 flex flex-col">
             <div className="flex items-center px-3 py-2 border-b border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200">
                 <Sparkles className="w-4 h-4 text-violet-500" /> {t('studio.visualizer')}
@@ -418,7 +418,7 @@ export default function Studio() {
               clearTarget={chatClearSlot}
               heightClass="min-h-0 max-h-none"
               className="flex-1 min-h-0 p-3"
-              composerClassName="mt-auto pt-3"
+              composerClassName="mt-auto pt-3 -mx-3 px-3"
             />
           </div>
         )}

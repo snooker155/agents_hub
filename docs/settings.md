@@ -32,9 +32,13 @@ lives on the [models](models.md) page, not here.
 - **API auth** — a token that protects this service's own API.
 - Environment variables, per workspace.
 
-Anything set here is global. A workspace's own Settings tab overrides the
-parts that make sense per workspace ([workspaces](workspaces.md), "The
-Settings tab").
+The Agents group shows each global value beside the override of the workspace
+picked in the header: execution, tool policy, web access and task assignment
+are set here for a workspace, not on the workspace's own page.
+
+Personal memory and agent roles have no global value, so they are only on
+the workspace's own Settings tab ([workspaces](workspaces.md), "The Settings
+tab"); a note in this page's menu links there.
 
 Connectors are **not** here any more. Telegram, GitHub/GitLab and Blender moved
 to Integrations → Connectors ([connectors](connectors.md)), because a connector is
@@ -64,8 +68,9 @@ Account → Palette, set 2 to 4 base colors (a brand color, a neutral tint, a
 success accent and a danger accent, the last three optional) and everything
 else (11 shades per color, panels, borders, text) is computed from them with a
 fixed lightness curve in OKLCH, so contrast holds in both light and dark mode
-(`src/lib/palette.js`). Four presets ship (Navy, the default; Forest; Slate;
-Sunset), plus Custom for anything else, and Reset removes the personal override.
+(`src/lib/palette.js`). Five presets ship (Navy, the default; Magenta, Telekom
+magenta on graphite; Forest; Slate; Sunset), plus Custom for anything else, and
+Reset removes the personal override.
 
 A workspace has a default palette of its own, set by an admin under a
 workspace's Agents tab, "Default palette", stored at `settings.palette` next to

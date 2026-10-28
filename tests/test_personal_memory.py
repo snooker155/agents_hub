@@ -339,3 +339,25 @@ def test_making_an_agent_the_main_one_turns_its_personal_memory_on(api, ws):
     assert settings["main_agent"] == "web_searcher"
     assert settings["agents"]["web_searcher"] is True
     assert settings["agents"]["main-agent"] is True, "the old main agent keeps what it had"
+
+
+def test_a_personal_pool_is_never_saved_as_one_of_the_agents_pools(api, as_user):
+    # The personal switch attaches it for whoever runs the agent; stored on the
+    # record it would reach every user and be attached a second way.
+    own = SharedMemory(name="team pool", workspace="default")
+    MemoryStore().add(own)
+    mine = str(personal.ensure_pool("alice", "default").id)
+
+    resp = api.post("/api/agents/analyst/memory", json={
+        "memory_type": "shared", "workspace": "default",
+        "memory_data": [str(own.id), {"id": mine, "read_only": True}],
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["memory_data"] == str(own.id)
+    assert registry.get_agent("analyst").memory_data == str(own.id)
+
+    resp = api.post("/api/agents/analyst/memory", json={
+        "memory_type": "shared", "workspace": "default", "memory_data": mine,
+    })
+    assert resp.status_code == 400
+    assert "Personal memory" in resp.json()["detail"]

@@ -23,7 +23,7 @@ orchestrator of the agent runs, not their sandbox, the same as a flow.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from common.paths import AGENTS_HUB_ROOT
 from loops.models import LoopRun
@@ -50,11 +50,17 @@ def start_loop_run(
     task_id: Optional[str] = None,
     seed: Optional[Dict[str, Any]] = None,
     parent_run_id: Optional[str] = None,
+    context: str = "",
+    attached: Optional[List[Dict[str, str]]] = None,
+    origin: Optional[Dict[str, Any]] = None,
 ) -> LoopRun:
     """The database half of launching a loop run.
 
+    ``origin`` is the chat that started it (chat/background_runs.py), told
+    when the run ends.
+
     Validates the loop and its flow the way ``loops.runner.run_loop`` does,
-    resolves the workspace, task and session the way
+    resolves the workspace, the task it was given (none is made) and the session the way
     ``loops.runner._prepare_context`` does (which also records the loop as the
     task's executor), creates the ``LoopRun`` record as ``pending`` with its
     log path and the seed state, then builds the launch spec and hands it to
@@ -79,6 +85,7 @@ def start_loop_run(
 
     run = LoopRun(
         loop_id=loop_id, workspace=ws_name, goal=goal, task_id=task_id,
+        context=context or "", attached=list(attached or []),
         session_id=session_id, parent_run_id=parent_run_id, status="pending",
         started_at="",
     )
@@ -89,19 +96,22 @@ def start_loop_run(
     # The seed rides on the record's document: the subprocess reads
     # everything it needs back from the record, so the spec stays small.
     from common import entity_runs
-    entity_runs.update(run.loop_run_id, {"log_file": log_file, "seed": dict(seed or {})},
+    from chat.background_runs import ORIGIN_KEY
+    entity_runs.update(run.loop_run_id, {"log_file": log_file, "seed": dict(seed or {}),
+                                         **({ORIGIN_KEY: origin} if origin else {})},
                        notify=False)
-    # Point the task at this run (the executor itself was recorded by
-    # _prepare_context before the run id existed).
-    try:
-        from tasks import service as _ts
-        _ts.assign_executor(
-            task_id, {"kind": "loop", "id": loop_id},
-            {"loop_id": loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
-            run_id=run.loop_run_id,
-        )
-    except Exception:  # noqa: BLE001 - the run still launches; the task page just shows no run id yet
-        log.debug("assigning loop run to task failed", exc_info=True)
+    # Point the task, when the loop works on one, at this run (the executor
+    # itself was recorded by _prepare_context before the run id existed).
+    if task_id:
+        try:
+            from tasks import service as _ts
+            _ts.assign_executor(
+                task_id, {"kind": "loop", "id": loop_id},
+                {"loop_id": loop_id, "flow_id": loop.flow_id, "workspace": ws_name},
+                run_id=run.loop_run_id,
+            )
+        except Exception:  # noqa: BLE001 - the run still launches; the task page just shows no run id yet
+            log.debug("assigning loop run to task failed", exc_info=True)
 
     spec = {
         "kind": QUEUE_KIND, "run_id": run.loop_run_id, "entity_id": loop_id,
@@ -109,7 +119,7 @@ def start_loop_run(
         "workspace": ws_name, "ws_path": ws_path,
         "task_id": task_id, "session_id": session_id,
         "log_file": log_file, "header": "Loop run started", "mode": "w",
-        "execution_mode": "local", "resume": False,
+        "execution_mode": entity_launch.execution_mode_for(ws_name), "resume": False,
     }
     entity_launch.dispatch(spec, launch_prepared)
     return store.get_run(run.loop_run_id) or run
@@ -157,12 +167,12 @@ def resume_loop_run(loop_run_id: str, *, auto: bool = False) -> LoopRun:
     ws_name = run.workspace or loop.workspace
     ws_name = (create_workspace_folder(ws_name).name if ws_name
                else create_workspace_folder().name)
+    # The folder, never the bare name: in docker mode it is what gets mounted.
     ws_path = ws_name
     try:
         from tasks import service as _ts
         task = _ts.get_task(run.task_id) if run.task_id else None
-        if task is not None:
-            _, ws_path = resolve_task_workspace(task, as_param_dict({"workspace": ws_name}))
+        _, ws_path = resolve_task_workspace(task, as_param_dict({"workspace": ws_name}))
     except Exception:  # noqa: BLE001 - the workspace root is a fine fallback for the cwd
         log.debug("resolving task workspace failed", exc_info=True)
 
@@ -172,7 +182,7 @@ def resume_loop_run(loop_run_id: str, *, auto: bool = False) -> LoopRun:
         "workspace": ws_name, "ws_path": str(ws_path),
         "task_id": run.task_id, "session_id": run.session_id,
         "log_file": log_file, "header": "Loop run resumed", "mode": "a",
-        "execution_mode": "local", "resume": True,
+        "execution_mode": entity_launch.execution_mode_for(ws_name), "resume": True,
     }
     entity_launch.dispatch(spec, launch_prepared)
     return store.get_run(loop_run_id) or run
@@ -180,7 +190,7 @@ def resume_loop_run(loop_run_id: str, *, auto: bool = False) -> LoopRun:
 
 def launch_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
     """The process half of a loop launch: spawn ``runtime/loop_run.py`` on
-    this host from a spec :func:`start_loop_run` or :func:`resume_loop_run`
+    this host (or in a container, by the workspace's execution mode) from a spec :func:`start_loop_run` or :func:`resume_loop_run`
     prepared. The shared envelope records the pid and the host and moves the
     record to ``running``; the flow's coarse running marker is flipped by the
     runner itself once the first iteration starts."""

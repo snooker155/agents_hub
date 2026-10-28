@@ -16,14 +16,18 @@
  * grows the spacer after it, `[data-turn-spacer]`, by what the fold took away,
  * so the rest of the turn does not move.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 // Within this many pixels of the end still counts as "at the end".
 const BOTTOM_SLACK = 48;
 
 export function useChatScroll({ convId, lastUserId, messages, stuckHint }) {
   const scrollerRef = useRef(null);
-  const contentRef = useRef(null);
+  // The content is a callback ref: a host may mount it only once there are
+  // messages (an empty chat shows a placeholder instead), and the observer
+  // below has to follow it when it appears, or nothing that settles after
+  // the first paint is followed.
+  const [contentEl, contentRef] = useState(null);
   const atBottomRef = useRef(true);
   const frameRef = useRef(0);
   const hintRef = useRef(stuckHint);
@@ -98,16 +102,27 @@ export function useChatScroll({ convId, lastUserId, messages, stuckHint }) {
     scheduleStuck();
   }, [messages, toBottom, scheduleStuck]);
 
+  // The scroller is watched too: a transcript in a tab that was hidden has
+  // no height to scroll in, so it is taken to the end once it shows, and a
+  // panel that is resized keeps its end in view.
   useEffect(() => {
-    const content = contentRef.current;
-    if (!content || typeof ResizeObserver === 'undefined') return undefined;
+    const content = contentEl;
+    const scroller = scrollerRef.current;
+    if ((!content && !scroller) || typeof ResizeObserver === 'undefined') return undefined;
     const ro = new ResizeObserver(() => {
       if (atBottomRef.current) toBottom();
       scheduleStuck();
     });
-    ro.observe(content);
+    if (content) ro.observe(content);
+    if (scroller) ro.observe(scroller);
     return () => ro.disconnect();
-  }, [toBottom, scheduleStuck]);
+  }, [contentEl, toBottom, scheduleStuck]);
+
+  // For a change the observers do not see (the room kept free under the
+  // last message growing): to the end again while the reader is there.
+  const followEnd = useCallback(() => {
+    if (atBottomRef.current) toBottom();
+  }, [toBottom]);
 
   // Back to where the prompt sits in the flow, a little below the top so it
   // is released and shows whole.
@@ -127,7 +142,7 @@ export function useChatScroll({ convId, lastUserId, messages, stuckHint }) {
     scrollToPrompt(slot.getAttribute('data-turn-prompt'));
   }, [scrollToPrompt]);
 
-  return { scrollerRef, contentRef, onScroll, onPromptClick, scrollToPrompt };
+  return { scrollerRef, contentRef, onScroll, onPromptClick, scrollToPrompt, followEnd };
 }
 
 export default useChatScroll;

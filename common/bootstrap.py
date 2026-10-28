@@ -185,9 +185,33 @@ def ensure_system_agent(agent_id: str) -> bool:
 # assignment, workspace ownership) is the operator's and is never touched.
 # Tools are handled separately, and are merged rather than replaced (see below).
 _SEED_OWNED_FIELDS = ("description", "system", "delegates", "handoffs",
-                      # A shipped child (``assistant``): its parent and its
-                      # own list deltas are part of its design too.
-                      "extends", "list_deltas")
+                      # A shipped child: its parent and its own list
+                      # deltas are part of its design too.
+                      "extends", "list_deltas",
+                      # A shipped exception to the capability guard (the SWE
+                      # agent's run_shell) comes with the tool that needs it,
+                      # and so does the approval that keeps it bounded.
+                      "capability_override", "tool_policy",
+                      # How much a shipped agent's model reasons is part of
+                      # its design as well: none, unless the operator sets it.
+                      "effort")
+
+# Tools a shipped seed once granted and has since taken back on purpose. The
+# merge below never drops a tool on its own, so without this an install that
+# predates the change keeps the grant, and loses the approval policy that came
+# with it once the seed's ``tool_policy`` no longer names it. Only unedited
+# records are touched, like every other seed field.
+_SEED_WITHDRAWN_TOOLS: dict[str, frozenset[str]] = {
+    # Shell is a developer's tool: it moved to swe_agent. Handing a task to
+    # another agent goes through the orchestrator.
+    "main-agent": frozenset({"run_shell", "delegate_task_tool"}),
+    # The orchestrator does not run agents or flows itself: it assigns an
+    # agent to a task and starts it there (assign_agent_tool,
+    # start_agent_tool), and hands a piece of a tracked task on as a subtask
+    # (delegate_task_tool). Flows are run by the people and agents that own
+    # them; building a new one is the flow_creator's work.
+    "orchestrator": frozenset({"run_agent_tool", "run_flow_tool", "run_new_flow_tool"}),
+}
 
 
 def _is_system_seed(ad: dict) -> bool:
@@ -248,6 +272,10 @@ def _sync_system_agents() -> list[str]:
             return True
 
     changed: list[str] = []
+    _user_agent_ids = {
+        ad.get("id") for ad in (live_raw.get("agents") or [])
+        if isinstance(ad, dict) and ad.get("id") and not _is_system_seed(ad)
+    }
     for ad in (live_raw.get("agents") or []):
         if not isinstance(ad, dict):
             continue
@@ -259,6 +287,18 @@ def _sync_system_agents() -> list[str]:
             k: seed[k] for k in _SEED_OWNED_FIELDS
             if k in seed and ad.get(k) != seed[k]
         }
+        # The seed owns the system agents a shipped agent links to, not the
+        # person's own agents: a link to one of those (the main agent gains
+        # every new agent, agents/main_links.py) stays after the seed's list.
+        for k in ("delegates", "handoffs"):
+            if k not in updates:
+                continue
+            own = [x for x in (ad.get(k) or [])
+                   if x in _user_agent_ids and x not in (seed.get(k) or [])]
+            if own:
+                updates[k] = list(seed.get(k) or []) + own
+                if updates[k] == list(ad.get(k) or []):
+                    del updates[k]
 
         # Tools are merged, never replaced. On an install that predates the
         # `user_modified` flag there is no way to tell a deliberate extra grant
@@ -274,6 +314,13 @@ def _sync_system_agents() -> list[str]:
         live_tools = list(ad.get("tools") or [])
         seed_tools = list(seed.get("tools") or [])
         extra = [t for t in live_tools if t not in seed_tools]
+        withdrawn = [t for t in extra if t in _SEED_WITHDRAWN_TOOLS.get(ad.get("id") or "", ())]
+        if withdrawn:
+            log.warning(
+                "system agent sync: %r drops %s — the shipped agent no longer has them.",
+                ad.get("id"), withdrawn,
+            )
+            extra = [t for t in extra if t not in withdrawn]
         retired = [t for t in extra if not _recognised(t)]
         if retired:
             log.warning(
@@ -282,6 +329,7 @@ def _sync_system_agents() -> list[str]:
             )
             extra = [t for t in extra if t not in retired]
         effective = seed_tools + extra
+        overridden = bool(updates.get("capability_override", ad.get("capability_override")))
 
         # The merged set is checked even when it is identical to what is already
         # on disk: a record can already hold a blocked combination (the guard
@@ -293,7 +341,7 @@ def _sync_system_agents() -> list[str]:
         # private data and reach the web is exactly what the guard exists to
         # prevent, so keeping the grant is not an option. Only when the seed
         # itself is blocked does the record go untouched.
-        if check_combination is not None and not ad.get("capability_override"):
+        if check_combination is not None and not overridden:
             violation = check_combination(effective)
             if violation is not None and violation.blocking:
                 seed_violation = check_combination(seed_tools)
@@ -328,7 +376,7 @@ def _sync_system_agents() -> list[str]:
         # private data and reach the web is exactly what the guard exists to
         # prevent, so keeping the local grant is not an option. Only when the
         # seed itself is blocked does the record go untouched.
-        if "tools" in updates and check_combination is not None and not ad.get("capability_override"):
+        if "tools" in updates and check_combination is not None and not overridden:
             violation = check_combination(updates["tools"])
             if violation is not None and violation.blocking:
                 seed_tools = list(seed.get("tools") or [])

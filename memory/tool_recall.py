@@ -29,16 +29,16 @@ def build_recall_tool(ctx):
             ...,
             description=(
                 "What you want to look up. Can be a slot name, topic, or natural-language question. "
-                "The tool searches structured slots then notes, and falls back to RAG if nothing matches."
+                "The tool searches blocks, slots, notes and episodes, and the pool's indexed documents when RAG is on."
             ),
         )
 
     def _recall_impl(query: str) -> str:
         """Rank every layer of every attached pool for `query`.
 
-        Blocks, slots, notes and episodes are ranked together with BM25; when a
-        vector store answers, its hits join the same ranking through reciprocal
-        rank fusion (see memory/ranking.py). Each result carries the layer it
+        Blocks, slots, notes and episodes are ranked together with BM25; when
+        RAG is on and its service answers, its passages join the same ranking
+        through reciprocal rank fusion (see memory/ranking.py). Each result carries the layer it
         came from and its score, so the caller can see why it is where it is.
         """
         try:
@@ -59,12 +59,9 @@ def build_recall_tool(ctx):
             missing: list[str] = []
             graph_hits = 0
 
-            try:
-                from memory.rag_query import is_rag_configured
-                rag_on = is_rag_configured()
-            except Exception:  # noqa: BLE001 - RAG is an optional layer, treat a failed probe as off
-                log.debug("rag configuration probe failed", exc_info=True)
-                rag_on = False
+            # The RAG step's state across the pools: ok, off (not configured,
+            # nothing asked) or unavailable (the service did not answer).
+            rag_status = "off"
 
             for pid in pool_ids:
                 mem = store.get(pid)
@@ -78,21 +75,22 @@ def build_recall_tool(ctx):
                     src = "structured" if cand.layer == "slot" else cand.layer
                     searched[src] = searched.get(src, 0) + 1
 
-                # Indexed passages join the same ranking: the passage
-                # retriever's own order (BM25 over the chunk store, fused with
-                # vector similarity when a vector store is configured) is the
-                # second ranked list fused with BM25 over the pool's items.
+                # Indexed passages join the same ranking: the RAG service's
+                # own order (memory/rag_query.py) is the second ranked list
+                # fused with BM25 over the pool's items. With RAG off, or the
+                # service not answering, the step is skipped: a run never
+                # indexes or loads an embedding model itself.
                 vector_keys: list[str] = []
-                try:
-                    from memory.rag_query import search_rag
-                    for hit in search_rag(query, str(pid), top_k=5):
+                if rag_status != "unavailable":
+                    from memory.rag_query import search_rag_service
+                    hits, status = search_rag_service(query, str(pid), top_k=5)
+                    rag_status = status
+                    for hit in hits:
                         key = f"{pid}:rag:{hit.get('file_id', '')}:{hit.get('chunk_idx', 0)}"
                         candidates.append(Candidate(
                             key=key, layer="rag", text=hit.get("text", ""), payload=_rag_payload(hit),
                         ))
                         vector_keys.append(key)
-                except Exception:  # noqa: BLE001 - the passage search is one layer; the others still answer
-                    log.debug("passage search failed", exc_info=True)
 
                 ranked = rank_candidates(query, candidates, vector_keys=vector_keys)
                 pool_results: list[dict] = []
@@ -137,9 +135,9 @@ def build_recall_tool(ctx):
                 {"layer": "episodes", "searched": searched.get("episode", 0), "hits": counts["episode"]},
                 {"layer": "graph", "hits": graph_hits},
             ]
-            # Indexed passages are always searched (BM25 over the chunk store);
-            # ``vector`` says whether vector similarity took part.
-            trace.append({"layer": "rag", "hits": counts["rag"], "vector": rag_on})
+            # ``status``: ok, off (RAG not configured) or unavailable (the
+            # service did not answer); anything but ok means the step was skipped.
+            trace.append({"layer": "rag", "hits": counts["rag"], "status": rag_status})
 
             base = {"ok": True, "pool": ", ".join(m.name for _, m in found_pools), "query": query, "trace": trace}
             if missing:
@@ -192,10 +190,9 @@ def build_recall_tool(ctx):
         name="recall",
         description=(
             "Look up information from shared memory. "
-            "Ranks core memory blocks, structured slots, notes and episodes together (BM25, fused "
-            "with vector similarity when a vector store is configured), then adds knowledge-graph "
-            "matches; every result carries the `layer` it came from and a `score`. "
-            "Passages of the pool's indexed documents are ranked alongside, and a passage or a "
+            "Ranks core memory blocks, structured slots, notes and episodes together (BM25), then "
+            "adds knowledge-graph matches; every result carries the `layer` it came from and a `score`. "
+            "When RAG is on, passages of the pool's indexed documents are ranked alongside, and a passage or a "
             "note may carry a `cite` number to quote as [n] in the answer. "
             "The core memory blocks are already in your system prompt, so a block in the results "
             "is a confirmation, not news. "

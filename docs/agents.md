@@ -21,23 +21,27 @@ inaccuracy, and a test enforces that they match for system agents.
 never by default. See [tools-and-capabilities](tools-and-capabilities.md).
 
 **The model** can be inherited from the workspace or pinned per agent, along
-with temperature, max tokens and reasoning settings.
+with temperature, max tokens and reasoning effort, all on the Model tab.
 
-The thinking level (off, low, medium, high) turns on the model's own
-reasoning, which the chat shows as a thought above the answer. How much of it
-reaches the chat depends on the provider. Claude, gpt-oss, qwen3, deepseek-r1
-and other open models return their reasoning in full. OpenAI's o-series and
-gpt-5 models never return it, only a summary of it, and only on the Responses
-API: with a thinking level set, such a model is sent there with a summary
-requested. OpenAI leaves short reasoning unsummarised, so a quick step can
-come back with no thought at all. Behind a gateway (`OPENAI_BASE_URL`) the
-model stays on chat completions, which carry no reasoning text. An
+The reasoning effort sets how much the model reasons on its own, which the
+chat shows as a thought above the answer. Inherit (the default) takes the
+effort chosen in the header's model picker when the model is inherited too,
+then the model's default on the [models](models.md) page, then the provider's.
+The choices are the ones the model accepts (gpt-5: minimal to high; gpt-5.2
+and later: none to xhigh; Claude Opus 5.5: low to max), and a value another
+model accepted is clamped to the nearest one this model takes. How much of the
+reasoning reaches the chat depends on the provider. Claude, gpt-oss, qwen3,
+deepseek-r1 and other open models return their reasoning in full. OpenAI's
+o-series and gpt-5 models never return it, only a summary of it, and only on
+the Responses API: at an effort they reason at, such a model is sent there with
+a summary requested. OpenAI leaves short reasoning unsummarised, so a quick
+step can come back with no thought at all. Behind a gateway (`OPENAI_BASE_URL`)
+the model stays on chat completions, which carry no reasoning text. An
 organisation OpenAI has not verified is refused summaries; the request is then
 repeated without one, and the run goes on with no thought shown.
 
-Off holds the model to the lowest reasoning it accepts. OpenAI's reasoning
-models otherwise reason at their own default, medium on most families; the
-[models](models.md) page shows each model's default and what off sends.
+The Behavior tab's Think block is the think scratchpad tool alone: a tool the
+agent can call to reason step by step, separate from the model's own effort.
 
 **Memory** is assigned per workspace, not on the agent. See [memory](memory.md).
 

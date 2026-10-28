@@ -13,9 +13,16 @@ import { useI18n } from '../i18n';
 //
 // `children` is the content, shown clamped on the card and in full in the
 // modal; `detail` replaces it in the modal when the full form differs; `hint`
-// stands in on the card when there are no children.
+// stands in on the card when there are no children. `flush` draws it edge to
+// edge, with no rounded corners or side lines (a step inside a delegation card).
+// `lines`: how many lines the card shows before it fades (3 in a flow's log).
+// `footer` sits under the content, never clamped, on the card and in the
+// modal (a flow node's files under its output).
+const PREVIEW_HEIGHT = { 3: 'max-h-12', 4: 'max-h-16' };
+
 export default function ProcessNode({
-  label, labelColor, borderColor, bgColor, hint, children, detail, tool,
+  label, labelColor, borderColor, bgColor, hint, children, detail, tool, flush = false, lines = 4,
+  footer = null,
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -48,7 +55,9 @@ export default function ProcessNode({
         onClick={(e) => { if (!e.target.closest('a, button')) setOpen(true); }}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); } }}
         title={t('processGraph.openFull')}
-        className={`group rounded-lg border ${borderColor} ${bgColor} px-2.5 py-2 cursor-pointer transition-shadow hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300`}
+        // A named group: the expand mark shows for this card alone, not for
+        // every card inside one hovered row (a flow log line is a `group`).
+        className={`group/step ${flush ? 'border-y' : 'rounded-lg border'} ${borderColor} ${bgColor} px-2.5 py-2 cursor-pointer transition-shadow hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300`}
         data-testid="process-node"
       >
         <div className="flex items-center justify-between gap-2">
@@ -58,23 +67,24 @@ export default function ProcessNode({
           </span>
           <span className="flex items-center gap-1 shrink-0">
             {tool ? <PolicyBadge tool={tool} /> : null}
-            <Maximize2 className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 shrink-0" />
+            <Maximize2 className="w-3 h-3 text-gray-400 opacity-0 group-hover/step:opacity-100 group-focus-visible/step:opacity-100 shrink-0" />
           </span>
         </div>
         {preview && (
           <div
             ref={previewRef}
-            className="mt-1 leading-4 max-h-16 overflow-hidden"
+            className={`mt-1 leading-4 ${PREVIEW_HEIGHT[lines] || PREVIEW_HEIGHT[4]} overflow-hidden`}
             style={clipped ? { WebkitMaskImage: 'linear-gradient(to bottom, #000 70%, transparent)', maskImage: 'linear-gradient(to bottom, #000 70%, transparent)' } : undefined}
             data-testid="process-node-preview"
           >
             {preview}
           </div>
         )}
+        {footer}
       </div>
       {open && (
         <ProcessStepModal title={label} labelColor={labelColor} onClose={() => setOpen(false)}>
-          <div className="process-step-modal-body space-y-2">{modalBody}</div>
+          <div className="process-step-modal-body space-y-2">{modalBody}{footer}</div>
         </ProcessStepModal>
       )}
     </>

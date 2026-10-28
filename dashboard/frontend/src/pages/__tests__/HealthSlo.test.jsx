@@ -37,6 +37,8 @@ vi.mock('../../api/support', () => ({
 }));
 
 const saveBlobAs = vi.fn();
+// The Stack services card loads on its own; these tests are about other cards.
+vi.mock('../../api/services', () => ({ getClusterStack: () => Promise.resolve({ data: { components: [] } }) }));
 vi.mock('../../api/files', () => ({ saveBlobAs: (...a) => saveBlobAs(...a) }));
 
 const getDoctor = vi.fn(() => ok({ status: 'ok', checked_at: '2026-09-25T10:00:00Z', checks: [] }));

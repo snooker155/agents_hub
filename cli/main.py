@@ -69,6 +69,9 @@ auth_app.add_typer(auth_keys_app, name="keys")
 app.add_typer(server_app, name="server")
 app.add_typer(auth_app, name="auth")
 app.add_typer(db_app, name="db")
+state_app = typer.Typer(help="A hub in Docker with its state on a volume: sync it with the checkout's .agents_hub.",
+                        no_args_is_help=True)
+app.add_typer(state_app, name="state")
 
 # agent/task/workspace/project/instance (cli/commands/), flow/loop/team/eval/mcp/user
 # (also cli/commands/), the `api` escape hatch and the OpenAPI-generated groups
@@ -507,6 +510,31 @@ def _require_direct_mode(what: str) -> None:
         console.print(f"[red]{what} works on the local database only[/red]: unset "
                       "AGENTS_HUB_URL and run it where the state lives.")
         raise typer.Exit(code=1)
+
+
+@state_app.command("status")
+def state_status():
+    """The last sync and whether the folder changed since (common/state_sync.py)."""
+    import json as _json
+    from common import state_sync
+    console.print_json(_json.dumps(state_sync.status(), default=str))
+
+
+@state_app.command("export")
+def state_export(force: bool = typer.Option(False, "--force", help="Overwrite the folder even if it changed too.")):
+    """Copy the volume's state to the checkout's .agents_hub (the old one kept as .agents_hub.prev)."""
+    raise typer.Exit(_state_sync_run("export", force))
+
+
+@state_app.command("import")
+def state_import(force: bool = typer.Option(False, "--force", help="Overwrite the volume even if it changed too.")):
+    """Copy the checkout's .agents_hub into the volume. Only with the hub stopped."""
+    raise typer.Exit(_state_sync_run("import", force))
+
+
+def _state_sync_run(command: str, force: bool) -> int:
+    from common import state_sync
+    return state_sync.main([command, "--force"] if force else [command, "--manual"])
 
 
 @db_app.command("status")
@@ -1324,10 +1352,35 @@ def _secrets_audit(action: str, workspace: str, name: str, agent: Optional[str],
 
 
 @secrets_app.command("keygen")
-def secrets_keygen():
-    """Print a fresh key for AGENTS_HUB_SECRET_KEY."""
+def secrets_keygen(
+    write: bool = typer.Option(False, "--write",
+                               help="Save the key to .env instead of printing it, when none is set yet."),
+    env_file: Optional[Path] = typer.Option(None, "--env-file",
+                                            help="The .env to write (default: the checkout's)."),
+):
+    """Print a fresh key for AGENTS_HUB_SECRET_KEY, or save it with --write."""
     from common.secrets import keygen
-    typer.echo(keygen())
+    if not write:
+        typer.echo(keygen())
+        return
+    from common.paths import PROJECT_ROOT
+    from cli.onboard.wizard import read_env, write_env
+    path = env_file or PROJECT_ROOT / ".env"
+    # Never replaced: stored secrets are encrypted under the key that is set,
+    # and a new one would leave every one of them unreadable.
+    if read_env(path).get("AGENTS_HUB_SECRET_KEY", "").strip():
+        console.print(f"[red]Error:[/red] AGENTS_HUB_SECRET_KEY is already set in {path}; "
+                      "replacing it would make the stored secrets unreadable.")
+        raise typer.Exit(1)
+    if os.environ.get("AGENTS_HUB_SECRET_KEY", "").strip():
+        console.print("[red]Error:[/red] AGENTS_HUB_SECRET_KEY is already set in the environment, "
+                      f"which wins over {path}.")
+        raise typer.Exit(1)
+    backup = write_env(path, PROJECT_ROOT / ".env.example",
+                       {"AGENTS_HUB_SECRET_KEY": keygen()}, fresh=False)
+    console.print(f"Saved AGENTS_HUB_SECRET_KEY to {path}"
+                  + (f" (backup: {backup.name})" if backup else "") + ".")
+    console.print("[dim]Restart the backend to use it.[/dim]")
 
 
 @secrets_app.command("list")

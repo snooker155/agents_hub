@@ -390,7 +390,11 @@ def main():
     if args.task_id:
         from common.agent_context import current_task_id
         current_task_id.set(str(args.task_id))
-        instruction = build_task_instruction(args.task_id, instruction, work_dir=ws)
+        from tasks.outcome import NON_GRADED_AGENTS
+        # Routing, splitting and review are not the work: they get the
+        # context without the note that tells a worker to make the files.
+        instruction = build_task_instruction(args.task_id, instruction, work_dir=ws,
+                                             worker=agent_id not in NON_GRADED_AGENTS)
 
     # A resume replays the checkpointed tool trail as the conversation before
     # this turn and asks the model to carry on; the instruction it was started

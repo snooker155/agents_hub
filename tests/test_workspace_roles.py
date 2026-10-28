@@ -118,7 +118,10 @@ def test_a_caller_naming_the_role_may_delegate_to_the_holder_only(two_workspaces
     from common.workspace_context import _workspace_ctx
     from tools.langchain_tools import _delegation_blocked
 
-    registry.add_agent(_spec("lead", tools=["run_agent_tool"], delegates=["@coder"]))
+    # The coder's default holder (swe_agent) has a shell, so a caller of
+    # @coder carries the guard's exception, as main-agent does.
+    registry.add_agent(_spec("lead", tools=["run_agent_tool"], delegates=["@coder"],
+                             capability_override=True))
     agent_token = current_agent_id.set("lead")
     ws_token = _workspace_ctx.set(WS)
     try:
@@ -195,21 +198,22 @@ def test_the_guard_sees_every_holder_of_a_role(two_workspaces):
 def test_a_binding_that_would_close_the_trifecta_for_a_caller_is_refused(two_workspaces):
     from workspace import get_workspace_metadata, update_workspace_metadata
 
-    # A caller that reads private data and delegates code work by role.
-    registry.add_agent(_spec("lead", tools=["read_file", "run_agent_tool"], delegates=["@coder"]))
+    # A caller that reads private data and delegates reviews by role (the
+    # reviewer's default holder has no shell, so the caller is fine as it is).
+    registry.add_agent(_spec("lead", tools=["read_file", "run_agent_tool"], delegates=["@reviewer"]))
     # A coder with a shell: ingest, private read and exfiltration in one tool,
     # saved under its own override, as an operator may.
     registry.add_agent(_spec("shell-coder", tools=["run_shell"], capability_override=True))
     allowed = list(get_workspace_metadata(WS).get("allowed_agents") or [])
     update_workspace_metadata(WS, {"allowed_agents": [*allowed, "shell-coder"]})
 
-    assert roles.binding_violations("coder", "shell-coder")
+    assert roles.binding_violations("reviewer", "shell-coder")
     with pytest.raises(roles.RoleError) as err:
-        roles.set_binding(WS, "coder", "shell-coder")
+        roles.set_binding(WS, "reviewer", "shell-coder")
     assert "lead" in str(err.value)
     assert roles.bindings(WS) == {}
     # The harmless one goes through.
-    roles.set_binding(WS, "coder", "claude-code")
+    roles.set_binding(WS, "reviewer", "claude-code")
 
 
 # ── the seed and an operator-edited system agent ─────────────────────────────
@@ -280,3 +284,11 @@ def test_the_roles_api(two_workspaces, client):
     assert client.put(f"/api/workspaces/{WS}/roles/janitor", json={"agent_id": "codex"}).status_code == 404
     assert client.put(f"/api/workspaces/{WS}/roles/coder", json={"agent_id": None}).status_code == 200
     assert roles.bindings(WS) == {}
+
+
+def test_the_prompt_names_only_the_role_tools_the_agent_has(two_workspaces):
+    spec = _spec("lead", delegates=["@coder"])
+    text = roles.prompt_section(spec, WS, ["run_agent_tool", "read_file"])
+    assert "(run_agent_tool)" in text
+    assert "delegate_task_tool" not in text and "assign_agent_tool" not in text
+    assert "delegate_task_tool" in roles.prompt_section(spec, WS)

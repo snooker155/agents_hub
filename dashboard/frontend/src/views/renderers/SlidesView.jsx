@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  ChevronLeft, ChevronRight, FileDown, LayoutGrid, Maximize2, Minimize2, Presentation, StickyNote,
+  ChevronLeft, ChevronRight, Download, FileText, LayoutGrid, Loader, Maximize2, Minimize2, Presentation, StickyNote,
 } from 'lucide-react';
 import { printHtml } from '../printView';
 import { exportViewPptx, viewAssetUrl } from '../../api';
@@ -72,6 +72,52 @@ const PRINT_CSS = `
   .slide-page:last-child { page-break-after: auto; break-after: auto; }
   .slide-page th, .slide-page td { border-width: 1px; }
 `;
+
+/**
+ * One Download button under the deck with the formats in a menu: two icon
+ * buttons of their own read as more deck controls (present, expand). It opens
+ * upward, into the card: the bar is the card's last line and the card clips.
+ */
+function DownloadMenu({ busy, onPdf, onPptx, t }) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  const pick = (fn) => { setOpen(false); fn(); };
+  const item = 'w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700';
+  return (
+    <div ref={boxRef} className="relative">
+      <button type="button" onClick={() => setOpen((v) => !v)} disabled={busy}
+        title={busy ? t('viewSlidesView.exporting') : t('viewSlidesView.download')}
+        aria-haspopup="menu" aria-expanded={open}
+        className="slides-bar-export inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50">
+        {busy ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+        <span className="slides-bar-label">{t('viewSlidesView.download')}</span>
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 bottom-full mb-1 z-30 min-w-[12rem] py-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg">
+          <button type="button" role="menuitem" onClick={() => pick(onPdf)} title={t('viewSlidesView.exportPdf')} className={item}>
+            <FileText className="w-4 h-4" /> {t('viewSlidesView.pdf')}
+          </button>
+          {onPptx && (
+            <button type="button" role="menuitem" onClick={() => pick(onPptx)} title={t('viewSlidesView.exportPptx')} className={item}>
+              <Presentation className="w-4 h-4" /> {t('viewSlidesView.pptx')}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function SlidesView({ view }) {
   const { t } = useI18n();
@@ -168,7 +214,9 @@ export default function SlidesView({ view }) {
       className={`flex flex-col h-full outline-none ${fullscreen ? 'bg-black' : ''}`}
       data-testid="slides-view"
     >
-      <div ref={frameRef} className={`flex-1 min-h-[240px] flex items-center justify-center ${fullscreen ? '' : 'p-3 bg-gray-100 dark:bg-gray-950'}`}>
+      {/* The floor only keeps a frame its host gives no height from folding
+          up; low enough that a small deck (a chat reply) is not letterboxed. */}
+      <div ref={frameRef} className={`flex-1 min-h-[120px] flex items-center justify-center ${fullscreen ? '' : 'p-3 bg-gray-100 dark:bg-gray-950'}`}>
         <div className={fullscreen ? '' : 'shadow-md rounded-sm overflow-hidden'} data-testid="slide-stage">
           <Scaled scale={fullscreen ? scale : Math.max(0.1, scale * 0.98)}>{stageFor(slide, cur)}</Scaled>
         </div>
@@ -183,7 +231,7 @@ export default function SlidesView({ view }) {
       )}
 
       {thumbs && !fullscreen && (
-        <div className="flex gap-2 overflow-x-auto px-3 py-2 border-t border-gray-200 dark:border-gray-700" data-testid="slide-thumbs">
+        <div data-view-chrome="" className="flex gap-2 overflow-x-auto px-3 py-2 border-t border-gray-200 dark:border-gray-700" data-testid="slide-thumbs">
           {slides.map((s, i) => (
             <button
               key={s.id}
@@ -200,44 +248,47 @@ export default function SlidesView({ view }) {
         </div>
       )}
 
-      <div className={`flex items-center gap-2 px-3 py-2 border-t ${fullscreen ? 'border-gray-800 bg-black/80' : 'border-gray-200 dark:border-gray-700'}`}>
-        <button type="button" onClick={() => go(-1)} disabled={cur === 0} className={btn} aria-label={t('viewSlidesView.prev')}>
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <span className="text-xs text-gray-500 tabular-nums min-w-[3.5rem] text-center" data-testid="slide-counter">{cur + 1} / {n}</span>
-        <button type="button" onClick={() => go(1)} disabled={cur === n - 1} className={btn} aria-label={t('viewSlidesView.next')}>
-          <ChevronRight className="w-4 h-4" />
-        </button>
-        <div className="flex-1 h-1 rounded bg-gray-200 dark:bg-gray-800 overflow-hidden mx-1">
-          <div className="h-full" style={{ width: `${((cur + 1) / n) * 100}%`, background: theme.accent }} />
-        </div>
-        {!fullscreen && (
-          <button type="button" onClick={() => setThumbs((v) => !v)} className={toggleBtn(thumbs)} title={t('viewSlidesView.thumbnails')} aria-pressed={thumbs}>
-            <LayoutGrid className="w-4 h-4" />
+      {/* One line however narrow the card: in a narrow one (a deck in a chat
+          reply) the row tightens and the export buttons drop their labels
+          (index.css, .slides-bar). */}
+      <div data-view-chrome="" className={`slides-bar border-t ${fullscreen ? 'border-gray-800 bg-black/80' : 'border-gray-200 dark:border-gray-700'}`}>
+        <div className="slides-bar-row flex items-center gap-1.5 px-3 py-2">
+          <button type="button" onClick={() => go(-1)} disabled={cur === 0} className={btn} aria-label={t('viewSlidesView.prev')}>
+            <ChevronLeft className="w-4 h-4" />
           </button>
-        )}
-        {hasNotes && (
-          <button type="button" onClick={() => setNotes((v) => !v)} className={toggleBtn(notes)} title={t('viewSlidesView.notes')} aria-pressed={notes}>
-            <StickyNote className="w-4 h-4" />
+          <span className="slides-bar-counter text-xs text-gray-500 tabular-nums min-w-[3.5rem] text-center" data-testid="slide-counter">{cur + 1} / {n}</span>
+          <button type="button" onClick={() => go(1)} disabled={cur === n - 1} className={btn} aria-label={t('viewSlidesView.next')}>
+            <ChevronRight className="w-4 h-4" />
           </button>
-        )}
-        <button type="button" onClick={toggleFullscreen} className={btn} title={fullscreen ? t('viewSlidesView.exitPresent') : t('viewSlidesView.present')}>
-          {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-        </button>
-        {!fullscreen && (
-          <>
-            <button type="button" onClick={() => setPrinting(true)} disabled={printing} title={t('viewSlidesView.exportPdf')}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50">
-              <FileDown className="w-3.5 h-3.5" /> {t('viewSlidesView.pdf')}
+          {/* How far the talk has got: for presenting only, the card has the
+              counter. The empty spacer keeps the buttons on the right. */}
+          {fullscreen ? (
+            <div className="flex-1 h-1 rounded bg-gray-200 dark:bg-gray-800 overflow-hidden mx-1">
+              <div className="h-full" style={{ width: `${((cur + 1) / n) * 100}%`, background: theme.accent }} />
+            </div>
+          ) : <div className="flex-1" />}
+          {!fullscreen && (
+            <button type="button" onClick={() => setThumbs((v) => !v)} className={toggleBtn(thumbs)} title={t('viewSlidesView.thumbnails')} aria-pressed={thumbs}>
+              <LayoutGrid className="w-4 h-4" />
             </button>
-            {view?.view_id && (
-              <button type="button" onClick={exportPptx} disabled={busy} title={t('viewSlidesView.exportPptx')}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50">
-                <Presentation className="w-3.5 h-3.5" /> {busy ? t('viewSlidesView.exporting') : t('viewSlidesView.pptx')}
-              </button>
-            )}
-          </>
-        )}
+          )}
+          {hasNotes && (
+            <button type="button" onClick={() => setNotes((v) => !v)} className={toggleBtn(notes)} title={t('viewSlidesView.notes')} aria-pressed={notes}>
+              <StickyNote className="w-4 h-4" />
+            </button>
+          )}
+          <button type="button" onClick={toggleFullscreen} className={btn} title={fullscreen ? t('viewSlidesView.exitPresent') : t('viewSlidesView.present')}>
+            {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+          {!fullscreen && (
+            <DownloadMenu
+              busy={printing || busy}
+              onPdf={() => setPrinting(true)}
+              onPptx={view?.view_id ? exportPptx : null}
+              t={t}
+            />
+          )}
+        </div>
       </div>
       {error && <div className="px-3 pb-2 text-xs text-red-600" role="alert">{error}</div>}
 

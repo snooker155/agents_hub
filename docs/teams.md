@@ -36,8 +36,8 @@ resume a member whose message for that round is already on the board is not
 re-run or re-billed. The leader's decision call and the synthesis call are not
 deduplicated, so a resumed round re-asks the leader.
 
-A team started from chat runs inside the API process (it streams the board live)
-but now beats a heartbeat too. A team run claims its task as executor kind `team`.
+A team started from chat runs inside the backend process (it streams the board live)
+but beats a heartbeat too. A team run makes no task of its own; one on a task claims it as executor kind `team`.
 `GET /api/teams/runs/{id}` includes `has_checkpoint`, `host`, `heartbeat_at`,
 `resume_attempts`, `pid`, `log_file`.
 

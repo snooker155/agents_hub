@@ -1,21 +1,33 @@
-import { updateAgentClarifyGate, updateAgentReasoning, updateAgentResponseFormat, updateAgentSelfDelegation } from '../../api';
+import { updateAgentClarifyGate, updateAgentReasoning, updateAgentResponseFormat, updateAgentSelfDelegation, updateAgentStreaming } from '../../api';
 import SystemAgentWarning from './SystemAgentWarning';
 import AgentSecretsCard from './AgentSecretsCard';
 import AgentWebDomainsCard from './AgentWebDomainsCard';
 import AgentConsentCard from './AgentConsentCard';
 import AgentOutcomeCard from './AgentOutcomeCard';
-import { BrainCircuit, HelpCircle, Layers, MessageSquare, Repeat } from 'lucide-react';
+import { Fragment, useEffect, useState } from 'react';
+import { BrainCircuit, HelpCircle, Layers, MessageSquare, Radio, Repeat } from 'lucide-react';
 import { useAgentPage } from './context';
 
+// Put elements into a translated string at its {{name}} slots.
+const withSlots = (text, slots) => String(text).split(/(\{\{\w+\}\})/).map((part, i) => {
+  const name = part.match(/^\{\{(\w+)\}\}$/)?.[1];
+  return name && name in slots ? <Fragment key={i}>{slots[name]}</Fragment> : part;
+});
+
 /** How the agent thinks and answers (reasoning, clarification gate,
- * self-delegation, response format) and the secrets a run may receive. */
+ * self-delegation, streaming, response format) and the secrets a run may receive. */
 export default function BehaviorTab() {
   const {
-    PLAN_FORMATS, THINKING_LEVELS, THINK_MODES, agent, clarifyGate, clarifyGateSaving, id,
+    PLAN_FORMATS, THINK_MODES, agent, clarifyGate, clarifyGateSaving, id,
     reasoningSettings, responseFormat, responseFormatSaving, selfDelegation, selfDelegationSaving,
-    setClarifyGate, setClarifyGateSaving, setReasoningSettings, setResponseFormat,
+    setActiveTab, setClarifyGate, setClarifyGateSaving, setReasoningSettings, setResponseFormat,
     setResponseFormatSaving, setSelfDelegation, setSelfDelegationSaving, t,
   } = useAgentPage();
+  // Kept here rather than on the page: nothing else on it reads the flag.
+  const [streaming, setStreaming] = useState(!!agent?.streaming);
+  const [streamingSaving, setStreamingSaving] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- follows the record when the page reloads it
+  useEffect(() => { setStreaming(!!agent?.streaming); }, [agent?.streaming]);
   return (
         <div className="space-y-6">
           {agent.system && <SystemAgentWarning scope="tools" />}
@@ -31,25 +43,19 @@ export default function BehaviorTab() {
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Think card */}
+              {/* Think card: the think scratchpad tool. How much the model
+                  itself reasons (effort) is a model setting, on the Model tab. */}
               {(() => {
-                const thinkToolOn = reasoningSettings.thinkEnabled;
-                const nativeOn = (reasoningSettings.thinkingLevel || 'off') !== 'off';
-                // Enable/disable applies to the whole Think block (native + tool).
-                const blockEnabled = nativeOn || thinkToolOn;
+                const enabled = reasoningSettings.thinkEnabled;
 
                 // Persist a partial reasoning change (state + server) in one place.
                 const patchReasoning = (patch) => {
                   setReasoningSettings({ ...reasoningSettings, ...patch });
                   const payload = {};
-                  if ('thinkingLevel' in patch) payload.thinking_level = patch.thinkingLevel;
                   if ('thinkEnabled' in patch) payload.think_enabled = patch.thinkEnabled;
                   if ('thinkMode' in patch) payload.think_mode = patch.thinkMode;
                   updateAgentReasoning(id, payload).catch(() => {});
                 };
-
-                // Tool segmented switcher: an "Off" segment plus the depth modes.
-                const toolSegments = [{ value: 'off', label: t('agentDetails.off'), desc: t('agentDetails.noScratchpadTool') }, ...THINK_MODES];
 
                 const segBtn = (selected, onClick, label, desc) => (
                   <button
@@ -66,68 +72,49 @@ export default function BehaviorTab() {
                 );
 
                 return (
-                  <div className={`rounded-xl border-2 p-4 transition-colors ${blockEnabled ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <div className={`rounded-xl border-2 p-4 transition-colors ${enabled ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-gray-50'}`}>
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div className="flex items-center gap-2">
-                        <div className={`p-2 rounded-lg ${blockEnabled ? 'bg-violet-100' : 'bg-gray-200'}`}>
-                          <BrainCircuit className={`w-4 h-4 ${blockEnabled ? 'text-violet-600' : 'text-gray-400'}`} />
+                        <div className={`p-2 rounded-lg ${enabled ? 'bg-violet-100' : 'bg-gray-200'}`}>
+                          <BrainCircuit className={`w-4 h-4 ${enabled ? 'text-violet-600' : 'text-gray-400'}`} />
                         </div>
                         <div>
                           <div className="font-semibold text-gray-900 text-sm">{t('agentDetails.think')}</div>
                           <div className="text-xs text-gray-500">{t('agentDetails.thinkBlockHint')}</div>
                         </div>
                       </div>
-                      {/* Enable/disable the whole block: turns both native
-                          thinking and the scratchpad tool off. */}
                       <button
                         type="button"
-                        onClick={() => blockEnabled
-                          ? patchReasoning({ thinkingLevel: 'off', thinkEnabled: false })
-                          : patchReasoning({ thinkingLevel: 'medium' })}
+                        onClick={() => patchReasoning({ thinkEnabled: !enabled })}
                         className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 ${
-                          blockEnabled ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-300'
+                          enabled ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {blockEnabled ? 'Enabled' : 'Disabled'}
+                        {enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600 mb-3">
-                      <span className="font-medium">{t('agentDetails.nativeThinking')}</span> is a model parameter — how much the model reasons on its
-                      own. The <span className="font-medium">{t('agentDetails.thinkTool')}</span> is a separate scratchpad the agent can call; pick its
-                      depth or turn it off.
+                      {withSlots(t('agentDetails.thinkExplain'), {
+                        tool: <span className="font-medium">{t('agentDetails.thinkTool')}</span>,
+                        model: (
+                          <button type="button" onClick={() => setActiveTab('model')}
+                            className="font-medium text-violet-700 hover:underline">
+                            {t('agentDetails.thinkModelTab')}
+                          </button>
+                        ),
+                      })}
                     </p>
 
-                    {blockEnabled && (
-                      <div className="grid grid-cols-2 gap-3">
-                        {/* Native thinking column */}
-                        <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">{t('agentDetails.nativeThinking')}</label>
-                          <div className="flex rounded-lg border border-gray-300 overflow-hidden bg-white">
-                            {THINKING_LEVELS.filter(m => m.value !== 'off').map(m =>
-                              segBtn(
-                                reasoningSettings.thinkingLevel === m.value,
-                                () => patchReasoning({ thinkingLevel: m.value }),
-                                m.label,
-                                m.desc,
-                              )
-                            )}
-                          </div>
-                        </div>
-                        {/* Think tool column */}
-                        <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">{t('agentDetails.thinkTool2')}</label>
-                          <div className="flex rounded-lg border border-gray-300 overflow-hidden bg-white">
-                            {toolSegments.map(m =>
-                              m.value === 'off'
-                                ? segBtn(!thinkToolOn, () => patchReasoning({ thinkEnabled: false }), m.label, m.desc)
-                                : segBtn(
-                                    thinkToolOn && reasoningSettings.thinkMode === m.value,
-                                    () => patchReasoning({ thinkEnabled: true, thinkMode: m.value }),
-                                    m.label,
-                                    m.desc,
-                                  )
-                            )}
-                          </div>
+                    {enabled && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">{t('agentDetails.thinkTool2')}</label>
+                        <div className="flex rounded-lg border border-gray-300 overflow-hidden bg-white">
+                          {THINK_MODES.map(m => segBtn(
+                            reasoningSettings.thinkMode === m.value,
+                            () => patchReasoning({ thinkMode: m.value }),
+                            m.label,
+                            m.desc,
+                          ))}
                         </div>
                       </div>
                     )}
@@ -165,7 +152,7 @@ export default function BehaviorTab() {
                           enabled ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {enabled ? 'Enabled' : 'Disabled'}
+                        {enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600 mb-3">
@@ -225,11 +212,11 @@ export default function BehaviorTab() {
                           enabled ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {enabled ? 'Enabled' : 'Disabled'}
+                        {enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600">
-                      When the agent lacks key information, it asks a few clarifying questions and waits instead of guessing. In a task it pauses (awaiting input) until you answer; in chat it asks and continues once you reply.
+                      {t('agentDetails.clarifyExplain')}
                     </p>
                   </div>
                 );
@@ -267,15 +254,54 @@ export default function BehaviorTab() {
                           enabled ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {enabled ? 'Enabled' : 'Disabled'}
+                        {enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600">
-                      Allows the agent to target its own id in <code>{t('agentDetails.runAgentTool')}</code> / <code>{t('agentDetails.assignAgentTool')}</code>. Off by default because a self-run recurses the same agent. Enable only for agents meant to hand a sub-goal back to themselves, and keep an eye on runaway loops.
+                      {withSlots(t('agentDetails.selfDelegationExplain'), {
+                        run: <code>{t('agentDetails.runAgentTool')}</code>,
+                        assign: <code>{t('agentDetails.assignAgentTool')}</code>,
+                      })}
                     </p>
                   </div>
                 );
               })()}
+
+              {/* Streaming card: on forces token streaming in background runs,
+                  off leaves it to the global switch in Settings. */}
+              <div className={`rounded-xl border-2 p-4 transition-colors ${streaming ? 'border-indigo-300 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className={`p-2 rounded-lg ${streaming ? 'bg-indigo-100' : 'bg-gray-200'}`}>
+                      <Radio className={`w-4 h-4 ${streaming ? 'text-indigo-600' : 'text-gray-400'}`} />
+                    </div>
+                    <div>
+                      <div className="font-semibold text-gray-900 text-sm">{t('agentDetails.streamingTitle')}</div>
+                      <div className="text-xs text-gray-500">{t('agentDetails.streamingSubtitle')}</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={streamingSaving}
+                    onClick={() => {
+                      const next = !streaming;
+                      const prev = streaming;
+                      setStreaming(next);
+                      setStreamingSaving(true);
+                      updateAgentStreaming(id, next)
+                        .then((r) => setStreaming(!!r.data?.streaming))
+                        .catch(() => setStreaming(prev))
+                        .finally(() => setStreamingSaving(false));
+                    }}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 disabled:opacity-50 ${
+                      streaming ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-500 border-gray-300'
+                    }`}
+                  >
+                    {streaming ? t('agentDetails.streamingAlways') : t('agentDetails.streamingFollow')}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-600">{t('agentDetails.streamingExplain')}</p>
+              </div>
             </div>
           </div>
 
@@ -329,8 +355,10 @@ export default function BehaviorTab() {
             </div>
           </div>
 
-          {/* The secret names a run of this agent may receive (docs/secrets.md). */}
-          <AgentSecretsCard agentId={id} readOnly={Boolean(agent.system)} />
+          {/* The secret names a run of this agent may receive (docs/secrets.md).
+              A system agent may declare them too: one declaration for every
+              workspace, the value falling back to the default workspace's. */}
+          <AgentSecretsCard agentId={id} system={Boolean(agent.system)} />
 
           {/* The hosts web_search, fetch_url and the browser may reach (tools/web.py). */}
           <AgentWebDomainsCard agentId={id} readOnly={Boolean(agent.system)} />

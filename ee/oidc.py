@@ -79,6 +79,12 @@ def issuer() -> str:
     return (getattr(_settings(), "auth_oidc_issuer", "") or "").strip().rstrip("/")
 
 
+def internal_url() -> str:
+    """Where the hub's own server-to-server calls reach the provider, when that
+    differs from the public issuer (a Keycloak on the compose network)."""
+    return (getattr(_settings(), "auth_oidc_internal_url", "") or "").strip().rstrip("/")
+
+
 def client_id() -> str:
     return (getattr(_settings(), "auth_oidc_client_id", "") or "").strip()
 
@@ -136,6 +142,39 @@ def _http_post_form(url: str, data: Dict[str, str],
             return {"error": f"http_{exc.code}"}
 
 
+# ── public vs internal address ───────────────────────────────────────────────
+#
+# A provider inside the compose stack is reached by browsers at its public URL
+# (the issuer) and by the hub at an internal one. Only the origin differs, so
+# the swap is by origin and keeps path and query. Browser-facing URLs always
+# end up public, server-to-server ones always internal.
+
+def _origin(url: str) -> str:
+    parts = urllib.parse.urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}".lower() if parts.scheme and parts.netloc else ""
+
+
+def _swap_origin(url: str, source: str, target: str) -> str:
+    if not url or not source or not target or _origin(url) != _origin(source):
+        return url
+    parts = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit(
+        urllib.parse.urlsplit(target)._replace(path=parts.path, query=parts.query,
+                                               fragment=parts.fragment))
+
+
+def _to_internal(url: str) -> str:
+    """The address the hub itself should call for a URL on the public origin."""
+    internal = internal_url()
+    return _swap_origin(url, issuer(), internal) if internal else url
+
+
+def _to_public(url: str) -> str:
+    """The address a browser should be sent to for a URL on the internal origin."""
+    internal = internal_url()
+    return _swap_origin(url, internal, issuer()) if internal else url
+
+
 # ── discovery and keys ───────────────────────────────────────────────────────
 
 def discovery(force: bool = False) -> Dict[str, Any]:
@@ -144,10 +183,18 @@ def discovery(force: bool = False) -> Dict[str, Any]:
     cached = _discovery_cache.get(iss)
     if cached and not force and time.time() - cached[0] < DISCOVERY_TTL_SECONDS:
         return cached[1]
-    doc = _http_get_json(f"{iss}/.well-known/openid-configuration")
+    doc = _http_get_json(_to_internal(f"{iss}/.well-known/openid-configuration"))
     for key in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
         if not doc.get(key):
             raise OidcError("provider_unreachable", f"discovery document lacks {key}")
+    if internal_url():
+        # Asked at the internal address, a provider without a fixed hostname
+        # may describe itself there. Tokens carry the public issuer and the
+        # browser cannot reach the internal host, so put those back.
+        doc = dict(doc)
+        for key in ("issuer", "authorization_endpoint", "end_session_endpoint"):
+            if isinstance(doc.get(key), str):
+                doc[key] = _to_public(doc[key])
     _discovery_cache[iss] = (time.time(), doc)
     return doc
 
@@ -158,7 +205,7 @@ def jwks(force: bool = False) -> Dict[str, Any]:
     cached = _jwks_cache.get(uri)
     if cached and not force and time.time() - cached[0] < DISCOVERY_TTL_SECONDS:
         return cached[1]
-    keys = _http_get_json(uri)
+    keys = _http_get_json(_to_internal(uri))
     _jwks_cache[uri] = (time.time(), keys)
     return keys
 
@@ -243,7 +290,7 @@ def exchange_code(request, code: str, verifier: str) -> Dict[str, Any]:
             headers["Authorization"] = "Basic " + base64.b64encode(
                 pair.encode("utf-8")).decode("ascii")
     try:
-        tokens = _http_post_form(doc["token_endpoint"], data, headers)
+        tokens = _http_post_form(_to_internal(doc["token_endpoint"]), data, headers)
     except Exception as exc:  # noqa: BLE001 - the provider's HTTP/network failure modes vary; converted to OidcError below
         log.debug("token endpoint exchange failed", exc_info=True)
         raise OidcError("exchange_failed", f"token endpoint unreachable: {exc}")
@@ -420,6 +467,6 @@ __all__ = [
     "CLOCK_SKEW_SECONDS", "OidcError", "STATE_COOKIE", "STATE_COOKIE_PATH",
     "STATE_TTL_SECONDS", "begin", "claim_at", "client_id", "complete", "cookie_secure",
     "discovery", "enabled", "exchange_code", "groups_from_claims", "groups_overage", "identity_from_claims",
-    "issuer", "jwks", "public_url", "read_state", "redirect_uri", "reset_caches",
+    "internal_url", "issuer", "jwks", "public_url", "read_state", "redirect_uri", "reset_caches",
     "safe_next", "sign_state", "sync_groups", "verify_id_token",
 ]

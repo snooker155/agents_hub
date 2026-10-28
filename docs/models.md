@@ -20,6 +20,64 @@ Resolution order, most specific first:
 An agent with nothing pinned inherits, which is usually what you want: change
 the workspace default and the whole workspace moves.
 
+A workspace with a [model policy](#model-policy-per-workspace) narrows all of
+this to the models the policy allows.
+
+## Model policy per workspace
+
+An administrator can fix which models a workspace runs, and with what
+settings, so that its members cannot change them. It is set on the
+workspace's page (Settings tab), or with
+`PUT /api/workspaces/{name}/model-policy`:
+
+```json
+{"models": ["openai/gpt-5", "anthropic/claude-sonnet-5-5"],
+ "default": "openai/gpt-5",
+ "temperature": 0.2, "effort": "medium", "max_tokens": 8000}
+```
+
+`models` are enabled catalog models; `default` must be one of them (the first
+when left out). `temperature`, `effort` and `max_tokens` are optional. An
+empty `models` list removes the policy. In `multi` mode only an administrator
+writes it, owner or not; every member reads it (`GET` on the same path, and
+`policy` in `GET /api/workspaces/{name}/model`).
+
+With a policy in place:
+
+- the workspace's default model is the policy's, and the workspace default
+  route refuses to change it;
+- the header's model picker offers only the policy's models; the global
+  default is not one of them;
+- an agent's own model may be set only to an allowed model of its workspace
+  (and of the workspace the page is on);
+- a model switch sent to a running run, an agent's fallback models, the
+  advisor and a delegation with a named model pick only among the allowed
+  models (`tools/delegation.py` `enabled_models`, `resolve_model`);
+- at run time, a model that is not allowed (an agent pinned before the policy,
+  a shared or system agent pinned for another workspace) runs on the policy's
+  default instead, with that provider's own endpoint and key
+  (`agents/agent_factory.py`);
+- `temperature`, `effort` and `max_tokens`, when set, beat the agent's own
+  values and the header's effort.
+
+A policy of one model makes that model the workspace's global model: its
+default, the only choice in the header, and the only model any agent there
+runs on.
+
+The policy also makes the workspace's [special models](special-models.md)
+(images, video, speech, transcription and its own models) the
+administrator's to set: members see them read-only. Send
+`"lock_special_models": false` to leave them to the members.
+
+A member's personal workspace with no policy of its own follows the `default`
+workspace's (`inherited_from: "default"` in the answer), so working in one's
+own workspace does not step around the hub's policy. An administrator can
+give a personal workspace a policy of its own, which then applies instead.
+
+Setting a policy clears the header's choice when the policy does not allow
+it. The model catalog itself (which models are enabled, their prices,
+temperatures and efforts) is the administrator's to change in `multi` mode.
+
 ## A first key switches on a model
 
 Saving a provider key (Settings, the welcome window, or the assistant's
@@ -75,29 +133,52 @@ There is no workspace level.
 Some models refuse a temperature. OpenAI's reasoning models take none at all
 while they reason, so the field is disabled for gpt-5, gpt-5-mini, gpt-5-nano
 and the o-series. gpt-5.1 and later take one only at reasoning effort `none`,
-which is what an agent with thinking off sends them (below), so for those it
-applies only while thinking is off. Claude takes none while it thinks either.
+so for those it applies only at that effort. Claude takes none while it thinks
+either.
 
-## Reasoning
+## Reasoning effort
 
-The Reasoning column shows two things per model: the effort the provider applies
-when a request names none, and what the hub sends when an agent's thinking
-level is off. They differ because OpenAI's reasoning models keep reasoning when
-nothing is asked for, billed and invisible:
+How much a model reasons before it answers is a model setting, like the
+temperature. Resolution, most specific first:
 
-| Family | Provider default | Sent for off |
-|---|---|---|
-| gpt-5, gpt-5-mini, gpt-5-nano | medium | minimal |
-| gpt-5.1 to gpt-5.4 | none | none |
-| gpt-5.5, gpt-5.6 | medium | none |
-| o1, o3, o4 | medium | low (cannot go lower) |
-| gpt-5-pro | high | nothing (cannot go lower) |
-| Claude | off | nothing |
+1. the agent's own effort (its Model tab)
+2. the effort chosen in the header's model picker for the workspace, for agents
+   that inherit the model too (an agent with a model of its own skips it)
+3. the model's effort on this page (the Reasoning effort column)
+4. the provider's default, sent explicitly so the reasoning summary is asked for
 
-The table was measured against the API (`providers/reasoning_profile.py`);
-providers without one show a dash. A call that never chose a level, such as a
-chat title or an eval judge, sends nothing and keeps the provider default. For
-what a positive level shows in the chat, see [agents](agents.md).
+The header's choice is stored apart from the model (`model_effort` in the
+workspace record), so it outlives a model switch. A personal workspace that
+chose none takes `default`'s.
+
+What a value may be depends on the model, so every picker offers only the
+efforts that model accepts, and a value carried over from another model is
+clamped: to the nearest accepted effort below, else the model's lowest. `off`
+is the model's lowest (OpenAI reasoning models never stop reasoning when
+nothing is sent; they fall back to their default, billed and invisible):
+
+| Family | Efforts | Provider default | Off sends |
+|---|---|---|---|
+| gpt-5, gpt-5-mini, gpt-5-nano | minimal, low, medium, high | medium | minimal |
+| gpt-5.1 | none, low, medium, high | none | none |
+| gpt-5.2 to gpt-5.4 | none to xhigh | none | none |
+| gpt-5.5, gpt-5.6, gpt-6 | none to xhigh | medium | none |
+| o1, o3, o4 | low, medium, high | medium | low |
+| gpt-5-pro | high | high | nothing |
+| Claude Opus 5.5 | low to max | medium | low (thinking cannot stop) |
+| Claude Opus 5, Sonnet 5, Sonnet 5.5, Fable | low to max | high | low |
+| Claude Opus 4.7, 4.8 | off, low to max | off | nothing |
+| Claude Opus 4.6, Sonnet 4.6 | off, low, medium, high, max | off | nothing |
+| Older Claude (Haiku 4.5) | off, low, medium, high (token budget) | off | nothing |
+| Ollama reasoning families, LM Studio, custom backends | off, low, medium, high | off | nothing |
+
+Claude gets the effort as `output_config.effort` with adaptive thinking; older
+Claude models think on a token budget sized from it. The OpenAI defaults were
+measured against the API (`providers/reasoning_profile.py`); gpt-6 is assumed
+to behave like gpt-5.6 until measured. Google models take no effort and show a
+dash. A call that never chose an effort, such as a chat title or an eval
+judge, sends nothing and keeps the provider default. For what a reasoning
+model shows in the chat, see [agents](agents.md).
 
 ## Providers
 

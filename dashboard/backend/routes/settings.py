@@ -169,6 +169,10 @@ class SettingsResponse(BaseModel):
     # and whether a per-agent override needs a no-network container to count.
     capability_guard: str
     capability_override_requires_container: bool
+    # The egress proxy (environments/egress.py): whether it is on in .env, and
+    # whether this backend process is listening right now.
+    egress_proxy: bool = False
+    egress_proxy_running: bool = False
     # Web search (tools/web.py): the provider behind ``web_search`` and its
     # key, and the backend a search would actually use now: the setting, or
     # with none set a model provider (Anthropic, OpenAI) searching on its own
@@ -238,6 +242,7 @@ _FIELD_TO_ENV = {
     "code_runner_provider": "CODE_RUNNER_PROVIDER",
     "code_runner_fallback": "CODE_RUNNER_FALLBACK",
     "capability_override_requires_container": "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER",
+    "egress_proxy": "AGENTS_HUB_EGRESS_PROXY",
     "web_search_provider": "WEB_SEARCH_PROVIDER",
     "web_search_api_key": "WEB_SEARCH_API_KEY",
     "web_search_max_results": "WEB_SEARCH_MAX_RESULTS",
@@ -297,6 +302,16 @@ def _override_requires_container() -> bool:
     return override_requires_container()
 
 
+def _egress_enabled() -> bool:
+    from environments import egress
+    return egress.enabled()
+
+
+def _egress_running() -> bool:
+    from environments import egress
+    return egress.running() is not None
+
+
 @router.get("", response_model=SettingsResponse)
 async def get_settings():
     """Return current settings (API keys are masked)."""
@@ -348,6 +363,8 @@ async def get_settings():
         agent_streaming=_as_bool(env.get("AGENT_STREAMING")),
         capability_guard=_guard_mode(),
         capability_override_requires_container=_override_requires_container(),
+        egress_proxy=_egress_enabled(),
+        egress_proxy_running=_egress_running(),
         web_search_provider=(env.get("WEB_SEARCH_PROVIDER") or _cfg.web_search_provider or "").strip().lower(),
         # Empty when no key is set, so the page can tell "not configured"
         # from "configured": _mask_key masks an empty key like a short one.
@@ -412,6 +429,7 @@ class SettingsUpdate(BaseModel):
     agent_streaming: Optional[bool] = None
     capability_guard: Optional[str] = None
     capability_override_requires_container: Optional[bool] = None
+    egress_proxy: Optional[bool] = None
     web_search_provider: Optional[str] = None
     web_search_api_key: Optional[str] = None
     web_search_max_results: Optional[int] = None
@@ -482,6 +500,8 @@ async def update_settings(data: SettingsUpdate):
         updates["capability_override_requires_container"] = (
             "true" if updates["capability_override_requires_container"] else "false"
         )
+    if "egress_proxy" in updates:
+        updates["egress_proxy"] = "1" if updates["egress_proxy"] else "0"
     for field, value in updates.items():
         env_key = _FIELD_TO_ENV.get(field)
         if env_key:
@@ -517,6 +537,19 @@ async def update_settings(data: SettingsUpdate):
         except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
             log.debug("update_settings: best-effort step failed", exc_info=True)
     out = {"ok": True, "updated": list(updates.keys())}
+    if "egress_proxy" in updates:
+        # The proxy is a listener of this process (started at boot when on), so
+        # the switch starts or stops it here too. Workers start theirs at boot.
+        from environments import egress
+        try:
+            if updates["egress_proxy"] == "1":
+                egress.start_background()
+            else:
+                egress.stop_background()
+        except Exception as exc:  # noqa: BLE001 - the setting is saved; the page shows why it is not listening
+            log.warning("egress proxy switch: %s", exc)
+            out["egress_proxy_error"] = str(exc)
+        out["egress_proxy_running"] = egress.running() is not None
     # A first key for a provider switches on one default model with its catalog
     # price, so the first run works without a trip to the Models page.
     from common import default_model
@@ -847,3 +880,26 @@ async def set_active_workspace(data: WorkspaceContextUpdate):
     except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
         log.debug("set_active_workspace: best-effort step failed", exc_info=True)
     return {"workspace": ws}
+
+
+# ── Sidebar rows hidden from members (common/member_menu.py) ─────────────────
+
+@router.get("/member-menu")
+async def get_member_menu():
+    """The rows members of a multi-user hub do not see, and the default list."""
+    from common import member_menu
+    return {"hidden": member_menu.hidden(), "default": list(member_menu.DEFAULT_HIDDEN),
+            "is_default": member_menu.is_default()}
+
+
+@router.put("/member-menu")
+async def set_member_menu(payload: dict):
+    """Save the rows hidden from members (an administrator's write in ``multi``
+    mode). ``{"hidden": null}`` goes back to the default list."""
+    from common import member_menu
+    paths = payload.get("hidden") if isinstance(payload, dict) else None
+    if paths is not None and not isinstance(paths, list):
+        raise HTTPException(status_code=400, detail="hidden must be a list of paths or null")
+    hidden = member_menu.set_hidden(paths)
+    return {"hidden": hidden, "default": list(member_menu.DEFAULT_HIDDEN),
+            "is_default": paths is None}

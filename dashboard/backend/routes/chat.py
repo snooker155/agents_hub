@@ -21,7 +21,7 @@ import logging
 import uuid
 from typing import cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 # Strong references to in-flight background pump tasks. asyncio keeps only weak
@@ -31,6 +31,7 @@ from fastapi.responses import StreamingResponse
 _PUMP_TASKS: set[asyncio.Task] = set()
 
 from models import ChatRequest
+from common.record_access import require_chat_target
 
 from chat.pipelines import run_chat_pipeline, run_chat_flow_pipeline, run_chat_team_pipeline
 from chat.send import send_chat_message, ChatSendError
@@ -40,14 +41,24 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
+def _check_target(http: Request, request: ChatRequest) -> None:
+    """The caller may run a turn in the request's workspace, against an
+    agent, flow or team that lives there (common/record_access.py)."""
+    require_chat_target(http, workspace=getattr(request, "workspace", None),
+                        agent_id=getattr(request, "agent_id", None),
+                        flow_id=getattr(request, "flow_id", None),
+                        team_id=getattr(request, "team_id", None))
+
+
 @router.post("/message")
-async def send_message(request: ChatRequest):
+async def send_message(request: ChatRequest, http: Request = cast(Request, None)):
     """Send a message to an agent and get a response.
 
     The turn itself lives in :func:`chat.send.send_chat_message`, so the
     terminal client runs the identical orchestration; this maps its failures
     onto HTTP.
     """
+    _check_target(http, request)
     try:
         return await send_chat_message(request)
     except ChatSendError as e:
@@ -70,8 +81,9 @@ def _pipeline_for(request: ChatRequest):
 
 
 @router.post("/stream")
-async def stream_message(request: ChatRequest):
+async def stream_message(request: ChatRequest, http: Request = cast(Request, None)):
     """Stream chat response tokens and execution events (SSE)."""
+    _check_target(http, request)
     pipeline = _pipeline_for(request)
 
     async def event_stream():
@@ -82,7 +94,7 @@ async def stream_message(request: ChatRequest):
 
 
 @router.post("/stream-sse")
-async def stream_message_sse(request: ChatRequest):
+async def stream_message_sse(request: ChatRequest, http: Request = cast(Request, None)):
     """Run a chat turn and deliver its events over the browser's single existing
     multiplexed SSE connection (/api/stream) instead of a dedicated streaming
     response.
@@ -107,6 +119,7 @@ async def stream_message_sse(request: ChatRequest):
     from chat.broadcast import channel_for
     from common.session_broker import broker
 
+    _check_target(http, request)
     conv = request.conversation_id or str(uuid.uuid4())
     request.conversation_id = conv
     channel = cast(str, channel_for(conv))  # conv is never empty here

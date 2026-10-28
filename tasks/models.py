@@ -54,7 +54,11 @@ class Actor(str, Enum):
 # (subprocess mode), or ``reviewing`` (assigning code_reviewer) — this is how
 # a blocked, resolved, reviewed or even done task can be picked up again. That
 # rule is spelled out once here and then folded into every state below.
-_REASSIGNABLE_TARGETS = frozenset({TaskStatus.ready, TaskStatus.in_progress, TaskStatus.reviewing})
+# ``pending`` is the same reassignment waiting for a person's approval
+# (assignment_mode manual); without it an agent's assignment always failed.
+_REASSIGNABLE_TARGETS = frozenset({
+    TaskStatus.ready, TaskStatus.in_progress, TaskStatus.reviewing, TaskStatus.pending,
+})
 
 TRANSITIONS: Dict[TaskStatus, FrozenSet[TaskStatus]] = {
     # Not started. Reassignable; can be blocked by a dependency, aborted, or —
@@ -113,11 +117,12 @@ TRANSITIONS: Dict[TaskStatus, FrozenSet[TaskStatus]] = {
         TaskStatus.todo, TaskStatus.ready, TaskStatus.in_progress,
     }),
     # The worker finished. Reassignable; otherwise handed to a reviewer,
-    # failed post-hoc (blocked), completed without review (done), stopped, or
-    # — the finalizer's own "not yet verdicted" fallback — pushed back to
+    # failed post-hoc (blocked), completed without review (done), stopped,
+    # reset to todo by a person (as a done task can be), or — the
+    # finalizer's own "not yet verdicted" fallback — pushed back to
     # in_progress by a later completed run on the same task.
     TaskStatus.resolved: _REASSIGNABLE_TARGETS | frozenset({
-        TaskStatus.blocked, TaskStatus.stopped, TaskStatus.done,
+        TaskStatus.blocked, TaskStatus.stopped, TaskStatus.done, TaskStatus.todo,
     }),
     # A reviewer is running. Reassignable; records a verdict (reviewed),
     # falls back to resolved if it never records one, can be blocked/stopped,
@@ -127,9 +132,10 @@ TRANSITIONS: Dict[TaskStatus, FrozenSet[TaskStatus]] = {
         TaskStatus.stopped,
     }),
     # Reviewed. Reassignable; passed (done), sent back for rework
-    # (in_progress, already part of the reassignable set), or blocked/stopped.
+    # (in_progress, already part of the reassignable set), blocked/stopped,
+    # or reset to todo by a person.
     TaskStatus.reviewed: _REASSIGNABLE_TARGETS | frozenset({
-        TaskStatus.done, TaskStatus.blocked, TaskStatus.stopped,
+        TaskStatus.done, TaskStatus.blocked, TaskStatus.stopped, TaskStatus.todo,
     }),
     # Finished. Reassignable (redoing a done task); not fully terminal
     # either way — an external issue sync can reopen it straight to todo.
@@ -269,6 +275,16 @@ def coerce_priority(value: Any) -> TaskPriority:
         return TaskPriority.medium
 
 
+def coerce_stored_priority(value: Any) -> Optional[TaskPriority]:
+    """A task's own priority: None (or "") when nobody set one, else as
+    :func:`coerce_priority`. A task without a priority is ordered like a
+    medium one (``order_for_dispatch``), but is not shown as one.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return coerce_priority(value)
+
+
 class CreatedBy(str, Enum):
     user = "user"
     orchestrator = "orchestrator"
@@ -366,7 +382,7 @@ class Task(BaseModel):
     # the user instead of starting another review once it is reached.
     review_cycles: int = Field(default=0, description="Review cycles already started for this task")
 
-    priority: TaskPriority = Field(default=TaskPriority.medium, description="Task priority: low, medium, high, critical")
+    priority: Optional[TaskPriority] = Field(default=None, description="Task priority: low, medium, high, critical; None when nobody set one")
 
     # Optional deadline. Naive values are assumed UTC (see the validator below).
     due_at: Optional[datetime] = Field(default=None, description="Optional deadline for the task")
@@ -395,6 +411,10 @@ class Task(BaseModel):
     # {"rubric": markdown, "max_iterations": int, "grader": {"provider",
     # "model"} | None, "threshold": float | None}. None means no outcome check.
     outcome: Optional[Dict[str, Any]] = Field(default=None, description="Outcome rubric and grading settings, None = no outcome check")
+    # Off by default: the assigned agent's own default criterion (``AgentSpec.
+    # default_outcome``) applies to this task only when this is on and the task
+    # has no rubric of its own (tasks/outcome.py ``effective_outcome``).
+    use_agent_outcome: bool = Field(default=False, description="Apply the assigned agent's default outcome when the task has none of its own")
     # One entry per grading: {"iteration", "run_id", "passed", "score",
     # "criteria": [{"name", "passed", "score", "feedback"}], "feedback",
     # "grader": {"provider", "model"}, "cost_usd", "graded_at"}.
@@ -418,7 +438,7 @@ class Task(BaseModel):
     @field_validator("priority", mode="before")
     @classmethod
     def _coerce_priority(cls, v):
-        return coerce_priority(v)
+        return coerce_stored_priority(v)
 
     @field_validator("due_at")
     @classmethod
@@ -479,6 +499,13 @@ class Task(BaseModel):
     )
     routing_reason: Optional[str] = Field(
         default=None, description="Orchestrator's reasoning for choosing this agent"
+    )
+    # A parent with subtasks is a container: the agent assigned to it works
+    # through the subtasks one by one (tasks.service.promote_runnable_subtasks)
+    # instead of running on the parent. None means the orchestrator routes
+    # each subtask, the original container behaviour.
+    container_agent: Optional[str] = Field(
+        default=None, description="Agent that runs this container task's subtasks"
     )
 
     # Session context ID grouping all agent runs for this task

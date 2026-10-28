@@ -8,7 +8,7 @@ module re-exports them for the route layer and other backend consumers.
 """
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, PrivateAttr, field_validator, model_validator
 
 
 class ChatHistoryMessage(BaseModel):
@@ -56,6 +56,16 @@ class ChatRequest(BaseModel):
     # A team target: the message is handed to a roster of agents that talk to
     # each other (teams/), rather than to one agent or a flow's DAG.
     team_id: Optional[str] = None
+    # A flow turn can start at one node instead of the flow's start
+    # (``flow_start_node``: the message is that node's input, the flow runs on
+    # to the end), or run the conversation's last turn again from a node
+    # (``flow_rerun``: ``{node_id, mode}``, mode ``single`` or ``rest``, with
+    # that turn's inputs). See flow/rerun.py.
+    flow_start_node: Optional[str] = None
+    flow_rerun: Optional[Dict[str, str]] = None
+    # The flow chat's Summary view: once the last node is done, the turn ends
+    # with one message summing up what was done (chat/flow_summary.py).
+    flow_summary: bool = False
     message: str
     workspace: Optional[str] = None
     project_id: Optional[str] = None
@@ -75,6 +85,11 @@ class ChatRequest(BaseModel):
     # the Messages list can distinguish e.g. Telegram runs from web chat. None
     # defaults to "chat" (the web Chat page) at run-record time.
     source: Optional[str] = None
+    # A turn the hub starts by itself (chat/background_runs.py: a flow, loop or
+    # team the agent started has ended): what started it, shown in the chat as
+    # a notice in place of a message from the person. ``message`` is then what
+    # the agent is told, not something the person said.
+    notice: Optional[Dict[str, Any]] = None
     # For the multiplexed transport (POST /api/chat/stream-sse): the caller's SSE
     # client id, so the server can deliver this run's events over the browser's
     # single existing /api/stream connection instead of a dedicated stream.
@@ -103,6 +118,17 @@ class ChatRequest(BaseModel):
     # output_schema. An unknown key is a 400; a tool set the capability
     # guard refuses is a 409. Kept on the run record as ``overrides``.
     overrides: Optional[Dict[str, Any]] = None
+    # Auto mode (common/auto_mode.py): the person switched it on in this
+    # conversation, so every confirmation of the turn is accepted without a
+    # card. Honoured only from the Chat page or the assistant's thread, and
+    # only where the workspace allows it (pipelines.execute_locally checks).
+    auto_approve: bool = False
+    # What a deployment grants the job's agent for this one turn (a scheduled
+    # agent run, plans/service.py): ``agent_id``, ``memory_pool_ids``,
+    # ``memory_access`` and ``secrets``. Private, so no client can send it:
+    # extra secrets and pools widen what an agent reads, and only a job the
+    # capability guard checked when it was saved may carry them.
+    _grants: Optional[Dict[str, Any]] = PrivateAttr(default=None)
 
     @field_validator("agent_id")
     @classmethod

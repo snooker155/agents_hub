@@ -34,6 +34,16 @@ html.dark body {
   min-height: 100vh;
 }
 
+/* The page itself never scrolls (the app shell holds the viewport and its
+   panes scroll inside), so a Mac trackpad's rubber band on the document only
+   made the whole page drift. Vertical only: the browser's two-finger swipe
+   back and forward is the horizontal overscroll of the root, and `none` on
+   both axes turned it off. Pointer devices only: a phone keeps its own
+   overscroll behaviour. */
+@media (hover: hover) and (pointer: fine) {
+  html, body { overscroll-behavior-y: none; }
+}
+
 /* The app shell is the lowest surface in the stack; panels and cards sit on
    top of it. Using a token keeps that ordering right in both themes, which a
    fixed `bg-gray-100` cannot do (it inverts once the palette flips). */
@@ -145,6 +155,23 @@ textarea:focus,
 .react-flow__minimap.flow-minimap {
   background-color: #fff;
   border: 1px solid #e2e8f0;
+}
+
+/* The minimap is drawn 200 by 150 whatever room the canvas has. It is sized
+   by the canvas instead (a container query on the react-flow root, which
+   always has a set size), keeping its proportions through the viewBox, and
+   it goes where it would cover most of a small canvas. */
+.react-flow {
+  container-type: size;
+}
+@container (max-width: 900px) or (max-height: 520px) {
+  .react-flow__minimap svg { width: 130px; height: 98px; }
+}
+@container (max-width: 600px) or (max-height: 380px) {
+  .react-flow__minimap svg { width: 96px; height: 72px; }
+}
+@container (max-width: 380px) or (max-height: 240px) {
+  .react-flow__minimap { display: none; }
 }
 
 html.dark .react-flow__background {
@@ -263,6 +290,43 @@ html.dark .react-flow__minimap-mask {
   overflow: hidden;
   cursor: pointer;
   box-shadow: 0 10px 24px -10px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(0 0 0 / 0.05);
+}
+
+/* The page's selection tint is the brand colour the prompt bubble is filled
+   with, so inside the bubble it vanishes: select in white there instead. */
+.chat-prompt-bubble::selection,
+.chat-prompt-bubble ::selection {
+  background: rgb(255 255 255 / 0.9);
+  color: var(--brand);
+}
+
+/* The control bar under a deck (views/renderers/SlidesView.jsx) keeps to
+   one line. In a narrow card (a deck in a chat reply is 16rem at its least)
+   the row tightens and the export buttons show their icons only; the bar is
+   the container, so the row inside it is what the query restyles. */
+.slides-bar {
+  container-type: inline-size;
+}
+.slides-bar-row > * {
+  flex-shrink: 0;
+}
+@container (max-width: 24rem) {
+  .slides-bar-row {
+    gap: 0.25rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  .slides-bar-row .slides-bar-counter {
+    min-width: 0;
+    padding: 0 0.125rem;
+  }
+  .slides-bar-row .slides-bar-export {
+    padding-left: 0.375rem;
+    padding-right: 0.375rem;
+  }
+  .slides-bar-row .slides-bar-label {
+    display: none;
+  }
 }
 
 /* A code view inside a view card (views/ViewCard.jsx): the code block is the

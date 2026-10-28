@@ -199,6 +199,25 @@ WIDGET_PUBLIC_PREFIXES = ("/api/widgets/public",)
 OWNER_SCOPED_SEGMENTS = frozenset({"policy", "env", "settings-overrides", "members",
                                    "secrets", "isolation", "data-class"})
 
+#: Sub-paths of a workspace any member may read but only an administrator may
+#: change: the model policy (which models the workspace may use, and the
+#: settings they run with) is the administrator's to set, owner or not.
+ADMIN_WRITE_SEGMENTS = frozenset({"model-policy"})
+
+#: Prefixes whose writes are the administrator's in ``multi`` mode: the model
+#: catalog and the local model runtime (``/api/models``), and the hub's
+#: settings (provider keys, endpoints, temperature). Members still read them;
+#: the pages they back show read-only.
+ADMIN_WRITE_PREFIXES = ("/api/models", "/api/settings")
+
+#: Writes under :data:`ADMIN_WRITE_PREFIXES` that stay open to members: the
+#: browser's own workspace selection, and the voices a person records for
+#: their assistant.
+ADMIN_WRITE_EXEMPT = (
+    ("PUT", "/api/settings/workspace"),
+    ("*", "/api/models/local/runtime/voices"),
+)
+
 #: Path segments directly under ``/api/workspaces/`` that are routes, not
 #: workspace names. Without this, ``POST /api/workspaces/attach`` would be read
 #: as a request against a workspace called "attach".
@@ -403,6 +422,22 @@ def required_workspace_role(method: str, path: str) -> str:
     return WS_VIEWER if method in SAFE_METHODS else WS_EDITOR
 
 
+def admin_only(method: str, path: str) -> bool:
+    """Whether ``method path`` is a write only an administrator may make in
+    ``multi`` mode (:data:`ADMIN_WRITE_PREFIXES`, :data:`ADMIN_WRITE_SEGMENTS`)."""
+    method = (method or "").upper()
+    if method in SAFE_METHODS:
+        return False
+    for want_method, prefix in ADMIN_WRITE_EXEMPT:
+        if (want_method in ("*", method)) and _has_prefix(path, (prefix,)):
+            return False
+    if _has_prefix(path, ADMIN_WRITE_PREFIXES):
+        return True
+    segments = [s for s in path.split("/") if s]
+    return (len(segments) >= 4 and segments[0] == "api" and segments[1] == "workspaces"
+            and segments[3] in ADMIN_WRITE_SEGMENTS)
+
+
 def role_satisfies(held: Optional[str], required: str) -> bool:
     """Whether a held membership role covers the required one."""
     return _WS_RANK.get((held or "").strip(), 0) >= _WS_RANK.get(required, 0)
@@ -448,8 +483,12 @@ def authorize(
         return False
     if principal.is_admin:
         return True
+    if admin_only(method, path):
+        return False
     if not workspace:
-        # Record-level ownership is out of scope: any authenticated user may
-        # use the parts of the API that name no workspace.
+        # Any authenticated user may use the parts of the API that name no
+        # workspace. Routes that name a record by id instead are checked
+        # against the record's own workspace afterwards
+        # (common.record_access, from identity.authorize_request).
         return True
     return role_satisfies(membership_role, required_workspace_role(method, path))

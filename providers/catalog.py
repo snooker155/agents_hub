@@ -87,6 +87,23 @@ def export_snapshot() -> dict:
 __all__ = ["load_catalog_raw", "save_catalog_raw", "export_snapshot"]
 
 
+def model_effort(provider: Optional[str], model: Optional[str]) -> Optional[str]:
+    """The reasoning effort set for ``model`` on the Models page, or None when
+    it has none of its own (the provider's default applies). Safe to call from
+    the agent runtime: never raises."""
+    try:
+        from providers.reasoning_profile import EFFORT_ORDER
+        catalog = load_catalog_raw()
+        entry = (catalog or {}).get(provider or "") or {}
+        for m in entry.get("models", []):
+            if m.get("id") == model:
+                value = str(m.get("effort") or "").strip().lower()
+                return value if value in EFFORT_ORDER else None
+    except Exception:  # noqa: BLE001 - documented never to raise; the provider default applies
+        log.debug("no effort for %s/%s", provider, model, exc_info=True)
+    return None
+
+
 def model_temperature(provider: Optional[str], model: Optional[str]) -> Optional[float]:
     """The temperature set for ``model`` on the Models page, or None when it
     has none of its own (the global default applies). Safe to call from the

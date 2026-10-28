@@ -117,7 +117,8 @@ describe('SlidesView', () => {
 
   it('downloads the deck as .pptx through the API', async () => {
     show();
-    fireEvent.click(screen.getByTitle('Download as PowerPoint (.pptx)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'PowerPoint (.pptx)' }));
     await waitFor(() => expect(saveBlobAs).toHaveBeenCalled());
     expect(exportViewPptx).toHaveBeenCalledWith('vw_1');
     expect(saveBlobAs.mock.calls[0][1]).toBe('What is new.pptx');
@@ -126,7 +127,8 @@ describe('SlidesView', () => {
   it('says when the .pptx could not be built', async () => {
     exportViewPptx.mockImplementationOnce(() => Promise.reject(new Error('500')));
     show();
-    fireEvent.click(screen.getByTitle('Download as PowerPoint (.pptx)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'PowerPoint (.pptx)' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not build');
   });
 

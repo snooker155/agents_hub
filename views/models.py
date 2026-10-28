@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Type, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 
 class ViewValidationError(ValueError):
@@ -191,6 +191,7 @@ SLIDE_LAYOUTS: Dict[str, str] = {
     "stats": "big numbers: items with value (the number), title (label) and text (1 to 4 items)",
     "cards": "a grid of cards: items with icon, title and text (1 to 6 items)",
     "timeline": "a horizontal timeline: items with value (date or step), title and text (1 to 8 items)",
+    "chart": "title plus a native chart (chart: type, categories, series), optional short markdown body beside it",
 }
 _ITEM_LIMITS = {"stats": 4, "cards": 6, "timeline": 8}
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -212,6 +213,58 @@ class SlideItem(BaseModel):
     value: str = Field("", description="The big number (stats) or the date/step (timeline).")
 
 
+class SlideChartSeries(BaseModel):
+    """One data series of a ``chart`` slide; ``values`` lines up with the categories."""
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = ""
+    values: List[Optional[Union[int, float]]] = Field(default_factory=list)
+
+    @field_validator("values", mode="before")
+    @classmethod
+    def _numbers_only(cls, v: Any) -> Any:
+        if isinstance(v, list) and any(isinstance(x, bool) for x in v):
+            raise ValueError("chart values are numbers (or null for a gap), not true/false")
+        return v
+
+
+class SlideChart(BaseModel):
+    """The chart of a ``chart`` slide: drawn natively in the browser and in the .pptx."""
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["bar", "line", "area", "pie"] = "bar"
+    categories: List[str] = Field(default_factory=list, description="x axis labels (pie: slice labels), 1 to 24.")
+    series: List[SlideChartSeries] = Field(default_factory=list, description="1 to 6 series (pie: exactly one).")
+    stacked: bool = Field(False, description="bar and area only.")
+    horizontal: bool = Field(False, description="bar only.")
+    x_label: str = ""
+    y_label: str = ""
+    unit: str = Field("", description="Short suffix for value labels, e.g. % (at most 8 characters).")
+
+
+_CHART_MAX_CATEGORIES = 24
+_CHART_MAX_SERIES = 6
+
+
+def _check_chart(chart: SlideChart, where: str) -> None:
+    if not 1 <= len(chart.categories) <= _CHART_MAX_CATEGORIES:
+        raise ValueError(
+            f"{where}: chart.categories takes 1 to {_CHART_MAX_CATEGORIES} labels, got {len(chart.categories)}")
+    if not 1 <= len(chart.series) <= _CHART_MAX_SERIES:
+        raise ValueError(f"{where}: chart.series takes 1 to {_CHART_MAX_SERIES} series, got {len(chart.series)}")
+    if len(chart.unit) > 8:
+        raise ValueError(f"{where}: chart.unit is a short suffix such as % or ₽ (at most 8 characters)")
+    if chart.type == "pie" and len(chart.series) != 1:
+        raise ValueError(f"{where}: a pie chart takes exactly one series, got {len(chart.series)}; use bar or line to compare several")
+    for ser in chart.series:
+        if len(ser.values) != len(chart.categories):
+            raise ValueError(
+                f"{where}: series {ser.name or '?'!r} has {len(ser.values)} values but there are "
+                f"{len(chart.categories)} categories; every series needs one value per category (null for a gap)")
+        if chart.type == "pie" and any(v is None or v < 0 for v in ser.values):
+            raise ValueError(f"{where}: pie values must be numbers of 0 or more, no nulls")
+
+
 class Slide(BaseModel):
     """One slide. ``layout`` picks the arrangement (:data:`SLIDE_LAYOUTS`);
     ``body`` and ``columns`` are markdown; ``items`` feed the stats, cards and
@@ -228,6 +281,7 @@ class Slide(BaseModel):
     caption: str = ""
     columns: List[str] = Field(default_factory=list, description="two_column: exactly two markdown columns.")
     items: List[SlideItem] = Field(default_factory=list)
+    chart: Optional[SlideChart] = Field(None, description="chart layout only: the native chart.")
     accent: str = Field("", description="Optional #rrggbb accent for this slide.")
     notes: str = Field("", description="Speaker notes; not shown on the slide.")
     order: int = 0
@@ -258,6 +312,14 @@ class Slide(BaseModel):
                 raise ValueError(f"{where}: {lay} takes 1 to {limit} items, got {len(self.items)}")
             if any(not (it.title.strip() or it.value.strip()) for it in self.items):
                 raise ValueError(f"{where}: every {lay} item needs a title or a value")
+        if self.chart is not None and lay != "chart":
+            raise ValueError(f"{where}: chart only goes with layout chart (this slide uses layout {lay})")
+        if lay == "chart":
+            if self.chart is None:
+                raise ValueError(f"{where}: a chart slide needs chart: {{type, categories, series: [{{name, values}}]}}")
+            if not self.title.strip():
+                raise ValueError(f"{where}: a chart slide needs a title")
+            _check_chart(self.chart, where)
         if lay == "content" and not (self.title.strip() or self.body.strip()):
             raise ValueError(
                 f"{where} has neither a title nor a body; "
@@ -297,8 +359,9 @@ class SlidesSpec(BaseModel):
                 raise ValueError(
                     f"slide {key}: not {', '.join(extra) or 'a structured body'}. A slide is "
                     "{title, subtitle, body (markdown string), layout, icon, image, caption, "
-                    "columns, items, accent, notes}. Bullets go into body as markdown; big numbers, "
-                    "cards and timeline steps go into items with the stats, cards or timeline layout. "
+                    "columns, items, chart, accent, notes}. Bullets go into body as markdown; big numbers, "
+                    "cards and timeline steps go into items with the stats, cards or timeline layout; "
+                    "numbers over categories go into chart with the chart layout. "
                     "Build the deck with slides_add, one slide per call.")
             try:
                 Slide.model_validate({"id": str(key), **slide} if "id" not in slide else slide)

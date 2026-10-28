@@ -53,7 +53,7 @@ export default {
   devCommand: 'Dev Command',
   backend: 'Backend',
   swaggerPath: 'Swagger Path',
-  showTheTaskPlanner: 'Show the task planner',
+  showTheTaskPlanner: 'Show the task manager',
   noRepoConfigured: 'No repo configured',
   noUrl: 'no URL',
   created: 'Created',
@@ -117,7 +117,7 @@ export default {
   headersJson: 'Headers (JSON)',
   bodyJson: 'Body (JSON)',
   edit: 'Edit',
-  planner: 'Planner',
+  planner: 'Task manager',
   info: 'Info',
   cancel: 'Cancel',
   errors: {

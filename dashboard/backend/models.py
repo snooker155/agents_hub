@@ -13,6 +13,11 @@ class TaskCreate(BaseModel):
     workspace: Optional[str] = None
     project: Optional[str] = None
     should_decompose: bool = False
+    # With should_decompose: the page's stream connection and the channel
+    # (decompose:<id>) it follows the decomposer on. The client is subscribed
+    # before the decomposer starts, so no early event is lost.
+    client_id: Optional[str] = None
+    decompose_channel: Optional[str] = None
     parent_id: Optional[str] = None
     priority: Optional[str] = None
     project_id: Optional[str] = None
@@ -25,6 +30,8 @@ class TaskCreate(BaseModel):
     # Outcome rubric: {"rubric", "max_iterations", "grader", "threshold"}
     # (tasks/outcome.py). None = no outcome check.
     outcome: Optional[Dict[str, Any]] = None
+    # Apply the assigned agent's default criterion when the task has none of its own.
+    use_agent_outcome: Optional[bool] = None
     # Workspace files (files/service.py) the task works from, by id.
     file_ids: Optional[List[str]] = None
 
@@ -49,12 +56,15 @@ class TaskUpdate(BaseModel):
     agent_version: Optional[int] = None
     # Outcome rubric (see TaskCreate); null clears it.
     outcome: Optional[Dict[str, Any]] = None
+    # Apply the agent's default criterion when the task has no rubric of its own.
+    use_agent_outcome: Optional[bool] = None
     # Replace the task's workspace files (ids); [] or null clears them.
     file_ids: Optional[List[str]] = None
 
 
 class AgentCreateCustom(BaseModel):
-    id: str
+    # Left empty, the id is made from ``name`` (agents/agent_ids.py).
+    id: str = ""
     name: str
     description: str = ""
     domain: str = "general"
@@ -151,6 +161,12 @@ class AgentSelfDelegationUpdate(BaseModel):
     # When True, the agent may target itself in run_agent_tool / assign_agent_tool.
     # Off by default because a self-run recurses the same agent.
     allow_self_delegation: bool = False
+
+
+class AgentStreamingUpdate(BaseModel):
+    # When True, the agent streams tokens in background runs whatever the
+    # global AGENT_STREAMING flag says. False only means "follow the flag".
+    streaming: bool = False
 
 
 class AgentCapabilityOverrideUpdate(BaseModel):
@@ -252,7 +268,9 @@ class AgentHandoffsUpdate(BaseModel):
 class AgentReasoningUpdate(BaseModel):
     think_enabled: Optional[bool] = None  # add the think scratchpad tool
     think_mode: Optional[str] = None      # standard | deep | analytical (tool prompt)
-    thinking_level: Optional[str] = None  # off | low | medium | high (native model reasoning)
+    # Former home of the model's effort, kept so older clients still work: a
+    # positive level is written to the agent's effort, off clears it.
+    thinking_level: Optional[str] = None
     plan_enabled: Optional[bool] = None   # add the plan tool
     plan_format: Optional[str] = None     # structured | bullet | numbered | freeform
 
@@ -266,6 +284,9 @@ class AgentModelUpdate(BaseModel):
     max_tokens: Optional[int] = None
     clear_temperature: bool = False       # explicitly remove temperature override
     clear_max_tokens: bool = False        # explicitly remove max_tokens override
+    # Reasoning effort (providers/reasoning_profile.EFFORT_ORDER); "" or
+    # "inherit" clears it. None leaves it as it is.
+    effort: Optional[str] = None
     clear_api_key: bool = False           # explicitly remove api_key override
 
 
@@ -301,6 +322,10 @@ class DecomposeRequest(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     verbose: bool = True
+    # The page's stream connection and the channel (decompose:<id>) it follows
+    # the decomposer on, as on TaskCreate.
+    client_id: Optional[str] = None
+    channel: Optional[str] = None
 
 
 class WorkspaceCreate(BaseModel):
@@ -691,5 +716,10 @@ class WorkspaceListItem(BaseModel):
     name: str
     path: str
     tasks_count: int = 0
+    # The agents the Agents page lists in this workspace, and its projects
+    # (every name; the list page shows the first few).
+    agents_count: int = 0
+    projects: List[str] = []
+    projects_count: int = 0
     attached: bool = False
     target: Optional[str] = None

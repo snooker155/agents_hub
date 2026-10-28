@@ -110,6 +110,116 @@ def log_flow_event(
     _notify_flow_runs(flow_id)
 
 
+def delete_flow_chat_log(flow_id: str, run_group: str) -> Optional[str]:
+    """Drop one flow chat's log file, the record its History entry is built from.
+
+    Only a chat goes here (see :func:`delete_flow_history` for any entry).
+    Returns None on success, else why not: ``not_found`` (no such file, or an
+    id that would leave the flow's log folder) or ``not_chat``.
+    """
+    kind = flow_history_kind(flow_id, run_group)
+    if kind is None:
+        return "not_found"
+    if kind != "chat":
+        return "not_chat"
+    return delete_flow_history(flow_id, run_group)
+
+
+def flow_history_kind(flow_id: str, run_group: str) -> Optional[str]:
+    """``chat`` or ``task`` for one History entry's log file, None when there
+    is no such file (or the ids would leave the flow's log folder)."""
+    path = _history_log(flow_id, run_group)
+    if path is None:
+        return None
+    try:
+        events = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        events = []
+    kinds = {e.get("kind") for e in events if isinstance(e, dict)} if isinstance(events, list) else set()
+    return "chat" if kinds == {"chat"} else "task"
+
+
+def delete_flow_history(flow_id: str, run_group: str) -> Optional[str]:
+    """Drop one History entry of a flow, a chat or a task run: its log file,
+    and for a task run the execution record too (its checkpoint goes with it,
+    so it can no longer be resumed). The task it worked on, and the node runs
+    in the run ledger, stay. Returns None, or ``not_found``."""
+    path = _history_log(flow_id, run_group)
+    if path is None:
+        return "not_found"
+    path.unlink(missing_ok=True)
+    cp = _checkpoint_path(flow_id, run_group)
+    if cp is not None:
+        cp.unlink(missing_ok=True)
+    record = _RUNS.get(run_group)
+    if record and str(record.get("flow_id") or "") == str(flow_id):
+        _RUNS.delete(run_group)
+    _notify_flow_runs(flow_id)
+    return None
+
+
+# -------------------- Chat checkpoints --------------------
+# A flow chat has no flow-run record, so the resume point of its latest turn
+# (the engine's checkpoint, plus the message that turn answered) is kept next
+# to its log, as flow_logs/<flow_id>/<conversation_id>.checkpoint. The suffix
+# keeps it out of read_flow_logs' *.json merge. A run from one of its nodes
+# starts from it (flow/rerun.py).
+
+def _checkpoint_path(flow_id: str, run_group: str) -> Optional[Path]:
+    if any(not s or s.startswith(".") or "/" in s or "\\" in s for s in (str(flow_id), str(run_group))):
+        return None
+    return FLOW_LOGS_DIR / str(flow_id) / f"{run_group}.checkpoint"
+
+
+def save_chat_checkpoint(flow_id: str, run_group: str, checkpoint: Dict[str, Any], message: str) -> None:
+    """Keep a chat turn's checkpoint. Best effort, like the log itself."""
+    path = _checkpoint_path(flow_id, run_group)
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"checkpoint": checkpoint, "message": message}
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001 - a missing checkpoint only means the turn is rebuilt from its log
+        log.debug("chat checkpoint write failed", exc_info=True)
+
+
+def load_chat_checkpoint(flow_id: str, run_group: str) -> Optional[Dict[str, Any]]:
+    """``{checkpoint, message}`` of a chat's latest turn, or None."""
+    path = _checkpoint_path(flow_id, run_group)
+    if path is None or not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def read_run_group_events(flow_id: str, run_group: str) -> List[Dict[str, Any]]:
+    """The log events of one History entry (one run, or one chat)."""
+    path = _history_log(flow_id, run_group)
+    if path is None:
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []
+
+
+def _history_log(flow_id: str, run_group: str) -> Optional[Path]:
+    """The log file of one History entry, or None when there is none or the
+    ids would leave the flow's log folder."""
+    if any(not s or s.startswith(".") or "/" in s or "\\" in s for s in (str(flow_id), str(run_group))):
+        return None
+    run_dir = (FLOW_LOGS_DIR / str(flow_id)).resolve()
+    path = flow_log_path(flow_id, run_group).resolve()
+    if path.parent != run_dir or run_dir.parent != FLOW_LOGS_DIR.resolve() or not path.is_file():
+        return None
+    return path
+
+
 def read_flow_logs(flow_id: str) -> List[Dict[str, Any]]:
     """Return all log events for a flow, merged across its per-run files.
 

@@ -36,3 +36,6 @@ htmlcov/
 # dist/ are already covered by the patterns above.
 site/guide/
 site/.vitepress/cache/
+# common/state_sync.py: the folder before the last export, and an export in progress
+.agents_hub.prev/
+.agents_hub.syncing/

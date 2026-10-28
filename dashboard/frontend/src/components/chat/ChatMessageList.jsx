@@ -7,6 +7,8 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
 import { useChatScroll } from './useChatScroll';
+import { withHandoffLine } from './handoff';
+import { BackgroundRunCard, BackgroundRunsLive, StoredBackgroundRun } from './BackgroundRuns';
 
 // A prompt that can stay on screen for its reply: the user's own message, not
 // one sent while the turn worked (that one steers the reply, it does not start it).
@@ -36,7 +38,7 @@ function groupTurns(messages) {
  */
 export default function ChatMessageList() {
   const {
-    agentName, agents, artifacts, currentConv, currentConvId, currentTelegramBinding, flows, jumpToArtifact,
+    agentName, agents, backgroundRuns, currentConv, currentConvId, currentTelegramBinding, flows, jumpToArtifact,
     liveMessages, liveTurn, loading, messages, renderedMessages,
     runTimelineByRunId, selectedFlow, selectedTeam, selectedWorkspace, sendMessage, t,
     targetMode, teams, telegramReplyAllowed, viewMode,
@@ -45,7 +47,26 @@ export default function ChatMessageList() {
   const { scrollerRef, contentRef, onScroll, onPromptClick } = useChatScroll({
     convId: currentConvId, lastUserId, messages: renderedMessages, stuckHint: t('chat.pinnedPromptHint'),
   });
-  const renderMessage = (msg, idx) => {
+  // The work of what the agent started in the background is shown in the
+  // Build view only; the chat view keeps to the agent's replies (the
+  // composer's footer says what runs). A run whose agent was woken has the
+  // notice of that turn in the transcript: its card stands right above it,
+  // live while this page watched it, else from the run's stored record; the
+  // runs still going are at the end.
+  const isBuild = viewMode === 'build';
+  const bgById = Object.fromEntries((backgroundRuns || []).map((r) => [r.run_id, r]));
+  const noticed = new Set(renderedMessages.map((m) => m.notice?.run_id).filter((id) => id && bgById[id]));
+  const trailingRuns = isBuild ? (backgroundRuns || []).filter((r) => !noticed.has(r.run_id) && !r.woken) : [];
+  const renderMessage = (rawMsg, idx) => {
+    // The line that a background run ended stands centred in the Build view
+    // only; the chat view keeps to the replies (the reply after it says so).
+    if (!isBuild && rawMsg.role === 'system' && rawMsg.notice?.type === 'background_run_finished') return null;
+    // A bubble that handed the chat over says to whom (chat/handoff.js).
+    const nextMsg = renderedMessages[idx + 1];
+    const msg = withHandoffLine(rawMsg, nextMsg, t('handoffs.passing', {
+      agent: (nextMsg?.handoff && (agents.find((a) => a.id === nextMsg.handoff.to_agent_id)?.name
+        || nextMsg.handoff.to_agent_name || nextMsg.handoff.to_agent_id)) || '',
+    }));
     // A refused turn is retried with the message that started it.
     const retryText = msg.refusal
       ? [...renderedMessages.slice(0, idx)].reverse().find((m) => m.role === 'user')?.content
@@ -66,7 +87,14 @@ export default function ChatMessageList() {
     // The mirrored turn is labelled: it is being written somewhere
     // else, so an answer appearing on its own is explained rather
     // than surprising.
-    const liveLabel = msg.id === liveMessages[0]?.id ? (
+    // A turn the hub began (a background run ended) says so in its notice.
+    const runNotice = isBuild && msg.role === 'system' && msg.notice?.type === 'background_run_finished'
+      ? msg.notice : null;
+    const runCard = runNotice?.run_id ? (noticed.has(runNotice.run_id)
+      ? <BackgroundRunCard key={`bg-${runNotice.run_id}`} run={bgById[runNotice.run_id]} />
+      : <StoredBackgroundRun key={`bg-${runNotice.run_id}`} notice={runNotice} />
+    ) : null;
+    const liveLabel = msg.id === liveMessages[0]?.id && !liveTurn?.notice ? (
       <div key="live-label" className="flex items-center gap-1.5 mb-2 text-[11px] font-medium text-indigo-500">
         <Radio className="w-3 h-3 animate-pulse" />
         {liveTurn?.source && liveTurn.source !== 'chat'
@@ -85,6 +113,7 @@ export default function ChatMessageList() {
         : msg;
       return (
         <React.Fragment key={msg.id}>
+          {runCard}
           {liveLabel}
           {handoffDivider}
           <BuildMessage
@@ -98,6 +127,7 @@ export default function ChatMessageList() {
     }
     return (
       <React.Fragment key={msg.id}>
+        {runCard}
         {liveLabel}
         {handoffDivider}
         <MessageBubble
@@ -107,7 +137,6 @@ export default function ChatMessageList() {
             || (msg.id === 'live-agent' && liveTurn?.status === 'running')
           }
           agentName={msgAgentName}
-          artifactsByPath={artifacts}
           onAction={sendMessage}
           onRetry={retryText ? () => sendMessage(retryText) : undefined}
         />
@@ -242,6 +271,9 @@ export default function ChatMessageList() {
             {loading && (messages.length === 0 || messages[messages.length - 1].role !== 'agent') && (
               <TypingIndicator agentName={agentName} />
             )}
+
+            {/* What the agent started in the background, at work (BackgroundRuns.jsx). */}
+            <BackgroundRunsLive runs={trailingRuns} />
 
           </div>
         </div>

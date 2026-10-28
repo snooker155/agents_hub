@@ -3,6 +3,9 @@ Web access log API — review what ``web_search`` and ``fetch_url`` actually rea
 
 - ``GET    /api/web-logs``            sortable, filterable page of calls
 - ``GET    /api/web-logs/stats``      volume, failures, flagged calls, top hosts
+
+The list, the stats and the clear take ``workspace``: the page shows only the
+calls made in the workspace the person is in.
 - ``GET    /api/web-logs/{entry_id}`` one call including the stored response text
 - ``DELETE /api/web-logs``            clear the log
 
@@ -55,8 +58,8 @@ async def list_web_logs(
 
 
 @router.get("/stats")
-async def web_log_stats():
-    return web_log.stats()
+async def web_log_stats(workspace: Optional[str] = None):
+    return web_log.stats(workspace)
 
 
 @router.get("/{entry_id}")
@@ -68,5 +71,5 @@ async def get_web_log(entry_id: str):
 
 
 @router.delete("")
-async def clear_web_logs():
-    return {"ok": True, "deleted": web_log.clear()}
+async def clear_web_logs(workspace: Optional[str] = None):
+    return {"ok": True, "deleted": web_log.clear(workspace)}

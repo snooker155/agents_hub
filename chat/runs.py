@@ -93,7 +93,49 @@ def request_overrides(request: ChatRequest) -> dict:
         from agents import run_overrides
         out.update(run_overrides.build_kwargs(
             run_overrides.normalize(request.overrides, check_tool_ids=False)))
+    out.update(grant_overrides(request))
     return out
+
+
+def turn_grants(request: ChatRequest) -> Dict[str, Any]:
+    """What a deployment grants this turn's agent (``ChatRequest._grants``),
+    or nothing. Granted to the job's agent only: an agent the conversation
+    is handed to (chat/handoff.py) answers with its own binding and secrets."""
+    grants = getattr(request, "_grants", None) or {}
+    if not grants or str(grants.get("agent_id") or "") != str(request.agent_id or ""):
+        return {}
+    return grants
+
+
+def grant_overrides(request: ChatRequest) -> Dict[str, Any]:
+    """``create_agent`` keywords for the granted memory pools and secrets,
+    the ones a task's run gets from the same deployment (runtime/instance_run.py)."""
+    grants = turn_grants(request)
+    out: Dict[str, Any] = {}
+    pools = [str(p) for p in (grants.get("memory_pool_ids") or []) if str(p or "").strip()]
+    if pools:
+        out["memory_pool"] = pools
+        out["memory_access"] = str(grants.get("memory_access") or "read")
+    secrets = grant_secrets(request)
+    if secrets:
+        out["extra_secrets"] = secrets
+    return out
+
+
+def grant_secrets(request: ChatRequest) -> list:
+    """The secret names granted on top of the agent's allowlist."""
+    return [str(n).strip() for n in (turn_grants(request).get("secrets") or []) if str(n or "").strip()]
+
+
+def journal_pool_id(request: ChatRequest) -> str | None:
+    """Where this turn's exchange is journaled: the first granted pool when
+    the grant may write to it, none when it may only read, else the agent's
+    own primary pool (:func:`get_pool_id`)."""
+    grants = turn_grants(request)
+    pools = [str(p) for p in (grants.get("memory_pool_ids") or []) if str(p or "").strip()]
+    if pools:
+        return pools[0] if str(grants.get("memory_access") or "read") == "write" else None
+    return get_pool_id(request.agent_id, request.workspace)
 
 
 def get_pool_id(agent_id: str, workspace: str | None = None) -> str | None:
@@ -379,6 +421,10 @@ def create_chat_run(request: ChatRequest, **run_extra):
     if request.overrides:
         from agents import run_overrides as _run_overrides
         run_extra.setdefault("overrides", _run_overrides.record_view(request.overrides))
+    # Auto mode, on the record so a process that only has the run id reads it
+    # (common/auto_mode.is_on) and the run page can say the turn ran in it.
+    if getattr(request, "auto_approve", False):
+        run_extra.setdefault("auto_approve", True)
 
     register_run(
         run_id,

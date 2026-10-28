@@ -30,6 +30,9 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
+from common.untrusted import agent_output_fence
+from common.workspace_scope import same_workspace
+
 log = logging.getLogger(__name__)
 
 # Per-entity and whole-message budgets for the rendered blocks. A reference is a
@@ -119,7 +122,7 @@ def _list_tasks(workspace: Optional[str], project_id: Optional[str], query: str)
 
 def _render_task(entity_id: str) -> Optional[Dict[str, str]]:
     from uuid import UUID
-    from tasks.service import get_task, get_task_result, get_subtasks
+    from tasks.service import get_task, get_task_results, get_subtasks
 
     try:
         task = get_task(UUID(entity_id))
@@ -154,11 +157,19 @@ def _render_task(entity_id: str) -> Optional[Dict[str, str]]:
             for s in subtasks[:30]
         ]
     try:
-        result = get_task_result(task.id)
+        entries = get_task_results(task.id)
     except Exception:  # noqa: BLE001 - the task is rendered without its result
         log.debug("task result read failed", exc_info=True)
-        result = None
-    lines += _prose("Latest result", result)
+        entries = []
+    last = entries[-1] if entries else {}
+    result = last.get("result")
+    # The result is the words of the agent that ran the task: fenced, so the
+    # chat agent reads it as data, not as orders (common/untrusted.py).
+    result_lines = _prose("Latest result", result)
+    if result_lines:
+        result_lines[-1] = agent_output_fence(
+            result_lines[-1], source=f"agent {last.get('agent_id') or 'unknown'}, task {task.id}")
+    lines += result_lines
     return {"title": task.title or f"Task {entity_id[:8]}", "body": "\n".join(lines), "workspace": getattr(task, "workspace", None)}
 
 
@@ -375,7 +386,8 @@ def _list_flows(workspace: Optional[str], project_id: Optional[str], query: str)
     from flow.store import list_flows
 
     # Visibility matches the /api/flows listing: an explicit ``allowed_flows``
-    # allowlist on the workspace is authoritative, otherwise global + own flows.
+    # allowlist on the workspace is authoritative, otherwise its own flows (one
+    # that names no workspace is the default one's).
     allowed = None
     if workspace:
         try:
@@ -391,7 +403,7 @@ def _list_flows(workspace: Optional[str], project_id: Optional[str], query: str)
         if allowed is not None:
             if flow_id not in allowed:
                 continue
-        elif workspace and flow.get("workspace") not in (None, "", workspace):
+        elif workspace and not same_workspace(flow.get("workspace"), workspace):
             continue
         if not _matches(query, flow.get("name"), flow.get("description"), flow_id):
             continue
@@ -732,7 +744,6 @@ def resolve_references(request, *, workspace: Optional[str] = None) -> None:
         if rendered is None:
             continue
         if workspace and rendered.get("workspace"):
-            from common.workspace_scope import same_workspace
             if not same_workspace(rendered["workspace"], workspace):
                 continue
         body = rendered["body"]

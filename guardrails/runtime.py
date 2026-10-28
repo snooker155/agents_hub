@@ -47,7 +47,18 @@ def _now_iso() -> str:
 
 
 def _workspace_of(agent: Any, state: Any) -> Optional[str]:
-    return str(getattr(state, "workspace", "") or getattr(agent, "workspace", "") or "") or None
+    """The workspace *name* guardrails are scoped by. A chat run's agent holds
+    its operating path (``WORKSPACES_ROOT/<ws>``, or a project folder under
+    it), which matches no guardrail's ``workspace``: only the global ones
+    would apply."""
+    raw = str(getattr(state, "workspace", "") or getattr(agent, "workspace", "") or "")
+    if not raw:
+        return None
+    try:
+        from common.workspace_context import workspace_name_from_path
+        return workspace_name_from_path(raw) or None
+    except Exception:  # noqa: BLE001 - a bare name is still a name
+        return raw
 
 
 def _agent_guardrail_ids(agent: Any) -> List[str]:
@@ -86,13 +97,13 @@ def _excerpt(text: str, hits: Optional[List[Any]]) -> str:
 
 
 def _record_event(state: Any, guardrail: Any, *, stage: str, action: str, reason: str,
-                  excerpt: str) -> None:
+                  excerpt: str, workspace: Optional[str]) -> None:
     try:
         store.add_event({
             "run_id": str(getattr(state, "run_id", "") or ""),
             "task_id": str(getattr(state, "task_id", "") or ""),
             "agent_id": str(getattr(state, "agent_id", "") or ""),
-            "workspace": getattr(state, "workspace", "") or None,
+            "workspace": workspace,
             "stage": stage,
             "guardrail_id": guardrail.id,
             "guardrail_name": guardrail.name,
@@ -134,14 +145,16 @@ def _check_one(guardrail: Any, text: str, workspace: Optional[str]) -> Dict[str,
     """
     if checks.is_rule_kind(guardrail.kind):
         reason, hits = checks.check_rule(guardrail.kind, guardrail.config, text)
-        return {"passed": reason is None, "reason": reason or "", "hits": hits}
+        detail = checks.rule_detail(guardrail.kind, guardrail.config, text, hits) if reason else {}
+        return {"passed": reason is None, "reason": reason or "", "hits": hits, "detail": detail}
 
     reason, error = checks.check_judge(
         guardrail.config, text, guardrail_model=guardrail.model, workspace=workspace,
         timeout=_JUDGE_TIMEOUT)
     if error is not None:
         if guardrail.fail_closed:
-            return {"passed": False, "reason": f"the judge could not be reached: {error}", "hits": []}
+            return {"passed": False, "reason": f"the judge could not be reached: {error}", "hits": [],
+                    "detail": {"unreachable": True}}
         log.warning("guardrails: judge '%s' failed, passing through (fail_closed is off): %s",
                     guardrail.name, error)
         return {"passed": True, "reason": "", "hits": []}
@@ -168,16 +181,18 @@ def _run(agent: Any, state: Any, stage: str, text: str) -> Optional[Dict[str, An
                 "guardrail_id": guardrail.id, "name": guardrail.name, "stage": stage,
                 "kind": guardrail.kind, "passed": passed, "reason": reason,
                 "action": guardrail.action,
+                **({} if passed else {"detail": dict(outcome.get("detail") or {})}),
             })
         if passed:
             return
         excerpt = _excerpt(text, outcome.get("hits"))
         _record_event(state, guardrail, stage=stage, action=guardrail.action, reason=reason,
-                      excerpt=excerpt)
+                      excerpt=excerpt, workspace=workspace)
         _record_audit(state, guardrail, action=guardrail.action, reason=reason)
         if guardrail.action == "block" and trip is None:
             trip = {
                 "guardrail_id": guardrail.id, "name": guardrail.name, "stage": stage,
+                "kind": guardrail.kind, "detail": dict(outcome.get("detail") or {}),
                 "reason": reason,
                 "message": f"This {stage} was stopped by the '{guardrail.name}' guardrail.",
             }

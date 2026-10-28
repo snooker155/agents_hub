@@ -734,9 +734,11 @@ REASON_CODES = (
     "hook_ask",             # a PreToolUse hook asked for a person
     "human_approved",       # a person approved this exact call earlier
     "human_denied",         # a person denied the call in the chat, or nobody answered
+    "auto_mode_approved",   # auto mode was on in the chat, so the call ran without a card
     "think_required",       # the think gate refused an action before a think
     "guardrail_deny",       # a sequence guardrail refused the call
     "guardrail_ask",        # a sequence guardrail asked for a person
+    "domain_policy",        # the URL is outside the web domain policy, refused before anyone is asked
 )
 
 #: How each failure of the classifier phrases its fallback ``ask``.
@@ -770,6 +772,8 @@ def reason_code(*, by: str, decision: str, mode: str = "", source: str = "",
         return "auto_unclear" if str(reason or "").startswith(_UNCLEAR_PREFIX) else "auto_ask"
     if by == "think":
         return "think_required"
+    if by == "domain":
+        return "domain_policy"
     if by == "guardrail":
         return "guardrail_deny" if decision == DENY else "guardrail_ask"
     if mode == ALWAYS_ASK or decision == ASK:

@@ -46,9 +46,16 @@ HANDOFF_PROMPT = (
     "turns after it, so hand over only when the rest of the conversation belongs with "
     "that agent. Hand over by calling the tool; never write the call out as text. The "
     "`reason` you give is shown to the user as the reason for the handoff, so write it "
-    "for them, in their language. When the user asks to talk to one of those agents, "
-    "or to be passed on to it, that is a handoff: call `handoff_to_agent`, not a "
-    "delegation tool such as `run_agent_tool`, which would keep you in the conversation. "
+    "for them, in their language, about the agent that takes over (what it does for "
+    "them), never as if you were going to do the work yourself. Write nothing else in "
+    "a turn you hand over: the chat already tells the user which agent takes over. "
+    "When the user's message names one of those agents (`@<id>`, its id or its name), "
+    "hand over to it at once: do not answer the request yourself, do not ask the user "
+    "questions first and do not say the agent is unavailable without calling the tool, "
+    "even if an earlier turn of yours said so. When the user asks to talk to one of "
+    "those agents, or to be passed on to it, that is a handoff: call `handoff_to_agent`, "
+    "not a delegation tool such as `run_agent_tool`, which would keep you in the "
+    "conversation. "
     "When you only need a piece of work done and want to keep the conversation, "
     "delegate instead if you have a delegation tool, and answer with its result. A "
     "refused handoff is final for that target: answer yourself or pick another listed "
@@ -58,7 +65,7 @@ HANDOFF_PROMPT = (
 
 class HandoffInput(BaseModel):
     agent_id: str = Field(..., description="The agent to hand the conversation to: one of the ids listed in this tool's description.")
-    reason: str = Field(..., description="Why that agent takes over, in one short sentence in the user's language. The user sees it.")
+    reason: str = Field(..., description="Why that agent takes over, in one short sentence in the user's language, about that agent (what it does for the user), never in the first person as if you did the work. The user sees it.")
     note: Optional[str] = Field(
         None,
         description="What the receiving agent should know that the conversation does not say: what you found out, what the user wants next. Only the receiving agent sees it.",
@@ -98,6 +105,13 @@ def create_handoff_tools(spec: Any, workspace: Optional[str] = None) -> List[Str
     targets = [t for t in _expand_roles(getattr(spec, "handoffs", None) or [], workspace)
                if t and t != agent_id]
     default_filter = str(getattr(spec, "handoff_history", "") or "full")
+    # Only targets the person can reach here: an agent owned by another
+    # workspace is not offered (the call would refuse it anyway).
+    if workspace:
+        from agents.registry import get_agent as _get_target
+        from common.workspace_context import filter_agents_for_workspace
+        targets = [t for t in targets
+                   if (_t := _get_target(t)) is not None and filter_agents_for_workspace([_t], workspace)]
     listed = _target_lines(targets)
     if not listed:
         return []
@@ -154,6 +168,11 @@ def _perform(*, caller_id: str, caller_name: str, targets: List[str], default_fi
     if not reason:
         return _json_err("Give a reason the user can read.", code="bad_request")
     if target not in targets:
+        from agents.main_links import refusal_message
+        from agents.registry import get_agent as _get_caller
+        refused = refusal_message(_get_caller(caller_id), target, "hand the conversation to")
+        if refused:
+            return _json_err(refused, code="security_refused")
         return _json_err(
             f"'{target}' is not an agent you may hand over to. Allowed: {', '.join(targets)}.",
             code="not_allowed", extra={"allowed": list(targets)})

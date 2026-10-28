@@ -23,7 +23,9 @@ log = logging.getLogger(__name__)
 # A callable(op: str, path: str, before: str | None, after: str | None) -> None.
 # ``before``/``after`` are the file's full text content before and after the op;
 # ``None`` means "did not exist" (add has before=None, delete has after=None).
-ArtifactRecorder = Callable[[str, str, Optional[str], Optional[str]], None]
+# A recorder that links files also takes ``url=``; one that does not is called
+# without it, so the type leaves the arguments open.
+ArtifactRecorder = Callable[..., None]
 
 _artifact_recorder: contextvars.ContextVar[Optional[ArtifactRecorder]] = contextvars.ContextVar(
     "artifact_recorder", default=None
@@ -43,13 +45,21 @@ def reset_recorder(token) -> None:
         pass
 
 
-def record_artifact(op: str, path: str, before: Optional[str], after: Optional[str]) -> None:
-    """Report a file change to the active recorder, if any. Never raises."""
+def record_artifact(op: str, path: str, before: Optional[str], after: Optional[str],
+                    url: Optional[str] = None) -> None:
+    """Report a file change to the active recorder, if any. Never raises.
+
+    ``url`` is the file's page in the dashboard when the tool knows it, so a
+    chat can link the file instead of showing its diff.
+    """
     recorder = _artifact_recorder.get()
     if recorder is None:
         return
     try:
-        recorder(op, path, before, after)
+        if url:
+            recorder(op, path, before, after, url=url)
+        else:
+            recorder(op, path, before, after)
     except Exception:  # noqa: BLE001 - artifact reporting is best-effort; never let it break a tool call
         log.debug("artifact_sink: record failed for %s %s", op, path, exc_info=True)
 

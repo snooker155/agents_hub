@@ -1,5 +1,6 @@
 """Capability overrides, tools, delegates, handoffs, reasoning, model and default chat agent."""
 import dataclasses
+import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from typing import Any, Dict, List, Optional
@@ -7,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from agents import registry
 from agents.capability_guard import (
     CapabilityViolation, capability_warning, guard_mode, is_system_workspace_agent,
-    override_honoured_at_build, override_requires_container,
+    override_honoured_at_build, override_honoured_in_chat, override_requires_container,
 )
 from models import AgentToolsUpdate, AgentDelegatesUpdate, AgentHandoffsUpdate, AgentModelUpdate, AgentReasoningUpdate, AgentCapabilityOverrideUpdate
 from workspace import system_agent_ids
@@ -67,6 +68,9 @@ def _capability_override_state(spec) -> Dict[str, Any]:
         # agent is built: not in block mode with the container requirement on
         # and a local execution mode. Shown next to the switch.
         "honoured_at_build": override_honoured_at_build(spec.id),
+        # The same for a chat turn, which is built on the hub and never in a
+        # container: what the chat refusal card shows after the switch.
+        "honoured_in_chat": override_honoured_in_chat(),
         "capability_warning": _capability_warning_dict(spec),
     }
 
@@ -95,6 +99,34 @@ def _can_edit_agent(request: Request, spec) -> bool:
     except HTTPException:
         return False
     return True
+
+
+@router.get("/{agent_id}/tool-visibility")
+async def get_agent_tool_visibility(agent_id: str, workspace: Optional[str] = None):
+    """How many of this agent's tools its model is shown in a chat in
+    ``workspace``, the threshold above which the rest go behind tool search,
+    and which tools are which (agents/loop_ext/tool_search.py). The agent is
+    built as a chat would build it, so the count is the real one."""
+    import asyncio
+
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    ws = workspace or getattr(spec, "owner_workspace", None) or None
+
+    def _build() -> Dict[str, Any]:
+        from agents.agent_factory import create_agent
+        from agents.loop_ext.tool_search import visibility
+        from chat.runs import agent_overrides
+        from workspace import create_workspace_folder
+        path = str(create_workspace_folder(ws)) if ws else None
+        return visibility(create_agent(agent_id, workspace=path, **agent_overrides(agent_id)))
+
+    try:
+        seen = await asyncio.to_thread(_build)
+    except Exception as e:  # noqa: BLE001 - an agent that does not build has no count to show
+        raise HTTPException(status_code=422, detail=f"The agent could not be built: {e}") from e
+    return {"agent_id": agent_id, "workspace": ws, **seen}
 
 
 @router.get("/{agent_id}/capability-override")
@@ -271,12 +303,15 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
         raise HTTPException(status_code=404, detail="Agent not found")
 
     current = dict(spec.reasoning or {})
+    current.pop("thinking_level", None)
+    new_effort = spec.effort
+    if data.thinking_level is not None:
+        from agents.registry import normalize_effort
+        new_effort = None if data.thinking_level.lower() == "off" else normalize_effort(data.thinking_level)
     if data.think_enabled is not None:
         current["think_enabled"] = data.think_enabled
     if data.think_mode is not None:
         current["think_mode"] = data.think_mode
-    if data.thinking_level is not None:
-        current["thinking_level"] = data.thinking_level
     if data.plan_enabled is not None:
         current["plan_enabled"] = data.plan_enabled
     if data.plan_format is not None:
@@ -286,29 +321,56 @@ async def update_agent_reasoning(agent_id: str, data: AgentReasoningUpdate):
     # every field added to AgentSpec after it was written (delegates, handoffs,
     # the loop policies, secrets, ...), the bug routes/agents.py's tools route
     # already fixed the same way.
-    new_spec = dataclasses.replace(spec, reasoning=current)
+    new_spec = dataclasses.replace(spec, reasoning=current, effort=new_effort)
     registry.add_agent(new_spec)
     from reasoning import resolve_reasoning
     return resolve_reasoning(current, spec.tools)
 
 
-@router.get("/{agent_id}/model")
-async def get_agent_model(agent_id: str):
-    spec = registry.get_agent(agent_id)
-    if not spec:
-        raise HTTPException(status_code=404, detail="Agent not found")
+def _effective_effort(spec, workspace: Optional[str]) -> dict:
+    """The effort the agent runs at in ``workspace`` and where it comes from
+    (providers.reasoning_profile.effective_effort), for the Model tab."""
+    from agents.agent_factory import get_factory
+    from agents.agent_utils import default_model_for
+    from providers.reasoning_profile import effective_effort
+    ws_effort = None
+    try:
+        provider, model, _u, _k = get_factory()._resolve_model_config(spec.to_dict(), workspace)
+        if workspace:
+            from workspace import get_workspace_metadata, get_workspace_model_effort
+            ws_effort = get_workspace_model_effort(get_workspace_metadata(workspace))
+    except Exception:  # noqa: BLE001 - the tab still shows the agent's own value
+        logging.getLogger(__name__).debug("effective effort of %s not resolved", spec.id, exc_info=True)
+        provider, model = spec.provider, spec.model
+    provider = provider or "openai"
+    model = model or default_model_for(provider)
+    return effective_effort(provider, model, agent=spec.effort, workspace=ws_effort,
+                            model_inherited=not spec.provider)
+
+
+def _model_view(spec, workspace: Optional[str]) -> dict:
     return {
         "provider":    spec.provider or "inherit",
         "model":       spec.model or "",
         "base_url":    spec.base_url or "",
         "temperature": spec.temperature,   # None means "inherit global"
         "max_tokens":  spec.max_tokens,    # None means "inherit global"
+        "effort":      spec.effort,        # None means inherit (header, then the model)
+        "effective_effort": _effective_effort(spec, workspace),
         "has_api_key": bool(spec.api_key), # never expose the key value
     }
 
 
+@router.get("/{agent_id}/model")
+async def get_agent_model(agent_id: str, workspace: Optional[str] = None):
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return _model_view(spec, workspace)
+
+
 @router.post("/{agent_id}/model")
-async def update_agent_model(agent_id: str, data: AgentModelUpdate):
+async def update_agent_model(agent_id: str, data: AgentModelUpdate, workspace: Optional[str] = None):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -333,6 +395,15 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
         if data.base_url is not None:
             new_base_url = data.base_url.strip() or None
 
+    # The model must be one the workspace's model policy allows: the agent's
+    # own workspace, and the one the page is in (workspace/model_policy.py).
+    if new_provider is not None and (data.provider is not None or data.model is not None):
+        from workspace.model_policy import refusal
+        for ws in {spec.owner_workspace or "default", workspace or ""} - {""}:
+            reason = refusal(ws, new_provider, new_model)
+            if reason:
+                raise HTTPException(status_code=400, detail=reason)
+
     # API key override — stored as flat field (sensitive; not exposed in to_dict)
     new_api_key = spec.api_key
     if data.clear_api_key:
@@ -354,6 +425,18 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
     elif data.max_tokens is not None:
         new_max_tokens = data.max_tokens
 
+    # Reasoning effort — flat field; "" / "inherit" clears it
+    new_effort = spec.effort
+    if data.effort is not None:
+        from agents.registry import normalize_effort
+        word = data.effort.strip().lower()
+        if word in ("", "inherit"):
+            new_effort = None
+        else:
+            new_effort = normalize_effort(word)
+            if new_effort is None:
+                raise HTTPException(status_code=400, detail=f"Unknown effort '{data.effort}'")
+
     # dataclasses.replace, not a field-by-field rebuild: the rebuild dropped
     # every field added to AgentSpec after it was written (delegates, handoffs,
     # the loop policies, secrets, ...), the bug routes/agents.py's tools route
@@ -365,17 +448,11 @@ async def update_agent_model(agent_id: str, data: AgentModelUpdate):
         base_url=new_base_url,
         temperature=new_temperature,
         max_tokens=new_max_tokens,
+        effort=new_effort,
         api_key=new_api_key,
     )
     registry.add_agent(new_spec)
-    return {
-        "provider":    new_provider or "inherit",
-        "model":       new_model or "",
-        "base_url":    new_base_url or "",
-        "temperature": new_temperature,
-        "max_tokens":  new_max_tokens,
-        "has_api_key": bool(new_api_key),
-    }
+    return _model_view(new_spec, workspace)
 
 
 @router.get("/{agent_id}/health")

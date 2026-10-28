@@ -4,6 +4,9 @@ import { createTask, getProjects } from '../api';
 import { useI18n } from '../i18n';
 import DateInput from './DateInput';
 import FileIdsField from './files/FileIdsField';
+import { useStream } from './stream';
+import { DecomposeModal } from './task/DecomposeProgress';
+import { newDecomposeChannel } from './task/decomposeChannel';
 
 // Selectable initial statuses (mirrors the task board, minus the system-only
 // "pending"/waiting-approval state which can't be set manually).
@@ -22,8 +25,16 @@ const STATUS_OPTIONS = [
 // Shared "Create New Task" modal used by the Tasks page and the Flow editor.
 // onCreated receives the created task so callers that need its id (e.g. to
 // attach it to a flow) can use it; callers that only refetch can ignore it.
+//
+// With "decompose" ticked the modal stays open after Create and follows the
+// decomposer live (DecomposeProgress): its passes, the tasks it creates and
+// its output. The stream channel is chosen and mounted before the request, so
+// the server subscribes this tab to it before the decomposer starts.
 export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defaultProjectId, lockProject, onClose, onCreated }) {
   const { t } = useI18n();
+  const { clientId } = useStream();
+  // Set while a decomposition is followed: { channel, task } (task null until created).
+  const [decompose, setDecompose] = useState(null);
   const [form, setForm] = useState({
     title: '', description: '',
     should_decompose: false,
@@ -47,6 +58,8 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    const channel = form.should_decompose ? newDecomposeChannel() : null;
+    if (channel) setDecompose({ channel, task: null });
     try {
       const resp = await createTask({
         ...form,
@@ -54,15 +67,22 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
         workspace_name: selectedWorkspace || null,
         due_at: form.due_at || null,
         file_ids: form.file_ids.length ? form.file_ids : null,
+        ...(channel ? { client_id: clientId, decompose_channel: channel } : {}),
       });
       onCreated?.(resp.data);
-      onClose();
+      if (channel) setDecompose({ channel, task: resp.data });
+      else onClose();
     } catch (err) {
       console.error('Error creating task:', err);
+      setDecompose(null);
     } finally {
       setLoading(false);
     }
   };
+
+  if (decompose) {
+    return <DecomposeModal task={decompose.task} channel={decompose.channel} onClose={onClose} />;
+  }
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -135,6 +155,18 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
               uploadSource="task"
             />
           </div>
+          {/* Mirrors the status select: ticked means "ready", unticked falls back to "todo". */}
+          <div className="mb-3 flex items-center">
+            <input
+              id="ready-to-assign" type="checkbox"
+              className="h-4 w-4 text-indigo-600 border-gray-300 rounded"
+              checked={form.status === 'ready'}
+              onChange={e => setForm({ ...form, status: e.target.checked ? 'ready' : 'todo' })}
+            />
+            <label htmlFor="ready-to-assign" className="ml-2 text-sm text-gray-700">
+              {t('createTaskModal.readyToAssign')}
+            </label>
+          </div>
           <div className="mb-6 flex items-center">
             <input
               id="decompose" type="checkbox"
@@ -152,7 +184,7 @@ export default function CreateTaskModal({ defaultStatus, selectedWorkspace, defa
               type="submit" disabled={loading}
               className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50"
             >
-              {loading ? 'Creating…' : 'Create'}
+              {loading ? t('createTaskModal.creating') : t('createTaskModal.create')}
             </button>
           </div>
         </form>

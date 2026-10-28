@@ -62,9 +62,14 @@ command that reaches the service then uses them as if `AGENTS_HUB_URL` and
 
 ## Getting the command
 
-`./install.sh` installs it. See [installation](installation.md). Without an
-install, `python -m cli` from the checkout is the same program, and `ah` below
-stands for either. A Docker install has `ah` inside the backend container
+`./install.sh` installs it. See [installation](installation.md). A checkout
+installed by hand into an environment you already had, a conda environment
+included (`pip install -e ".[backend,agents]"`, editable or it does not run),
+has it in that environment's `bin`, and `ah shell-init --install` from there
+makes it reachable in every shell without activating the environment:
+[installation](installation.md), "Into an environment you already have".
+Without an install, `python -m cli` from the checkout is the same program,
+and `ah` below stands for any of these. A Docker install has `ah` inside the backend container
 (`docker compose exec backend ah ...`) and none on the host until a client is
 added: [installation](installation.md), "The `ah` command on each path". `ah setup` is the guided install and configuration
 ([installation](installation.md), "Guided setup").

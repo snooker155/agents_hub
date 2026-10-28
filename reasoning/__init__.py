@@ -16,8 +16,6 @@ from the package root (``from reasoning import resolve_reasoning``).
 from reasoning.config import (
     DEFAULT_PLAN_FORMAT,
     DEFAULT_THINK_MODE,
-    DEFAULT_THINKING_LEVEL,
-    THINKING_LEVELS,
     build_reasoning_prompt,
     build_reasoning_tools,
     resolve_reasoning,
@@ -29,6 +27,4 @@ __all__ = [
     "build_reasoning_prompt",
     "DEFAULT_THINK_MODE",
     "DEFAULT_PLAN_FORMAT",
-    "DEFAULT_THINKING_LEVEL",
-    "THINKING_LEVELS",
 ]

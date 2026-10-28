@@ -108,6 +108,20 @@ def test_relay_notify_sends_no_header_when_token_unset(monkeypatch):
     assert captured["headers"] == {}
 
 
+def test_the_first_relay_flushes_the_waiting_ones_on_exit(monkeypatch):
+    # An agent subprocess finalizes its task and exits inside the debounce
+    # window; without the exit flush the last status never reached a tab.
+    registered = []
+    monkeypatch.setattr(sb.atexit, "register", registered.append)
+    monkeypatch.setattr(sb, "_relay_flush_registered", False)
+    _capture_post(monkeypatch, {})
+
+    _real_relay_notify("tasks", {"task_id": "1"})
+    _real_relay_notify("tasks", {"task_id": "2"})
+    assert registered == [sb.flush_relayed_notifications]
+    assert sb.flush_relayed_notifications() == 1
+
+
 # ---------------------------------------------------------------------------
 # cli.backend.HttpBackend._request — the CLI talking to a remote backend
 # ---------------------------------------------------------------------------

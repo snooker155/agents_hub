@@ -20,13 +20,15 @@ lists the name.
 ## The key
 
 Values are encrypted with Fernet (AES with an HMAC, from the `cryptography`
-package) under `AGENTS_HUB_SECRET_KEY`. Generate one:
+package) under `AGENTS_HUB_SECRET_KEY`. Generate one and save it to `.env`:
 
 ```
-ah secrets keygen
+ah secrets keygen --write
 ```
 
-and put the printed line in `.env`:
+It only fills a key that is not set yet: replacing one would leave every stored
+secret unreadable, so it refuses. Without `--write` it prints the key, for a
+`.env` elsewhere or a secret manager; the line looks like this:
 
 ```
 AGENTS_HUB_SECRET_KEY=3q2-7w...=
@@ -89,6 +91,28 @@ which is refused at save time. The violation names the source as
 `secrets:GITHUB_TOKEN`, next to the tools that supply the other two
 capabilities. A delegate's declared secrets count for whoever can delegate to
 it, the same way its tools do. See [tools and capabilities](tools-and-capabilities.md).
+
+The guard's mode decides what "refused" means. In Settings → Capability guard,
+**Block** refuses the save, **Warn only** saves it and shows the warning, and
+**Off** skips the check. An agent can also be exempted on its own Behavior tab
+("Lift the block for this agent"); its save then goes through with a warning
+whatever the mode.
+
+### A secret on a system agent, for every workspace
+
+A system agent (`writer`, `analyst`, `researcher` and the rest) is one record
+serving every workspace, so a name declared on it is declared everywhere. The
+card on its Behavior tab says so. When a run of a system agent asks for a
+declared name its workspace does not hold, the value comes from the
+**default** workspace instead. An operator who wants one credential for all
+workspaces (a read-only token for a shared data source, say) stores it once in
+default and declares the name on the system agent. A workspace that stores its
+own secret under the same name gets its own value for its runs.
+
+Only system agents fall back this way: an agent made in a workspace never
+reaches into default's secrets. Declaring secrets is not an edit of the agent's
+design, so a system agent keeps receiving the updates of its tools and prompt
+that come with new hub versions.
 
 ## How a run receives them
 

@@ -815,6 +815,28 @@ async def reindex_rag(
     return {"results": results}
 
 
+class RagSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+@router.post("/{memory_id}/rag/search")
+async def search_rag_passages(memory_id: UUID, payload: RagSearchRequest):
+    """The pool's indexed passages for a query: the RAG service an agent's
+    ``recall`` and ``search_memory`` call (memory/rag_query.py
+    ``search_rag_service``), so a run never loads an embedding model or reads
+    the index itself. ``available`` is false when RAG is off; the agent then
+    skips the step."""
+    from rag.config import rag_config
+    if not rag_config.is_configured:
+        return {"available": False, "reason": "RAG is not configured", "results": []}
+    import asyncio
+    from memory.rag_query import search_rag
+    top_k = max(1, min(int(payload.top_k or 5), 50))
+    results = await asyncio.to_thread(search_rag, payload.query, str(memory_id), top_k)
+    return {"available": True, "results": results}
+
+
 @router.delete("/{memory_id}/files/{file_ref}/index")
 async def deindex_knowledge_file(memory_id: UUID, file_ref: str, request: Request):
     """Remove a file's index entry from this pool (does not delete the file from disk)."""

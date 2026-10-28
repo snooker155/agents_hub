@@ -118,7 +118,24 @@ def test_linear_two_agent_dag(monkeypatch):
     assert "OUT[a]" not in prompts["a"]
     finish = events[-1]
     assert finish["ok"] is True and finish["any_failure"] is False
-    assert "### [a]" in finish["combined_output"] and "### [b]" in finish["combined_output"]
+    # No name of their own: the node ids head the parts.
+    assert "### a\n" in finish["combined_output"] and "### b\n" in finish["combined_output"]
+
+
+def test_combined_output_names_each_part_by_the_node_name(monkeypatch):
+    """A loop stores the combined output as its pass's output: each part is
+    headed by the name the flow shows, two nodes of one name told apart."""
+    _install_fakes(monkeypatch)
+    flow = {
+        "id": "f1", "name": "named",
+        "nodes": [{"id": "agent-1", "kind": "agent", "data": {"label": "Researcher"}},
+                  {"id": "agent-2", "kind": "agent", "data": {"label": "Writer"}},
+                  {"id": "agent-3", "kind": "agent", "data": {"label": "Writer"}}],
+        "edges": [{"source": "agent-1", "target": "agent-2"}, {"source": "agent-2", "target": "agent-3"}],
+    }
+    out = _drive(flow, _make_driver())[-1]["combined_output"]
+    assert "### Researcher\n" in out and "### Writer\n" in out and "### Writer (2)\n" in out
+    assert "agent-1" not in out.split("\n")[0]
 
 
 def test_condition_node_prunes_unselected_branch(monkeypatch):
@@ -193,3 +210,34 @@ def test_stop_short_circuits(monkeypatch):
     events = _drive(flow, driver)
     assert [e["type"] for e in events] == ["flow_start", "flow_finish"]
     assert events[-1]["stopped"] is True
+
+
+def test_user_request_is_the_bare_request_when_given(monkeypatch):
+    """The run's working rules stay in the prompt; the state carries what was
+    asked, which is what a person reads in the run's state."""
+    _install_fakes(monkeypatch)
+    flow = {"id": "f1", "name": "one", "nodes": [{"id": "a", "kind": "agent"}], "edges": []}
+    prompts = {}
+
+    async def _collect(**kw):
+        return [ev async for ev in run_flow_engine(
+            flow, flow_id="f1", shared_context="RULES\nWrite the report", driver=_make_driver(prompts=prompts), **kw)]
+
+    start = asyncio.run(_collect(request="Write the report"))[0]
+    assert start["state"]["user_request"] == "Write the report"
+    assert "RULES" in prompts["a"]
+    # Without one, the shared context is the request, as before.
+    assert asyncio.run(_collect())[0]["state"]["user_request"] == "RULES\nWrite the report"
+
+
+def test_declared_user_request_stays_when_the_run_brings_none(monkeypatch):
+    """A flow whose own state names the request runs on it when nothing is asked."""
+    _install_fakes(monkeypatch)
+    flow = {"id": "f1", "name": "one", "state": {"user_request": "Weekly digest"},
+            "nodes": [{"id": "a", "kind": "agent"}], "edges": []}
+
+    async def _collect(**kw):
+        return [ev async for ev in run_flow_engine(flow, flow_id="f1", driver=_make_driver(), **kw)]
+
+    assert asyncio.run(_collect(shared_context=""))[0]["state"]["user_request"] == "Weekly digest"
+    assert asyncio.run(_collect(shared_context="", request="Today only"))[0]["state"]["user_request"] == "Today only"

@@ -72,8 +72,8 @@ describe('navMenu', () => {
     expect(visibleGroups(groups, FULL)).toBe(groups);
   });
 
-  it('cluster row only for an operator when the hub is a cluster', () => {
-    expect(paths(buildMenu({ t, auth: single }))).not.toContain('/cluster');
+  it('cluster row for every operator, one process or many', () => {
+    expect(paths(buildMenu({ t, auth: single }))).toContain('/cluster');
     expect(paths(buildMenu({ t, auth: single, features: { cluster: true } }))).toContain('/cluster');
     expect(paths(buildMenu({ t, auth: multiUser, features: { cluster: true } }))).not.toContain('/cluster');
     expect(paths(buildMenu({ t, auth: multiUser }))).not.toContain('/health');
@@ -107,5 +107,29 @@ describe('navMenu', () => {
     expect(isItemActive({ path: '/dashboard' }, '/dashboard/x')).toBe(false);
     expect(isItemActive({ path: '/agents' }, '/agents/a1')).toBe(true);
     expect(isItemActive({ path: '/artifacts', also: ['/studio'] }, '/studio')).toBe(true);
+  });
+});
+
+describe('navMenu hidden rows for members', () => {
+  const hiddenFor = (hidden_menu) => ({ ...multiUser, user: { ...multiUser.user, hidden_menu } });
+
+  it('drops the rows an administrator hid from this member', async () => {
+    const { isMenuHidden } = await import('../navMenu');
+    const groups = buildMenu({ t, auth: hiddenFor(['/models', '/costs']) });
+    expect(paths(groups)).not.toContain('/models');
+    expect(paths(groups)).not.toContain('/costs');
+    expect(paths(groups)).toContain('/agents');
+    expect(paths(visibleGroups(groups, SIMPLE))).not.toContain('/models');
+    expect(hiddenCount(groups)).toBe(paths(groups).length - paths(visibleGroups(groups, SIMPLE)).length);
+    expect(isMenuHidden(['/models'], '/models/openai/gpt')).toBe(true);
+    expect(isMenuHidden(['/models'], '/modelsx')).toBe(false);
+  });
+
+  it('keeps everything when nothing is hidden, and never hides chat or account', async () => {
+    const { isMenuHidden } = await import('../navMenu');
+    expect(paths(buildMenu({ t, auth: hiddenFor([]) }))).toContain('/models');
+    expect(paths(buildMenu({ t, auth: multiUser }))).toContain('/models');
+    expect(isMenuHidden(['/chat', '/account'], '/chat/abc')).toBe(false);
+    expect(isMenuHidden(['/account'], '/account')).toBe(false);
   });
 });

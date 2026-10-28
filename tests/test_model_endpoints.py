@@ -30,7 +30,8 @@ def payload_for(model, thinking_level=None, provider="openai"):
     return endpoint, body
 
 
-@pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "GPT-5.6-Luna"])
+@pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "GPT-5.6-Luna",
+                                   "gpt-6-luna", "openai/gpt-6-astra", "gpt-7"])
 def test_tool_calls_on_responses_only_models_go_to_the_responses_api(model):
     # Without this, the model 400s on chat completions even with no reasoning
     # parameter of our own in the request.
@@ -43,7 +44,7 @@ def test_tool_calls_on_responses_only_models_go_to_the_responses_api(model):
     assert "max_output_tokens" in body
 
 
-@pytest.mark.parametrize("model", ["gpt-5.4", "gpt-5", "o3", "gpt-4o"])
+@pytest.mark.parametrize("model", ["gpt-5.4", "gpt-5", "o3", "gpt-4o", "gpt-6-chat-latest"])
 def test_every_other_model_stays_on_chat_completions(model):
     assert not needs_responses_api(model)
     endpoint, body = payload_for(model)

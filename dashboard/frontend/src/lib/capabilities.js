@@ -9,6 +9,7 @@
  * Capabilities themselves are not duplicated here: each tool's grants arrive
  * from `GET /api/tools` (`tool.capabilities`). Only the rules live in this file.
  */
+import { toolLabel } from './toolText';
 
 export const CAPABILITY_LABELS = {
   ingests_untrusted: 'ingests untrusted content',
@@ -106,7 +107,13 @@ export function localizeViolation(violation, t) {
   const viaWord = t('capabilities.via', { defaultValue: 'via' });
   const sources = {};
   for (const [cap, list] of Object.entries(violation.sources || {})) {
-    sources[cap] = (list || []).map((src) => String(src).replace(/(^|-> )via /g, `$1${viaWord} `));
+    sources[cap] = (list || []).map((src) => {
+      const text = String(src);
+      // A tool of the agent itself comes as its bare id: show its name. A
+      // delegation hop keeps its ids, only the "via" is translated.
+      if (/^[a-z0-9_]+$/.test(text)) return toolLabel(t, text);
+      return text.replace(/(^|-> )via /g, `$1${viaWord} `);
+    });
   }
   return { ...violation, title, explanation, sources };
 }
@@ -114,4 +121,13 @@ export function localizeViolation(violation, t) {
 /** The UI-language label of a capability, the English one as fallback. */
 export function capabilityLabel(cap, t) {
   return t(`capabilities.labels.${cap}`, { defaultValue: CAPABILITY_LABELS[cap] || cap });
+}
+
+/** The line under a banner for a record that was saved anyway: why it went through. */
+export function capabilityFooter(violation, { overridden, guardMode }, t) {
+  if (!violation) return null;
+  if (!violation.blocking) return t('agentDetails.capabilityAllowed');
+  if (overridden) return t('agentDetails.capabilityOverrideAccepted');
+  if ((guardMode || 'block') !== 'block') return t('agentDetails.capabilityGuardWarnGlobal');
+  return t('agentDetails.capabilityBlocked');
 }

@@ -258,11 +258,32 @@ class ContextWindowGuard(BaseCallbackHandler):
 
 
 class ToolRepetitionError(RuntimeError):
-    """Raised when the same tool is called too many times consecutively."""
+    """Raised when the same tool call is repeated too many times consecutively."""
+
+
+def _call_key(name: str, input_str: Any) -> str:
+    """One tool call as ``name`` plus its arguments in a stable form, so two
+    calls with the same arguments compare equal whatever their key order."""
+    args = input_str
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (ValueError, TypeError):
+            return f"{name}\x00{args.strip()}"
+    try:
+        return f"{name}\x00{json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)}"
+    except (TypeError, ValueError):
+        return f"{name}\x00{args!r}"
 
 
 class ToolRepetitionGuard(BaseCallbackHandler):
-    """Stop agent execution when the same tool is called N times in a row.
+    """Stop agent execution when the same tool call (the same tool with the
+    same arguments) is made more than N times in a row.
+
+    A tool called many times with different arguments is ordinary work (a
+    researcher opening one page after another), not a loop, so only an
+    identical call counts. Exempt tools (think, plan, graph builders) neither
+    count nor break a streak.
 
     Accumulates every (tool, output) pair during the run so that the full
     work done by the agent can be returned when stopping early.
@@ -281,6 +302,7 @@ class ToolRepetitionGuard(BaseCallbackHandler):
         self.raise_error = True  # tell LangChain to propagate our exceptions
         self.max_repeats = max_repeats
         self._last_tool: Optional[str] = None
+        self._last_key: Optional[str] = None
         self._consecutive: int = 0
         self._should_stop: bool = False
         self._pending_tool: str = ""
@@ -321,10 +343,12 @@ class ToolRepetitionGuard(BaseCallbackHandler):
         if name in _REPEAT_EXEMPT_TOOL_NAMES:
             self._should_stop = False
             return
-        if name and name == self._last_tool:
+        key = _call_key(name, input_str if input_str is not None else kwargs.get("inputs"))
+        if name and key == self._last_key:
             self._consecutive += 1
         else:
             self._last_tool = name
+            self._last_key = key
             self._consecutive = 1
         self._should_stop = self._consecutive > self.max_repeats
 
@@ -332,7 +356,8 @@ class ToolRepetitionGuard(BaseCallbackHandler):
         if self._should_stop:
             raise ToolRepetitionError(
                 f"Tool '{self._last_tool}' was called {self._consecutive} times in a row "
-                f"(limit={self.max_repeats}). Stopping agent to prevent infinite loop."
+                f"with the same arguments (limit={self.max_repeats}). Stopping agent to "
+                f"prevent infinite loop."
             )
 
 

@@ -157,6 +157,8 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
         "\n\n## Shared Memory",
         intro,
         "1. Check your current context first — if the answer is already in the conversation, use it directly.",
+        "   Otherwise call `recall` before you answer that you do not know or ask the user to clarify: "
+        "a question about a person, a preference or an earlier decision is often answered by a note listed below.",
         "2. Use `recall` to search memory (structured slots → notes → knowledge graph → RAG documents). "
         "When a `recall` result includes a `relations` list, those 1-hop graph edges ARE part of the answer — "
         "include them when the question is about how things are connected.",

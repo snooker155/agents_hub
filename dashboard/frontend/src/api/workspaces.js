@@ -95,6 +95,9 @@ export const updateWorkspacePolicy = (name, policy) => api.put(`/workspaces/${en
 export const importWorkspaceHooksFile = (name) => api.post(`/workspaces/${encodeURIComponent(name)}/policy/import-hooks-file`);
 export const getWorkspaceModel = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/model`);
 export const updateWorkspaceModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/model`, data);
+// The administrator's model policy of a workspace (workspace/model_policy.py): `{policy}`.
+export const getWorkspaceModelPolicy = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/model-policy`);
+export const updateWorkspaceModelPolicy = (name, body) => api.put(`/workspaces/${encodeURIComponent(name)}/model-policy`, body);
 export const updateWorkspaceDefaultModel = (name, data) => api.put(`/workspaces/${encodeURIComponent(name)}/default-model`, data);
 export const setWorkspaceAgentMode = (name, mode) => api.put(`/workspaces/${encodeURIComponent(name)}/agent-mode`, { agent_mode: mode });
 export const getWorkspaceInstructions = (name) => api.get(`/workspaces/${encodeURIComponent(name)}/instructions`);

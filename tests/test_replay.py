@@ -124,3 +124,67 @@ def test_replay_run_excluded_from_budget_spend(monkeypatch, tmp_path):
 
     # Spend is unchanged: the replay run is excluded from budget aggregation.
     assert budget.workspace_period_spend("ws1", "total") == pytest.approx(2.5)
+def test_replay_streams_on_its_channel(monkeypatch):
+    sent = []
+    monkeypatch.setattr("common.session_broker.publish_event",
+                        lambda channel, event: sent.append((channel, event)))
+
+    def _streaming_invocation(agent, prompt, **kw):
+        (cb,) = kw["extra_callbacks"]
+        cb.on_tool_start({"name": "read_file"}, "a.txt")
+        cb.on_tool_end("contents")
+        cb.on_llm_new_token("replayed ")
+        cb.on_llm_new_token("answer")
+        return _fake_invocation(agent, prompt, **kw)
+
+    _stub_agent(monkeypatch, invoke=_streaming_invocation)
+    _seed_original()
+
+    result = agent_replay.replay_run("orig", channel="replay:abc")
+
+    assert {ch for ch, _ in sent} == {"replay:abc"}
+    types = [ev["type"] for _, ev in sent]
+    assert types == ["meta", "tool_start", "tool_end", "token", "done"]
+    assert all(ev["run_id"] == result["replay_run_id"] for _, ev in sent)
+    assert sent[1][1]["tool"] == "read_file"
+    assert sent[3][1]["token"] == "replayed answer"
+    assert sent[-1][1]["ok"] is True
+
+
+def test_replay_without_channel_streams_nothing(monkeypatch):
+    seen = {}
+
+    def _invoke(agent, prompt, **kw):
+        seen["callbacks"] = kw.get("extra_callbacks")
+        return _fake_invocation(agent, prompt, **kw)
+
+    _stub_agent(monkeypatch, invoke=_invoke)
+    _seed_original()
+    agent_replay.replay_run("orig")
+    assert not seen["callbacks"]
+
+
+def test_replay_route_subscribes_the_client_first(monkeypatch):
+    from fastapi import HTTPException
+    from common.session_broker import broker
+    from dashboard.backend.routes import replay as route
+
+    calls = []
+    monkeypatch.setattr(broker, "add_channel", lambda cid, ch: calls.append(("sub", cid, ch)) or True)
+    monkeypatch.setattr(route, "replay_run", lambda rid, **kw: calls.append(("run", rid, kw)) or {"ok": True})
+
+    route.replay("orig", route.ReplayRequest(model="m", client_id="c1", channel="replay:x"))
+    assert calls == [("sub", "c1", "replay:x"),
+                     ("run", "orig", {"provider": None, "model": "m", "channel": "replay:x"})]
+
+    with pytest.raises(HTTPException):
+        route.replay("orig", route.ReplayRequest(client_id="c1", channel="chat:someone"))
+
+
+def test_replay_diff_keeps_lines_apart_without_a_final_newline(monkeypatch):
+    _stub_agent(monkeypatch)
+    _seed_original(output="first\nlast line")  # no newline after the last line
+    diff = agent_replay.replay_run("orig")["diff"]
+    lines = diff.split("\n")
+    assert "-last line" in lines
+    assert "+replayed answer" in lines

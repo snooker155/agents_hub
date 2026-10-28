@@ -1,7 +1,7 @@
 import { ChatColumn, FILL_COLUMN } from '../ChatColumn';
 import EntityChat from '../EntityChat';
 import SystemAgentWarning from './SystemAgentWarning';
-import { BookOpen, FileCode, GitBranch, Loader, RotateCcw, Save, Terminal, Zap } from 'lucide-react';
+import { BookOpen, FileCode, GitBranch, Loader, Lock, RotateCcw, Save, Terminal, Zap } from 'lucide-react';
 import { useAgentPage } from './context';
 
 /** The definition: the prompt files alone. Versions, guardrails, the pulse and
@@ -19,6 +19,21 @@ export default function ConfigTab() {
         <div className={defChat.gridClass}>
           <div className={`space-y-6 ${defChat.mainClass}`}>
           {agent.system && <SystemAgentWarning scope="config" />}
+          {agent.pinned_version != null && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-xs text-amber-800 flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+                {t('agentDetails.versions.pinnedConfigBanner', { n: agent.pinned_version })}
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveTab('versions')}
+                className="text-xs font-semibold text-amber-800 hover:text-amber-950 whitespace-nowrap"
+              >
+                {t('agentDetails.versions.openVersions')}
+              </button>
+            </div>
+          )}
           {agentDefinition.customized && (
             <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
               <div className="min-w-0">

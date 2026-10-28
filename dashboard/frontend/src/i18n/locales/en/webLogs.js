@@ -7,7 +7,7 @@ export default {
   loggingOffAfter: 'New calls are not being recorded.',
   refresh: 'Refresh',
   clearLog: 'Clear log',
-  confirmClear: 'Delete every recorded web call? This cannot be undone.',
+  confirmClear: 'Delete every web call recorded in this workspace? This cannot be undone.',
   clearedEntries: 'Cleared {{count}} entries.',
   cards: {
     callsRecorded: 'Calls recorded',
@@ -50,11 +50,12 @@ export default {
   webSearchTitle: 'Web search',
   pageFetchTitle: 'Page fetch',
   riskLevel: '{{level}} risk',
+  openRun: 'Open the run',
   facts: {
     when: 'When',
     workspace: 'Workspace',
     agent: 'Agent',
-    session: 'Session',
+    run: 'Run',
     task: 'Task',
     duration: 'Duration',
     provider: 'Provider',

@@ -98,8 +98,10 @@ def _fake_replica_answers(channel, wait_for_msg, events):
 
 
 def _claimer(instance_id):
+    # Up to 10 s: the dispatch runs in a worker thread and was seen, rarely,
+    # to take longer than the 2 s this used to allow on a loaded machine.
     async def _wait():
-        for _ in range(100):
+        for _ in range(500):
             msg = await asyncio.to_thread(inbox.claim_next, instance_id)
             if msg:
                 return msg["msg_id"]
@@ -110,6 +112,9 @@ def _claimer(instance_id):
 
 def test_relay_yields_the_replicas_events_and_stops_at_the_end_marker(monkeypatch, fake_agent):
     monkeypatch.setattr("services.routing.default_environment", lambda ws: (None, None))
+    # A replica that never answers fails the test in seconds, not after the
+    # real start timeout.
+    monkeypatch.setattr(routing, "_timeouts", lambda: {"start": 15.0, "idle": 15.0})
     svc = store.create(name="s", agent_id="swe_agent", workspace="ws")
     rep = _replica(svc)
     request = ChatRequest(agent_id="swe_agent", message="hi", workspace="ws", conversation_id="conv-1")

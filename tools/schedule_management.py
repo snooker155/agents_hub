@@ -1,9 +1,15 @@
 """
 Schedule management tools.
 
-Let agents schedule future user notifications and future agent tasks (Plan
-page). Jobs are written to the shared plans store; the backend scheduler
-fires them when due.
+Let agents schedule future user notifications, agent tasks, agent runs, flows,
+loops and memory consolidations (Plan page), and run those jobs as deployments (Deployments
+page: resources, auto pause, the firing journal). Jobs are written to the
+shared plans store; the backend scheduler fires them when due.
+
+These tools belong to the Planner (agents/definitions/planner): the main
+agent delegates scheduling to it rather than holding them. Secrets are the one
+deployment field no tool sets: a secret is a private-data grant to another
+agent's runs, which the person gives on the Deployments page.
 
 Named schedule_* (not plan_*) to avoid colliding with the reasoning layer's
 auto-injected plan-store tools (save_plan / get_plan / list_plans / ...).
@@ -19,6 +25,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from common.entity_sink import record_entity
 from common.workspace_context import filter_agents_for_workspace, resolve_active_workspace
+from common.auto_mode import approved as _approved
 from common.workspace_scope import check_record, current_agent, is_service_wide
 from plans.models import JobKind, JobStatus, Recurrence
 from plans import service as plan_service
@@ -58,6 +65,28 @@ def _agent_unavailable(agent_id: str) -> bool:
     return not filter_agents_for_workspace([spec], ws)
 
 
+def _criterion_note(agent_id: Optional[str], use_agent_outcome: bool) -> str:
+    """What the reply tells the person about the agent's default criterion:
+    whether the agent has one, and whether the job's tasks use it."""
+    if not agent_id:
+        return (" Tasks will be graded against the default criterion of the agent the orchestrator picks."
+                if use_agent_outcome else "")
+    try:
+        from agents.registry import get_agent as reg_get_agent
+        spec = reg_get_agent(agent_id)
+    except Exception:  # noqa: BLE001 - the note is a courtesy, the job is created either way
+        return ""
+    rubric = str(((getattr(spec, "default_outcome", None) or {}).get("rubric")) or "").strip()
+    if not rubric:
+        return (f" Agent '{agent_id}' has no default criterion, so its tasks are not graded."
+                if use_agent_outcome else "")
+    if use_agent_outcome:
+        return (f" Every task will be graded against agent '{agent_id}'s default criterion and sent back "
+                "for another attempt while it falls short. Tell the person.")
+    return (f" Agent '{agent_id}' has a default criterion; these tasks do not use it. Tell the person "
+            "in one sentence that they can turn it on (use_agent_outcome).")
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -90,9 +119,74 @@ def _resolve_run_at(
     raise ValueError("Provide run_at (ISO datetime) or delay_minutes")
 
 
+def _effective_recurrence(recurrence: Optional[Recurrence], cron: Optional[str]) -> Optional[Recurrence]:
+    """A cron expression means a cron schedule whatever ``recurrence`` says:
+    the model often sends only ``cron``, or ``cron`` beside 'weekly'."""
+    if (cron or "").strip():
+        return Recurrence.cron
+    return recurrence
+
+
+_INTERVALS = {
+    Recurrence.hourly: timedelta(hours=1),
+    Recurrence.daily: timedelta(days=1),
+    Recurrence.weekly: timedelta(weeks=1),
+}
+
+
+def _next_cron_time(cron: Optional[str], tz: Optional[str], not_before: Optional[datetime] = None) -> datetime:
+    """The first cron occurrence at or after ``not_before`` (default now),
+    computed by the scheduler's own ``_next_run`` via ``upcoming_runs``."""
+    start = (not_before or _now()) - timedelta(seconds=1)
+    return datetime.fromisoformat(plan_service.upcoming_runs(cron, tz, count=1, start=start)[0])
+
+
+def _resolve_first_run(
+    run_at: Optional[str],
+    delay_minutes: Optional[int],
+    recurrence: Recurrence,
+    cron: Optional[str] = None,
+    tz: Optional[str] = None,
+) -> tuple[datetime, Recurrence]:
+    """The first firing time and the recurrence to store.
+
+    A cron schedule needs no start time: its first run is the next cron
+    occurrence, or the first one at or after ``run_at``/``delay_minutes``
+    when given, so the job never fires off its grid. Hourly, daily and weekly
+    without a time start one interval from now; a one-off job needs
+    ``run_at`` or ``delay_minutes``.
+    """
+    recurrence = _effective_recurrence(recurrence, cron) or Recurrence.none
+    if recurrence == Recurrence.cron:
+        given = _resolve_run_at(run_at, delay_minutes) if (run_at or delay_minutes is not None) else None
+        return _next_cron_time(cron, tz, given), recurrence
+    if not run_at and delay_minutes is None and recurrence in _INTERVALS:
+        return _now() + _INTERVALS[recurrence], recurrence
+    return _resolve_run_at(run_at, delay_minutes), recurrence
+
+
+def _check_when(model: BaseModel) -> BaseModel:
+    """Shared schema check: only a one-off job must say when it runs."""
+    recurrence = _effective_recurrence(getattr(model, "recurrence", None), getattr(model, "cron", None))
+    if recurrence == Recurrence.cron:
+        if not (getattr(model, "cron", None) or "").strip():
+            raise ValueError("recurrence='cron' requires a cron expression, e.g. '0 9 * * 1-5'")
+        return model
+    if recurrence in (None, Recurrence.none) and not model.run_at and model.delay_minutes is None:
+        raise ValueError(
+            "Provide run_at or delay_minutes for a one-off job (a recurring one needs "
+            "neither: cron starts at the next cron time, hourly/daily/weekly one interval from now)"
+        )
+    return model
+
+
 _TIME_HELP = (
     "Timing: pass either `run_at` (ISO 8601, e.g. '2026-06-13T09:00:00+00:00'; "
     "naive values are treated as UTC) or `delay_minutes` (relative to now). "
+    "A recurring job needs neither. A `cron` expression always makes the job a "
+    "cron schedule (whatever `recurrence` says): the first run is the next cron "
+    "time, or the first one at or after run_at when given. hourly/daily/weekly "
+    "without a time start one interval from now; for a set day or hour, use cron. "
     "Prefer delay_minutes for relative requests like 'in 2 hours' (=120). "
     "The response includes `current_time` and the resolved `run_at` — verify it "
     "matches the user's intent. If you need the current date/time first, call "
@@ -107,7 +201,9 @@ class ScheduleNotificationInput(BaseModel):
     message: str = Field("", description="Notification body text")
     run_at: Optional[str] = Field(None, description="ISO 8601 datetime when to notify (UTC if no offset)")
     delay_minutes: Optional[int] = Field(None, ge=1, description="Alternative to run_at: minutes from now")
-    recurrence: Recurrence = Field(Recurrence.none, description="none, hourly, daily, or weekly")
+    recurrence: Recurrence = Field(Recurrence.none, description="none, hourly, daily, weekly, or cron")
+    cron: Optional[str] = Field(None, description="Cron expression, required when recurrence='cron'")
+    timezone: Optional[str] = Field(None, description="IANA timezone name, e.g. 'Europe/Berlin'. Defaults to UTC.")
     telegram: bool = Field(
         False,
         description="When it fires, also deliver to the user's bound Telegram chat(s). Default false = inbox/bell only.",
@@ -115,9 +211,7 @@ class ScheduleNotificationInput(BaseModel):
 
     @model_validator(mode="after")
     def _check_when(self):
-        if not self.run_at and self.delay_minutes is None:
-            raise ValueError("Provide run_at or delay_minutes")
-        return self
+        return _check_when(self)
 
 
 class ScheduleTaskInput(BaseModel):
@@ -136,18 +230,135 @@ class ScheduleTaskInput(BaseModel):
     )
     agent_id: Optional[str] = Field(
         None,
-        description="Optional agent to run the task. Omit to let the orchestrator pick one at fire time.",
+        description="Id of the agent to run the task. Always set it when the person named an agent; "
+                    "omit only when they named none, and the orchestrator picks one at fire time.",
     )
     telegram: bool = Field(
         False,
         description="Also send the 'task started' notification to the user's bound Telegram chat(s). Default false = inbox/bell only.",
     )
+    agent_version: Optional[int] = Field(
+        None, ge=1, description="Pin the runs to a stored version of agent_id (requires agent_id).",
+    )
+    project_id: Optional[str] = Field(None, description="Project the created tasks belong to.")
+    file_ids: Optional[List[str]] = Field(
+        None, description="Workspace file ids (file_...) every run finds in its working directory.",
+    )
+    memory_pool_ids: Optional[List[str]] = Field(
+        None, description="Memory pools (ids or names) bound for these runs instead of the agent's own binding.",
+    )
+    memory_access: Optional[str] = Field(
+        None, description="How the runs may use memory_pool_ids: 'read' (default) or 'write'.",
+    )
+    use_agent_outcome: bool = Field(
+        False,
+        description="Grade every created task against the agent's default criterion. Only when the "
+                    "person asked for it; off by default.",
+    )
+    auto_pause_after: int = Field(
+        3, ge=0, description="Consecutive failed firings that pause the job; 0 turns auto pause off.",
+    )
 
     @model_validator(mode="after")
     def _check_when(self):
-        if not self.run_at and self.delay_minutes is None:
-            raise ValueError("Provide run_at or delay_minutes")
-        return self
+        return _check_when(self)
+
+
+class ScheduleAgentRunInput(BaseModel):
+    title: str = Field(..., min_length=1, description="Name of the job, shown on the Plan page and as the conversation title")
+    agent_id: str = Field(..., description="Id of the agent to run (list_agents_tool)")
+    message: str = Field(..., min_length=1, description="What the agent is asked to do, as if the person wrote it in a chat")
+    run_at: Optional[str] = Field(None, description="ISO 8601 datetime of the first run (UTC if no offset)")
+    delay_minutes: Optional[int] = Field(None, ge=1, description="Alternative to run_at: minutes from now")
+    recurrence: Recurrence = Field(Recurrence.none, description="none, hourly, daily, weekly, or cron")
+    cron: Optional[str] = Field(None, description="Cron expression, required when recurrence='cron'")
+    timezone: Optional[str] = Field(None, description="IANA timezone name, e.g. 'Europe/Berlin'. Defaults to UTC.")
+    agent_version: Optional[int] = Field(None, ge=1, description="Pin the runs to a stored version of the agent.")
+    project_id: Optional[str] = Field(None, description="Project each run's conversation belongs to.")
+    file_ids: Optional[List[str]] = Field(
+        None, description="Workspace file ids (file_...) attached to the message of every run.",
+    )
+    memory_pool_ids: Optional[List[str]] = Field(
+        None, description="Memory pools (ids or names) bound for these runs instead of the agent's own binding.",
+    )
+    memory_access: Optional[str] = Field(
+        None, description="How the runs may use memory_pool_ids: 'read' (default) or 'write'.",
+    )
+    auto_pause_after: int = Field(
+        3, ge=0, description="Consecutive failed firings that pause the job; 0 turns auto pause off.",
+    )
+
+    @model_validator(mode="after")
+    def _check_when(self):
+        return _check_when(self)
+
+
+class ScheduleFlowInput(BaseModel):
+    title: str = Field(..., min_length=1, description="Name of the job, shown on the Plan and Deployments pages")
+    flow_id: str = Field(..., description="Id of the flow to run (list_flows_tool)")
+    message: str = Field("", description="What the run is for; the flow gets it as its request")
+    seed: Optional[Dict[str, Any]] = Field(
+        None, description="JSON object merged into the flow's initial state on every run",
+    )
+    run_at: Optional[str] = Field(None, description="ISO 8601 datetime of the first run (UTC if no offset)")
+    delay_minutes: Optional[int] = Field(None, ge=1, description="Alternative to run_at: minutes from now")
+    recurrence: Recurrence = Field(Recurrence.none, description="none, hourly, daily, weekly, or cron")
+    cron: Optional[str] = Field(None, description="Cron expression, required when recurrence='cron'")
+    timezone: Optional[str] = Field(None, description="IANA timezone name, e.g. 'Europe/Berlin'. Defaults to UTC.")
+    max_concurrent: int = Field(1, ge=0, description="Runs of this job allowed at once; 0 means no limit")
+    auto_pause_after: int = Field(
+        3, ge=0, description="Consecutive failed firings that pause the job; 0 turns auto pause off.",
+    )
+
+    @model_validator(mode="after")
+    def _check_when(self):
+        return _check_when(self)
+
+
+class ScheduleLoopInput(BaseModel):
+    title: str = Field(..., min_length=1, description="Name of the job, shown on the Plan and Deployments pages")
+    loop_id: str = Field(..., description="Id of the loop to start (list_loops_tool)")
+    message: str = Field("", description="What the run is for; the loop gets it as its goal")
+    run_at: Optional[str] = Field(None, description="ISO 8601 datetime of the first run (UTC if no offset)")
+    delay_minutes: Optional[int] = Field(None, ge=1, description="Alternative to run_at: minutes from now")
+    recurrence: Recurrence = Field(Recurrence.none, description="none, hourly, daily, weekly, or cron")
+    cron: Optional[str] = Field(None, description="Cron expression, required when recurrence='cron'")
+    timezone: Optional[str] = Field(None, description="IANA timezone name, e.g. 'Europe/Berlin'. Defaults to UTC.")
+    auto_pause_after: int = Field(
+        3, ge=0, description="Consecutive failed firings that pause the job; 0 turns auto pause off.",
+    )
+    user_approved: bool = Field(
+        False,
+        description=(
+            "Must be True. Set only after you have shown the person the loop's name, "
+            "the schedule and the cost per run that a call without it returns, and "
+            "they have said yes."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_when(self):
+        return _check_when(self)
+
+
+class ScheduleConsolidationInput(BaseModel):
+    title: str = Field(..., min_length=1, description="Name of the job")
+    pool_id: str = Field(..., description="Id or name of the memory pool to consolidate (a name is looked up in the active workspace)")
+    session_limit: int = Field(10, ge=1, le=100, description="How many recent sessions of the pool to fold in")
+    run_at: Optional[str] = Field(None, description="ISO 8601 datetime of the first run (UTC if no offset)")
+    delay_minutes: Optional[int] = Field(None, ge=1, description="Alternative to run_at: minutes from now")
+    recurrence: Recurrence = Field(Recurrence.none, description="none, hourly, daily, weekly, or cron")
+    cron: Optional[str] = Field(None, description="Cron expression, required when recurrence='cron'")
+    timezone: Optional[str] = Field(None, description="IANA timezone name, e.g. 'Europe/Berlin'. Defaults to UTC.")
+
+    @model_validator(mode="after")
+    def _check_when(self):
+        return _check_when(self)
+
+
+class GetScheduledInput(BaseModel):
+    id: str = Field(..., description="UUID of the scheduled job")
+    fires: int = Field(10, ge=0, le=50, description="How many of its latest firings to include")
 
 
 class NotifyUserInput(BaseModel):
@@ -190,7 +401,18 @@ class UpdateScheduledInput(BaseModel):
     recurrence: Optional[Recurrence] = None
     cron: Optional[str] = Field(None, description="New cron expression, required when recurrence='cron'")
     timezone: Optional[str] = Field(None, description="New IANA timezone name, e.g. 'Europe/Berlin'")
-    agent_id: Optional[str] = Field(None, description="New agent for agent_task jobs; empty string clears it")
+    agent_id: Optional[str] = Field(None, description="New agent for agent_task and agent_run jobs; empty string clears it (agent_task only)")
+    agent_version: Optional[int] = Field(None, ge=0, description="agent_task, agent_run: pin to this version; 0 clears the pin")
+    project_id: Optional[str] = Field(None, description="agent_task, agent_run: new project; empty string clears it")
+    file_ids: Optional[List[str]] = Field(None, description="agent_task, agent_run: replaces the file list")
+    memory_pool_ids: Optional[List[str]] = Field(None, description="agent_task, agent_run: replaces the bound pools")
+    memory_access: Optional[str] = Field(None, description="agent_task, agent_run: 'read' or 'write'")
+    use_agent_outcome: Optional[bool] = Field(
+        None, description="agent_task: grade created tasks against the agent's default criterion (true/false)",
+    )
+    auto_pause_after: Optional[int] = Field(None, ge=0, description="Failed firings before auto pause; 0 = off")
+    seed: Optional[Dict[str, Any]] = Field(None, description="flow: replaces the JSON seed")
+    max_concurrent: Optional[int] = Field(None, ge=0, description="flow: runs allowed at once; 0 = no limit")
 
 
 # -------------------- Tools --------------------
@@ -203,6 +425,8 @@ def schedule_notification(
     delay_minutes: Optional[int] = None,
     recurrence: Recurrence = Recurrence.none,
     telegram: bool = False,
+    cron: Optional[str] = None,
+    timezone: Optional[str] = None,
 ) -> str:
     """Schedule a future notification (reminder) for the user.
 
@@ -212,13 +436,15 @@ def schedule_notification(
     Telegram chat(s) when it fires. Returns JSON with the created job.
     """
     try:
-        when = _resolve_run_at(run_at, delay_minutes)
+        when, recurrence = _resolve_first_run(run_at, delay_minutes, recurrence, cron, timezone)
         job = plan_service.create_job(
             kind=JobKind.notification,
             title=title,
             message=message,
             run_at=when,
             recurrence=recurrence,
+            cron=cron,
+            timezone=timezone,
             workspace=resolve_active_workspace(),
             created_by="agent",
             channels=["dashboard", "telegram"] if telegram else ["dashboard"],
@@ -247,22 +473,33 @@ def schedule_task(
     timezone: Optional[str] = None,
     agent_id: Optional[str] = None,
     telegram: bool = False,
+    agent_version: Optional[int] = None,
+    project_id: Optional[str] = None,
+    file_ids: Optional[List[str]] = None,
+    memory_pool_ids: Optional[List[str]] = None,
+    memory_access: Optional[str] = None,
+    use_agent_outcome: bool = False,
+    auto_pause_after: int = 3,
 ) -> str:
-    """Schedule agent work for the future.
+    """Schedule agent work for the future as a task on the tracker.
 
     At the scheduled time a regular task is created and started: if agent_id
     is set, that agent runs it; otherwise the orchestrator routes it. The user
-    is notified when the work starts. Use for requests like "every morning
-    generate a summary" or "in 3 hours run the tests again". For recurrence
+    is notified when the work starts. Use it when the person wants a task
+    ("поставь задачу", "a task every Monday"), or when no agent was named.
+    To just run an agent later, with no task, use schedule_agent_run. A task
+    gets no criterion unless use_agent_outcome is set. For recurrence
     'cron', pass a cron expression; timezone (IANA name, default UTC) applies
     to cron and keeps hourly/daily/weekly at the same local time across a DST
     change. Set telegram=true to also send that start notification to the
-    user's bound Telegram chat(s). Returns JSON with the created job.
+    user's bound Telegram chat(s). A recurring job is a deployment: it may carry a project, files and
+    memory pools copied onto every task it creates, an agent version pin, and
+    how many failed firings pause it. Returns JSON with the created job.
     """
     try:
         if agent_id and _agent_unavailable(agent_id):
             return _json_err(f"Agent '{agent_id}' not found", code="not_found")
-        when = _resolve_run_at(run_at, delay_minutes)
+        when, recurrence = _resolve_first_run(run_at, delay_minutes, recurrence, cron, timezone)
         job = plan_service.create_job(
             kind=JobKind.agent_task,
             title=title,
@@ -275,10 +512,22 @@ def schedule_task(
             created_by="agent",
             agent_id=agent_id or None,
             channels=["dashboard", "telegram"] if telegram else ["dashboard"],
+            agent_version=agent_version,
+            auto_pause_after=auto_pause_after,
+            project_id=project_id or None,
+            file_ids=file_ids,
+            memory_pool_ids=memory_pool_ids,
+            memory_access=memory_access,
+            use_agent_outcome=use_agent_outcome,
         )
         _record_job(job, "scheduled")
         return _json_ok({
-            "message": "Task scheduled. Confirm the time and agent to the user.",
+            "message": "Task scheduled. Confirm the time and agent to the user."
+            + _criterion_note(agent_id, use_agent_outcome) + (
+                "" if agent_id else
+                " No agent_id was set: the orchestrator picks an agent when it fires. If the person"
+                " named an agent, set it now with update_scheduled (agent_id) and do not ask them again."
+            ),
             "current_time": _now().isoformat(),
             "job": job_to_dict(job),
         })
@@ -287,6 +536,71 @@ def schedule_task(
 
 
 schedule_task.description += "\n\n" + _TIME_HELP
+
+
+@tool("schedule_agent_run", args_schema=ScheduleAgentRunInput)
+def schedule_agent_run(
+    title: str,
+    agent_id: str,
+    message: str,
+    run_at: Optional[str] = None,
+    delay_minutes: Optional[int] = None,
+    recurrence: Recurrence = Recurrence.none,
+    cron: Optional[str] = None,
+    timezone: Optional[str] = None,
+    agent_version: Optional[int] = None,
+    project_id: Optional[str] = None,
+    file_ids: Optional[List[str]] = None,
+    memory_pool_ids: Optional[List[str]] = None,
+    memory_access: Optional[str] = None,
+    auto_pause_after: int = 3,
+) -> str:
+    """Run an agent at a set time, once or on a schedule, with no task.
+
+    Each firing opens a new conversation with the agent in the Chat list and
+    sends it `message`, as if the person had written it then: the answer
+    stays in that conversation, nothing lands on the task tracker. Use it for
+    "every morning ask the researcher for the news" or "in an hour have the
+    agent check the build". Use schedule_task only when the person wants a
+    task. A recurring run is a deployment like a scheduled task: it may carry
+    a project, files attached to every run's message and memory pools bound
+    for those runs. Returns JSON with the created job.
+    """
+    try:
+        if _agent_unavailable(agent_id):
+            return _json_err(f"Agent '{agent_id}' not found", code="not_found")
+        when, recurrence = _resolve_first_run(run_at, delay_minutes, recurrence, cron, timezone)
+        job = plan_service.create_job(
+            kind=JobKind.agent_run,
+            title=title,
+            message=message,
+            run_at=when,
+            recurrence=recurrence,
+            cron=cron,
+            timezone=timezone,
+            workspace=resolve_active_workspace(),
+            created_by="agent",
+            agent_id=agent_id,
+            channels=["dashboard"],
+            agent_version=agent_version,
+            auto_pause_after=auto_pause_after,
+            project_id=project_id or None,
+            file_ids=file_ids,
+            memory_pool_ids=memory_pool_ids,
+            memory_access=memory_access,
+        )
+        _record_job(job, "scheduled")
+        return _json_ok({
+            "message": "Agent run scheduled. Confirm the time and the agent to the user; "
+                       "each run's answer will be in a new conversation in the Chat list.",
+            "current_time": _now().isoformat(),
+            "job": job_to_dict(job),
+        })
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to schedule agent run: {e}")
+
+
+schedule_agent_run.description += "\n\n" + _TIME_HELP
 
 
 @tool("notify_user", args_schema=NotifyUserInput)
@@ -383,7 +697,7 @@ def wake_agent(agent_id: str, message: str) -> str:
 
 @tool("list_scheduled", args_schema=ListScheduledInput)
 def list_scheduled(include_finished: bool = False) -> str:
-    """List scheduled jobs (future notifications and agent tasks) in the active workspace.
+    """List scheduled jobs (notifications, agent tasks, flows, loops, memory consolidations) in the active workspace.
 
     By default returns only pending jobs (scheduled/paused). The response
     includes `current_time` (UTC) — also call this when you need the current
@@ -434,9 +748,19 @@ def update_scheduled(
     cron: Optional[str] = None,
     timezone: Optional[str] = None,
     agent_id: Optional[str] = None,
+    agent_version: Optional[int] = None,
+    project_id: Optional[str] = None,
+    file_ids: Optional[List[str]] = None,
+    memory_pool_ids: Optional[List[str]] = None,
+    memory_access: Optional[str] = None,
+    use_agent_outcome: Optional[bool] = None,
+    auto_pause_after: Optional[int] = None,
+    seed: Optional[Dict[str, Any]] = None,
+    max_concurrent: Optional[int] = None,
 ) -> str:
-    """Update a pending scheduled job (time, title, message, recurrence, cron,
-    timezone, or agent).
+    """Update a pending scheduled job: time, title, message, recurrence, cron,
+    timezone, agent, and a deployment's resources, version pin, auto pause,
+    flow seed and concurrency.
 
     Only scheduled/paused jobs can be edited. Returns JSON with the updated job.
     """
@@ -455,7 +779,15 @@ def update_scheduled(
             fields["title"] = title
         if message is not None:
             fields["message"] = message
-        if run_at or delay_minutes is not None:
+        recurrence = _effective_recurrence(recurrence, cron)
+        time_given = bool(run_at) or delay_minutes is not None
+        will_be_cron = (recurrence or job.recurrence) == Recurrence.cron
+        if will_be_cron and (time_given or recurrence is not None or cron is not None or timezone is not None):
+            # Keep a cron job on its grid: the next occurrence of the new
+            # schedule, or the first at or after the time given.
+            given = _resolve_run_at(run_at, delay_minutes) if time_given else None
+            fields["run_at"] = _next_cron_time(cron or job.cron, timezone or job.timezone, given)
+        elif time_given:
             fields["run_at"] = _resolve_run_at(run_at, delay_minutes)
         if recurrence is not None:
             fields["recurrence"] = recurrence
@@ -470,6 +802,16 @@ def update_scheduled(
                 fields["agent_id"] = agent_id.strip()
             else:
                 fields["agent_id"] = None
+        if agent_version is not None:
+            fields["agent_version"] = agent_version or None
+        if project_id is not None:
+            fields["project_id"] = project_id.strip() or None
+        for key, value in (("file_ids", file_ids), ("memory_pool_ids", memory_pool_ids),
+                           ("memory_access", memory_access), ("auto_pause_after", auto_pause_after),
+                           ("use_agent_outcome", use_agent_outcome),
+                           ("seed", seed), ("max_concurrent", max_concurrent)):
+            if value is not None:
+                fields[key] = value
         if not fields:
             return _json_err("No fields to update provided")
 
@@ -486,11 +828,308 @@ def update_scheduled(
 update_scheduled.description += "\n\n" + _TIME_HELP
 
 
+def _flow_unavailable(flow_id: str) -> bool:
+    """Whether ``flow_id`` is unknown or another workspace's flow."""
+    from flow import store as flow_store
+    try:
+        flow = flow_store.get_flow(flow_id)
+    except Exception:  # noqa: BLE001 - a flow that does not parse cannot be scheduled either
+        return True
+    if not flow:
+        return True
+    return check_record((flow.get("workspace") or "").strip() or None,
+                        what="flow", workspace=resolve_active_workspace()) is not None
+
+
+@tool("schedule_flow", args_schema=ScheduleFlowInput)
+def schedule_flow(
+    title: str,
+    flow_id: str,
+    message: str = "",
+    seed: Optional[Dict[str, Any]] = None,
+    run_at: Optional[str] = None,
+    delay_minutes: Optional[int] = None,
+    recurrence: Recurrence = Recurrence.none,
+    cron: Optional[str] = None,
+    timezone: Optional[str] = None,
+    max_concurrent: int = 1,
+    auto_pause_after: int = 3,
+) -> str:
+    """Run a flow at a set time, once or on a schedule (a flow deployment).
+
+    Each firing starts one run of the flow with `message` as its request and
+    `seed` merged into its initial state; `max_concurrent` caps how many runs
+    of this job may be going at once, so a slow flow does not pile up. Returns
+    JSON with the created job.
+    """
+    try:
+        if _flow_unavailable(flow_id):
+            return _json_err(f"Flow '{flow_id}' not found", code="not_found")
+        when, recurrence = _resolve_first_run(run_at, delay_minutes, recurrence, cron, timezone)
+        job = plan_service.create_job(
+            kind=JobKind.flow,
+            title=title,
+            message=message,
+            run_at=when,
+            recurrence=recurrence,
+            cron=cron,
+            timezone=timezone,
+            workspace=resolve_active_workspace(),
+            created_by="agent",
+            flow_id=flow_id,
+            seed=seed,
+            max_concurrent=max_concurrent,
+            channels=["dashboard"],
+            auto_pause_after=auto_pause_after,
+        )
+        _record_job(job, "scheduled")
+        return _json_ok({
+            "message": "Flow scheduled. Confirm the time and the flow to the user.",
+            "current_time": _now().isoformat(),
+            "job": job_to_dict(job),
+        })
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to schedule flow: {e}")
+
+
+schedule_flow.description += "\n\n" + _TIME_HELP
+
+
+@tool("schedule_loop", args_schema=ScheduleLoopInput)
+def schedule_loop(
+    title: str,
+    loop_id: str,
+    message: str = "",
+    run_at: Optional[str] = None,
+    delay_minutes: Optional[int] = None,
+    recurrence: Recurrence = Recurrence.none,
+    cron: Optional[str] = None,
+    timezone: Optional[str] = None,
+    auto_pause_after: int = 3,
+    user_approved: bool = False,
+) -> str:
+    """Start a loop at a set time, once or on a schedule (a loop deployment),
+    AFTER the person has approved it.
+
+    Each firing starts one run of the loop with `message` as its goal. A
+    firing while the previous run of the same loop is still going is skipped
+    and counts as a failed firing. Every run is billed for each iteration, so
+    this refuses unless `user_approved` is True, and the refusal hands you the
+    loop's real name, the first run and the cost ceiling of one run to show
+    the person. Returns JSON with the created job.
+    """
+    try:
+        from loops import store as loop_store
+        loop = loop_store.get_loop(loop_id)
+        if loop is None or check_record((loop.workspace or "").strip() or None, what="loop",
+                                        workspace=resolve_active_workspace()) is not None:
+            return _json_err(f"Loop '{loop_id}' not found. Call list_loops_tool and ask the "
+                             "person which loop they mean.", code="not_found")
+        when, recurrence = _resolve_first_run(run_at, delay_minutes, recurrence, cron, timezone)
+        if not _approved("schedule_loop", user_approved, {"loop_id": loop_id, "title": title}):
+            try:
+                from loops.runner import estimate_cost
+                estimate = estimate_cost(loop)
+            except Exception:  # noqa: BLE001 - the confirmation still goes out without a number
+                estimate = None
+            extra: Dict[str, Any] = {
+                "loop_id": loop.loop_id, "loop_name": loop.name, "requested_title": title,
+                "first_run_at": when.isoformat(), "recurrence": recurrence.value,
+                "cron": cron, "timezone": timezone or "UTC",
+            }
+            if estimate:
+                extra["estimate_per_run"] = estimate
+            return _json_err(
+                f"Not scheduled yet. Tell the person which loop this is ('{loop.name}'), "
+                "when it first runs and how often, and what one run may cost, then ask them "
+                "to confirm. If they named a loop that is not this one, say no loop has that "
+                "name and list the loops instead. Call schedule_loop again with "
+                "user_approved=True only after they say yes.",
+                code="approval_required", extra=extra,
+            )
+        job = plan_service.create_job(
+            kind=JobKind.loop,
+            title=title,
+            message=message,
+            run_at=when,
+            recurrence=recurrence,
+            cron=cron,
+            timezone=timezone,
+            workspace=resolve_active_workspace(),
+            created_by="agent",
+            loop_id=loop_id,
+            channels=["dashboard"],
+            auto_pause_after=auto_pause_after,
+        )
+        _record_job(job, "scheduled")
+        return _json_ok({
+            "message": "Loop scheduled. Confirm the time and the loop to the user.",
+            "current_time": _now().isoformat(),
+            "job": job_to_dict(job),
+        })
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to schedule loop: {e}")
+
+
+schedule_loop.description += "\n\n" + _TIME_HELP
+
+
+@tool("schedule_memory_consolidation", args_schema=ScheduleConsolidationInput)
+def schedule_memory_consolidation(
+    title: str,
+    pool_id: str,
+    session_limit: int = 10,
+    run_at: Optional[str] = None,
+    delay_minutes: Optional[int] = None,
+    recurrence: Recurrence = Recurrence.none,
+    cron: Optional[str] = None,
+    timezone: Optional[str] = None,
+) -> str:
+    """Consolidate a memory pool at a set time, once or on a schedule.
+
+    Each firing folds the pool and its recent sessions into a new pool:
+    duplicates merged, outdated facts replaced. The source pool is never
+    changed. Returns JSON with the created job.
+    """
+    try:
+        when, recurrence = _resolve_first_run(run_at, delay_minutes, recurrence, cron, timezone)
+        job = plan_service.create_job(
+            kind=JobKind.memory_consolidate,
+            title=title,
+            run_at=when,
+            recurrence=recurrence,
+            cron=cron,
+            timezone=timezone,
+            workspace=resolve_active_workspace(),
+            created_by="agent",
+            channels=["dashboard"],
+            consolidate_pool_id=pool_id,
+            consolidate_session_limit=session_limit,
+        )
+        _record_job(job, "scheduled")
+        return _json_ok({
+            "message": "Consolidation scheduled. Confirm the time and the pool to the user.",
+            "current_time": _now().isoformat(),
+            "job": job_to_dict(job),
+        })
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to schedule memory consolidation: {e}")
+
+
+schedule_memory_consolidation.description += "\n\n" + _TIME_HELP
+
+
+def _visible_job(id: str):
+    """The job ``id`` names in this run's workspace, or a JSON error string."""
+    jid = _uuid_from_str(id)
+    job = plan_service.get_job(jid)
+    if not job or _job_hidden(job):
+        return None, _json_err("Job not found", code="not_found", extra={"id": id})
+    return job, None
+
+
+@tool("get_scheduled", args_schema=GetScheduledInput)
+def get_scheduled(id: str, fires: int = 10) -> str:
+    """Show one scheduled job with its next runs and its firing journal.
+
+    A firing's ``ok`` says only that the work was started (or the error when
+    it could not be). Its ``result`` says what that work has come to now:
+    ``state`` running, waiting (on a person), completed, failed, stopped or
+    missing, the task or run status, and the start of what it produced. A job
+    has "done its work" only when the firing's result is completed. Use it
+    to answer "did the nightly job run, and what happened"."""
+    try:
+        job, err = _visible_job(id)
+        if err:
+            return err
+        journal = plan_service.list_job_fires(job.id, limit=fires) if fires else []
+        return _json_ok({
+            "current_time": _now().isoformat(),
+            "job": job_to_dict(job),
+            "fires": [{**plan_service.fire_to_dict(f), "result": plan_service.fire_result(f)}
+                      for f in journal],
+        })
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to read job: {e}")
+
+
+@tool("pause_scheduled", args_schema=JobIdInput)
+def pause_scheduled(id: str) -> str:
+    """Pause a scheduled job: it keeps its settings and does not fire until
+    resumed. Returns JSON with the job."""
+    try:
+        job, err = _visible_job(id)
+        if err:
+            return err
+        updated = plan_service.pause_job(job.id)
+        if updated is None:
+            return _json_err(f"Cannot pause a job in status '{job.status.value}'", code="invalid_state")
+        _record_job(updated, "paused")
+        return _json_ok({"job": job_to_dict(updated)})
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to pause job: {e}")
+
+
+@tool("resume_scheduled", args_schema=JobIdInput)
+def resume_scheduled(id: str) -> str:
+    """Resume a paused job, including one paused after repeated failures (its
+    error count starts again from zero). Returns JSON with the job."""
+    try:
+        job, err = _visible_job(id)
+        if err:
+            return err
+        updated = plan_service.resume_job(job.id)
+        if updated is None:
+            return _json_err(f"Cannot resume a job in status '{job.status.value}'", code="invalid_state")
+        _record_job(updated, "resumed")
+        return _json_ok({"current_time": _now().isoformat(), "job": job_to_dict(updated)})
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to resume job: {e}")
+
+
+@tool("run_scheduled_now", args_schema=JobIdInput)
+def run_scheduled_now(id: str) -> str:
+    """Fire a scheduled or paused job right now, without changing its schedule
+    (a paused job stays paused). Use it to test a deployment. The firing is
+    done by the hub, like the Run now button, and lands in the job's journal."""
+    try:
+        job, err = _visible_job(id)
+        if err:
+            return err
+        if job.status not in (JobStatus.scheduled, JobStatus.paused):
+            return _json_err(f"Cannot run a job in status '{job.status.value}'", code="invalid_state")
+        import requests
+        from common.auth import auth_headers
+        from common.hostnet import hub_base_url
+        resp = requests.post(f"{hub_base_url()}/api/plan/jobs/{job.id}/run-now",
+                             headers=auth_headers(), timeout=(2.0, 60.0))
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+        if not resp.ok or not isinstance(data, dict):
+            detail = data.get("detail") if isinstance(data, dict) else resp.text[:300]
+            return _json_err(f"The hub did not run the job: {detail}")
+        if data.get("job"):
+            _record_job(job, "fired")
+        return _json_ok(data)
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to run job: {e}")
+
+
 __all__ = [
     "schedule_notification",
     "schedule_task",
+    "schedule_agent_run",
+    "schedule_flow",
+    "schedule_loop",
+    "schedule_memory_consolidation",
     "notify_user",
     "list_scheduled",
+    "get_scheduled",
     "cancel_scheduled",
     "update_scheduled",
+    "pause_scheduled",
+    "resume_scheduled",
+    "run_scheduled_now",
 ]

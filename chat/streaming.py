@@ -90,6 +90,61 @@ def _without_steering(user_message: str, history: list, full_prompt: str) -> tup
     return full_prompt, []
 
 
+
+def build_process_payload(
+    callback, *, full_prompt: str, final_response: str, response_obj=None,
+    entities=None, citations=None, usage=None, duration_ms: int = 0,
+) -> dict:
+    """The run's ``process`` record from the chat callback that watched it.
+
+    One builder for every run the callback watches: a chat turn, a flow chat
+    node and a background flow node (flow/task_driver.py), so their records,
+    and the trails read back from them, have the same shape.
+    """
+    last_struct = getattr(callback, "_last_prompt_struct", None) or {}
+    # Prior turns now reach the model as real messages, so the callback's own
+    # split of the prompt (build_prompt_struct) already holds them and the latest
+    # user message is clean. A session recorded before that — history folded into
+    # the prompt text as a "Conversation history:" block — is read back apart
+    # here, so an old run still shows its turns rather than one blob. Either way
+    # the agent's own intra-run loop output ("middle response tokens") stays out:
+    # it belongs to the live bubble and the thinking trace.
+    from chat.context import split_embedded_history
+    prompt_text = last_struct.get("user_message") or full_prompt
+    history = list(last_struct.get("history") or [])
+    prompt_text, history = _without_steering(prompt_text, history, full_prompt)
+    if history:
+        user_message = prompt_text
+    else:
+        history, user_message = split_embedded_history(prompt_text)
+    structured_response = None
+    if response_obj is not None:
+        try:
+            structured_response = response_obj.to_payload() if hasattr(response_obj, "to_payload") else None
+        except Exception:  # noqa: BLE001 - a response without a payload is stored as plain text
+            log.debug("structured response payload failed", exc_info=True)
+            structured_response = None
+    # Canonical structured payload (see common.run_payloads): the input context
+    # is stored as blocks, the response as {text, structured}, and the trace as
+    # reasoning — identical shape to subprocess/node/docker runs.
+    return {
+        "input_context": {
+            "system_prompt": last_struct.get("system_prompt", ""),
+            "history": history,
+            "user_message": user_message,
+        },
+        "response": {"text": final_response, "structured": structured_response},
+        "tool_calls": callback.tool_history,
+        "reasoning": callback.thinking_history,
+        "llm_invocations": getattr(callback, "llm_invocations", []),
+        "llm_raw_responses": callback.llm_invoke_responses,
+        "artifacts": callback.artifact_history,
+        "entities": list(entities or []),
+        "citations": list(citations or []),
+        "token_usage": usage or {},
+        "duration_ms": duration_ms,
+    }
+
 async def drive_streaming_run(
     *,
     task: asyncio.Task,
@@ -172,6 +227,13 @@ async def drive_streaming_run(
             final_ok = True
         else:
             final_error = agent_result.error or "Agent returned no output"
+            if getattr(agent_result, "status", "") == "guardrail_tripped":
+                # The streamed tokens are the very text the guardrail stopped:
+                # the run record keeps the guardrail's message, never them.
+                final_response = str(agent_result.agent_output or "") or final_error
+                if agent_result.guardrail:
+                    from chat.refusals import guardrail_refusal
+                    result.refusal = guardrail_refusal(agent_result.guardrail)
     except asyncio.CancelledError:
         # A stopped turn has no result, but its loop may have done things
         # worth keeping (steering, tool policy decisions, compactions).
@@ -246,46 +308,8 @@ async def drive_streaming_run(
     result.stopped = (get_run(run_id) or {}).get("status") in ("stop", "stopped") or callback.cancelled
     result.duration_ms = duration_ms
     result.usage = usage
-    last_struct = getattr(callback, "_last_prompt_struct", None) or {}
-    # Prior turns now reach the model as real messages, so the callback's own
-    # split of the prompt (build_prompt_struct) already holds them and the latest
-    # user message is clean. A session recorded before that — history folded into
-    # the prompt text as a "Conversation history:" block — is read back apart
-    # here, so an old run still shows its turns rather than one blob. Either way
-    # the agent's own intra-run loop output ("middle response tokens") stays out:
-    # it belongs to the live bubble and the thinking trace.
-    from chat.context import split_embedded_history
-    prompt_text = last_struct.get("user_message") or full_prompt
-    history = list(last_struct.get("history") or [])
-    prompt_text, history = _without_steering(prompt_text, history, full_prompt)
-    if history:
-        user_message = prompt_text
-    else:
-        history, user_message = split_embedded_history(prompt_text)
-    structured_response = None
-    if response_obj is not None:
-        try:
-            structured_response = response_obj.to_payload() if hasattr(response_obj, "to_payload") else None
-        except Exception:  # noqa: BLE001 - a response without a payload is stored as plain text
-            log.debug("structured response payload failed", exc_info=True)
-            structured_response = None
-    # Canonical structured payload (see common.run_payloads): the input context
-    # is stored as blocks, the response as {text, structured}, and the trace as
-    # reasoning — identical shape to subprocess/node/docker runs.
-    result.process_payload = {
-        "input_context": {
-            "system_prompt": last_struct.get("system_prompt", ""),
-            "history": history,
-            "user_message": user_message,
-        },
-        "response": {"text": final_response, "structured": structured_response},
-        "tool_calls": callback.tool_history,
-        "reasoning": callback.thinking_history,
-        "llm_invocations": getattr(callback, "llm_invocations", []),
-        "llm_raw_responses": callback.llm_invoke_responses,
-        "artifacts": callback.artifact_history,
-        "entities": result.entities,
-        "citations": result.citations,
-        "token_usage": usage,
-        "duration_ms": duration_ms,
-    }
+    result.process_payload = build_process_payload(
+        callback, full_prompt=full_prompt, final_response=final_response,
+        response_obj=response_obj, entities=result.entities, citations=result.citations,
+        usage=usage, duration_ms=duration_ms,
+    )

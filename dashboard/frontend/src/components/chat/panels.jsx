@@ -6,12 +6,15 @@ import GraphMirror from '../GraphMirror';
 import ProcessGraph, { TokenPill } from '../ProcessGraph';
 import ViewCard from '../../views/ViewCard';
 import { useI18n } from '../../i18n';
-import { ChevronDown, ChevronUp, FileText, LayoutGrid, Loader2, Workflow } from 'lucide-react';
+import { ChevronDown, ChevronUp, ExternalLink, FileText, LayoutGrid, Loader2, Workflow } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { getWorkspaceFileContent } from '../../api';
 import CodeBlock from '../CodeBlock';
 import { codeLanguageFor } from '../../lib/codeLanguage';
+import { renderContent } from './markdown';
 import { ARTIFACT_OP_META } from './artifactOps';
+import { CodeDetail, CodeSection } from './CodePanel';
 
 function ProcessPanelContent({ processInsights, topology = null, graphRun = null, workspace = null }) {
   const { t } = useI18n();
@@ -71,7 +74,9 @@ function ProcessPanelContent({ processInsights, topology = null, graphRun = null
 // ---------------------------------------------------------------------------
 // Build view — unified diff renderer (no external deps)
 // ---------------------------------------------------------------------------
-function DiffView({ diff }) {
+// `wrap` folds long lines instead of scrolling sideways: prose (a replayed
+// answer) is one line per paragraph, code is not.
+function DiffView({ diff, wrap = false }) {
   const { t } = useI18n();
   if (!diff) {
     return <div className="px-3 py-2 text-xs text-gray-400 italic">{t('chat.noTextualDiffAvailable')}</div>;
@@ -95,7 +100,7 @@ function DiffView({ diff }) {
           bg = 'bg-red-50';
         }
         return (
-          <div key={i} className={`px-3 whitespace-pre ${bg} ${cls}`}>
+          <div key={i} className={`px-3 ${wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} ${bg} ${cls}`}>
             {line || ' '}
           </div>
         );
@@ -167,12 +172,17 @@ function ArtifactContent({ workspace, path }) {
   }
   if (state.error) return <div className="p-3 text-xs text-red-600">{state.error}</div>;
   const language = codeLanguageFor(path);
+  // A Markdown file reads as the document it is, in the panel itself, not
+  // as a code block of its source.
+  if (language === 'markdown') {
+    return <div className="px-4 py-3 text-sm text-gray-800" data-testid="artifact-markdown">{renderContent(state.content || '')}</div>;
+  }
   if (language) return <div className="p-3"><CodeBlock language={language} code={state.content} /></div>;
   return <pre className="p-3 font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words text-gray-700">{state.content}</pre>;
 }
 
 /** One changed file: what it holds now (``content``) or what changed (``diff``). */
-function ArtifactDetail({ artifact, workspace, mode }) {
+function ArtifactDetail({ artifact, workspace, mode, onModeChange = null }) {
   const { t } = useI18n();
   const meta = ARTIFACT_OP_META[artifact.op] || ARTIFACT_OP_META.modify;
   return (
@@ -186,6 +196,20 @@ function ArtifactDetail({ artifact, workspace, mode }) {
           {artifact.additions > 0 && <span className="text-emerald-600">+{artifact.additions}</span>}
           {artifact.deletions > 0 && <span className="text-red-600">−{artifact.deletions}</span>}
         </span>
+        {/* The file's own page under Artifacts; a deleted file has none. */}
+        {artifact.url && artifact.op !== 'delete' ? (
+          <Link
+            to={artifact.url}
+            title={t('chat.openArtifactTitle')}
+            data-testid="artifact-open"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-xs text-gray-600 no-underline transition-colors hover:border-indigo-300 hover:bg-indigo-50"
+          >
+            <ExternalLink className="h-3 w-3" />
+            {t('chat.openArtifact')}
+          </Link>
+        ) : null}
+        {/* Files / Diff on the file's own line, where the panel has no header of its own. */}
+        {onModeChange ? <ArtifactsModeSwitch mode={mode} onChange={onModeChange} t={t} /> : null}
       </div>
       <div className="flex-1 min-h-0 overflow-auto" data-testid="artifact-detail">
         {mode === 'content' ? (
@@ -207,9 +231,18 @@ function ArtifactDetail({ artifact, workspace, mode }) {
  * the selected one on the right. ``mode`` is the column's switch: ``content``
  * (the default) shows each file as it is now, so a deleted file is not
  * listed; ``diff`` shows what every run changed, deletions included. A view
- * is drawn whole in either.
+ * is drawn whole in either. `onModeChange`, when given, puts the switch on
+ * the selected file's line, for a panel without a header to hold it.
+ * `picked` (`file:<path>` / `view:<id>`) with `onPick` lets the page choose
+ * what is open.
  */
-function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'content' }) {
+// `code`: the Chat page's code (useChatCode.js), listed with the
+// views and files and opened in its workbench; other pages have none.
+// `pick`: `{ key, nonce }` the page asks to show (a file clicked in the chat).
+function ArtifactsPanel({
+  artifacts, views = [], workspace = null, mode = 'content', onModeChange = null,
+  picked: pickedProp, onPick = null, code = null, pick = null,
+}) {
   const { t } = useI18n();
   const items = useMemo(
     () => Object.values(artifacts || {})
@@ -223,14 +256,33 @@ function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'conte
     return { add, del };
   }, [items]);
   // `file:<path>` or `view:<id>`; the newest view, else the first file, until picked.
-  const [picked, setPicked] = useState(null);
-  const fallback = views.length ? `view:${views[views.length - 1].view_id}` : items.length ? `file:${items[0].path}` : null;
+  // Held here, or by the page when it picks one too (`picked` / `onPick`:
+  // a file clicked in the chat beside the panel).
+  const [pickedHere, setPickedHere] = useState(null);
+  const picked = onPick ? pickedProp : pickedHere;
+  const setPicked = onPick || setPickedHere;
+  // "Open in Code panel" on a reply's block selects it here.
+  const [seenCodeFocus, setSeenCodeFocus] = useState(null);
+  if (code && code.focus !== seenCodeFocus) {
+    setSeenCodeFocus(code.focus);
+    if (code.focus?.id && !onPick) setPickedHere(`code:${code.focus.id}`);
+  }
+  const [seenPick, setSeenPick] = useState(null);
+  if (pick && pick !== seenPick) {
+    setSeenPick(pick);
+    if (pick.key && !onPick) setPickedHere(pick.key);
+  }
+  const hasCode = Boolean(code?.count || code?.listLoading || code?.listError);
+  const fallback = views.length ? `view:${views[views.length - 1].view_id}`
+    : code?.first ? `code:${code.first}`
+      : items.length ? `file:${items[0].path}` : null;
   const stillThere = picked && (
     (picked.startsWith('file:') && items.some((a) => `file:${a.path}` === picked))
-    || (picked.startsWith('view:') && views.some((v) => `view:${v.view_id}` === picked)));
+    || (picked.startsWith('view:') && views.some((v) => `view:${v.view_id}` === picked))
+    || (picked.startsWith('code:') && Boolean(code?.has(picked.slice(5)))));
   const selected = stillThere ? picked : fallback;
 
-  if (!items.length && !views.length) {
+  if (!items.length && !views.length && !hasCode) {
     return (
       <div className="flex-1 overflow-y-auto p-4">
         <p className="text-xs text-gray-500 italic">{t('chat.noArtifactsYet')}</p>
@@ -239,9 +291,10 @@ function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'conte
   }
   const selectedFile = selected?.startsWith('file:') ? items.find((a) => `file:${a.path}` === selected) : null;
   const selectedView = selected?.startsWith('view:') ? views.find((v) => `view:${v.view_id}` === selected) : null;
+  const selectedCode = selected?.startsWith('code:') ? selected.slice(5) : null;
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden">
-      <div className="w-52 flex-shrink-0 border-r border-gray-200 overflow-y-auto py-2">
+      <div className="w-44 min-[1800px]:w-52 flex-shrink-0 border-r border-gray-200 overflow-y-auto py-2">
         {views.length > 0 && (
           <section>
             <div className="flex items-center gap-1.5 px-3 pb-1 text-xs font-semibold text-gray-600">
@@ -260,8 +313,12 @@ function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'conte
             })}
           </section>
         )}
+        <CodeSection
+          code={code} selectedId={selectedCode} onSelect={(id) => setPicked(`code:${id}`)}
+          className={views.length ? 'mt-2' : ''}
+        />
         {items.length > 0 && (
-          <section className={views.length ? 'mt-2' : ''}>
+          <section className={views.length || hasCode ? 'mt-2' : ''}>
             <div className="flex items-center gap-2 px-3 pb-1 text-xs text-gray-500">
               <FileText className="w-3.5 h-3.5 text-indigo-500" />
               <span className="font-semibold text-gray-600">{t('chat.fileCount', { count: items.length })}</span>
@@ -287,15 +344,43 @@ function ArtifactsPanel({ artifacts, views = [], workspace = null, mode = 'conte
           </section>
         )}
       </div>
-      {selectedFile ? (
-        <ArtifactDetail key={selectedFile.path} artifact={selectedFile} workspace={workspace} mode={mode} />
+      {selectedCode ? (
+        <CodeDetail code={code} viewId={selectedCode} />
+      ) : selectedFile ? (
+        <ArtifactDetail key={selectedFile.path} artifact={selectedFile} workspace={workspace} mode={mode} onModeChange={onModeChange} />
       ) : selectedView ? (
         <div className="flex-1 min-w-0 overflow-auto p-3" data-testid="artifact-detail">
-          <ViewCard key={selectedView.view_id} viewRef={selectedView} />
+          <ViewCard key={selectedView.view_id} viewRef={selectedView} actions={(
+            // The view's panel under Artifacts, in the Views folder.
+            <Link
+              to={`/artifacts?folder=__views__&view=${encodeURIComponent(selectedView.view_id)}`}
+              title={t('chat.openViewArtifactTitle')}
+              data-testid="artifact-open"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 px-2 py-0.5 text-xs text-gray-600 no-underline transition-colors hover:border-indigo-300 hover:bg-indigo-50"
+            >
+              <ExternalLink className="h-3 w-3" />
+              {t('chat.openArtifact')}
+            </Link>
+          )} />
         </div>
       ) : null}
     </div>
   );
 }
 
-export { ProcessPanelContent, DiffView, ArtifactItem, ArtifactsPanel };
+/** Files (what each file holds now) or Diff (what the runs changed). */
+function ArtifactsModeSwitch({ mode, onChange, t }) {
+  return (
+    <div className="inline-flex rounded-md border border-gray-200 overflow-hidden text-xs" role="tablist" aria-label={t('chat.artifactModes.label')}>
+      {[['content', t('chat.artifactModes.files')], ['diff', t('chat.artifactModes.diff')]].map(([key, label], i) => (
+        <button key={key} type="button" role="tab" aria-selected={mode === key} onClick={() => onChange(key)}
+          className={`px-2 py-0.5 ${i ? 'border-l border-gray-200' : ''} ${
+            mode === key ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'}`}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export { ProcessPanelContent, DiffView, ArtifactItem, ArtifactsModeSwitch, ArtifactsPanel };

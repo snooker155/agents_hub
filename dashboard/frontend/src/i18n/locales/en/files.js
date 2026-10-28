@@ -92,6 +92,8 @@ export default {
     cancel: 'Cancel',
     uploadNew: 'Upload a new file',
     alreadyAdded: 'Already added',
+    pickFolder: 'Pick every file in the folder',
+    pickFolderNamed: 'Pick every file in {{name}}',
   },
   field: {
     label: 'Files',
@@ -103,6 +105,8 @@ export default {
   task: {
     title: 'Files',
     hint: 'Copied into the working directory of each run (task_files/) and named in the prompt. Subtasks get them too.',
+    add: 'Add files',
+    about: 'About task files',
     saveFailed: 'Could not save the task files',
   },
   evalCase: {

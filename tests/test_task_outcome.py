@@ -626,7 +626,7 @@ def test_an_executor_at_the_attempt_limit_blocks(fake_grader, executor_launches,
 
 def _grading_runs(task_id):
     return [r for r in rm.load_runs()
-            if r.get("task_id") == str(task_id) and r.get("channel") == oc.GRADING_CHANNEL]
+            if r.get("task_id") == str(task_id) and r.get("agent_id") == oc.GRADER_AGENT_ID]
 
 
 def test_an_agent_runs_grading_is_a_run_of_its_own(fake_grader, no_launch):

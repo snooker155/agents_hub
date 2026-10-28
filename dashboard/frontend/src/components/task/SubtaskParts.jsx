@@ -3,11 +3,16 @@
  */
 import { ExternalLink, Trash2, UserPlus, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { createTask } from '../../api';
 import { PriorityBadge, StatusDropdown } from './TaskFields';
 import { executorLabel } from './taskUtils';
+import { forwardBack } from './taskBack';
+import DependencyChips from './DependencyChips';
 import { useI18n } from '../../i18n';
+
+// A row with no task list handed down still renders its chips (as ids).
+const EMPTY_TASKS = new Map();
 
 export function AddSubtaskModal({ parentId, parentWorkspace, onCreated, onCancel }) {
   const { t } = useI18n();
@@ -86,47 +91,55 @@ export function AddSubtaskModal({ parentId, parentWorkspace, onCreated, onCancel
   );
 }
 
-export function SubtaskRow({ st, onDelete, onStatusChange, onAssign, deleting }) {
+/**
+ * One subtask as a line of the list on the task page: key and title (the
+ * description as its tooltip), priority when one was set, executor and its
+ * state, the status picker, and the actions.
+ */
+export function SubtaskRow({ st, tasksById, onDelete, onStatusChange, onAssign, deleting }) {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const linkState = forwardBack(useLocation());
+  const open = () => navigate(`/tasks/${st.id}`, { state: linkState });
+  const executor = st.assigned_agent_type ? executorLabel(st) : null;
 
   return (
-    <div className="flex items-start gap-3 p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors">
-      {/* Status toggle */}
-      <div className="pt-0.5 flex-shrink-0">
+    <li className="flex items-center gap-3 px-1 py-2 hover:bg-gray-50 transition-colors">
+      <div
+        className="flex-1 min-w-0 flex items-baseline gap-2 cursor-pointer"
+        onClick={open}
+        title={st.description || undefined}
+      >
+        {st.key && <span className="text-xs font-semibold text-gray-400 flex-shrink-0">{st.key}</span>}
+        <span className="text-sm text-gray-900 truncate">{st.title}</span>
+        <DependencyChips ids={st.depends} byId={tasksById || EMPTY_TASKS} linkState={linkState} className="flex-shrink-0" />
+      </div>
+
+      {st.priority && <PriorityBadge priority={st.priority} />}
+
+      {executor && (
+        <span className="hidden sm:inline-flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
+          <executor.Icon className="w-3 h-3" />
+          {executor.id}
+          {st.agent_state && st.agent_state !== 'none' && (
+            <span className={`ml-1 px-1 py-0.5 rounded text-xs ${
+              st.agent_state === 'running' ? 'bg-blue-100 text-blue-700' :
+              st.agent_state === 'completed' ? 'bg-green-100 text-green-700' :
+              st.agent_state === 'pending_approval' ? 'bg-amber-100 text-amber-700' :
+              st.agent_state === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+              'bg-gray-100 text-gray-600'
+            }`}>{st.agent_state === 'pending_approval' ? t('taskDetails.awaitingApproval') : st.agent_state}</span>
+          )}
+        </span>
+      )}
+
+      <div className="flex-shrink-0">
         <StatusDropdown current={st.status} onChange={(v) => onStatusChange(st.id, v)} />
       </div>
 
-      {/* Content */}
-      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => navigate(`/tasks/${st.id}`)}>
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-900 truncate">{st.title}</span>
-          {st.priority && <PriorityBadge priority={st.priority} />}
-        </div>
-        {st.description && (
-          <p className="text-xs text-gray-500 truncate mt-0.5">{st.description}</p>
-        )}
-        {st.assigned_agent_type && (
-          <span className="inline-flex items-center gap-1 text-xs text-gray-400 mt-0.5">
-            {(() => { const { Icon } = executorLabel(st); return <Icon className="w-3 h-3" />; })()}
-            {executorLabel(st).id}
-            {st.agent_state && st.agent_state !== 'none' && (
-              <span className={`ml-1 px-1 py-0.5 rounded text-xs ${
-                st.agent_state === 'running' ? 'bg-blue-100 text-blue-700' :
-                st.agent_state === 'completed' ? 'bg-green-100 text-green-700' :
-                st.agent_state === 'pending_approval' ? 'bg-amber-100 text-amber-700' :
-                st.agent_state === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                'bg-gray-100 text-gray-600'
-              }`}>{st.agent_state === 'pending_approval' ? t('taskDetails.awaitingApproval') : st.agent_state}</span>
-            )}
-          </span>
-        )}
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="flex items-center gap-0.5 flex-shrink-0">
         <button
-          onClick={() => navigate(`/tasks/${st.id}`)}
+          onClick={open}
           className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"
           title={t('taskDetails.openDetails')}
         >
@@ -148,6 +161,6 @@ export function SubtaskRow({ st, onDelete, onStatusChange, onAssign, deleting })
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
-    </div>
+    </li>
   );
 }
