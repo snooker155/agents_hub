@@ -43,15 +43,25 @@ def settings(monkeypatch):
 
 @pytest.fixture
 def chat_turn(settings):
+    from agents.agent_loop import LoopState, reset_state, set_state
+    tokens = []
+    emitters = []
+
     def _make(**run_fields):
         run_id = _rid()
         _open_run(run_id, **run_fields)
-        from agents.agent_loop import LoopState, set_state
-        set_state(LoopState(run_id=run_id, agent_id="swe_agent", workspace="acme"))
+        tokens.append(set_state(LoopState(run_id=run_id, agent_id="swe_agent", workspace="acme")))
         events: list = []
-        stream_sink.set_emitter(events.append)
+        emitters.append(stream_sink.set_emitter(events.append))
         return run_id, events
-    return _make
+    yield _make
+    # The loop state and the emitter are context variables of the test
+    # thread: left set, the next test in this worker would run "inside" this turn.
+    for token in reversed(emitters):
+        stream_sink.reset_emitter(token)
+    for token in reversed(tokens):
+        reset_state(token)
+
 
 
 def _guard():
