@@ -333,6 +333,7 @@ html.dark {
 :where(html) .bg-indigo-600,
 :where(html) .bg-purple-600,
 :where(html) .bg-violet-600,
+:where(html) .disabled\:hover\:bg-indigo-600:disabled:hover,
 :where(html) .hover\:bg-indigo-600:hover,
 :where(html) .peer:checked ~ .peer-checked\:bg-indigo-600 { background-color: var(--brand-600); }
 :where(html) .bg-fuchsia-700,
@@ -645,6 +646,7 @@ html.dark {
 :where(html.dark) .bg-indigo-600,
 :where(html.dark) .bg-purple-600,
 :where(html.dark) .bg-violet-600,
+:where(html.dark) .disabled\:hover\:bg-indigo-600:disabled:hover,
 :where(html.dark) .hover\:bg-indigo-600:hover,
 :where(html.dark) .peer:checked ~ .peer-checked\:bg-indigo-600 { background-color: var(--brand-bg-600); }
 :where(html.dark) .bg-fuchsia-700,
