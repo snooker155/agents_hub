@@ -857,6 +857,7 @@
       "shared": true,
       "skills_enabled": false,
       "allow_self_delegation": true,
+      "capability_override": true,
       "delegates": [
         "orchestrator",
         "agent_creator",
