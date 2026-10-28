@@ -26,13 +26,21 @@ def _core_files():
             yield Path(rel), path
 
 
+# Each file allowed to import ee, and the guard every import in it follows.
+_GUARDED = {
+    "dashboard/backend/main.py": "if enterprise_available():",
+    "common/stack.py": "if not enterprise_available():",
+}
+
+
 def test_only_the_guarded_mount_imports_ee():
     found = {str(rel) for rel, path in _core_files()
              if _IMPORT.search(path.read_text(encoding="utf-8", errors="ignore"))}
-    assert found == {"dashboard/backend/main.py"}
-    main = (ROOT / "dashboard/backend/main.py").read_text(encoding="utf-8")
-    guard = main.index("if enterprise_available():")
-    assert all(m.start() > guard for m in _IMPORT.finditer(main))
+    assert found == set(_GUARDED)
+    for rel, guard_text in _GUARDED.items():
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        guard = text.index(guard_text)
+        assert all(m.start() > guard for m in _IMPORT.finditer(text)), rel
 
 
 def test_without_ee_sso_and_scim_are_not_offered(monkeypatch):

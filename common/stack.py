@@ -199,6 +199,10 @@ def probe_blob_store() -> Dict[str, Any]:
 # ── identity provider ────────────────────────────────────────────────────────
 
 def probe_oidc() -> Dict[str, Any]:
+    from common.edition import enterprise_available
+    if not enterprise_available():
+        return _component("oidc", "oidc", "Identity provider", "off",
+                          "Single sign-on is not part of this edition.")
     try:
         from ee import oidc
         if not oidc.enabled():

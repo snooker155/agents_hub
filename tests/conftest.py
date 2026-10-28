@@ -157,8 +157,12 @@ _PINNED_ENV = {
 # fallback. Hidden from ``read_dot_env`` so a test that monkeypatches
 # ``settings.agent_mode`` or ``settings.agent_docker_network`` is answered by
 # its patch, not by the developer's AGENT_EXECUTION_MODE=docker, and dropped
-# from os.environ even when the shell exported them before the session.
-_SETTINGS_BACKED_ENV = frozenset({"AGENT_EXECUTION_MODE", "AGENT_DOCKER_NETWORK"})
+# from os.environ even when the shell exported them before the session. The
+# web domain policy is read the same way (tools/web.py _live_list): a
+# developer's WEB_DENY_DOMAINS="[]" would answer over a patched deny list.
+_SETTINGS_BACKED_ENV = frozenset({"AGENT_EXECUTION_MODE", "AGENT_DOCKER_NETWORK",
+                                  "WEB_DENY_DOMAINS", "WEB_ALLOW_DOMAINS",
+                                  "WEB_DOMAIN_POLICY_ENABLED"})
 
 
 # The environment as the session started, before any test imported
@@ -167,6 +171,15 @@ _SETTINGS_BACKED_ENV = frozenset({"AGENT_EXECUTION_MODE", "AGENT_DOCKER_NETWORK"
 # every test, so a live setting (common.config.live_setting) never answers
 # from the operator's file in a test that monkeypatched ``settings``.
 _BASE_ENV_KEYS = frozenset(os.environ)
+
+# The export itself is switched off for the session. The fixture below drops
+# what it added before each test, but the test whose client fixture imports
+# dashboard/backend/main.py first runs that import after its own fixtures,
+# so the file's values were live for that one test (a developer's
+# WEB_DENY_DOMAINS="[]" let a denied host through). Nothing in the suite
+# needs the export; CI has no .env.
+import dotenv as _dotenv  # noqa: E402
+_dotenv.load_dotenv = lambda *args, **kwargs: False
 
 
 def _dot_env_keys() -> set:
