@@ -17,6 +17,7 @@
 import { readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BRAND_RGB, BRAND_DARK, BRAND_DARK_VARS, NEUTRAL_DARK, DARK_TOKENS } from '../src/lib/darkShape.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'src');
@@ -29,34 +30,9 @@ const BRAND_LIGHT = {
   500: '#3f66d8', 600: '#2a4fbd', 700: '#21409c', 800: '#1d3680', 900: '#1a2c63',
   950: '#101c40',
 };
-const BRAND_RGB = '63, 102, 216'; // #3f66d8
-
-// Brand in dark mode: text tiers lighten, tint backgrounds become translucent.
-const BRAND_DARK = {
-  bg: {
-    50: `rgba(${BRAND_RGB}, 0.16)`, 100: `rgba(${BRAND_RGB}, 0.26)`,
-    200: `rgba(${BRAND_RGB}, 0.34)`, 300: '#3a5cc4', 400: '#3a5cc4',
-    500: '#3f66d8', 600: '#3159cc', 700: '#264aa8', 800: '#1e3c85',
-    900: '#16294f', 950: '#0c1730',
-  },
-  text: {
-    300: '#a8c4ff', 400: '#9dbaff', 500: '#8cb0ff', 600: '#8fb2ff',
-    700: '#a8c4ff', 800: '#bcd2ff', 900: '#d2e0ff', 950: '#e4ecff',
-  },
-  border: {
-    50: `rgba(${BRAND_RGB}, 0.22)`, 100: `rgba(${BRAND_RGB}, 0.30)`,
-    200: `rgba(${BRAND_RGB}, 0.40)`, 300: `rgba(${BRAND_RGB}, 0.52)`,
-    400: '#4a72e6', 500: '#3f66d8', 600: '#3159cc', 700: '#264aa8',
-    800: '#1e3c85', 900: '#16294f',
-  },
-};
-
-// Same ramp inverted, for inline styles that read var(--brand-N) directly.
-const BRAND_DARK_VARS = {
-  50: '#0c1730', 100: '#12224a', 200: '#1a3068', 300: '#264aa8', 400: '#3159cc',
-  500: '#3f66d8', 600: '#5b82e6', 700: '#8fb2ff', 800: '#bcd2ff', 900: '#d2e0ff',
-  950: '#e4ecff',
-};
+// The dark tables (BRAND_DARK, BRAND_DARK_VARS, NEUTRAL_DARK, DARK_TOKENS)
+// live in src/lib/darkShape.js: the same data the runtime palette reads to
+// keep its dark ladder at the shipped lightness per shade.
 
 const BRAND_HUES = ['indigo', 'violet', 'purple', 'fuchsia'];
 const NEUTRAL_HUES = ['gray', 'slate', 'zinc', 'neutral', 'stone'];
@@ -73,24 +49,6 @@ const NEUTRAL_LIGHT = {
   50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1', 400: '#94a3b8',
   500: '#64748b', 600: '#475569', 700: '#334155', 800: '#1e293b', 900: '#0f172a',
   950: '#020617',
-};
-
-// Navy-tinted neutral ladder. Backgrounds go page < sunken < card < raised.
-const NEUTRAL_DARK = {
-  bg: {
-    50: '#0c1322', 100: '#18223a', 200: '#1e2943', 300: '#25314c',
-    400: '#3a4867', 500: '#4c5b7c', 600: '#5d6c8d', 700: '#16203a',
-    800: '#101828', 900: '#080f1c', 950: '#050a14',
-  },
-  text: {
-    300: '#8e9bb1', 400: '#8b98ae', 500: '#9aa7bd', 600: '#b6c1d4',
-    700: '#ccd5e3', 800: '#dfe6f0', 900: '#eef2fa', 950: '#f8fafc',
-  },
-  border: {
-    50: '#151e33', 100: '#1a2440', 200: '#25314c', 300: '#31405e',
-    400: '#3d4d6e', 500: '#4a5a7d', 600: '#33415f', 700: '#2a3654',
-    800: '#202b45', 900: '#18213a', 950: '#111a2e',
-  },
 };
 
 // Chromatic hues: 500 as rgb triple (for translucent tints) + light text tiers.
@@ -225,6 +183,17 @@ function darkVarValue(prefix, hue, shade) {
   if (shade === 200) return `rgba(${rgbVar}, 0.36)`;
   if (shade === 300) return `rgba(${rgbVar}, 0.46)`;
   return null;
+}
+
+/** The dark semantic tokens (src/lib/darkShape.js), grouped surface / border /
+ * text with a blank line between the groups, aligned like the light block. */
+function darkTokenLines() {
+  const groups = [[], [], []];
+  for (const [name, value] of Object.entries(DARK_TOKENS)) {
+    const group = name.startsWith('--surface') ? 0 : name.startsWith('--border') ? 1 : 2;
+    groups[group].push(`  ${(name + ':').padEnd(19)}${value};`);
+  }
+  return groups.map((g) => g.join('\n')).join('\n\n');
 }
 
 /* ── css emission ───────────────────────────────────────────────────────── */
@@ -506,22 +475,7 @@ ${Object.entries(HUES).map(([name, h]) => `  --hue-${name}-rgb: ${h.rgb};\n  --h
 html.dark {
   color-scheme: dark;
 
-  --surface-page:    #070d18;
-  --surface-sunken:  #0c1322;
-  --surface-card:    #121a2b;
-  --surface-raised:  #18223a;
-  --surface-hover:   #1e2943;
-  --surface-inverse: #eef2fa;
-
-  --border-subtle:   #1a2440;
-  --border-default:  #25314c;
-  --border-strong:   #31405e;
-
-  --text-primary:    #eef2fa;
-  --text-secondary:  #ccd5e3;
-  --text-muted:      #9aa7bd;
-  --text-faint:      #8b98ae;
-  --text-inverse:    #0d1526;
+${darkTokenLines()}
 
   --chart-accent:   #5b82e6;
   --chart-muted:    #3a4a6b;

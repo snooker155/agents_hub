@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
-  rampFromColor, contrastRatio, checkPalette, applyPalette, clearPalette, SHADES,
+  rampFromColor, contrastRatio, checkPalette, applyPalette, clearPalette, SHADES, hexToOklch,
 } from '../palette';
+import { DARK_TOKENS } from '../darkShape';
 
 describe('rampFromColor', () => {
   it('returns all 11 shades', () => {
@@ -111,5 +112,31 @@ describe('applyPalette / clearPalette', () => {
     expect(root.style.getPropertyValue('--surface-page')).toBe('');
     expect(root.style.getPropertyValue('--hue-green-rgb')).toBe('');
     expect(root.style.getPropertyValue('--danger')).toBe('');
+  });
+
+  it('keeps the dark surfaces at the shipped lightness, whatever neutral was picked', () => {
+    // The sidebar and the header are `bg-white`, painted with --surface-card
+    // in dark mode: a palette must not lift it to a grey slab.
+    const shippedCard = hexToOklch(DARK_TOKENS['--surface-card'])[0];
+    const shippedPage = hexToOklch(DARK_TOKENS['--surface-page'])[0];
+    for (const neutral of ['#64748b', '#57534e', '#78716c', '#737373']) {
+      applyPalette({ neutral }, 'dark');
+      const card = hexToOklch(document.documentElement.style.getPropertyValue('--surface-card'))[0];
+      const page = hexToOklch(document.documentElement.style.getPropertyValue('--surface-page'))[0];
+      expect(Math.abs(card - shippedCard)).toBeLessThan(0.02);
+      expect(Math.abs(page - shippedPage)).toBeLessThan(0.02);
+      // bg-gray-300 stays a dark fill and text-gray-300 a pale label.
+      expect(hexToOklch(document.documentElement.style.getPropertyValue('--neutral-bg-300'))[0]).toBeLessThan(0.4);
+      expect(hexToOklch(document.documentElement.style.getPropertyValue('--neutral-text-300'))[0]).toBeGreaterThan(0.6);
+    }
+  });
+
+  it('inverts the inline brand ramp in dark mode, as the stylesheet does', () => {
+    applyPalette({ brand: '#166534' }, 'dark');
+    const deep = hexToOklch(document.documentElement.style.getPropertyValue('--brand-50'))[0];
+    const pale = hexToOklch(document.documentElement.style.getPropertyValue('--brand-950'))[0];
+    expect(deep).toBeLessThan(0.3);
+    expect(pale).toBeGreaterThan(0.85);
+    expect(document.documentElement.style.getPropertyValue('--brand-bg-50')).toMatch(/^rgba\(/);
   });
 });

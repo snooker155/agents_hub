@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ThemeContext, WORKSPACE_EVENT, effectiveMode, resolvePalette } from './theme';
+import { ThemeContext, WORKSPACE_EVENT, effectiveMode, repaintPalette, resolvePalette } from './theme';
 
 function applyTheme(theme) {
   const root = document.documentElement;
@@ -27,27 +27,34 @@ function syncThemeColor() {
 export function ThemeProvider({ children }) {
   const [theme, setThemeState] = useState(() => localStorage.getItem('theme') || 'system');
 
+  // One effect, in this order: the `dark` class, then the last known palette
+  // repainted for the new mode in the same tick (otherwise the inline
+  // custom properties keep the old mode's ramp, and a dark page shows
+  // light-grey surfaces until the backend has answered), then the full
+  // re-resolution (personal preference, then the workspace default, then
+  // the built-in one; `resolvePalette` in theme.js is the same function
+  // Account.jsx and WorkspaceDetails.jsx call after a save or a reset).
   useEffect(() => {
     applyTheme(theme);
+    repaintPalette(theme);
+    syncThemeColor();
+    // The palette may repaint the surfaces, so the color is read again after it.
+    Promise.resolve(resolvePalette(theme)).catch(() => {}).finally(syncThemeColor);
   }, [theme]);
 
-  // Watch system preference changes when theme === 'system'
+  // Watch system preference changes when theme === 'system': the same three
+  // steps, since the ramp is picked per mode and the OS just changed it.
   useEffect(() => {
     if (theme !== 'system') return;
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = () => { applyTheme('system'); syncThemeColor(); };
+    const handler = () => {
+      applyTheme('system');
+      repaintPalette('system');
+      syncThemeColor();
+      Promise.resolve(resolvePalette('system')).catch(() => {}).finally(syncThemeColor);
+    };
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
-  }, [theme]);
-
-  // The resolved palette (personal preference, then the workspace default,
-  // then the built-in one) needs the dark/light ramp a mode switch picks, so
-  // it is re-resolved on mount and whenever `theme` changes. `resolvePalette`
-  // (theme.js) is the same function Account.jsx and WorkspaceDetails.jsx call
-  // again right after they save or reset a palette.
-  useEffect(() => {
-    // The palette may repaint the surfaces, so the color is read after it.
-    Promise.resolve(resolvePalette(theme)).catch(() => {}).finally(syncThemeColor);
   }, [theme]);
 
   // ThemeProvider sits above WorkspaceProvider in main.jsx, so it cannot read
@@ -56,7 +63,7 @@ export function ThemeProvider({ children }) {
   // the palette is re-resolved then, since a workspace may carry a default
   // palette of its own.
   useEffect(() => {
-    const onWorkspace = () => resolvePalette(theme);
+    const onWorkspace = () => { Promise.resolve(resolvePalette(theme)).catch(() => {}); };
     window.addEventListener(WORKSPACE_EVENT, onWorkspace);
     return () => window.removeEventListener(WORKSPACE_EVENT, onWorkspace);
   }, [theme]);
