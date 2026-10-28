@@ -51,7 +51,9 @@ function WorkingDots({ label }) {
   );
 }
 
-function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry, compact = false }) {
+// `renderContent`: a host's own rendering of a finished reply (the Help panel
+// turns links into navigation); the markdown renderer otherwise.
+function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry, compact = false, renderContent = null }) {
   const size = compact ? BUBBLE_SIZES.compact : BUBBLE_SIZES.full;
   const { t } = useI18n();
   // Outside the Chat page (tests, other hosts) there is no Code panel to open.
@@ -182,7 +184,9 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
           <RefusalCard refusal={refusal} onRetry={onRetry} />
         ) : text ? (
           <ChatCodeActionsContext.Provider value={codeActions}>
-            <CitedText content={text} citations={msg.citations} anchor={msg.id} streaming={isStreaming} />
+            {renderContent && !isStreaming
+              ? renderContent(text)
+              : <CitedText content={text} citations={msg.citations} anchor={msg.id} streaming={isStreaming} />}
           </ChatCodeActionsContext.Provider>
         ) : null}
         {/* The thought being written, tailing three lines, gone when the step ends. */}

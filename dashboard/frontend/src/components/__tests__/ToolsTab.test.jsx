@@ -287,7 +287,7 @@ describe('ToolsTab', () => {
     it('disables a tool outside the allowlist, with a hint, and does not toggle it', async () => {
       renderTab();
       await screen.findByLabelText('toolPolicy.defaultMode');
-      const blocked = screen.getByRole('checkbox', { name: 'Run shell' });
+      const blocked = screen.getByRole('checkbox', { name: 'Run Shell' });
       expect(blocked).toHaveAttribute('aria-disabled', 'true');
       expect(blocked.className).toMatch(/cursor-not-allowed/);
       expect(blocked).toHaveTextContent('isolation.toolHint');
@@ -298,7 +298,7 @@ describe('ToolsTab', () => {
     it('leaves an allowed tool toggleable', async () => {
       renderTab();
       await screen.findByLabelText('toolPolicy.defaultMode');
-      const allowed = screen.getByRole('checkbox', { name: 'Read file' });
+      const allowed = screen.getByRole('checkbox', { name: 'Read File' });
       expect(allowed).not.toHaveAttribute('aria-disabled');
       fireEvent.click(allowed);
       expect(page.current.toggleTool).toHaveBeenCalledWith('read_file');
@@ -308,7 +308,7 @@ describe('ToolsTab', () => {
       isolation.current = { data: { isolated: false, allowed_tools: [] }, loading: false, error: '' };
       renderTab();
       await screen.findByLabelText('toolPolicy.defaultMode');
-      const card = screen.getByRole('checkbox', { name: 'Run shell' });
+      const card = screen.getByRole('checkbox', { name: 'Run Shell' });
       expect(card).not.toHaveAttribute('aria-disabled');
       fireEvent.click(card);
       expect(page.current.toggleTool).toHaveBeenCalledWith('run_shell');

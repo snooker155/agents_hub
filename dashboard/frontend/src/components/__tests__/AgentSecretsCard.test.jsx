@@ -56,7 +56,8 @@ describe('AgentSecretsCard', () => {
     expect(api.getWorkspaceSecrets).toHaveBeenCalledWith('default');
     fireEvent.click(await screen.findByRole('button', { name: 'READ_TOKEN' }));
     fireEvent.click(screen.getByRole('button', { name: 'agentDetails.saveSecrets' }));
-    await waitFor(() => expect(api.updateAgentSecrets).toHaveBeenCalledWith('writer', ['GITHUB_TOKEN', 'READ_TOKEN']));
+    // The third argument is this edition's GitHub identity choice.
+    await waitFor(() => expect(api.updateAgentSecrets).toHaveBeenCalledWith('writer', ['GITHUB_TOKEN', 'READ_TOKEN'], expect.anything()));
   });
 
   it('shows the combination a save let through, and why it went through', async () => {

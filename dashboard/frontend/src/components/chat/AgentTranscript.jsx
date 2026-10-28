@@ -22,7 +22,7 @@ import { MessageBubble, TypingIndicator } from './MessageBubble';
  */
 export default function AgentTranscript({
   messages, viewMode, streamingId = null, waiting = false, compact = false,
-  agentNameFor = null, agentName = '', onAction = null,
+  agentNameFor = null, agentName = '', onAction = null, renderContent = null,
 }) {
   return (
     <>
@@ -41,6 +41,7 @@ export default function AgentTranscript({
             agentName={name}
             compact={compact}
             onAction={onAction || undefined}
+            renderContent={renderContent || undefined}
           />
         );
       })}

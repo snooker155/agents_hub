@@ -101,8 +101,8 @@ export default function EntityChat({
   inline = true,
   composerClassName = '',
   onHide = null,
-  // Accepted for hosts that used to render the replies themselves (the Help
-  // panel): the transcript renders markdown itself now, links included.
+  // text => nodes for the agent's replies, for a host that renders more than
+  // markdown (the Help panel turns links into navigation).
   renderReply: _renderReply = null,
 }) {
   const { t } = useI18n();
@@ -454,6 +454,7 @@ export default function EntityChat({
           </div>
         ) : (
           <AgentTranscript
+            renderContent={_renderReply || undefined}
             messages={messages}
             viewMode={viewMode}
             streamingId={streamingId}
