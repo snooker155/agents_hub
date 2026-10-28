@@ -226,6 +226,35 @@ def test_one_conversation_keeps_one_live_turn():
     assert live_runs.by_run("r1") is None
 
 
+def test_a_delegated_run_does_not_take_over_the_turns_run_id():
+    """A delegated worker's events carry its own run id; the live turn stays
+    the parent's run, which is the one the stored reply names, so a tab that
+    holds that reply knows the snapshot for it."""
+    from common import live_runs
+
+    turn = live_runs.start_turn(conversation_id="c-d", user_message="go",
+                                origin_client="tab-1", client_turn_id="k1")
+    live_runs.record(turn, {"type": "meta", "run_id": "parent"})
+    live_runs.record(turn, {"type": "delegation_start", "run_id": "child", "agent_id": "w"})
+    live_runs.record(turn, {"type": "tool_start", "tool": "read", "run_id": "child", "delegation": True})
+    live_runs.record(turn, {"type": "delegation_end", "run_id": "child", "ok": False})
+
+    snapshot = live_runs.by_conversation("c-d")
+    assert snapshot["run_id"] == "parent"
+    assert (snapshot["origin_client"], snapshot["client_turn_id"]) == ("tab-1", "k1")
+    assert live_runs.by_run("child") is None
+
+
+def test_a_replicas_turn_keeps_the_tab_that_sent_it():
+    from common import live_runs
+
+    live_runs.record_conversation_event("conv-t", {
+        "type": "turn_start", "message": "hi", "origin_client": "tab-2", "client_turn_id": "k2",
+    })
+    turn = live_runs.by_conversation("conv-t")
+    assert (turn["origin_client"], turn["client_turn_id"]) == ("tab-2", "k2")
+
+
 # ── the turn survives the browser ────────────────────────────────────────────
 
 async def _body_test_a_finished_turn_is_written_to_the_chat():

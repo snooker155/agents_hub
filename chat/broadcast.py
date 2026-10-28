@@ -207,11 +207,12 @@ async def broadcast_turn(request, pipeline: AsyncIterator[Dict[str, Any]]):
     notice = getattr(request, "notice", None)
     user_message = "" if notice else str(getattr(request, "message", "") or "")
 
+    client_turn_id = getattr(request, "client_turn_id", None)
     turn_id = live_runs.start_turn(conversation_id=conversation_id,
-                                   user_message=user_message, source=source, notice=notice)
+                                   user_message=user_message, source=source, notice=notice,
+                                   origin_client=origin_client, client_turn_id=client_turn_id)
     announce_running_change(conversation_id)
     stamp = {"conversation_id": conversation_id, "origin_client": origin_client}
-    client_turn_id = getattr(request, "client_turn_id", None)
     if client_turn_id:
         stamp["client_turn_id"] = client_turn_id
 

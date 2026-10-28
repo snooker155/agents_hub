@@ -13,7 +13,7 @@ vi.mock('../stream', () => ({
 
 import { getChatLive } from '../../api';
 import {
-  LIVE_TURN_LINGER_MS, MAX_LIVE_TEXT, reduceLiveTurn, useLiveChatTurn,
+  LIVE_TURN_LINGER_MS, MAX_LIVE_TEXT, claimTurn, reduceLiveTurn, releaseTurn, useLiveChatTurn,
 } from '../chatLiveTurn';
 
 /**
@@ -155,6 +155,28 @@ describe('useLiveChatTurn', () => {
     await waitFor(() => expect(result.current?.text).toBe('half an '));
     await emit({ type: 'token', token: 'answer', origin_client: 'other-tab' });
     expect(result.current.text).toBe('half an answer');
+  });
+
+  it('does not catch up on a turn this tab draws itself', async () => {
+    // A turn the person stopped here is still running on the server for a
+    // moment; its end comes back as an echo this tab drops, so mirroring its
+    // snapshot would leave the agent "working" until a reload.
+    claimTurn('k-stopped');
+    getChatLive.mockResolvedValue({
+      data: {
+        turn: {
+          run_id: 'r8', text: 'delegating', tools: [], thinking: [], status: 'running',
+          origin_client: 'this-tab', client_turn_id: 'k-stopped',
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useLiveChatTurn('c1'));
+    await waitFor(() => expect(getChatLive).toHaveBeenCalled());
+    await emit({ type: 'chat_stream_end', origin_client: 'this-tab', client_turn_id: 'k-stopped' });
+
+    expect(result.current).toBeNull();
+    releaseTurn('k-stopped');
   });
 
   it('does not let a late snapshot roll back events already received', async () => {

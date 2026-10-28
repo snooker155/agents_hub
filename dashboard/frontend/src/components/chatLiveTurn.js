@@ -241,6 +241,11 @@ export function useLiveChatTurn(conversationId, { muted = false, resolvedRunIds 
     getChatLive(conversationId)
       .then(({ data }) => {
         if (cancelled || !data?.turn) return;
+        // This tab's own turn, the way its echoes are: a turn the person just
+        // stopped is still running on the server for a moment, and its end
+        // arrives as an echo that is dropped, so a snapshot of it would stay
+        // "working" for good.
+        if (isOwnEcho(data.turn, clientIdRef.current)) return;
         // Only as a starting point: events that arrived while this was in
         // flight are ahead of the snapshot and must not be rolled back.
         setState((prev) => (prev.key === key && prev.turn
