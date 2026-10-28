@@ -13,14 +13,15 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from common.migrations import table_exists
+
 
 def _rubric(outcome: Any) -> str:
     return str((outcome or {}).get("rubric") or "").strip() if isinstance(outcome, dict) else ""
 
 
 def upgrade(conn: Any, dialect: str) -> None:
-    have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
-    if not {"tasks", "documents"} <= have:
+    if not (table_exists(conn, dialect, "tasks") and table_exists(conn, dialect, "documents")):
         return
     defaults = {}
     for key, doc in conn.execute("SELECT key, doc FROM documents WHERE store = 'agents'").fetchall():

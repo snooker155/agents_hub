@@ -12,14 +12,13 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from common.migrations import table_exists
+
 TOOL = "schedule_agent_run"
 
 
 def upgrade(conn: Any, dialect: str) -> None:
-    exists = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'documents'",
-    ).fetchone()
-    if not exists:
+    if not table_exists(conn, dialect, "documents"):
         return
     row = conn.execute(
         "SELECT doc FROM documents WHERE store = 'agents' AND key = 'planner'",

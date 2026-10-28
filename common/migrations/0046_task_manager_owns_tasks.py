@@ -19,6 +19,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from common.migrations import table_exists
+
 TASK_TOOLS = ("list_tasks", "get_task", "create_task", "add_subtask", "create_sequence",
               "update_task", "block_task", "set_task_dependencies", "get_task_result")
 TASK_COMMANDS = ("/plan", "/plan-from-view")
@@ -42,10 +44,7 @@ def _save(conn: Any, key: str, doc: dict) -> None:
 
 
 def upgrade(conn: Any, dialect: str) -> None:
-    exists = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'documents'",
-    ).fetchone()
-    if not exists:
+    if not table_exists(conn, dialect, "documents"):
         return
     for key, doc in list(_rows(conn)):
         changed = False
