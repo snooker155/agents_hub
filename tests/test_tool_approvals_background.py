@@ -337,6 +337,11 @@ def test_a_team_member_waits_for_a_person_then_runs_the_call(gate_on, bell, monk
 
     def approve(row):
         seen["row"] = row
+        # The row is visible a moment before the clock pauses (on_open runs
+        # after the card is posted), so give the pause a moment to land.
+        deadline = time.monotonic() + 5
+        while not control.is_waiting(team_run_id) and time.monotonic() < deadline:
+            time.sleep(0.01)
         seen["waiting"] = control.is_waiting(team_run_id)
         tool_approvals.decide(row["approval_id"], "approve", author="ann")
 

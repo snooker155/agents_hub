@@ -19,6 +19,7 @@ def _shape(comp):
     assert comp["status"] in {"ok", "warn", "fail", "off", "unknown"}
 
 
+@pytest.mark.sqlite_only
 def test_database_on_sqlite_is_ok_with_sizes():
     comp = stack.probe_database()
     _shape(comp)
@@ -149,6 +150,14 @@ def test_s3_probe_uses_a_short_timeout_client_without_retries(monkeypatch):
         return Client()
 
     monkeypatch.setitem(sys.modules, "boto3", types.SimpleNamespace(client=fake_client))
+    try:
+        import botocore.config  # noqa: F401 - the real Config when requirements-blobs.txt is installed
+    except ImportError:
+        # CI installs requirements.lock only, without boto: a stand-in that
+        # keeps what the probe passes is enough for what this test reads.
+        monkeypatch.setitem(sys.modules, "botocore", types.ModuleType("botocore"))
+        monkeypatch.setitem(sys.modules, "botocore.config",
+                            types.SimpleNamespace(Config=lambda **kw: types.SimpleNamespace(**kw)))
     store = S3BlobStore("s3://bkt/pre", endpoint="http://minio:9000")
     assert store.probe(timeout=2.5)["roundtrip_ok"]
     assert store.probe(timeout=2.5)["roundtrip_ok"]

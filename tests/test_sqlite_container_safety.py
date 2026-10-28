@@ -50,6 +50,8 @@ def test_task_containers_relay_their_records_on_docker_desktop(desktop):
 
 
 def test_task_containers_keep_the_configured_transport_where_shared(monkeypatch):
+    # Configured as "db": left unset it is "http" on Postgres (run_state_transport).
+    monkeypatch.setattr("common.config.run_state_transport", lambda: "db")
     monkeypatch.setattr(cm, "db_shared_with_containers", lambda: True)
     assert cm.container_state_transport() == "db"
 

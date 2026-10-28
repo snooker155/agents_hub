@@ -69,7 +69,9 @@ def test_list_orders_live_stale_stopped_and_prune_forgets_old_rows():
 
 def test_rows_never_registered_are_hidden_and_pruned_and_a_start_prunes():
     with db.transaction() as conn:
-        conn.execute("INSERT INTO members (member_id, role, host) VALUES (NULL, '2026-03-21T01:22:44+00:00', '688')")
+        if not db.is_postgres():
+            # SQLite takes a NULL in a TEXT primary key; Postgres refuses the row.
+            conn.execute("INSERT INTO members (member_id, role, host) VALUES (NULL, '2026-03-21T01:22:44+00:00', '688')")
         conn.execute("INSERT INTO members (member_id, role, host) VALUES ('ghost', 'x', '1')")
     members.register("worker", member_id="w-old")
     _age("w-old", members.FORGET_AFTER_SECONDS + 60)

@@ -216,6 +216,10 @@ def guard_defaults(monkeypatch):
     import common.config as _cfg
     for key in _dot_env_keys() - _BASE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    # The setup wizard (cli/onboard) writes its plan's database URL straight
+    # into os.environ, so a test of it left "" behind: on Postgres every later
+    # connection a new thread or a subprocess opened went to SQLite.
+    monkeypatch.setenv("AGENTS_HUB_DATABASE_URL", TEST_DATABASE_URL)
     real = _cfg.read_dot_env
     for key, (field, default) in _PINNED_ENV.items():
         monkeypatch.delenv(key, raising=False)
