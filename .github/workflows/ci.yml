@@ -240,9 +240,36 @@ jobs:
         working-directory: dashboard/frontend
     steps:
       - uses: actions/checkout@v7
+        with:
+          # A push to dev tests only what changed since the previous push, and
+          # vitest finds it with git diff <before>...HEAD, which needs history.
+          fetch-depth: 0
+
+      # A push to dev runs the tests the pushed changes reach through imports
+      # (vitest --changed); a change to package.json, the vite config, the
+      # setup file or a forceRerunTriggers path runs them all. A push that
+      # touches nothing the frontend reads skips the job. main, pull requests,
+      # releases and a first or forced push run everything with coverage.
+      - name: Test scope
+        id: scope
+        env:
+          BEFORE: ${{ github.event.before }}
+          INCREMENTAL: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+        run: |
+          scope=full
+          if [ "$INCREMENTAL" = true ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            if git diff --quiet "$BEFORE...HEAD" -- . ../widget ../../common/doctor.py ../../.github/workflows/ci.yml; then
+              scope=none
+            else
+              scope=changed
+            fi
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "Frontend tests: $scope"
 
       # 22, as in dashboard/frontend/Dockerfile: vitest 5 needs 22.12 or later.
       - name: Set up Node 22
+        if: steps.scope.outputs.scope != 'none'
         uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -250,9 +277,11 @@ jobs:
           cache-dependency-path: dashboard/frontend/package-lock.json
 
       - name: Install dependencies
+        if: steps.scope.outputs.scope != 'none'
         run: npm ci
 
       - name: Lint
+        if: steps.scope.outputs.scope != 'none'
         run: |
           if node -e "process.exit(require('./package.json').scripts?.lint ? 0 : 1)"; then
             npm run lint
@@ -264,10 +293,21 @@ jobs:
         # Workers hung intermittently when files ran in parallel on the CI
         # runner; one worker at a time is slower but finishes every time.
         # --coverage fails the step below the floor in vite.config.js
-        # (coverage.thresholds).
-        run: npx vitest run --coverage --fileParallelism=false
+        # (coverage.thresholds); a partial run has no meaningful coverage, so
+        # the incremental one goes without it.
+        if: steps.scope.outputs.scope != 'none'
+        env:
+          BEFORE: ${{ github.event.before }}
+          SCOPE: ${{ steps.scope.outputs.scope }}
+        run: |
+          if [ "$SCOPE" = changed ]; then
+            npx vitest run --changed "$BEFORE" --passWithNoTests --fileParallelism=false
+          else
+            npx vitest run --coverage --fileParallelism=false
+          fi
 
       - name: Build
+        if: steps.scope.outputs.scope != 'none'
         run: npx vite build
 
   docker:

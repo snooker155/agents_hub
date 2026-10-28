@@ -59,6 +59,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.js'],
+    // Files a test reads from disk rather than imports, so the import graph
+    // behind `vitest --changed` (CI on dev) does not see them: a change to one
+    // runs the whole suite. HealthDiagnostics.test.jsx reads common/doctor.py.
+    forceRerunTriggers: ['**/package.json', '**/{vitest,vite}.config.*', '**/common/doctor.py'],
     // Tests live next to the code they cover, in a `__tests__` folder.
     include: ['src/**/__tests__/**/*.test.{js,jsx}'],
     restoreMocks: true,
