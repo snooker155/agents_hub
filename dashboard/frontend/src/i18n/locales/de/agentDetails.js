@@ -141,11 +141,9 @@ export default {
   off: 'Aus',
   alwaysOn: 'immer an',
   think: 'Denken',
-  thinkBlockHint: 'Modelleigenes Reasoning & Notizblock-Werkzeug',
-  nativeThinking: 'Natives Denken',
+  thinkBlockHint: 'Notizblock-Werkzeug, das der Agent aufrufen kann',
   thinkTool: 'think-Werkzeug',
   thinkTool2: 'Think-Werkzeug',
-  noScratchpadTool: 'Kein Notizblock-Werkzeug',
   thinkModes: {
     standard: {
       label: 'Standard',
@@ -158,24 +156,6 @@ export default {
     analytical: {
       label: 'Analytisch',
       desc: 'Fokus auf Fehlerdiagnose und Logikprüfung',
-    },
-  },
-  thinkingLevels: {
-    off: {
-      label: 'Aus',
-      desc: 'Kein modelleigenes Reasoning',
-    },
-    low: {
-      label: 'Niedrig',
-      desc: 'Kurzes natives Reasoning',
-    },
-    medium: {
-      label: 'Mittel',
-      desc: 'Ausgewogenes natives Reasoning',
-    },
-    high: {
-      label: 'Hoch',
-      desc: 'Ausführliches natives Reasoning',
     },
   },
   plan: 'Plan',
@@ -205,7 +185,8 @@ export default {
   letThisAgentCallItself: 'Diesem Agenten erlauben, sich selbst aufzurufen',
   runAgentTool: 'run_agent_tool',
   assignAgentTool: 'assign_agent_tool',
-  thinkExplain: '{{native}} ist ein Modellparameter: wie viel das Modell selbst überlegt. Das {{tool}} ist ein separater Notizblock, den der Agent aufrufen kann; wählen Sie seine Tiefe oder schalten Sie es aus.',
+  thinkExplain: 'Das {{tool}} ist ein Notizblock, den der Agent aufrufen kann, um Schritt für Schritt zu überlegen; wählen Sie seine Tiefe oder schalten Sie es aus. Wie viel das Modell selbst überlegt, legen Sie im {{model}} fest.',
+  thinkModelTab: 'Tab „Modell“',
   clarifyExplain: 'Fehlen dem Agenten wichtige Informationen, stellt er einige Rückfragen und wartet, statt zu raten. In einer Aufgabe pausiert er (wartet auf Eingabe), bis Sie antworten; im Chat fragt er nach und macht nach Ihrer Antwort weiter.',
   selfDelegationExplain: 'Erlaubt dem Agenten, die eigene ID in {{run}} / {{assign}} anzugeben. Standardmäßig aus, weil ein Selbstaufruf denselben Agenten rekursiv startet. Nur für Agenten aktivieren, die ein Teilziel an sich selbst zurückgeben sollen, und auf Endlosschleifen achten.',
   streamingTitle: 'Streaming in Hintergrundläufen',

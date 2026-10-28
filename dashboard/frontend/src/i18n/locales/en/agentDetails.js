@@ -141,11 +141,9 @@ export default {
   off: 'Off',
   alwaysOn: 'always on',
   think: 'Think',
-  thinkBlockHint: 'Native model reasoning & scratchpad tool',
-  nativeThinking: 'Native thinking',
+  thinkBlockHint: 'Scratchpad tool the agent can call',
   thinkTool: 'think tool',
   thinkTool2: 'Think tool',
-  noScratchpadTool: 'No scratchpad tool',
   thinkModes: {
     standard: {
       label: 'Standard',
@@ -158,24 +156,6 @@ export default {
     analytical: {
       label: 'Analytical',
       desc: 'Focus on error diagnosis and logic checking',
-    },
-  },
-  thinkingLevels: {
-    off: {
-      label: 'Off',
-      desc: 'No native model reasoning',
-    },
-    low: {
-      label: 'Low',
-      desc: 'Brief native reasoning',
-    },
-    medium: {
-      label: 'Medium',
-      desc: 'Balanced native reasoning',
-    },
-    high: {
-      label: 'High',
-      desc: 'Extensive native reasoning',
     },
   },
   plan: 'Plan',
@@ -205,7 +185,8 @@ export default {
   letThisAgentCallItself: 'Let this agent call itself',
   runAgentTool: 'run_agent_tool',
   assignAgentTool: 'assign_agent_tool',
-  thinkExplain: '{{native}} is a model parameter: how much the model reasons on its own. The {{tool}} is a separate scratchpad the agent can call; pick its depth or turn it off.',
+  thinkExplain: 'The {{tool}} is a scratchpad the agent can call to reason step by step; pick its depth or turn it off. How much the model itself reasons is set on the {{model}}.',
+  thinkModelTab: 'Model tab',
   clarifyExplain: 'When the agent lacks key information, it asks a few clarifying questions and waits instead of guessing. In a task it pauses (awaiting input) until you answer; in chat it asks and continues once you reply.',
   selfDelegationExplain: 'Allows the agent to target its own id in {{run}} / {{assign}}. Off by default because a self-run recurses the same agent. Enable only for agents meant to hand a sub-goal back to themselves, and keep an eye on runaway loops.',
   streamingTitle: 'Streaming in background runs',

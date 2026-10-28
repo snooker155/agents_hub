@@ -923,18 +923,15 @@ def _ensure_architect_agent() -> bool:
                  "delete_graph_edge", "clear_graph", "read_graph_view"]
         existing = get_agent(_ARCHITECT_AGENT_ID)
         tools_ok = existing is not None and all(t in (existing.tools or []) for t in tools)
-        # Native model reasoning so the user can follow the agent's thinking as it
-        # builds the graph (streamed as think events to the chat).
-        reasoning_ok = existing is not None and (existing.reasoning or {}).get("thinking_level") not in (None, "", "off")
-        if existing is not None and tools_ok and reasoning_ok:
+        # The effort is the record's own (the seed ships none, the operator
+        # may raise it on the Model tab); this only makes sure of the tools.
+        if existing is not None and tools_ok:
             return True
         if existing is not None:
             # Update via replace() (AgentSpec is frozen) so user-set fields
             # (model/provider/temperature) survive — a full re-create would reset them.
             import dataclasses
-            new_reasoning = (existing.reasoning if reasoning_ok
-                             else {**(existing.reasoning or {}), "thinking_level": "medium"})
-            add_agent(dataclasses.replace(existing, tools=tools, reasoning=new_reasoning))
+            add_agent(dataclasses.replace(existing, tools=tools))
             return True
         # Missing entirely → register the full default spec.
         add_agent(AgentSpec(
@@ -951,7 +948,7 @@ def _ensure_architect_agent() -> bool:
             domain="System",
             tools=tools,
             temperature=0.0,
-            reasoning={"thinking_level": "medium"},
+            effort="none",
         ))
         return True
     except Exception:  # noqa: BLE001 - an unavailable registry means generation reports the agent as missing

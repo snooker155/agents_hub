@@ -62,8 +62,9 @@ export const getAgentAutoTools = (id, workspace) => api.get(`/agents/${id}/auto-
 // which tools sit behind search (agents/loop_ext/tool_search.py visibility).
 export const getAgentToolVisibility = (id, workspace) => api.get(`/agents/${id}/tool-visibility`, workspace ? { params: { workspace } } : {});
 export const updateAgentCapabilityOverride = (id, capability_override) => api.post(`/agents/${id}/capability-override`, { capability_override });
-export const getAgentModel = (id) => api.get(`/agents/${id}/model`);
-export const updateAgentModel = (id, data) => api.post(`/agents/${id}/model`, data);
+// `workspace` makes the answer's effective_effort count the header's choice there.
+export const getAgentModel = (id, workspace) => api.get(`/agents/${id}/model`, { params: workspace ? { workspace } : {} });
+export const updateAgentModel = (id, data, workspace) => api.post(`/agents/${id}/model`, data, { params: workspace ? { workspace } : {} });
 export const testLocalModel = (provider, base_url) => api.post('/settings/test-local-model', { provider, base_url });
 export const getAgentHealth = (id) => api.get(`/agents/${id}/health`);
 export const createCustomAgent = (data) => api.post('/agents/create', data);

@@ -46,6 +46,14 @@ log = logging.getLogger(__name__)
 
 # -------------------- Data models --------------------
 
+def normalize_effort(value: Any) -> Optional[str]:
+    """An effort as stored: a word of providers.reasoning_profile.EFFORT_ORDER,
+    or None (inherit) for anything else."""
+    from providers.reasoning_profile import EFFORT_ORDER
+    word = str(value or "").strip().lower()
+    return word if word in EFFORT_ORDER else None
+
+
 def _pool_entry_id(entry: Any) -> str:
     """A binding entry's pool id: entries are normally a plain id, or
     ``{"id": pool_id, "read_only": true}`` to mark that one binding read
@@ -135,6 +143,10 @@ class AgentSpec:
     # agents/prompt_assembly.py for the two folders.
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    # Reasoning effort (providers/reasoning_profile.EFFORT_ORDER); None means
+    # inherit: the header's choice when the model is inherited too, then the
+    # model's own default on the Models page, then the provider's.
+    effort: Optional[str] = None
     api_key: Optional[str] = None
     verbose: bool = False
     streaming: bool = False
@@ -393,6 +405,8 @@ class AgentSpec:
             overrides["temperature"] = self.temperature
         if self.max_tokens is not None:
             overrides["max_tokens"] = self.max_tokens
+        if self.effort:
+            overrides["effort"] = self.effort
         return overrides
 
     def to_dict(self) -> Dict[str, Any]:
@@ -432,6 +446,8 @@ class AgentSpec:
             d["temperature"] = self.temperature
         if self.max_tokens is not None:
             d["max_tokens"] = self.max_tokens
+        if self.effort:
+            d["effort"] = self.effort
         if self.verbose:
             d["verbose"] = self.verbose
         if self.streaming:
@@ -818,9 +834,14 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     skills_enabled = bool(ad.get("skills_enabled", False))
     _raw_epi = ad.get("episodic_write_enabled")
     episodic_write_enabled = bool(_raw_epi) if _raw_epi is not None else None
-    reasoning = ad.get("reasoning") or {}
-    if not isinstance(reasoning, dict):
-        reasoning = {}
+    reasoning = dict(ad.get("reasoning") or {}) if isinstance(ad.get("reasoning"), dict) else {}
+    # The effort used to live in reasoning as thinking_level, set on the
+    # Behavior tab. A positive level carries over as the agent's own effort;
+    # off (the switch left off) becomes inherit.
+    effort = normalize_effort(ad.get("effort"))
+    legacy_level = reasoning.pop("thinking_level", None)
+    if effort is None and str(legacy_level or "").lower() not in ("", "off"):
+        effort = normalize_effort(legacy_level)
 
     response_format = ad.get("response_format") or "none"
     if response_format not in ("none", "buttons", "telegram"):
@@ -969,6 +990,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         base_url=base_url,
         temperature=temperature,
         max_tokens=max_tokens,
+        effort=effort,
         api_key=api_key,
         verbose=verbose,
         streaming=streaming,

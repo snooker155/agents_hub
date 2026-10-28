@@ -47,6 +47,7 @@
       "default_workspace_only": false,
       "temperature": 0.0,
       "max_tokens": 15000,
+      "effort": "none",
       "verbose": false,
       "capability_override": true,
       "delegates": [
@@ -118,7 +119,8 @@
       "capacity": 1,
       "memory_type": "none",
       "memory_data": null,
-      "default_workspace_only": false
+      "default_workspace_only": false,
+      "effort": "none"
     },
     {
       "id": "decomposer",
@@ -162,6 +164,7 @@
       "memory_data": null,
       "temperature": 0.2,
       "max_tokens": 15000,
+      "effort": "none",
       "verbose": false
     },
     {
@@ -189,7 +192,8 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "memory_extractor",
@@ -214,7 +218,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "architect_agent",
@@ -245,9 +250,7 @@
       "shared": false,
       "temperature": 0.0,
       "skills_enabled": false,
-      "reasoning": {
-        "thinking_level": "medium"
-      }
+      "effort": "none"
     },
     {
       "id": "planner",
@@ -291,7 +294,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.2,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "task_manager",
@@ -334,7 +338,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.2,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "visualizer",
@@ -395,7 +400,8 @@
       "handoffs": [
         "modeler_3d",
         "web_view_builder"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "modeler_3d",
@@ -448,7 +454,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "web_view_builder",
@@ -486,7 +493,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "swe_agent",
@@ -556,7 +564,8 @@
       "capability_override": true,
       "tool_policy": {
         "run_shell": "always_ask"
-      }
+      },
+      "effort": "none"
     },
     {
       "id": "code_reviewer",
@@ -584,7 +593,8 @@
       "default_workspace_only": false,
       "shared": true,
       "temperature": 0.1,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "eval_agent",
@@ -616,7 +626,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "researcher",
@@ -663,12 +674,12 @@
       "skills_enabled": false,
       "reasoning": {
         "think_enabled": false,
-        "thinking_level": "high",
         "plan_enabled": false,
         "think_mode": "deep"
       },
       "response_format": "buttons",
-      "clarify_gate": true
+      "clarify_gate": true,
+      "effort": "none"
     },
     {
       "id": "web_searcher",
@@ -694,7 +705,8 @@
       "temperature": 0.3,
       "skills_enabled": false,
       "response_format": "buttons",
-      "clarify_gate": true
+      "clarify_gate": true,
+      "effort": "none"
     },
     {
       "id": "main-agent",
@@ -787,7 +799,8 @@
         "loop_creator",
         "team_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "universal_agent",
@@ -869,7 +882,8 @@
         "loop_creator",
         "team_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "service_agent",
@@ -909,7 +923,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "prompt-engineer",
@@ -933,7 +948,8 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "plot-manager",
@@ -960,7 +976,8 @@
       "skills_enabled": false,
       "reasoning": {
         "think_enabled": false
-      }
+      },
+      "effort": "none"
     },
     {
       "id": "world_builder",
@@ -987,7 +1004,8 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "scenario_creator",
@@ -1041,7 +1059,8 @@
         "loop_creator",
         "team_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "loop_creator",
@@ -1100,7 +1119,8 @@
         "scenario_creator",
         "team_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "team_creator",
@@ -1156,7 +1176,8 @@
         "scenario_creator",
         "loop_creator",
         "project_manager"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "project_manager",
@@ -1183,7 +1204,8 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "system_doctor",
@@ -1211,7 +1233,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "system_engineer",
@@ -1249,7 +1272,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.0,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "support",
@@ -1283,7 +1307,8 @@
       "default_workspace_only": false,
       "shared": false,
       "temperature": 0.2,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "verifier",
@@ -1322,7 +1347,8 @@
       "delegates": [
         "@web_search"
       ],
-      "capability_override": true
+      "capability_override": true,
+      "effort": "none"
     },
     {
       "id": "analyst",
@@ -1356,7 +1382,8 @@
       "skills_enabled": false,
       "delegates": [
         "@visualizer"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "writer",
@@ -1389,7 +1416,8 @@
       "skills_enabled": false,
       "handoffs": [
         "@verifier"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "sourcer",
@@ -1420,7 +1448,8 @@
       ],
       "handoffs": [
         "screener"
-      ]
+      ],
+      "effort": "none"
     },
     {
       "id": "screener",
@@ -1449,7 +1478,8 @@
       "default_workspace_only": false,
       "shared": true,
       "temperature": 0.1,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     },
     {
       "id": "assistant",
@@ -1494,7 +1524,8 @@
       "memory_data": null,
       "default_workspace_only": false,
       "shared": false,
-      "skills_enabled": false
+      "skills_enabled": false,
+      "effort": "none"
     }
   ]
 }

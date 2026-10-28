@@ -22,6 +22,7 @@ from workspace import (
     get_workspace_metadata,
     get_workspace_folder,
     get_workspace_default_model_config,
+    get_workspace_model_effort,
     is_system_agent,
     update_workspace_metadata,
     delete_workspace_folder,
@@ -29,6 +30,7 @@ from workspace import (
     set_workspace_instructions,
 )
 from workspace import storage as _workspace_storage
+from agents.registry import normalize_effort
 from models import WorkspaceCreate, WorkspaceAttach, WorkspaceAgentAction, WorkspaceFlowAction, WorkspaceListItem, WorkspacePersonalMemoryUpdate, WorkspaceRoleUpdate
 import logging
 
@@ -669,6 +671,10 @@ def _model_state(name: str, metadata: dict) -> dict:
             "provider": override.get("provider", ""),
             "model": override.get("model", ""),
         },
+        # The effort chosen in the header for agents that inherit the model;
+        # None = each model's own default (the Models page, then the provider).
+        "effort": get_workspace_model_effort(metadata),
+        "effort_own": normalize_effort(metadata.get("model_effort")),
     }
 
 
@@ -679,6 +685,17 @@ async def set_workspace_model(name: str, payload: dict):
     provider='' or 'workspace_default' clears the override (falls back to workspace settings then global).
     """
     _ensure_writable_workspace(name)
+    if "effort" in payload:
+        # The header's effort, for agents that inherit the model: "" or
+        # "inherit" goes back to each model's own default. Kept apart from the
+        # model, so it outlives a model switch (clamped to each model's range).
+        word = str(payload.get("effort") or "").strip().lower()
+        effort = None if word in ("", "inherit") else normalize_effort(word)
+        if word not in ("", "inherit") and effort is None:
+            raise HTTPException(status_code=400, detail=f"Unknown effort '{payload.get('effort')}'")
+        update_workspace_metadata(name, {"model_effort": effort})
+        if "provider" not in payload and "model" not in payload:
+            return {"effort": effort}
     provider = payload.get("provider", "")
     model = payload.get("model", "")
     if not provider or provider == "workspace_default":

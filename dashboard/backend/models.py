@@ -268,7 +268,9 @@ class AgentHandoffsUpdate(BaseModel):
 class AgentReasoningUpdate(BaseModel):
     think_enabled: Optional[bool] = None  # add the think scratchpad tool
     think_mode: Optional[str] = None      # standard | deep | analytical (tool prompt)
-    thinking_level: Optional[str] = None  # off | low | medium | high (native model reasoning)
+    # Former home of the model's effort, kept so older clients still work: a
+    # positive level is written to the agent's effort, off clears it.
+    thinking_level: Optional[str] = None
     plan_enabled: Optional[bool] = None   # add the plan tool
     plan_format: Optional[str] = None     # structured | bullet | numbered | freeform
 
@@ -282,6 +284,9 @@ class AgentModelUpdate(BaseModel):
     max_tokens: Optional[int] = None
     clear_temperature: bool = False       # explicitly remove temperature override
     clear_max_tokens: bool = False        # explicitly remove max_tokens override
+    # Reasoning effort (providers/reasoning_profile.EFFORT_ORDER); "" or
+    # "inherit" clears it. None leaves it as it is.
+    effort: Optional[str] = None
     clear_api_key: bool = False           # explicitly remove api_key override
 
 

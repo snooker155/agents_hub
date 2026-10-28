@@ -6,6 +6,8 @@ import api from './index';
 // Models API — curated catalog + per-model usage stats
 export const getModelsCatalog = () => api.get('/models');
 export const saveModelsCatalog = (providers) => api.put('/models', { providers });
+// The efforts a model accepts and the one it runs at (routes/models.py).
+export const getModelReasoning = (params) => api.get('/models/reasoning', { params });
 export const discoverProviderModels = (provider) => api.post(`/models/discover/${encodeURIComponent(provider)}`);
 export const getModelsUsage = (params) => api.get('/models/usage', { params });
 

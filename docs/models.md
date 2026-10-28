@@ -75,29 +75,52 @@ There is no workspace level.
 Some models refuse a temperature. OpenAI's reasoning models take none at all
 while they reason, so the field is disabled for gpt-5, gpt-5-mini, gpt-5-nano
 and the o-series. gpt-5.1 and later take one only at reasoning effort `none`,
-which is what an agent with thinking off sends them (below), so for those it
-applies only while thinking is off. Claude takes none while it thinks either.
+so for those it applies only at that effort. Claude takes none while it thinks
+either.
 
-## Reasoning
+## Reasoning effort
 
-The Reasoning column shows two things per model: the effort the provider applies
-when a request names none, and what the hub sends when an agent's thinking
-level is off. They differ because OpenAI's reasoning models keep reasoning when
-nothing is asked for, billed and invisible:
+How much a model reasons before it answers is a model setting, like the
+temperature. Resolution, most specific first:
 
-| Family | Provider default | Sent for off |
-|---|---|---|
-| gpt-5, gpt-5-mini, gpt-5-nano | medium | minimal |
-| gpt-5.1 to gpt-5.4 | none | none |
-| gpt-5.5, gpt-5.6 | medium | none |
-| o1, o3, o4 | medium | low (cannot go lower) |
-| gpt-5-pro | high | nothing (cannot go lower) |
-| Claude | off | nothing |
+1. the agent's own effort (its Model tab)
+2. the effort chosen in the header's model picker for the workspace, for agents
+   that inherit the model too (an agent with a model of its own skips it)
+3. the model's effort on this page (the Reasoning effort column)
+4. the provider's default, sent explicitly so the reasoning summary is asked for
 
-The table was measured against the API (`providers/reasoning_profile.py`);
-providers without one show a dash. A call that never chose a level, such as a
-chat title or an eval judge, sends nothing and keeps the provider default. For
-what a positive level shows in the chat, see [agents](agents.md).
+The header's choice is stored apart from the model (`model_effort` in the
+workspace record), so it outlives a model switch. A personal workspace that
+chose none takes `default`'s.
+
+What a value may be depends on the model, so every picker offers only the
+efforts that model accepts, and a value carried over from another model is
+clamped: to the nearest accepted effort below, else the model's lowest. `off`
+is the model's lowest (OpenAI reasoning models never stop reasoning when
+nothing is sent; they fall back to their default, billed and invisible):
+
+| Family | Efforts | Provider default | Off sends |
+|---|---|---|---|
+| gpt-5, gpt-5-mini, gpt-5-nano | minimal, low, medium, high | medium | minimal |
+| gpt-5.1 | none, low, medium, high | none | none |
+| gpt-5.2 to gpt-5.4 | none to xhigh | none | none |
+| gpt-5.5, gpt-5.6, gpt-6 | none to xhigh | medium | none |
+| o1, o3, o4 | low, medium, high | medium | low |
+| gpt-5-pro | high | high | nothing |
+| Claude Opus 5.5 | low to max | medium | low (thinking cannot stop) |
+| Claude Opus 5, Sonnet 5, Sonnet 5.5, Fable | low to max | high | low |
+| Claude Opus 4.7, 4.8 | off, low to max | off | nothing |
+| Claude Opus 4.6, Sonnet 4.6 | off, low, medium, high, max | off | nothing |
+| Older Claude (Haiku 4.5) | off, low, medium, high (token budget) | off | nothing |
+| Ollama reasoning families, LM Studio, custom backends | off, low, medium, high | off | nothing |
+
+Claude gets the effort as `output_config.effort` with adaptive thinking; older
+Claude models think on a token budget sized from it. The OpenAI defaults were
+measured against the API (`providers/reasoning_profile.py`); gpt-6 is assumed
+to behave like gpt-5.6 until measured. Google models take no effort and show a
+dash. A call that never chose an effort, such as a chat title or an eval
+judge, sends nothing and keeps the provider default. For what a reasoning
+model shows in the chat, see [agents](agents.md).
 
 ## Providers
 

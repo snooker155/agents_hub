@@ -53,7 +53,7 @@ LIST_FIELDS: Tuple[str, ...] = (
 )
 SCALAR_FIELDS: Tuple[str, ...] = (
     "type", "entrypoint", "provider", "model", "base_url", "temperature", "max_tokens",
-    "reasoning", "response_format", "clarify_gate", "allow_self_delegation",
+    "effort", "reasoning", "response_format", "clarify_gate", "allow_self_delegation",
     "skills_enabled", "episodic_write_enabled", "max_concurrent_delegates", "advisor_model",
     "output_schema", "tool_search", "compaction", "handoff_history", "default_outcome",
     "streaming", "verbose", "commands", "data_class",

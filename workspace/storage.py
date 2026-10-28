@@ -387,6 +387,22 @@ def get_workspace_default_model_config(meta: Dict[str, Any] | None) -> Dict[str,
     return own
 
 
+def get_workspace_model_effort(meta: Dict[str, Any] | None) -> Optional[str]:
+    """The reasoning effort chosen in the header's model picker for this
+    workspace (top-level ``model_effort``), or None to inherit the model's own.
+    It applies to agents that inherit the model too. A personal workspace that
+    chose none takes ``default``'s, as it does the model."""
+    from agents.registry import normalize_effort
+    if not isinstance(meta, dict):
+        return None
+    own = normalize_effort(meta.get("model_effort"))
+    if own is None and meta.get("personal_of"):
+        fallback = get_workspace_metadata("default")
+        if isinstance(fallback, dict) and not fallback.get("personal_of"):
+            return normalize_effort(fallback.get("model_effort"))
+    return own
+
+
 def _own_default_model_config(meta: Dict[str, Any] | None) -> Dict[str, str]:
     if isinstance(meta, dict):
         md = meta.get("model_default")

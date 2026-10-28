@@ -304,7 +304,15 @@ def _norm_model(m: dict) -> dict:
         # This model's own temperature; None = the global default
         # (LLM_TEMPERATURE). An agent's own value still wins over it.
         "temperature": _norm_temperature(m.get("temperature")),
+        # This model's own reasoning effort; None = the provider's default.
+        # The header's choice and an agent's own still win over it.
+        "effort": _norm_effort(m.get("effort")),
     }
+
+
+def _norm_effort(value) -> str | None:
+    from agents.registry import normalize_effort
+    return normalize_effort(value)
 
 
 def _norm_temperature(value) -> float | None:
@@ -318,9 +326,10 @@ def _norm_temperature(value) -> float | None:
 
 def _with_reasoning(provider: str, models: list) -> list:
     """Copies of ``models`` carrying their reasoning profile for the page:
-    the effort the provider applies when none is asked for, and what thinking
-    level off sends (providers/reasoning_profile.py). Derived on every read,
-    never stored, so a corrected table reaches every catalog at once."""
+    the efforts the model accepts, the one the provider applies when none is
+    asked for, and what off sends (providers/reasoning_profile.py). Derived on
+    every read, never stored, so a corrected table reaches every catalog at
+    once."""
     return [{**m, "reasoning": reasoning_profile(provider, m.get("id"))} for m in models]
 
 
@@ -375,6 +384,23 @@ def _global_default() -> dict:
 
 
 # ── Catalog endpoints ─────────────────────────────────────────────────────────
+
+@router.get("/reasoning")
+async def get_model_reasoning(provider: str = "", model: str = "", workspace: str = ""):
+    """The efforts ``provider``/``model`` accepts and the one it runs at when
+    nothing more specific is set, for pickers that are not on the Models page
+    (the agent's Model tab, the header). An empty model is the provider's
+    default one. With ``workspace``, the header's choice there counts too."""
+    from agents.agent_utils import default_model_for
+    from providers.reasoning_profile import effective_effort
+    prov = provider.strip() or _global_default()["provider"]
+    mdl = model.strip() or default_model_for(prov)
+    ws_effort = None
+    if workspace.strip():
+        from workspace import get_workspace_metadata, get_workspace_model_effort
+        ws_effort = get_workspace_model_effort(get_workspace_metadata(workspace.strip()))
+    return effective_effort(prov, mdl, workspace=ws_effort)
+
 
 @router.get("")
 async def get_catalog():

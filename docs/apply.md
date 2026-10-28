@@ -79,8 +79,8 @@ the hub.
 | `description` | text | `PUT /api/agents/{id}/description` |
 | `tools` | list of tool ids; a child (`extends:` set) may also give `+id` / `-id` deltas | `POST .../tools` |
 | `capability_override` | `true` to accept a combination the capability guard refuses | `POST .../capability-override` |
-| `model` | mapping: `provider`, `model`, `base_url`, `temperature`, `max_tokens` (null clears the last two) | `POST .../model` |
-| `reasoning` | mapping: `think_enabled`, `think_mode`, `thinking_level`, `plan_enabled`, `plan_format` | `POST .../reasoning` |
+| `model` | mapping: `provider`, `model`, `base_url`, `temperature`, `max_tokens`, `effort` (null clears the last three; `effort` is one of off, none, minimal, low, medium, high, xhigh, max, clamped to what the model accepts) | `POST .../model` |
+| `reasoning` | mapping: `think_enabled`, `think_mode`, `plan_enabled`, `plan_format` | `POST .../reasoning` |
 | `memory` | list of memory pools, primary first: an id, or `{pool: id, read_only: true}`; `[]` or `none` for no pool | `POST .../memory` |
 | `delegates`, `handoffs` | lists of agent ids; a child may also give `+id` / `-id` deltas | `POST .../delegates`, `POST .../handoffs` |
 | `handoff_history` | `full`, `summary`, `none` or `last_n:<N>` | `POST .../handoffs` |

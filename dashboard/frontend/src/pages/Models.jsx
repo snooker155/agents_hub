@@ -13,6 +13,8 @@ import {
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
+import { EffortSelect } from '../components/EffortSelect';
+import { effortLabel } from '../components/effort';
 import DateInput from '../components/DateInput';
 import LocalTab from '../components/models/LocalTab';
 import CacheTab from '../components/models/CacheTab';
@@ -64,11 +66,6 @@ const fmtCost = (n) => '$' + (n || 0).toFixed(2);
 
 // ── Catalog tab ───────────────────────────────────────────────────────────────
 
-const EFFORT_KEYS = {
-  none: 'models.effortNone', minimal: 'models.effortMinimal', low: 'models.effortLow',
-  medium: 'models.effortMedium', high: 'models.effortHigh', off: 'models.effortOff',
-};
-
 // A model's own temperature; empty = the global default. Where the model
 // rejects a temperature (OpenAI reasoning families) the field is disabled, and
 // where it takes one only with thinking off, the hint says so.
@@ -86,27 +83,31 @@ function TemperatureInput({ model, globalTemperature, onChange }) {
       placeholder={String(globalTemperature)}
       disabled={mode === 'never'}
       onChange={(e) => onChange(e.target.value === '' ? null : Math.min(2, Math.max(0, parseFloat(e.target.value) || 0)))}
-      className={`${inputCls} w-16 disabled:opacity-40`}
+      className={`${inputCls} w-full min-w-0 disabled:opacity-40`}
       title={hint}
       aria-label={t('models.temperature')}
     />
   );
 }
 
-// The effort the provider applies when none is asked for, and what thinking
-// level off sends. Unknown for providers the hub has no table for.
-function ReasoningDefaults({ profile }) {
+// The model's own reasoning effort; empty = the provider's default, named in
+// the empty choice. The choices are the efforts this model accepts.
+function ModelEffortSelect({ model, onChange }) {
   const { t } = useI18n();
-  if (!profile) return <span className="text-xs text-gray-300">—</span>;
-  const effort = (e) => (EFFORT_KEYS[e] ? t(EFFORT_KEYS[e]) : e);
-  let off = '';
-  if (profile.off) off = t('models.reasoningOff', { effort: effort(profile.off) });
-  else if (profile.default !== 'off' && profile.default !== 'none') off = t('models.reasoningOffKeeps', { effort: effort(profile.default) });
+  const profile = model.reasoning;
+  if (!profile) return <span className="text-xs text-gray-300" title={t('effort.unsupported')}>—</span>;
+  const off = profile.off ? effortLabel(t, profile.off) : t('effort.offNothing');
   return (
-    <div className="text-xs leading-tight" title={t('models.reasoningHint')}>
-      <div className="text-gray-700">{effort(profile.default)}</div>
-      {off && profile.off !== profile.default && <div className="text-gray-400">{off}</div>}
-    </div>
+    <span className="block" title={t('effort.modelHint', { off })}>
+      <EffortSelect
+        efforts={profile.efforts || []}
+        value={model.effort || null}
+        onChange={onChange}
+        inheritLabel={t('effort.modelDefault', { value: effortLabel(t, profile.default) })}
+        className="text-xs w-full min-w-0"
+        ariaLabel={t('models.reasoning')}
+      />
+    </span>
   );
 }
 
@@ -237,7 +238,7 @@ function CatalogTab() {
       ...c,
       [provider]: {
         ...c[provider],
-        models: [...c[provider].models, { id, enabled: true, input_price: 0, cached_input_price: 0, output_price: 0, context_window: 0, price_source: 'auto', temperature: null }],
+        models: [...c[provider].models, { id, enabled: true, input_price: 0, cached_input_price: 0, output_price: 0, context_window: 0, price_source: 'auto', temperature: null, effort: null }],
       },
     }));
     setNewModel((s) => ({ ...s, [provider]: '' }));
@@ -468,19 +469,19 @@ function CatalogTab() {
                     )}
 
                     <div className="max-h-80 overflow-y-auto border border-gray-100 rounded-lg">
-                      <table className="w-full text-sm">
+                      <table className="w-full min-w-[60rem] text-sm table-fixed">
                         <thead className="sticky top-0 bg-white z-10">
                           <tr className="text-left text-xs text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                            <th className="px-2 py-1.5 font-medium w-10">{t('models.on')}</th>
-                            <th className="px-2 py-1.5 font-medium">{t('models.model')}</th>
-                            <th className="px-2 py-1.5 font-medium w-12">{t('models.default2')}</th>
-                            <th className="px-2 py-1.5 font-medium w-28">{t('models.input1m')}</th>
-                            <th className="px-2 py-1.5 font-medium w-28" title={t('models.cached1mHint')}>{t('models.cached1m')}</th>
-                            <th className="px-2 py-1.5 font-medium w-28">{t('models.output1m')}</th>
-                            <th className="px-2 py-1.5 font-medium w-28" title={t('models.contextWindowMaxInputTokens')}>{t('models.context')}</th>
-                            <th className="px-2 py-1.5 font-medium w-20" title={t('models.temperatureHint', { value: globalTemperature })}>{t('models.temperature')}</th>
-                            <th className="px-2 py-1.5 font-medium w-36" title={t('models.reasoningHint')}>{t('models.reasoning')}</th>
-                            <th className="px-2 py-1.5 font-medium w-10"></th>
+                            <th className="px-3 py-1.5 font-medium w-[4%]">{t('models.on')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[22%]">{t('models.model')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[5%]">{t('models.default2')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[10%]">{t('models.input1m')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[10%]" title={t('models.cached1mHint')}>{t('models.cached1m')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[10%]">{t('models.output1m')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[10%]" title={t('models.contextWindowMaxInputTokens')}>{t('models.context')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[8%]" title={t('models.temperatureHint', { value: globalTemperature })}>{t('models.temperature')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[15%]" title={t('models.reasoningHint')}>{t('models.reasoning')}</th>
+                            <th className="px-3 py-1.5 font-medium w-[6%]"></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -488,7 +489,7 @@ function CatalogTab() {
                             <tr><td colSpan={10} className="px-2 py-4 text-center text-gray-400 text-xs">{t('models.noModelsMatch', { query: q })}</td></tr>
                           ) : visible.map((m) => (
                             <tr key={m.id} className="border-t border-gray-50 hover:bg-gray-50">
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <input
                                   type="checkbox"
                                   checked={m.enabled}
@@ -496,23 +497,23 @@ function CatalogTab() {
                                   className="w-4 h-4 accent-indigo-600"
                                 />
                               </td>
-                              <td className="px-2 py-1.5 font-mono text-gray-700">
+                              <td className="px-3 py-1.5 font-mono text-gray-700 break-all">
                                 {m.id}
                                 {provider === globalDefault.provider && m.id === globalDefault.model && (
                                   <span className="ml-2 align-middle px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50 text-gray-500 text-[10px] font-sans uppercase tracking-wider" title={t('models.systemWideDefaultFromEnv')}>{t('models.global')}</span>
                                 )}
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <button onClick={() => setDefault(provider, m.id)} title={t('models.setAsProviderDefault')}>
                                   <Star className={`w-4 h-4 ${entry.default === m.id ? 'fill-amber-400 text-amber-400' : 'text-gray-300 hover:text-amber-400'}`} />
                                 </button>
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <div className="flex items-center gap-1">
                                   <input
                                     type="number" min="0" step="0.01" value={m.input_price}
                                     onChange={(e) => updateModel(provider, m.id, { input_price: parseFloat(e.target.value) || 0 })}
-                                    className={`${inputCls} w-24`}
+                                    className={`${inputCls} w-full min-w-0`}
                                   />
                                   {m.price_source === 'manual' && (
                                     <span className="text-[10px] text-amber-600 font-medium" title={t('models.manualPriceHint')}>
@@ -521,43 +522,46 @@ function CatalogTab() {
                                   )}
                                 </div>
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 {/* Cache reads are billed apart from fresh input, and an
                                     agent loop re-sends its prompt every step, so this is
                                     most of a long run's input bill. */}
                                 <input
                                   type="number" min="0" step="0.01" value={m.cached_input_price ?? 0}
                                   onChange={(e) => updateModel(provider, m.id, { cached_input_price: parseFloat(e.target.value) || 0 })}
-                                  className={`${inputCls} w-24`}
+                                  className={`${inputCls} w-full min-w-0`}
                                   title={t('models.cached1mHint')}
                                 />
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <input
                                   type="number" min="0" step="0.01" value={m.output_price}
                                   onChange={(e) => updateModel(provider, m.id, { output_price: parseFloat(e.target.value) || 0 })}
-                                  className={`${inputCls} w-24`}
+                                  className={`${inputCls} w-full min-w-0`}
                                 />
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <input
                                   type="number" min="0" step="1000" value={m.context_window || 0}
                                   onChange={(e) => updateModel(provider, m.id, { context_window: parseInt(e.target.value, 10) || 0 })}
-                                  className={`${inputCls} w-24`}
+                                  className={`${inputCls} w-full min-w-0`}
                                   title={t('models.contextWindowInTokensMax')}
                                 />
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <TemperatureInput
                                   model={m}
                                   globalTemperature={globalTemperature}
                                   onChange={(temperature) => updateModel(provider, m.id, { temperature })}
                                 />
                               </td>
-                              <td className="px-2 py-1.5">
-                                <ReasoningDefaults profile={m.reasoning} />
+                              <td className="px-3 py-1.5">
+                                <ModelEffortSelect
+                                  model={m}
+                                  onChange={(effort) => updateModel(provider, m.id, { effort })}
+                                />
                               </td>
-                              <td className="px-2 py-1.5">
+                              <td className="px-3 py-1.5">
                                 <div className="flex items-center gap-2">
                                   <Link
                                     to={`/models/${provider}/${encodeURIComponent(m.id)}`}

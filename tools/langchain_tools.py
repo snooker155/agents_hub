@@ -22,6 +22,7 @@ from agents.registry import (
     add_agent as reg_add_agent,
     get_agent as reg_get_agent,
     list_agents as reg_list_agents,
+    normalize_effort,
     remove_agent as reg_remove_agent,
 )
 from managers.run_manager import (
@@ -1656,9 +1657,13 @@ class ModifyAgentInput(BaseModel):
     base_url: Optional[str] = Field(None, description="Provider base URL override; empty string clears")
     temperature: Optional[float] = Field(None, description="Temperature override")
     max_tokens: Optional[int] = Field(None, ge=1, description="Max tokens override")
+    effort: Optional[str] = Field(
+        None,
+        description="How much the model reasons: off, none, minimal, low, medium, high, xhigh or max, clamped to what the model accepts; empty string or 'inherit' clears it (the header's choice, then the model's default apply).",
+    )
     reasoning: Optional[Dict[str, Any]] = Field(
         None,
-        description="Reasoning settings, e.g. {'think_enabled': true, 'think_mode': 'deep', 'thinking_level': 'high', 'plan_enabled': true, 'plan_format': 'bullet'}. 'thinking_level' (off|low|medium|high) is the native model reasoning parameter, separate from the 'think' scratchpad tool.",
+        description="Scratchpad tool settings, e.g. {'think_enabled': true, 'think_mode': 'deep', 'plan_enabled': true, 'plan_format': 'bullet'}. How much the model itself reasons is 'effort', not this.",
     )
     delegates: Optional[List[str]] = Field(
         None,
@@ -1706,6 +1711,7 @@ def modify_agent_tool(
     base_url: Optional[str] = None,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
+    effort: Optional[str] = None,
     reasoning: Optional[Dict[str, Any]] = None,
     delegates: Optional[List[str]] = None,
 ) -> str:
@@ -1791,6 +1797,7 @@ def modify_agent_tool(
             base_url=_blank_to_none(base_url) if base_url is not None else spec.base_url,
             temperature=temperature if temperature is not None else spec.temperature,
             max_tokens=int(max_tokens) if max_tokens is not None else spec.max_tokens,
+            effort=(normalize_effort(effort) if effort is not None else spec.effort),
             skills_enabled=bool(skills_enabled) if skills_enabled is not None else spec.skills_enabled,
             episodic_write_enabled=bool(episodic_write_enabled) if episodic_write_enabled is not None else spec.episodic_write_enabled,
             reasoning=dict(reasoning) if reasoning is not None else dict(spec.reasoning or {}),
@@ -1803,7 +1810,7 @@ def modify_agent_tool(
         before = spec.to_dict()
         reg_add_agent(new_spec)
         after = new_spec.to_dict()
-        for key in ("name", "description", "domain", "tools", "capacity", "memory_type", "memory_data", "skills_enabled", "episodic_write_enabled", "provider", "model", "base_url", "temperature", "max_tokens", "reasoning", "delegates"):
+        for key in ("name", "description", "domain", "tools", "capacity", "memory_type", "memory_data", "skills_enabled", "episodic_write_enabled", "provider", "model", "base_url", "temperature", "max_tokens", "effort", "reasoning", "delegates"):
             if before.get(key) != after.get(key):
                 changed.append(key)
 

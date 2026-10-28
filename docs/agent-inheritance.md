@@ -18,7 +18,7 @@ child immediately; nothing needs re-saving on the child's side.
 ## What is inherited and what is not
 
 **Inherited unless the child sets it ("scalar fields"):** `type`,
-`entrypoint`, `provider`, `model`, `base_url`, `temperature`, `max_tokens`,
+`entrypoint`, `provider`, `model`, `base_url`, `temperature`, `max_tokens`, `effort`,
 `reasoning`, `response_format`, `clarify_gate`, `allow_self_delegation`,
 `skills_enabled`, `episodic_write_enabled`, `max_concurrent_delegates`,
 `advisor_model`, `output_schema`, `tool_search`, `compaction`,

@@ -342,6 +342,7 @@ class AgentFactory:
             # then the global one from Settings, apply in that order.
             "temperature": spec.temperature,
             "max_tokens": spec.max_tokens,
+            "effort": spec.effort,
             "api_key": spec.api_key,
             "verbose": spec.verbose,
             "streaming": spec.streaming,
@@ -462,6 +463,29 @@ class AgentFactory:
                 resolved_base_url = resolved_base_url or _os.environ.get("LMSTUDIO_BASE_URL") or _file_env.get("LMSTUDIO_BASE_URL") or _cfg.lmstudio_base_url or None
 
         return resolved_provider, resolved_model, resolved_base_url, ws_api_key
+
+    @staticmethod
+    def _resolve_effort(config: Dict[str, Any], workspace: Optional[str]) -> str:
+        """The effort the agent is built with: its own, else (when it inherits
+        the model too) the one chosen in the header's model picker, else
+        ``"inherit"``, which build_chat_model turns into the model's own
+        default on the Models page, then the provider's."""
+        from agents.registry import normalize_effort
+        own = normalize_effort(config.get("effort"))
+        if own:
+            return own
+        if (config.get("provider") or "inherit") == "inherit":
+            from common.workspace_context import workspace_name_from_path
+            ws_name = workspace_name_from_path(workspace)
+            if ws_name:
+                try:
+                    from workspace import get_workspace_metadata, get_workspace_model_effort
+                    picked = get_workspace_model_effort(get_workspace_metadata(ws_name))
+                    if picked:
+                        return picked
+                except Exception:  # noqa: BLE001 - optional build step: the model's default applies
+                    log.debug("_resolve_effort: ignored error", exc_info=True)
+        return "inherit"
 
     def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None, agent_id: Optional[str] = None, episodic_write: bool = True, pool_override: Optional[str] = None, personal_pool: Optional[str] = None) -> List[Any]:
         """Create tool instances based on tool ids.
@@ -849,6 +873,7 @@ class AgentFactory:
             # then the global one from Settings, apply in that order.
             "temperature": spec.temperature,
             "max_tokens": spec.max_tokens,
+            "effort": spec.effort,
             "api_key": spec.api_key,
             "verbose": spec.verbose,
             "streaming": spec.streaming,
@@ -995,6 +1020,7 @@ class AgentFactory:
         resolved_provider, resolved_model, resolved_base_url, _ws_api_key = (
             self._resolve_model_config(config, workspace)
         )
+        _effort = self._resolve_effort(config, workspace)
         _episodic_write = resolve_episodic_write(
             _spec.episodic_write_enabled if _spec else None, resolved_provider
         )
@@ -1489,15 +1515,14 @@ class AgentFactory:
             max_tool_repeats=int(config.get("max_tool_repeats", 10)),
             max_iterations=int(config.get("max_iterations", 60)),
             think_gate=think_gate,
-            # Native model reasoning is a model parameter (``thinking_level``),
-            # independent of the ``think`` scratchpad tool: when it is a positive
-            # level, capable models reason natively in the API, and that
-            # reasoning is shown in the chat bubble and stripped from the final
-            # answer text. Off is passed on as off, not dropped: a model that
-            # reasons by default is held to its lowest effort then
-            # (providers/reasoning_profile.py).
-            thinking_level=reasoning.get("thinking_level") or "off",
-            native_reasoning=reasoning.get("thinking_level") not in (None, "", "off"),
+            # The reasoning effort is a model setting (the Model tab, the
+            # header's picker, the Models page), independent of the ``think``
+            # scratchpad tool: capable models reason natively in the API at
+            # it, and that reasoning is shown in the chat bubble and stripped
+            # from the final answer text. Each provider gets it clamped to
+            # what its model accepts (providers/reasoning_profile.py).
+            thinking_level=_effort,
+            native_reasoning=_effort not in ("off", "none"),
             # The record this build came from (a stored version when pinned),
             # for the loop extensions and guardrails (agents/agent_loop.py).
             spec=_spec,

@@ -72,6 +72,7 @@ def _spec_parts(spec: Any) -> Dict[str, Any]:
         "base_url": spec.base_url,
         "temperature": spec.temperature,
         "max_tokens": spec.max_tokens,
+        "effort": spec.effort,
         "reasoning": spec.reasoning or {},
         "memory_type": spec.memory_type,
         "memory_data": spec.memory_data,

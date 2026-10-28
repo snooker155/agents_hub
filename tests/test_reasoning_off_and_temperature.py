@@ -25,18 +25,23 @@ from providers.reasoning_profile import openai_off_effort, reasoning_profile
     ("gpt-5.5", "medium", "none", "when_off"),
     ("gpt-5.6-sol", "medium", "none", "when_off"),
     ("openai/gpt-5.6-terra", "medium", "none", "when_off"),
+    ("gpt-6-luna", "medium", "none", "when_off"),
     ("o3", "medium", "low", "never"),
     ("o4-mini", "medium", "low", "never"),
     ("gpt-5-pro", "high", None, "never"),
 ])
 def test_the_measured_table(model, default, off, temperature):
-    assert reasoning_profile("openai", model) == {
+    profile = reasoning_profile("openai", model)
+    assert {k: profile[k] for k in ("default", "off", "temperature")} == {
         "default": default, "off": off, "temperature": temperature}
+    # The default and the off effort are among the values the model accepts.
+    assert profile["default"] in profile["efforts"]
+    assert off is None or off in profile["efforts"]
 
 
 @pytest.mark.parametrize("provider, model", [
     ("openai", "gpt-4o"), ("openai", "gpt-5-chat-latest"),
-    ("ollama", "gpt-oss:20b"), ("google", "gemini-2.5-pro"),
+    ("ollama", "llama3.2"), ("google", "gemini-2.5-pro"),
 ])
 def test_models_without_a_known_profile(provider, model):
     assert reasoning_profile(provider, model) is None
@@ -45,7 +50,9 @@ def test_models_without_a_known_profile(provider, model):
 
 
 def test_claude_does_not_think_unless_asked():
-    assert reasoning_profile("anthropic", "claude-opus-5-5")["default"] == "off"
+    # Opus 4.6 to 4.8 think only when asked; Opus 5.5 always does, at medium.
+    assert reasoning_profile("anthropic", "claude-opus-4-8")["default"] == "off"
+    assert reasoning_profile("anthropic", "claude-opus-5-5")["default"] == "medium"
 
 
 @pytest.fixture

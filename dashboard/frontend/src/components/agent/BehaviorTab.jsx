@@ -18,9 +18,9 @@ const withSlots = (text, slots) => String(text).split(/(\{\{\w+\}\})/).map((part
  * self-delegation, streaming, response format) and the secrets a run may receive. */
 export default function BehaviorTab() {
   const {
-    PLAN_FORMATS, THINKING_LEVELS, THINK_MODES, agent, clarifyGate, clarifyGateSaving, id,
+    PLAN_FORMATS, THINK_MODES, agent, clarifyGate, clarifyGateSaving, id,
     reasoningSettings, responseFormat, responseFormatSaving, selfDelegation, selfDelegationSaving,
-    setClarifyGate, setClarifyGateSaving, setReasoningSettings, setResponseFormat,
+    setActiveTab, setClarifyGate, setClarifyGateSaving, setReasoningSettings, setResponseFormat,
     setResponseFormatSaving, setSelfDelegation, setSelfDelegationSaving, t,
   } = useAgentPage();
   // Kept here rather than on the page: nothing else on it reads the flag.
@@ -43,25 +43,19 @@ export default function BehaviorTab() {
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Think card */}
+              {/* Think card: the think scratchpad tool. How much the model
+                  itself reasons (effort) is a model setting, on the Model tab. */}
               {(() => {
-                const thinkToolOn = reasoningSettings.thinkEnabled;
-                const nativeOn = (reasoningSettings.thinkingLevel || 'off') !== 'off';
-                // Enable/disable applies to the whole Think block (native + tool).
-                const blockEnabled = nativeOn || thinkToolOn;
+                const enabled = reasoningSettings.thinkEnabled;
 
                 // Persist a partial reasoning change (state + server) in one place.
                 const patchReasoning = (patch) => {
                   setReasoningSettings({ ...reasoningSettings, ...patch });
                   const payload = {};
-                  if ('thinkingLevel' in patch) payload.thinking_level = patch.thinkingLevel;
                   if ('thinkEnabled' in patch) payload.think_enabled = patch.thinkEnabled;
                   if ('thinkMode' in patch) payload.think_mode = patch.thinkMode;
                   updateAgentReasoning(id, payload).catch(() => {});
                 };
-
-                // Tool segmented switcher: an "Off" segment plus the depth modes.
-                const toolSegments = [{ value: 'off', label: t('agentDetails.off'), desc: t('agentDetails.noScratchpadTool') }, ...THINK_MODES];
 
                 const segBtn = (selected, onClick, label, desc) => (
                   <button
@@ -78,69 +72,49 @@ export default function BehaviorTab() {
                 );
 
                 return (
-                  <div className={`rounded-xl border-2 p-4 transition-colors ${blockEnabled ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <div className={`rounded-xl border-2 p-4 transition-colors ${enabled ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-gray-50'}`}>
                     <div className="flex items-start justify-between gap-3 mb-3">
                       <div className="flex items-center gap-2">
-                        <div className={`p-2 rounded-lg ${blockEnabled ? 'bg-violet-100' : 'bg-gray-200'}`}>
-                          <BrainCircuit className={`w-4 h-4 ${blockEnabled ? 'text-violet-600' : 'text-gray-400'}`} />
+                        <div className={`p-2 rounded-lg ${enabled ? 'bg-violet-100' : 'bg-gray-200'}`}>
+                          <BrainCircuit className={`w-4 h-4 ${enabled ? 'text-violet-600' : 'text-gray-400'}`} />
                         </div>
                         <div>
                           <div className="font-semibold text-gray-900 text-sm">{t('agentDetails.think')}</div>
                           <div className="text-xs text-gray-500">{t('agentDetails.thinkBlockHint')}</div>
                         </div>
                       </div>
-                      {/* Enable/disable the whole block: turns both native
-                          thinking and the scratchpad tool off. */}
                       <button
                         type="button"
-                        onClick={() => blockEnabled
-                          ? patchReasoning({ thinkingLevel: 'off', thinkEnabled: false })
-                          : patchReasoning({ thinkingLevel: 'medium' })}
+                        onClick={() => patchReasoning({ thinkEnabled: !enabled })}
                         className={`px-3 py-1 rounded-full text-xs font-semibold border shrink-0 ${
-                          blockEnabled ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-300'
+                          enabled ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-gray-500 border-gray-300'
                         }`}
                       >
-                        {blockEnabled ? t('common.enabled') : t('common.disabled')}
+                        {enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-600 mb-3">
                       {withSlots(t('agentDetails.thinkExplain'), {
-                        native: <span className="font-medium">{t('agentDetails.nativeThinking')}</span>,
                         tool: <span className="font-medium">{t('agentDetails.thinkTool')}</span>,
+                        model: (
+                          <button type="button" onClick={() => setActiveTab('model')}
+                            className="font-medium text-violet-700 hover:underline">
+                            {t('agentDetails.thinkModelTab')}
+                          </button>
+                        ),
                       })}
                     </p>
 
-                    {blockEnabled && (
-                      <div className="grid grid-cols-2 gap-3">
-                        {/* Native thinking column */}
-                        <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">{t('agentDetails.nativeThinking')}</label>
-                          <div className="flex rounded-lg border border-gray-300 overflow-hidden bg-white">
-                            {THINKING_LEVELS.filter(m => m.value !== 'off').map(m =>
-                              segBtn(
-                                reasoningSettings.thinkingLevel === m.value,
-                                () => patchReasoning({ thinkingLevel: m.value }),
-                                m.label,
-                                m.desc,
-                              )
-                            )}
-                          </div>
-                        </div>
-                        {/* Think tool column */}
-                        <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">{t('agentDetails.thinkTool2')}</label>
-                          <div className="flex rounded-lg border border-gray-300 overflow-hidden bg-white">
-                            {toolSegments.map(m =>
-                              m.value === 'off'
-                                ? segBtn(!thinkToolOn, () => patchReasoning({ thinkEnabled: false }), m.label, m.desc)
-                                : segBtn(
-                                    thinkToolOn && reasoningSettings.thinkMode === m.value,
-                                    () => patchReasoning({ thinkEnabled: true, thinkMode: m.value }),
-                                    m.label,
-                                    m.desc,
-                                  )
-                            )}
-                          </div>
+                    {enabled && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">{t('agentDetails.thinkTool2')}</label>
+                        <div className="flex rounded-lg border border-gray-300 overflow-hidden bg-white">
+                          {THINK_MODES.map(m => segBtn(
+                            reasoningSettings.thinkMode === m.value,
+                            () => patchReasoning({ thinkMode: m.value }),
+                            m.label,
+                            m.desc,
+                          ))}
                         </div>
                       </div>
                     )}

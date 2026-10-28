@@ -1,11 +1,13 @@
 import { updateAgentModel } from '../../api';
 import { AlertCircle, BrainCircuit, Eye, EyeOff, Loader, Save, Trash2, Wifi } from 'lucide-react';
 import { useAgentPage } from './context';
+import { EffortSelect } from '../EffortSelect';
+import { clampEffort, effortLabel, inheritText } from '../effort';
 
 /** Which model answers, and how much it is allowed to think first. */
 export default function ModelTab() {
   const {
-    customBackends, handleFetchLocalModels, handleSaveModel, id, localModels,
+    customBackends, effectiveEffort, effortInfo, handleFetchLocalModels, handleSaveModel, id, localModels,
     localModelsError, localModelsFetching, modelForm, modelHasApiKey, modelMessage,
     modelSaving, modelShowKey, setLocalModels, setLocalModelsError, setModelForm,
     setModelHasApiKey, setModelMessage, setModelShowKey, t,
@@ -170,6 +172,43 @@ export default function ModelTab() {
                 <p className="text-xs text-gray-400 mt-1">{t('agentDetails.clearToInheritFromGlobal')}</p>
               </div>
             </div>
+
+            {/* Reasoning effort: what the model accepts decides the choices */}
+            {(() => {
+              const profile = effortInfo?.profile;
+              const efforts = profile?.efforts || [];
+              // Inherit resolves to the header's choice or the model's default;
+              // for the saved agent the server says which, for a model being
+              // typed in here its own default stands in.
+              const inherited = modelForm.provider === 'inherit'
+                ? (effectiveEffort?.source === 'agent' ? null : effectiveEffort)
+                : (effortInfo && { value: effortInfo.value, source: effortInfo.source });
+              const shown = modelForm.effort || null;
+              const runsAt = clampEffort(profile, shown);
+              const clampedTo = runsAt && runsAt !== shown ? runsAt : null;
+              return (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('effort.label')}</label>
+                  <p className="text-xs text-gray-500 mb-2">{t('effort.agentHint')}</p>
+                  {profile ? (
+                    <EffortSelect
+                      efforts={efforts}
+                      value={shown}
+                      onChange={(v) => setModelForm(f => ({ ...f, effort: v || '' }))}
+                      inheritLabel={inheritText(t, inherited)}
+                      className="w-full sm:w-80"
+                    />
+                  ) : (
+                    <p className="text-xs text-gray-400 italic">{t('effort.unsupported')}</p>
+                  )}
+                  {clampedTo && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      {t('effort.clamped', { requested: effortLabel(t, shown), value: effortLabel(t, clampedTo) })}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* API Key override */}

@@ -191,7 +191,10 @@ _SEED_OWNED_FIELDS = ("description", "system", "delegates", "handoffs",
                       # A shipped exception to the capability guard (the SWE
                       # agent's run_shell) comes with the tool that needs it,
                       # and so does the approval that keeps it bounded.
-                      "capability_override", "tool_policy")
+                      "capability_override", "tool_policy",
+                      # How much a shipped agent's model reasons is part of
+                      # its design as well: none, unless the operator sets it.
+                      "effort")
 
 # Tools a shipped seed once granted and has since taken back on purpose. The
 # merge below never drops a tool on its own, so without this an install that

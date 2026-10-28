@@ -155,10 +155,6 @@ const AgentDetails = () => {
   const THINK_MODES = ['standard', 'deep', 'analytical'].map((value) => ({
     value, label: t(`agentDetails.thinkModes.${value}.label`), desc: t(`agentDetails.thinkModes.${value}.desc`),
   }));
-  // Native model reasoning level — a model parameter, separate from the think tool.
-  const THINKING_LEVELS = ['off', 'low', 'medium', 'high'].map((value) => ({
-    value, label: t(`agentDetails.thinkingLevels.${value}.label`), desc: t(`agentDetails.thinkingLevels.${value}.desc`),
-  }));
   const PLAN_FORMATS = ['structured', 'bullet', 'numbered', 'freeform'].map((value) => ({
     value, label: t(`agentDetails.planFormats.${value}.label`), desc: t(`agentDetails.planFormats.${value}.desc`),
   }));
@@ -306,7 +302,7 @@ const AgentDetails = () => {
   // Three tabs own enough state to be their own concern; each loads on the tab
   // opening and hands the page back what its tab renders.
   const docker = useAgentDocker({ id, activeTab, t, toast });
-  const model = useAgentModel({ id, t });
+  const model = useAgentModel({ id, t, workspace: selectedWorkspace || undefined });
   const agentSkills = useAgentSkills({ id, agent, activeTab, selectedWorkspace, t, toast });
   const versions = useAgentVersions({ id, activeTab, onRolledBack: fetchData, t });
   usePageChat(definitionChat);
@@ -331,7 +327,6 @@ const AgentDetails = () => {
       .then(r => setReasoningSettings({
         thinkEnabled: !!r.data.think_enabled,
         thinkMode: r.data.think_mode || 'standard',
-        thinkingLevel: r.data.thinking_level || 'off',
         planEnabled: !!r.data.plan_enabled,
         planFormat: r.data.plan_format || 'structured',
       }))
@@ -799,7 +794,7 @@ const AgentDetails = () => {
   // Published once for the tabs and the overlays; see `agent/context.js`.
   const page = {
     ...docker, ...model, ...agentSkills, ...versions,
-    PLAN_FORMATS, THINKING_LEVELS, THINK_MODES, activeRun, addExtraPool, agent,
+    PLAN_FORMATS, THINK_MODES, activeRun, addExtraPool, agent,
     agentDefinition, agentTasks, allAgents, availableTools,
     capabilityOverridden, capabilityViolation, capabilityOverride, capabilityOverrideSaving,
     capabilityGuardInfo, capabilitySoftened, handleToggleCapabilityOverride,

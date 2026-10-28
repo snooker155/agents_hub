@@ -6,7 +6,9 @@ import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
 import { MULTI, useAuth } from './auth';
 import { buildMenu, visibleGroups, hiddenCount, defaultMenuMode, readMenuMode, writeMenuMode, isItemActive, SIMPLE, FULL } from './navMenu';
-import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog } from '../api';
+import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog, getModelReasoning } from '../api';
+import { EffortSlider } from './EffortSelect';
+import { clampEffort, effortLabel } from './effort';
 import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
 import { LogOut, Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
@@ -235,6 +237,35 @@ const Layout = ({ children }) => {
     }
     return { ...globalDefault, source: 'global' };
   })();
+
+  // The header's reasoning effort, for agents that inherit the model: kept
+  // apart from the model, so it outlives a switch, and shown as the displayed
+  // model can take it (providers/reasoning_profile.py).
+  const workspaceEffort = workspaceModel.effort || null;
+  const [displayProfile, setDisplayProfile] = useState(null);
+  const displayProvider = displayModel.provider;
+  const displayModelId = displayModel.model;
+  useEffect(() => {
+    let live = true;
+    getModelReasoning({ provider: displayProvider || '', model: displayModelId || '' })
+      .then(({ data }) => { if (live) setDisplayProfile(data); })
+      .catch(() => { if (live) setDisplayProfile(null); });
+    return () => { live = false; };
+  }, [displayProvider, displayModelId]);
+  const effortShown = workspaceEffort
+    ? clampEffort(displayProfile?.profile, workspaceEffort) || workspaceEffort
+    : null;
+
+  const handleEffortSwitch = async (effort) => {
+    try {
+      await updateWorkspaceModel(selectedWorkspace || 'default', { effort: effort || '' });
+      const next = { ...workspaceModel, effort: effort || null, effort_own: effort || null };
+      setWorkspaceModel(next);
+      patchWorkspaceSummary(selectedWorkspace || 'default', { model: next });
+    } catch (e) {
+      console.error('Error switching workspace effort:', e);
+    }
+  };
 
   const handleModelSwitch = async (provider, model) => {
     try {
@@ -516,6 +547,7 @@ const Layout = ({ children }) => {
                 <span className="hidden sm:contents">
                   <span>{PROVIDER_CONFIG[displayModel.provider]?.label || displayModel.provider}</span>
                   {displayModel.model && <><span className="opacity-50">·</span><span className="max-w-32 truncate">{displayModel.model}</span></>}
+                  {effortShown && <><span className="opacity-50">·</span><span>{effortLabel(t, effortShown)}</span></>}
                   {displayModel.source === 'global' && <span className="opacity-40 italic text-[10px]">{t('layout.modelPicker.globalSuffix')}</span>}
                   {displayModel.source === 'workspace_default' && <span className="opacity-40 italic text-[10px]">{workspaceModel?.workspace_default?.inherited_from ? t('layout.modelPicker.inheritedSuffix', { workspace: workspaceModel.workspace_default.inherited_from }) : t('layout.modelPicker.defaultSuffix')}</span>}
                 </span>
@@ -578,6 +610,20 @@ const Layout = ({ children }) => {
                       </div>
                     );
                   })}
+                  {/* Reasoning effort for agents that inherit the model: the
+                      leftmost stop is the model's own default */}
+                  {displayProfile?.profile?.efforts?.length > 0 && (
+                    <div className="border-t border-gray-100 mt-1 px-4 pt-2 pb-1.5">
+                      <EffortSlider
+                        efforts={displayProfile.profile.efforts}
+                        value={effortShown}
+                        onChange={handleEffortSwitch}
+                        title={t('effort.headerTitle')}
+                        hint={t('effort.headerHint')}
+                        defaultLabel={t('effort.headerDefault', { value: effortLabel(t, displayProfile.value) || '—' })}
+                      />
+                    </div>
+                  )}
                   <div className="border-t border-gray-100 mt-1 pt-1">
                     <p className="px-4 py-1.5 text-[10px] text-gray-400">
                       {t('layout.modelPicker.legend')} <span className="text-green-600">●</span> {t('layout.modelPicker.legendAvailable')} &nbsp;
