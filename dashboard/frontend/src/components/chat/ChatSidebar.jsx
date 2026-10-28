@@ -17,6 +17,8 @@ export default function ChatSidebar() {
     setSelectedFlow, setSelectedProject, setSelectedTeam, setTargetMode, syncError, t,
     runningChats, teams, turns, visibleConversations, visibleTelegramBindings,
   } = useChatPage();
+  // A page that has no Telegram (a test's page, a hub without the connector) lists none.
+  const telegramBindings = visibleTelegramBindings || [];
   const [query, setQuery] = useState('');
   const { results, searching } = useChatSearch(query, visibleConversations, selectedWorkspace);
   const shown = results || visibleConversations;
@@ -243,13 +245,13 @@ export default function ChatSidebar() {
             exactly the bottom half of the column (flex-1 + a matching flex-1 on
             the top "Chats" panel makes them split 50/50). Overflow uses the
             macOS-style overlay scrollbar via overflow-y-auto. */}
-        {visibleTelegramBindings.length > 0 && (
+        {telegramBindings.length > 0 && (
           <div className="flex-1 min-h-0 flex flex-col border-t border-gray-200">
             <div className="px-3 pt-2 pb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-gray-400 font-semibold flex-shrink-0">
               <SendIcon className="w-3 h-3" /> {t('chat.telegramChats')}
             </div>
             <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
-              {visibleTelegramBindings.map((b) => {
+              {telegramBindings.map((b) => {
                 const convId = b.conversation_id;
                 const isActive = currentConvId === convId;
                 const agent = selectableAgents.find((a) => a.id === b.agent_id);
