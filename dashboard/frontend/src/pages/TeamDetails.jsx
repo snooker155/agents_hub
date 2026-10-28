@@ -410,7 +410,7 @@ export default function TeamDetails() {
   ].filter(Boolean).join(' · ');
 
   const creator = chatOpen && (panelHoldsChat ? (
-    <div className="absolute inset-y-0 right-0 z-30 flex w-full flex-col overflow-hidden border-l border-slate-200 bg-white p-4 shadow-2xl sm:w-[26rem] 2xl:static 2xl:z-auto 2xl:w-[30rem] 2xl:shrink-0 2xl:shadow-none">
+    <div className="absolute inset-y-0 right-0 z-30 flex w-full flex-col overflow-hidden border-l border-slate-200 bg-white p-4 shadow-2xl sm:w-[26rem] 2xl:static 2xl:z-auto 2xl:w-[34.5rem] 2xl:shrink-0 2xl:shadow-none">
       <InPanelNote />
     </div>
   ) : (
@@ -418,7 +418,7 @@ export default function TeamDetails() {
       teamId={team.team_id}
       onTeamChanged={applyTeamFromChat}
       onClose={() => setChatOpen(false)}
-      className="absolute inset-y-0 right-0 z-30 w-full border-l border-slate-200 shadow-2xl sm:w-[26rem] 2xl:static 2xl:z-auto 2xl:w-[30rem] 2xl:shrink-0 2xl:shadow-none"
+      className="absolute inset-y-0 right-0 z-30 w-full border-l border-slate-200 shadow-2xl sm:w-[26rem] 2xl:static 2xl:z-auto 2xl:w-[34.5rem] 2xl:shrink-0 2xl:shadow-none"
     />
   ));
 

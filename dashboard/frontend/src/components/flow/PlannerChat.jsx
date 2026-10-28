@@ -10,6 +10,8 @@ import { genId } from '../chat/turnState';
 import ChatSessionList, { ChatSessionsToggle } from '../ChatSessionList';
 import { useChatSessions } from '../chatSessions';
 import ContextMeter from '../ContextMeter';
+import ComposerBox from '../chat/ComposerBox';
+import { COMPOSER_SEND_CLS, COMPOSER_SIDE_TEXTAREA_CLS, COMPOSER_STOP_CLS } from '../chat/composerStyles';
 import { useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
 import { useInlineChatOpen } from '../pageChat/pageChat';
@@ -52,7 +54,7 @@ function PlannerChat({ projectId, workspace, onGenerated, onClose, generateReque
   // The conversation, in the Chat page's message shape.
   const [messages, setMessages] = useState([]);
   const [streamingId, setStreamingId] = useState(null);
-  const [viewMode, setViewMode] = useChatViewMode();
+  const [viewMode, setViewMode] = useChatViewMode('side');
   // Planning sessions run long and re-send their transcript each turn: the
   // meter under the composer says how much of the model's window is left.
   const { usage: contextUsage, observe: observeContext, reset: resetContext } = useContextUsage();
@@ -231,7 +233,7 @@ function PlannerChat({ projectId, workspace, onGenerated, onClose, generateReque
   }, [sessionHistory]);
 
   return (
-    <div className="w-[36rem] max-w-[50%] shrink-0 flex flex-col bg-white border border-gray-200 rounded-xl overflow-hidden">
+    <div className="w-[36rem] 2xl:w-[41.5rem] max-w-[50%] shrink-0 flex flex-col bg-white border border-gray-200 rounded-xl overflow-hidden">
       {/* A fixed height: the controls come and go with the conversation and
           the history list, and the row must not move when they do. */}
       <div className="flex items-center justify-between h-11 shrink-0 px-3 border-b border-gray-100 gap-2">
@@ -246,10 +248,10 @@ function PlannerChat({ projectId, workspace, onGenerated, onClose, generateReque
               <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
             </button>
           )}
-          {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
           {sessionHistory.hasHistory && (
             <ChatSessionsToggle open={historyOpen} count={sessionHistory.count} disabled={busy} onToggle={toggleHistory} />
           )}
+          {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
           {onClose && (
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600" title={t('flowPlannerChat.hidePlanner')}>
               <PanelRightClose className="w-4 h-4" />
@@ -295,9 +297,21 @@ function PlannerChat({ projectId, workspace, onGenerated, onClose, generateReque
       </div>
 
       <div className="border-t border-gray-100 p-3">
-        <ContextMeter usage={contextUsage} onClear={busy ? null : newChat} className="mb-2" />
-        <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-2xl px-4 py-2.5
-          shadow-sm transition-all">
+        <ComposerBox
+          actions={busy ? (
+            <button onClick={stop} disabled={stopping} title={t('flowPlannerChat.stopTheCurrentRun')}
+              className={COMPOSER_STOP_CLS}>
+              <Square className="w-3 h-3" fill="currentColor" />
+            </button>
+          ) : (
+            <button onClick={onSend} disabled={!input.trim()} title={t('flowPlannerChat.sendEnter')}
+              className={COMPOSER_SEND_CLS}>
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          )}
+          hint={busy ? (stopping ? t('flowPlannerChat.stopping') : t('flowPlannerChat.pressStop')) : t('flowPlannerChat.enterToSend')}
+          footerRight={<ContextMeter usage={contextUsage} onClear={busy ? null : newChat} compact />}
+        >
           <textarea
             ref={textareaRef}
             rows={1}
@@ -306,23 +320,9 @@ function PlannerChat({ projectId, workspace, onGenerated, onClose, generateReque
             onChange={(e) => { setInput(e.target.value); resizeTextarea(); }}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); } }}
             placeholder={t('flowPlannerChat.askThePlannerToCreate')}
-            className="flex-1 resize-none text-sm text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
+            className={COMPOSER_SIDE_TEXTAREA_CLS}
           />
-          {busy ? (
-            <button onClick={stop} disabled={stopping} title={t('flowPlannerChat.stopTheCurrentRun')}
-              className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-              <Square className="w-3 h-3" fill="currentColor" />
-            </button>
-          ) : (
-            <button onClick={onSend} disabled={!input.trim()} title={t('flowPlannerChat.sendEnter')}
-              className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-              <Send className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        <p className="text-center text-[11px] text-gray-400 mt-1.5">
-          {busy ? (stopping ? t('flowPlannerChat.stopping') : t('flowPlannerChat.pressStop')) : t('flowPlannerChat.enterToSend')}
-        </p>
+        </ComposerBox>
       </div>
       </>)}
     </div>

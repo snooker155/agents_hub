@@ -298,7 +298,7 @@ export default function PlaygroundWorld() {
           where there is room for both: below lg the chat follows the form
           rather than squeezing a twelve-column row into half a screen. */}
       <div className={chatVisible
-        ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,25rem)] '
+        ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,25rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,29rem)] '
           + 'gap-6 lg:flex-1 lg:min-h-0'
         : ''}>
         <div className={`space-y-6 min-w-0${

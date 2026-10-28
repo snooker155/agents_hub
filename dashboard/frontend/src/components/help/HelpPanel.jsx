@@ -164,15 +164,15 @@ export default function HelpPanel() {
           role="dialog"
           aria-modal="false"
           aria-labelledby={`${PANEL_ID}-title`}
-          className={`fixed inset-y-0 right-0 z-50 flex flex-col pt-safe pb-safe bg-white border-l border-gray-200 shadow-2xl w-full ${wide ? 'sm:w-[40rem]' : 'sm:w-[26rem]'}`}
+          className={`fixed inset-y-0 right-0 z-50 flex flex-col pt-safe pb-safe bg-white border-l border-gray-200 shadow-2xl w-full ${wide ? 'sm:w-[40rem] 2xl:w-[46rem]' : 'sm:w-[26rem] 2xl:w-[30rem]'}`}
         >
-          <header className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 shrink-0">
+          <header className="flex items-center gap-1.5 px-4 py-3 border-b border-gray-200 shrink-0">
             <CircleQuestionMark className="w-5 h-5 text-indigo-600 shrink-0" strokeWidth={2.25} />
             <div className="min-w-0 flex-1">
               <div id={`${PANEL_ID}-title`} className="text-sm font-semibold text-gray-900 truncate">
                 {t('help.title')}
               </div>
-              <div className="text-[11px] text-gray-500 truncate">{t('help.subtitle')}</div>
+              <div className="text-[11px] text-gray-500 truncate" title={t('help.subtitle')}>{t('help.subtitle')}</div>
             </div>
             <span ref={setClearSlot} className="flex items-center shrink-0" />
             <button
@@ -208,7 +208,7 @@ export default function HelpPanel() {
             renderReply={renderReply}
             heightClass="min-h-0 max-h-none"
             className="flex-1 min-h-0 p-4"
-            composerClassName="mt-auto pt-3"
+            composerClassName="mt-auto pt-3 -mx-4 px-4"
           />
         </aside>
       )}

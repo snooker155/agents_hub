@@ -5,6 +5,10 @@
 /** The text area: grows with the text, no frame of its own. */
 export const COMPOSER_TEXTAREA_CLS = 'flex-1 min-w-0 resize-none text-base text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50';
 
+/** The text area of a side chat's box (a build chat, the planner, the
+ *  architect): the same, at the column's smaller text size. */
+export const COMPOSER_SIDE_TEXTAREA_CLS = 'flex-1 min-w-0 resize-none text-sm text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50';
+
 /** Send (or Run): a round button at the end of the line. */
 export const COMPOSER_SEND_CLS = 'flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors';
 

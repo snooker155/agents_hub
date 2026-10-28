@@ -68,7 +68,7 @@ describe('PlannerChat', () => {
 
   it('marks a tool done when it ends, while the run goes on', async () => {
     // The Build view keeps every step as a card.
-    localStorage.setItem('agent_hub_chat_view_mode', 'build');
+    localStorage.setItem('agent_hub_side_chat_view_mode', 'build');
     let finish;
     streamProjectTasksGenerate.mockImplementationOnce(async ({ onEvent }) => {
       onEvent({ type: 'tool_start', tool: 'list_tasks', input: '{}' });

@@ -20,6 +20,7 @@ export default {
   working: 'arbeitet…',
   stopping: 'wird gestoppt…',
   placeholder: 'Beschreibe, was geändert werden soll…',
+  enterToSend: 'Enter zum Senden · Shift+Enter für eine neue Zeile',
   emptyHint: 'Beschreibe, was du willst — der Agent bearbeitet es hier, und das Panel aktualisiert sich dabei.',
   loadFailed: 'Unterhaltung konnte nicht geladen werden',
   turnFailed: 'Der Durchlauf ist fehlgeschlagen',

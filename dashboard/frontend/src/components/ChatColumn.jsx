@@ -68,8 +68,8 @@ export function useChatColumn(defaultOpen = true, { wide = false } = {}) {
     gridClass: !open || inlineSuppressed
       ? ''
       : wide
-        ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(24rem,36rem)] gap-6 items-start'
-        : 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,25rem)] gap-6 items-start',
+        ? 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(24rem,36rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(27.5rem,41.5rem)] gap-6 items-start'
+        : 'grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(19rem,25rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(22rem,29rem)] gap-6 items-start',
     // The page's column. `min-w-0` only, so nothing about how the page scrolls
     // changes when the chat appears beside it.
     mainClass: 'min-w-0',
@@ -101,13 +101,15 @@ export function ChatToggle({ open, onToggle, label, className = '' }) {
  * together. Without `flex-1` the panel is only as tall as its content, so on a
  * short conversation the composer floats in the middle of the card; without
  * `min-h-0` it refuses to shrink on a long one and pushes the composer out the
- * bottom; `mt-auto` holds the composer down in the first case.
+ * bottom; `mt-auto` holds the composer down in the first case. The negative
+ * margins match the card's `p-5`, so the rule over the composer runs the
+ * card's whole width; a card with other padding passes its own.
  */
 // eslint-disable-next-line react-refresh/only-export-components -- see the note above `useChatColumn`.
 export const FILL_COLUMN = {
   heightClass: 'min-h-0 max-h-none',
   className: 'flex-1 min-h-0',
-  composerClassName: 'mt-auto',
+  composerClassName: 'mt-auto -mx-5 px-5',
 };
 
 /** Gap left below the column, and the smallest it is allowed to get. */

@@ -58,6 +58,8 @@ export default function TeamCreatorChat({ teamId, onTeamChanged, onClose, classN
             emptyHint={t('teamDetails.buildChatHint')}
             suggestions={suggestions}
             {...FILL_COLUMN}
+            /* The rule over the composer across the panel's `px-3`. */
+            composerClassName="mt-auto -mx-3 px-3"
           />
         )}
       </div>

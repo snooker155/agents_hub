@@ -26,6 +26,8 @@ import { agentMessage, applyTurnEvent, settleTurn } from '../chat/turnEvents';
 import { genId } from '../chat/turnState';
 import { graphChangeEvent, graphChatMessages, isGraphBuilderTool } from './graphChatTrace';
 import ContextMeter from '../ContextMeter';
+import ComposerBox from '../chat/ComposerBox';
+import { COMPOSER_SEND_CLS, COMPOSER_SIDE_TEXTAREA_CLS, COMPOSER_STOP_CLS } from '../chat/composerStyles';
 import ChatSessionList, { ChatSessionsToggle } from '../ChatSessionList';
 import { useChatSessions } from '../chatSessions';
 import { useContextUsage } from '../contextUsage';
@@ -212,7 +214,7 @@ function ProjectGraph({ projectId }) {
   // Chat
   const [messages, setMessages] = useState([]);   // the transcript, in the Chat page's message shape
   const [streamingId, setStreamingId] = useState(null);
-  const [viewMode, setViewMode] = useChatViewMode();
+  const [viewMode, setViewMode] = useChatViewMode('side');
   // The architect chat re-sends its transcript every turn, so a long build
   // walks into the model's context ceiling. The meter under the composer shows
   // how close it is; Clear chat is the way back.
@@ -745,7 +747,7 @@ function ProjectGraph({ projectId }) {
         </div>
 
         {showChat && (
-          <div className="w-[28rem] shrink-0 border-l border-gray-200 flex flex-col bg-white">
+          <div className="w-[28rem] 2xl:w-[32rem] shrink-0 border-l border-gray-200 flex flex-col bg-white">
             {/* A fixed height: the controls come and go with the conversation
                 and the history list, and the row must not move when they do. */}
             <div className="flex items-center justify-between h-11 shrink-0 px-3 border-b border-gray-100 gap-2">
@@ -759,10 +761,10 @@ function ProjectGraph({ projectId }) {
                     <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
                   </button>
                 )}
-                {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
                 {sessionHistory.hasHistory && (
                   <ChatSessionsToggle open={historyOpen} count={sessionHistory.count} disabled={busy} onToggle={toggleHistory} />
                 )}
+                {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
               </div>
             </div>
 
@@ -796,9 +798,23 @@ function ProjectGraph({ projectId }) {
             </div>
 
             <div className="border-t border-gray-100 p-3">
-              <ContextMeter usage={contextUsage} onClear={busy ? null : clearChat} className="mb-2" />
-              <div className="flex items-center gap-3 bg-white border border-gray-300 rounded-2xl px-4 py-2.5
-                shadow-sm transition-all">
+              <ComposerBox
+                actions={busy ? (
+                  <button onClick={stopChat} disabled={stopping}
+                    title={t('flowProjectGraph.stopTheCurrentRun')}
+                    className={COMPOSER_STOP_CLS}>
+                    <Square className="w-3 h-3" fill="currentColor" />
+                  </button>
+                ) : (
+                  <button onClick={onSend} disabled={!input.trim()}
+                    title={t('flowProjectGraph.sendEnter')}
+                    className={COMPOSER_SEND_CLS}>
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                hint={busy ? (stopping ? 'Stopping…' : 'Press ■ to stop the run') : 'Enter to send · Shift+Enter for new line'}
+                footerRight={<ContextMeter usage={contextUsage} onClear={busy ? null : clearChat} compact />}
+              >
                 <textarea
                   ref={textareaRef}
                   rows={1}
@@ -807,25 +823,9 @@ function ProjectGraph({ projectId }) {
                   onChange={(e) => { setInput(e.target.value); resizeTextarea(); }}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); } }}
                   placeholder={`Message the architect… (${view})`}
-                  className="flex-1 resize-none text-sm text-gray-800 placeholder-gray-400 focus:outline-none bg-transparent leading-relaxed disabled:opacity-50"
+                  className={COMPOSER_SIDE_TEXTAREA_CLS}
                 />
-                {busy ? (
-                  <button onClick={stopChat} disabled={stopping}
-                    title={t('flowProjectGraph.stopTheCurrentRun')}
-                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                    <Square className="w-3 h-3" fill="currentColor" />
-                  </button>
-                ) : (
-                  <button onClick={onSend} disabled={!input.trim()}
-                    title={t('flowProjectGraph.sendEnter')}
-                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                    <Send className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-              <p className="text-center text-[11px] text-gray-400 mt-1.5">
-                {busy ? (stopping ? 'Stopping…' : 'Press ■ to stop the run') : 'Enter to send · Shift+Enter for new line'}
-              </p>
+              </ComposerBox>
             </div>
             </>)}
           </div>

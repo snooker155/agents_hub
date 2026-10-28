@@ -11,6 +11,8 @@ import { agentMessage, applyTurnEvent, settleTurn } from './chat/turnEvents';
 import { messagesFromChatData } from './chat/traceMessages';
 import { genId } from './chat/turnState';
 import ContextMeter from './ContextMeter';
+import ComposerBox from './chat/ComposerBox';
+import { COMPOSER_SEND_CLS, COMPOSER_SIDE_TEXTAREA_CLS, COMPOSER_STOP_CLS } from './chat/composerStyles';
 import { useContextUsage } from './contextUsage';
 import { useI18n } from '../i18n';
 import { useInlineChatOpen } from './pageChat/pageChat';
@@ -111,7 +113,7 @@ export default function EntityChat({
   const [messages, setMessages] = useState([]);
   // The reply being written, while a turn is open.
   const [streamingId, setStreamingId] = useState(null);
-  const [viewMode, setViewMode] = useChatViewMode();
+  const [viewMode, setViewMode] = useChatViewMode('side');
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -378,7 +380,7 @@ export default function EntityChat({
   return (
     <div className={`flex flex-col min-h-0 ${className}`}>
       {clearTarget && createPortal(
-        <>{clearButton}{viewToggle}{historyToggle}</>, clearTarget,
+        <>{clearButton}{historyToggle}{viewToggle}</>, clearTarget,
       )}
       {showRow && (
         // A fixed height, so the row does not move when the controls in it
@@ -393,11 +395,11 @@ export default function EntityChat({
             ))}
           </div>
           {/* The chat's controls on the right, in the same order as every
-              other chat: New chat, Chat/Build, History. */}
+              other chat: New chat, History, Chat/Build. */}
           <div className="flex items-center gap-1 shrink-0">
             {!clearTarget && clearButton}
-            {!clearTarget && viewToggle}
             {!clearTarget && historyToggle}
+            {!clearTarget && viewToggle}
             {/* Folds the column away; the page's header button brings it back. */}
             {onHide && (
               <button type="button" onClick={onHide} title={t('entityChat.hide')} aria-label={t('entityChat.hide')}
@@ -473,8 +475,19 @@ export default function EntityChat({
           the conversation: there is nothing to write to while browsing. */}
       {!historyOpen && (
       <div className={`shrink-0 pt-3 border-t border-gray-200 ${composerClassName || 'mt-3'}`}>
-        <ContextMeter usage={contextUsage} onClear={busy ? null : onClear} className="mb-2" />
-        <div className="flex items-end gap-2">
+        <ComposerBox
+          actions={busy ? (
+            <button onClick={onStop} disabled={stopping} title={t('entityChat.stop')} className={COMPOSER_STOP_CLS}>
+              <StopCircle className="w-4 h-4" />
+            </button>
+          ) : (
+            <button onClick={onSend} disabled={!input.trim()} title={t('entityChat.send')} className={COMPOSER_SEND_CLS}>
+              <Send className="w-3.5 h-3.5" />
+            </button>
+          )}
+          hint={stopping ? t('entityChat.stopping') : t('entityChat.enterToSend')}
+          footerRight={<ContextMeter usage={contextUsage} onClear={busy ? null : onClear} compact />}
+        >
           <textarea
             ref={textareaRef}
             rows={1}
@@ -485,28 +498,9 @@ export default function EntityChat({
             }}
             placeholder={t('entityChat.placeholder')}
             disabled={busy}
-            // One line is 40px (line 20 + padding 16 + border 2), the buttons'
-            // h-10, so the row lines up until the field grows.
-            className="flex-1 resize-none text-sm leading-5 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none disabled:bg-gray-50"
+            className={COMPOSER_SIDE_TEXTAREA_CLS}
           />
-          {busy ? (
-            <button
-              onClick={onStop} disabled={stopping}
-              title={t('entityChat.stop')}
-              className="h-10 w-10 inline-flex items-center justify-center shrink-0 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
-            >
-              <StopCircle className="w-4 h-4" />
-            </button>
-          ) : (
-            <button
-              onClick={onSend} disabled={!input.trim()}
-              title={t('entityChat.send')}
-              className="h-10 w-10 inline-flex items-center justify-center shrink-0 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          )}
-        </div>
+        </ComposerBox>
       </div>
       )}
     </div>
