@@ -6,6 +6,17 @@ import { FolderPlus, Folder, Plus, Trash2 } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+
+// The first few project names of a workspace row; past that, an ellipsis
+// (the full list is the cell's tooltip).
+const PROJECTS_SHOWN = 3;
+function projectNames(ws) {
+  const names = ws.projects || [];
+  if (names.length === 0) return <span className="text-gray-400">—</span>;
+  const shown = names.slice(0, PROJECTS_SHOWN).join(', ');
+  return names.length > PROJECTS_SHOWN ? `${shown}, …` : shown;
+}
+
 const WorkspaceManager = () => {
   const { t } = useI18n();
   const [items, setItems] = useState([]);
@@ -84,7 +95,8 @@ const WorkspaceManager = () => {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('workspaceManager.name')}</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('workspaceManager.path')}</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('workspaceManager.agents')}</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('workspaceManager.projects')}</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('workspaceManager.tasks')}</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">{t('workspaceManager.actions')}</th>
               </tr>
@@ -92,7 +104,7 @@ const WorkspaceManager = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {items.length === 0 ? (
                 <tr>
-                  <td colSpan="4" className="px-6 py-4 text-center text-gray-500">{t('workspaceManager.noWorkspaces')}</td>
+                  <td colSpan="5" className="px-6 py-4 text-center text-gray-500">{t('workspaceManager.noWorkspaces')}</td>
                 </tr>
               ) : (
                 items.map(ws => (
@@ -114,7 +126,10 @@ const WorkspaceManager = () => {
                         </span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-gray-600 text-xs truncate max-w-xs">{ws.path}</td>
+                    <td className="px-6 py-4 text-sm font-medium text-gray-800">{ws.agents_count ?? 0}</td>
+                    <td className="px-6 py-4 text-sm text-gray-600 max-w-xs truncate" title={(ws.projects || []).join(', ')}>
+                      {projectNames(ws)}
+                    </td>
                     <td className="px-6 py-4 text-sm font-medium text-gray-800">{ws.tasks_count}</td>
                     <td className="px-6 py-4 text-right">
                       {ws.personal ? (

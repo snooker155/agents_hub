@@ -711,5 +711,10 @@ class WorkspaceListItem(BaseModel):
     name: str
     path: str
     tasks_count: int = 0
+    # The agents the Agents page lists in this workspace, and its projects
+    # (every name; the list page shows the first few).
+    agents_count: int = 0
+    projects: List[str] = []
+    projects_count: int = 0
     attached: bool = False
     target: Optional[str] = None

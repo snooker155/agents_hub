@@ -177,10 +177,29 @@ async def list_workspaces(request: Request):
     roots = _visible_to_caller(request, roots)
 
     all_tasks = tasks_service.list_tasks()
+    # The agents the Agents page would list there (routes/agents/listing.py)
+    # and the projects of the workspace (routes/projects), for the list's
+    # columns. Each is a best-effort count: a registry that cannot be read
+    # leaves a zero rather than hiding the workspaces.
+    from routes.agents.listing import visible_agents
+    try:
+        from routes.projects import _common as _projects
+        projects_by_ws: Dict[str, List[str]] = {}
+        for project in _projects.store().list():
+            projects_by_ws.setdefault(project.workspace or "", []).append(project.name)
+    except Exception:  # noqa: BLE001 - the list still answers without its project column
+        log.debug("list_workspaces: projects unavailable", exc_info=True)
+        projects_by_ws = {}
     items = []
     for p in roots:
         name = p.name
         ws_tasks = [t for t in all_tasks if (t.workspace or "").strip() == name]
+        try:
+            agents_count = len(visible_agents(name))
+        except Exception:  # noqa: BLE001 - see above
+            log.debug("list_workspaces: agents unavailable for %s", name, exc_info=True)
+            agents_count = 0
+        ws_projects = projects_by_ws.get(name, [])
         # `path` stays the entry under the workspaces root so it keeps naming the
         # workspace; `target` is where an attached one actually lives.
         attached = p.is_symlink()
@@ -189,6 +208,9 @@ async def list_workspaces(request: Request):
             "name": name,
             "path": str(p),
             "tasks_count": len(ws_tasks),
+            "agents_count": agents_count,
+            "projects": ws_projects,
+            "projects_count": len(ws_projects),
             "attached": attached,
             "target": str(p.resolve()) if attached else None,
             "personal": bool(personal_of),

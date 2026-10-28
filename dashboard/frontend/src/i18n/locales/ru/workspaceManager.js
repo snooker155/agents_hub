@@ -5,6 +5,8 @@ export default {
   name: 'Название',
   nameOptional: 'Название (необязательно)',
   path: 'Путь',
+  agents: 'Агенты',
+  projects: 'Проекты',
   tasks: 'Задачи',
   actions: 'Действия',
   noWorkspaces: 'Пространств нет',
