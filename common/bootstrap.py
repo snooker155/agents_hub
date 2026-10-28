@@ -314,7 +314,7 @@ def _sync_system_agents() -> list[str]:
         live_tools = list(ad.get("tools") or [])
         seed_tools = list(seed.get("tools") or [])
         extra = [t for t in live_tools if t not in seed_tools]
-        withdrawn = [t for t in extra if t in _SEED_WITHDRAWN_TOOLS.get(ad.get("id"), ())]
+        withdrawn = [t for t in extra if t in _SEED_WITHDRAWN_TOOLS.get(ad.get("id") or "", ())]
         if withdrawn:
             log.warning(
                 "system agent sync: %r drops %s — the shipped agent no longer has them.",

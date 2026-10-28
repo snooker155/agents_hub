@@ -23,7 +23,9 @@ log = logging.getLogger(__name__)
 # A callable(op: str, path: str, before: str | None, after: str | None) -> None.
 # ``before``/``after`` are the file's full text content before and after the op;
 # ``None`` means "did not exist" (add has before=None, delete has after=None).
-ArtifactRecorder = Callable[[str, str, Optional[str], Optional[str]], None]
+# A recorder that links files also takes ``url=``; one that does not is called
+# without it, so the type leaves the arguments open.
+ArtifactRecorder = Callable[..., None]
 
 _artifact_recorder: contextvars.ContextVar[Optional[ArtifactRecorder]] = contextvars.ContextVar(
     "artifact_recorder", default=None

@@ -337,7 +337,7 @@ def build_run_trail(run_id: str) -> Optional[dict]:
     node_log = "--- Node run started at" in log_text
     if node_log:
         try:
-            timeline = _node_log_timeline(log_text, (run_manager.get_run_process(run_id) or {}).get("tool_calls"))
+            timeline = _node_log_timeline(log_text, (run_manager.get_run_process(run_id) or {}).get("tool_calls") or [])
         except Exception:  # noqa: BLE001 - an unreadable node log falls back to the chat parse
             log.debug("build_run_trail: node log parse failed", exc_info=True)
             timeline = []

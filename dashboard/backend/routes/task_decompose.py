@@ -253,7 +253,7 @@ def _run_pass(task, kind: str, prompt: str, *, root: Path, channel: Optional[str
                 publisher._post({"type": "error", "run_id": run_id, "error": str(e)})
         if result is not None:
             fh.write((str(result.agent_output) if result.ok else f"error: {result.error}") + "\n")
-    if result is not None:
+    if result is not None and invocation is not None:
         try:
             rm.close_run_from_result(run_id, result, process=invocation.process)
         except Exception:  # noqa: BLE001 - the log already holds the outcome

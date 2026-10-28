@@ -902,8 +902,11 @@ def _attach_routes(flow_id: str, events: List[Dict]) -> List[Dict]:
     out = list(events)
     for i in wanted:
         ev = out[i]
+        tail = _BRANCH_TAIL.search(str(ev["content"]))
+        if tail is None:
+            continue
         try:
-            goto = ast.literal_eval(_BRANCH_TAIL.search(str(ev["content"])).group(1))
+            goto = ast.literal_eval(tail.group(1))
         except (ValueError, SyntaxError):
             continue
         if not isinstance(goto, list):
