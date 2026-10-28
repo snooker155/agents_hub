@@ -47,3 +47,7 @@ export const needsLogin = (auth) => (
 export const isAdmin = (auth) => (
   auth?.mode === MULTI && auth?.user?.role === 'admin'
 );
+
+/** True when this viewer may change what only an administrator changes: the
+ * one operator outside multi mode, or an administrator in it. */
+export const canAdminister = (auth) => auth?.mode !== MULTI || isAdmin(auth);

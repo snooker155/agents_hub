@@ -39,6 +39,8 @@ import CommandsTab from '../components/agent/CommandsTab';
 import ConfigTab from '../components/agent/ConfigTab';
 import VersionsTab from '../components/agent/VersionsTab';
 import ModelTab from '../components/agent/ModelTab';
+import { AccessNotice, EditLock } from '../components/access/EditLock';
+import { canAdminister, useAuth } from '../components/auth';
 import DockerTab from '../components/agent/DockerTab';
 import SkillsTab from '../components/agent/SkillsTab';
 import HandoffsCard from '../components/agent/HandoffsCard';
@@ -63,6 +65,7 @@ const AgentDetails = () => {
   const toast = useToast();
   const { id } = useParams();
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
+  const auth = useAuth();
   // The definition chat sits beside the Config tab, folded away by default:
   // most visits to this page are to read, not to rewrite.
   const defChat = useChatColumn(false, { wide: true });
@@ -734,6 +737,11 @@ const AgentDetails = () => {
   if (loading) return <PageLoader size="lg" label={t('agentDetails.loadingAgentDetails')} />;
   if (!agent) return <div className="text-center py-10">{t('agentDetails.agentNotFound')}</div>;
 
+  // A system agent is changed by an administrator only; members keep to its
+  // memory, skills, pulse and clone (the server refuses the rest).
+  const readOnly = Boolean(agent.system) && !canAdminister(auth);
+  const lock = (node) => <EditLock locked={readOnly}>{node}</EditLock>;
+
   const activeRun = runs.items.find(r => r.status === 'running');
   const agentTools = Array.isArray(agent?.tools) ? agent.tools : [];
   const mergedTools = [...new Set([...agentTools])];
@@ -835,15 +843,17 @@ const AgentDetails = () => {
           <div className="flex items-center gap-2">
             {/* The definition chat opens beside the Config tab: from another
                 tab its toggle opens Config with the chat. */}
-            <ChatToggle
-              open={activeTab === 'config' && defChat.open}
-              onToggle={() => {
-                if (activeTab === 'config') { defChat.toggle(); return; }
-                setActiveTab('config');
-                defChat.setOpen(true);
-              }}
-              label={t('agentDetails.definitionChat')}
-            />
+            {!readOnly && (
+              <ChatToggle
+                open={activeTab === 'config' && defChat.open}
+                onToggle={() => {
+                  if (activeTab === 'config') { defChat.toggle(); return; }
+                  setActiveTab('config');
+                  defChat.setOpen(true);
+                }}
+                label={t('agentDetails.definitionChat')}
+              />
+            )}
             {/* Run: one copy of your own to talk to. */}
             {/* Deploy: keep the agent running as replicas of a service, which
                 is also where its chat turns go (docs/services.md). Run: one
@@ -869,6 +879,8 @@ const AgentDetails = () => {
           </div>
         )}
       />
+
+      {readOnly && <AccessNotice testId="system-agent-notice">{t('access.systemAgentNotice')}</AccessNotice>}
 
       <InheritanceHeaderLine agent={agent} onManage={() => setActiveTab('inheritance')} />
 
@@ -989,7 +1001,7 @@ const AgentDetails = () => {
           <LiveQualityCard agentId={id} />
         </>
       )}
-      {activeTab === 'inheritance' && (
+      {activeTab === 'inheritance' && lock(
         <InheritanceTab
           agentId={id}
           agent={agent}
@@ -1001,7 +1013,7 @@ const AgentDetails = () => {
       {activeTab === 'sessions' && <SessionsTab />}
       {activeTab === 'runs' && <RunsTab />}
       {activeTab === 'memory' && <MemoryTab />}
-      {activeTab === 'tools' && (
+      {activeTab === 'tools' && lock(
         <>
           <ToolsTab />
           {/* An imported (remote) agent runs its own loop elsewhere: it has no
@@ -1009,11 +1021,11 @@ const AgentDetails = () => {
           {agent?.type !== 'remote' && <HandoffsCard agentId={id} agent={agent} onSaved={fetchData} />}
         </>
       )}
-      {activeTab === 'behavior' && <BehaviorTab />}
+      {activeTab === 'behavior' && lock(<BehaviorTab />)}
       {activeTab === 'tasks' && <TasksTab />}
-      {activeTab === 'commands' && <CommandsTab />}
-      {activeTab === 'config' && <ConfigTab />}
-      {activeTab === 'versions' && <VersionsTab />}
+      {activeTab === 'commands' && lock(<CommandsTab />)}
+      {activeTab === 'config' && lock(<ConfigTab />)}
+      {activeTab === 'versions' && lock(<VersionsTab />)}
       {/* The agent's pulse: an imported agent runs elsewhere and is not
           scheduled from here. */}
       {activeTab === 'pulse' && (
@@ -1021,15 +1033,15 @@ const AgentDetails = () => {
           ? <ProactiveCard agentId={id} onSaved={fetchData} />
           : <p className="text-sm text-gray-500 mt-6">{t('agentDetails.pulseRemote')}</p>
       )}
-      {activeTab === 'guardrails' && <AgentGuardrailsCard agentId={id} agent={agent} onSaved={fetchData} />}
-      {activeTab === 'experiments' && <ExperimentCard agentId={id} />}
-      {activeTab === 'model' && (
+      {activeTab === 'guardrails' && lock(<AgentGuardrailsCard agentId={id} agent={agent} onSaved={fetchData} />)}
+      {activeTab === 'experiments' && lock(<ExperimentCard agentId={id} />)}
+      {activeTab === 'model' && lock(
         <>
           <ModelTab />
           <LoopSettingsCard agentId={id} agent={agent} onSaved={fetchData} />
         </>
       )}
-      {activeTab === 'docker' && <DockerTab />}
+      {activeTab === 'docker' && lock(<DockerTab />)}
       {activeTab === 'skills' && <SkillsTab />}
 
       <AgentModals />

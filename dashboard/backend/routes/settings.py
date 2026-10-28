@@ -880,3 +880,26 @@ async def set_active_workspace(data: WorkspaceContextUpdate):
     except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
         log.debug("set_active_workspace: best-effort step failed", exc_info=True)
     return {"workspace": ws}
+
+
+# ── Sidebar rows hidden from members (common/member_menu.py) ─────────────────
+
+@router.get("/member-menu")
+async def get_member_menu():
+    """The rows members of a multi-user hub do not see, and the default list."""
+    from common import member_menu
+    return {"hidden": member_menu.hidden(), "default": list(member_menu.DEFAULT_HIDDEN),
+            "is_default": member_menu.is_default()}
+
+
+@router.put("/member-menu")
+async def set_member_menu(payload: dict):
+    """Save the rows hidden from members (an administrator's write in ``multi``
+    mode). ``{"hidden": null}`` goes back to the default list."""
+    from common import member_menu
+    paths = payload.get("hidden") if isinstance(payload, dict) else None
+    if paths is not None and not isinstance(paths, list):
+        raise HTTPException(status_code=400, detail="hidden must be a list of paths or null")
+    hidden = member_menu.set_hidden(paths)
+    return {"hidden": hidden, "default": list(member_menu.DEFAULT_HIDDEN),
+            "is_default": paths is None}

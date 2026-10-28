@@ -84,6 +84,37 @@ A request that names no workspace passes the guard for any signed-in account;
 what it then sees is filtered by membership, see
 [Record-level access](#record-level-access).
 
+Some writes are the administrator's alone, whatever the workspace role
+(`common.auth.admin_only`):
+
+- the model catalog and the local model runtime: every write under
+  `/api/models`, except the voices a person records for their assistant
+  (`/api/models/local/runtime/voices`);
+- the hub's settings: every write under `/api/settings`, except the browser's
+  own workspace selection (`PUT /api/settings/workspace`);
+- a workspace's model policy (`PUT /api/workspaces/{name}/model-policy`, see
+  [docs/models.md](models.md#model-policy-per-workspace)), owner or not;
+- a system agent: its definition, tools, model and every other setting of its
+  record. What a member does to a system agent *in their workspace* stays
+  open to editors there: its memory and personal memory, its skills, making
+  it the workspace's chat agent, its proactive profile, and copying it into
+  the workspace. A copy shares the system agent's prompt folder, so its prompt
+  is the administrator's too; the rest of the copy is the workspace's.
+
+Members read all of these; the pages that change them show read-only.
+
+### The menu members see
+
+An administrator chooses, on the Users page, which sidebar rows members do
+not see (`PUT /api/settings/member-menu`, `common/member_menu.py`). Until one
+is saved, members do not see the pages that configure the service: Models,
+Settings, Nodes, Environments, Containers, Services, Web logs and the two
+registries. A member's `GET /api/auth/me` carries the list as `hidden_menu`,
+and opening a hidden page by its address leads to the chat. Accounts and the
+chat are never hidden; an administrator always sees the whole menu. Hiding a
+row is not access control: what a member may not change is refused by the
+API, as above.
+
 The workspace a request is about is read from the path
 (`/api/workspaces/{name}/…`), the `workspace` query parameter, or the
 `X-Workspace` header. Request bodies are deliberately not parsed for it:
@@ -249,6 +280,21 @@ see [Record-level access](#record-level-access) below.
 A request that names no workspace used to be open to any signed-in account.
 It no longer returns the whole table: lists are filtered to the workspaces
 the caller is a member of, and a single record outside them answers 403.
+
+Agents, flows, teams, loops and their runs are named by id
+(`/api/agents/{id}`, `/api/flows/{id}/run`, `/api/teams/runs/{id}`), and the
+workspace such a request names is the page the browser is on, not the
+record's. The guard therefore looks the record up and checks the caller's
+membership of the workspace it lives in (`common/record_access.py`): a member
+of `w1` asking for an agent of `w2` gets 403, with `?workspace=w1` or without
+it. A record of no workspace is the `default` workspace's. System agents,
+shared agents and flows, and agents that predate workspace ownership are read
+from anywhere; changing them needs the role in their own workspace (or, for a
+system agent, the administrator). Where a request names its workspace only in
+the body (creating an agent, flow, team or loop, importing a flow, a chat
+turn, moving a record to another workspace), the route checks `editor` there
+itself; a chat turn is also refused when its agent, flow or team lives in
+another workspace.
 A member sees the tasks, runs, sessions and memory pools of their workspaces;
 a chat is visible to its owner and to administrators (and, when it was
 written by the system or before identity existed, to the members of its

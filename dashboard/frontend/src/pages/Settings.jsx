@@ -5,7 +5,7 @@ import {
   RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw, Shield, CheckSquare, UserRound,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
-import { MULTI, TOKEN, useAuth } from '../components/auth';
+import { MULTI, TOKEN, canAdminister, useAuth } from '../components/auth';
 import { getApiToken, setApiToken, API_ORIGIN } from '../api';
 import { getDemo, setDemo } from '../api/demo';
 
@@ -21,6 +21,7 @@ import { useWorkspaceSettings } from '../components/settings/useWorkspaceSetting
 import BrowserServiceSection from '../components/settings/BrowserServiceSection';
 import HubLinkSection from '../components/settings/HubLinkSection';
 import PageLoader from '../components/PageLoader';
+import { AccessNotice, EditLock } from '../components/access/EditLock';
 import FirstRunSettings from '../components/firstRun/FirstRunSettings';
 import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
 import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
@@ -518,7 +519,10 @@ export default function Settings() {
   const { t } = useI18n();
   const { selectedWorkspace } = useWorkspace();
   const activeWorkspace = selectedWorkspace || 'default';
-  const { mode } = useAuth();
+  const auth = useAuth();
+  const { mode } = auth;
+  // Members read this page; the server refuses their writes (docs/identity.md).
+  const readOnly = !canAdminister(auth);
   const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => !(i.singleOnly && mode === MULTI)) }));
 
   // The open section lives in the URL (/settings/:section) so a section can be
@@ -569,7 +573,7 @@ export default function Settings() {
         </>}
         // On the title line, right after the heading, rather than out at the
         // far edge of the header away from the sections it saves.
-        badges={staged && <SaveWorkspaceSettingsButton s={ws} />}
+        badges={staged && !readOnly && <SaveWorkspaceSettingsButton s={ws} />}
       />
 
       <div className="flex min-h-0 flex-1 gap-6">
@@ -646,8 +650,11 @@ export default function Settings() {
               </select>
             </div>
 
+            {readOnly && <AccessNotice>{t('access.adminOnlyNotice')}</AccessNotice>}
+
             <WorkspaceSettingsStatus s={ws} />
 
+            <EditLock locked={readOnly}>
             {visited.map((id) => {
               const Section = STAGED_SECTIONS[id];
               if (!Section) return null;
@@ -674,6 +681,7 @@ export default function Settings() {
                 <WorkspaceDataClass key={`dc-${activeWorkspace}`} workspace={activeWorkspace} />
               </>
             )}
+            </EditLock>
           </div>
         </div>
       </div>

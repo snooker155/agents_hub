@@ -189,11 +189,24 @@ export function buildMenu({ t, auth, features = {} }) {
       ],
     },
   ];
+  // Rows an administrator hid from members (GET /auth/me sends [] to admins).
+  const hiddenPaths = new Set(auth?.user?.hidden_menu || []);
   return groups.map((g) => ({
     ...g,
     label: t(`nav.groups.${g.key}`),
-    items: g.items.filter(Boolean),
+    items: g.items.filter((it) => it && !hiddenPaths.has(it.path)),
   }));
+}
+
+/**
+ * Whether `pathname` is a page an administrator hid from members: one of the
+ * `hidden` paths (GET /auth/me `hidden_menu`) or anything under it. The chat
+ * and the account page are never hidden.
+ */
+export function isMenuHidden(hidden, pathname) {
+  if (!hidden?.length || pathname === '/' || pathname === '/chat' || pathname.startsWith('/chat/')) return false;
+  if (pathname === '/account' || pathname.startsWith('/account/')) return false;
+  return hidden.some((p) => pathname === p || pathname.startsWith(p + '/'));
 }
 
 /** Whether `item` is the row of the page at `pathname`. */

@@ -12,6 +12,7 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useAuth } from '../components/auth';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import MemberMenuSection from '../components/users/MemberMenuSection';
 
 const inputCls = 'border border-gray-200 rounded-lg px-3 py-2 text-sm '
   + ' focus:outline-none';
@@ -317,6 +318,8 @@ export default function Users() {
       </p>
 
       {features?.groups !== false && <GroupsAndMappings users={users} />}
+
+      <MemberMenuSection />
     </PageContainer>
   );
 }

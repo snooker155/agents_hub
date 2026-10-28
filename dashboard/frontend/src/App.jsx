@@ -9,6 +9,7 @@ import { useFeatures } from './components/features';
 import { AuthProvider } from './components/AuthContext';
 import FirstRunGate from './components/firstRun/FirstRunGate';
 import { isAdmin, isMultiUser, needsLogin, useAuth } from './components/auth';
+import HiddenMenuGuard from './components/HiddenMenuGuard';
 import { getInstances } from './api';
 
 // ---------------------------------------------------------------------------
@@ -158,6 +159,7 @@ function AppRoutes() {
   const auth = useAuth();
   return (
     <Suspense fallback={<RouteFallback />}>
+      <HiddenMenuGuard>
       <Routes>
         <Route path="/" element={guard(<Chat />)} />
         <Route path="/chat" element={guard(<Chat />)} />
@@ -284,6 +286,7 @@ function AppRoutes() {
         {/* Where the OIDC callback lands the browser with its new session. */}
         <Route path="/login/oidc" element={<OidcCallback />} />
       </Routes>
+      </HiddenMenuGuard>
     </Suspense>
   );
 }
