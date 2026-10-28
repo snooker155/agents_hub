@@ -202,7 +202,9 @@ def test_use_agent_route_sets_the_flag_and_returns_the_view():
 
 
 def test_migration_0047_turns_old_copies_into_the_switch():
-    import importlib.util, json, sqlite3
+    import importlib.util
+    import json
+    import sqlite3
     from pathlib import Path
     path = Path(__file__).resolve().parents[1] / "common" / "migrations" / "0047_task_use_agent_outcome.py"
     spec = importlib.util.spec_from_file_location("m0047", path)

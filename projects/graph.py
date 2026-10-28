@@ -1019,7 +1019,7 @@ def generate_graph_via_llm(project, view: str, root: Optional[Path]) -> Dict[str
                     "build": {"max_tool_repeats": 0}, "prompt": prompt,
                 }))
                 return finalize_generated_output(res.agent_output if res.ok else None,
-                                                 project, view, root, tasks)
+                                                 project, view, root)
             from agents.agent_factory import create_agent
             from agents.agent_invoke import invoke_agent
 
