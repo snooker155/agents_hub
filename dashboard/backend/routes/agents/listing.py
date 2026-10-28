@@ -1,7 +1,7 @@
 """Agent list, details, tool catalog and workspace capacities."""
 
-from fastapi import APIRouter, HTTPException
-from typing import Any, Dict, List, Optional, Union
+from fastapi import APIRouter, HTTPException, Request
+from typing import Any, Dict, List, Optional, Union, cast
 
 from agents import registry
 from agents import versions as agent_versions
@@ -11,6 +11,7 @@ from agents.capability_guard import (
 )
 from models import AgentToolsUpdate, AgentListItem, AgentDetail, AgentPage
 from workspace import system_agent_ids
+from common import record_access
 
 
 
@@ -77,7 +78,7 @@ def visible_agents(workspace: Optional[str]) -> List[Any]:
 
 @router.get("", response_model=Union[List[AgentListItem], AgentPage])
 async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = None,
-                      offset: Optional[int] = None):
+                      offset: Optional[int] = None, request: Request = cast(Request, None)):
     """List all available agents from registry and factory definitions.
 
     Agents are assembled in memory from the registry and factory definitions
@@ -93,6 +94,10 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
     agents in the requested page.
     """
     visible = visible_agents(workspace)
+    if not workspace and not record_access.visible(record_access.visible_names(request), None):
+        # No workspace named lists the default one's agents; a member who is
+        # not in it gets none of them (the middleware checks a named one).
+        visible = []
     _SYS_IDS = system_agent_ids()
 
     total = len(visible)

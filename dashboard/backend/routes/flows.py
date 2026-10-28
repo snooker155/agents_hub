@@ -28,6 +28,7 @@ from models import FlowListItem, FlowDetail, FlowPage
 from flow.estimate import estimate_flow_cost
 from common.marketplace_names import agent_name_taken, flow_name_taken, name_key
 from common.workspace_scope import same_workspace
+from common import record_access
 from workspace import (
     create_workspace_folder,
     get_workspace_metadata,
@@ -196,7 +197,7 @@ def _paginate(items: list, limit: Optional[int], offset: Optional[int]) -> list:
 
 @router.get("", response_model=Union[List[FlowListItem], FlowPage])
 async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = None,
-                     offset: Optional[int] = None):
+                     offset: Optional[int] = None, request: Request = cast(Request, None)):
     """The flow list. With no ``limit``/``offset`` this is the full list, exactly
     as before; with either, it is one page: ``{items, total, limit, offset}``.
 
@@ -227,6 +228,14 @@ async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = Non
                    if same_workspace(f.get("workspace"), workspace)]
         total = len(visible)
         flows = _paginate(visible, limit, offset)
+    elif record_access.visible_names(request) is not None:
+        # A member asking for no workspace in particular sees the flows of
+        # the workspaces they belong to (and shared ones), not every flow.
+        names = record_access.visible_names(request)
+        mine = [f for f in flow_store.list_flows()
+                if f.get("shared") or record_access.visible(names, f.get("workspace"))]
+        total = len(mine)
+        flows = _paginate(mine, limit, offset)
     else:
         total = flow_store.count_flows()
         flows = flow_store.list_flows(limit=limit, offset=offset)
@@ -238,10 +247,11 @@ async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = Non
 
 
 @router.post("")
-async def create_flow(data: FlowCreate):
+async def create_flow(data: FlowCreate, request: Request = cast(Request, None)):
     # A new flow belongs to the workspace it is created in until it is
     # published; then other workspaces take a copy from the marketplace.
     workspace = _flow_workspace(data.workspace)
+    record_access.require_in_workspace(request, workspace)
     flows = _load()
     flow = {
         "id": str(uuid4()),
@@ -273,7 +283,11 @@ async def get_flow(flow_id: str):
 
 
 @router.put("/{flow_id}")
-async def update_flow(flow_id: str, data: FlowUpdate):
+async def update_flow(flow_id: str, data: FlowUpdate, request: Request = cast(Request, None)):
+    if data.workspace:
+        # Moving a flow needs the same right in the workspace it moves to as
+        # in the one it leaves (checked by the middleware).
+        record_access.require_in_workspace(request, data.workspace)
     flows = _load()
     for i, f in enumerate(flows):
         if f["id"] == flow_id:
@@ -457,8 +471,9 @@ async def export_flow(flow_id: str):
 
 
 @router.post("/import")
-async def import_flow(data: FlowImport):
+async def import_flow(data: FlowImport, request: Request = cast(Request, None)):
     """Validate an uploaded flow YAML and, if valid, store it as a new flow."""
+    record_access.require_in_workspace(request, data.workspace)
     if not (data.yaml or "").strip():
         raise HTTPException(status_code=400, detail="No YAML content provided")
 
@@ -545,9 +560,10 @@ async def list_n8n_workflows(workspace: Optional[str] = None):
 
 
 @router.post("/import/n8n")
-async def import_n8n_flow(data: N8nImport):
+async def import_n8n_flow(data: N8nImport, request: Request = cast(Request, None)):
     """Create a hub flow from an n8n workflow. Returns ``{flow, report}``; the
     report says what each n8n step became and what did not carry over."""
+    record_access.require_in_workspace(request, data.workspace)
     from connectors.n8n.client import N8nError
     from flow import n8n_import
 
@@ -1198,8 +1214,9 @@ def _ensure_flow_creator_registered() -> None:
 
 
 @router.post("/generate")
-async def generate_flow(data: FlowGenerateRequest):
+async def generate_flow(data: FlowGenerateRequest, request: Request = cast(Request, None)):
     """Run the flow_creator agent to design, validate, and create a flow for the requirement."""
+    record_access.require_in_workspace(request, data.workspace)
     from agents import registry
     from common.workspace_context import _workspace_ctx, filter_agents_for_workspace
 

@@ -436,7 +436,7 @@ async def _api_token_guard(request, call_next):
         # so answering a workspace the caller simply is not a member of with
         # 401 would log them out of the whole app.
         return JSONResponse(status_code=403,
-                            content={"detail": "Not a member of this workspace"})
+                            content={"detail": identity.refusal_detail(request)})
 
     # Routes read the principal off the request; the stores that stamp an owner
     # onto a new record read it off a contextvar instead, so they need no

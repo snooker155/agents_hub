@@ -24,15 +24,16 @@ same rows, so watching live and reading it back look the same.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from teams import store
 from teams.models import MAX_MEMBERS, MODES, Team
 from teams.prompts import suggest_manifest, team_system_prompt
 from teams.runner import estimate_cost, stop_run
+from common import record_access
 from chat.entity_chat import EntityChatSpec
 from chat.models import ChatAttachment, ChatReference, ChatRequest
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
@@ -180,12 +181,18 @@ def _enrich(team: Team) -> Dict[str, Any]:
 # ── Definitions ──────────────────────────────────────────────────────────────
 
 @router.get("")
-async def list_teams(workspace: Optional[str] = None):
-    return {"teams": [_enrich(t) for t in store.list_teams(workspace)]}
+async def list_teams(workspace: Optional[str] = None, request: Request = cast(Request, None)):
+    teams = store.list_teams(workspace)
+    if not workspace:
+        # A member asking for no workspace sees their own workspaces' teams.
+        names = record_access.visible_names(request)
+        teams = [t for t in teams if record_access.visible(names, t.workspace)]
+    return {"teams": [_enrich(t) for t in teams]}
 
 
 @router.post("")
-async def create_team(data: TeamIn):
+async def create_team(data: TeamIn, request: Request = cast(Request, None)):
+    record_access.require_in_workspace(request, data.workspace)
     _validate(data)
     return _enrich(store.save_team(_team_from_in(data)))
 
@@ -202,8 +209,11 @@ async def manifest_suggestion(agent_id: str):
 
 
 @router.get("/runs")
-async def list_runs(team_id: Optional[str] = None, limit: int = 50):
-    return {"runs": [r.to_dict() for r in store.list_runs(team_id, limit)]}
+async def list_runs(team_id: Optional[str] = None, limit: int = 50,
+                    request: Request = cast(Request, None)):
+    names = record_access.visible_names(request)
+    return {"runs": [r.to_dict() for r in store.list_runs(team_id, limit)
+                     if record_access.visible(names, r.workspace)]}
 
 
 @router.get("/runs/{team_run_id}")
@@ -323,10 +333,12 @@ async def get_team(team_id: str):
 
 
 @router.put("/{team_id}")
-async def update_team(team_id: str, data: TeamIn):
+async def update_team(team_id: str, data: TeamIn, request: Request = cast(Request, None)):
     existing = store.get_team(team_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Team not found")
+    if data.workspace and data.workspace != existing.workspace:
+        record_access.require_in_workspace(request, data.workspace)
     _validate(data)
     return _enrich(store.save_team(_team_from_in(data, existing)))
 

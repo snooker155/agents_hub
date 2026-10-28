@@ -18,15 +18,16 @@ rows, so watching live and reviewing afterwards look identical.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, cast, Union
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from common.workspace_scope import same_workspace
 from loops import store
 from loops.models import EVALUATOR_MODES, Loop
 from loops.runner import LoopResumeError, estimate_cost
+from common import record_access
 from chat.entity_chat import EntityChatSpec
 from chat.models import ChatAttachment, ChatReference, ChatRequest
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
@@ -196,22 +197,30 @@ def _last_run(loop_id: str) -> Optional[Dict[str, Any]]:
 
 
 @router.get("")
-async def list_loops(workspace: Optional[str] = None):
-    return {"loops": [{**_enrich(l), "last_run": _last_run(l.loop_id)}
-                      for l in store.list_loops(workspace)]}
+async def list_loops(workspace: Optional[str] = None, request: Request = cast(Request, None)):
+    loops = store.list_loops(workspace)
+    if not workspace:
+        # A member asking for no workspace sees their own workspaces' loops.
+        names = record_access.visible_names(request)
+        loops = [l for l in loops if record_access.visible(names, l.workspace)]
+    return {"loops": [{**_enrich(l), "last_run": _last_run(l.loop_id)} for l in loops]}
 
 
 @router.post("")
-async def create_loop(data: LoopIn):
+async def create_loop(data: LoopIn, request: Request = cast(Request, None)):
+    record_access.require_in_workspace(request, data.workspace)
     _validate(data)
     return _enrich(store.save_loop(_loop_from_in(data)))
 
 
 @router.get("/runs")
-async def list_runs(loop_id: Optional[str] = None, limit: int = 50):
+async def list_runs(loop_id: Optional[str] = None, limit: int = 50,
+                    request: Request = cast(Request, None)):
     """Recent loop runs. Declared before ``/{loop_id}`` so "runs" is not
     swallowed as a loop id."""
-    return {"runs": [r.to_dict() for r in store.list_runs(loop_id, limit)]}
+    names = record_access.visible_names(request)
+    return {"runs": [r.to_dict() for r in store.list_runs(loop_id, limit)
+                     if record_access.visible(names, r.workspace)]}
 
 
 @router.get("/runs/{loop_run_id}")
@@ -325,10 +334,12 @@ async def get_loop(loop_id: str):
 
 
 @router.put("/{loop_id}")
-async def update_loop(loop_id: str, data: LoopIn):
+async def update_loop(loop_id: str, data: LoopIn, request: Request = cast(Request, None)):
     existing = store.get_loop(loop_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Loop not found")
+    if data.workspace and data.workspace != existing.workspace:
+        record_access.require_in_workspace(request, data.workspace)
     _validate(data)
     return _enrich(store.save_loop(_loop_from_in(data, existing)))
 

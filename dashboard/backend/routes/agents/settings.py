@@ -1,8 +1,8 @@
 """Agent history, logs, delete and the per-agent memory, skills and response settings."""
 import dataclasses
 
-from fastapi import APIRouter, HTTPException
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Request
+from typing import Optional, cast
 from pathlib import Path
 
 from agents import registry
@@ -12,6 +12,7 @@ from models import AgentMemoryUpdate, AgentSkillsConfigUpdate, AgentEpisodicConf
 
 
 
+from common import record_access
 from ._common import (package, get_factory, _workspace_memory_overrides)
 from .listing import _workspace_capacity_overrides
 import logging
@@ -132,7 +133,8 @@ def _personal_pool_ids(pool_ids) -> set:
 
 
 @router.post("/{agent_id}/memory")
-async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
+async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate,
+                              request: Request = cast(Request, None)):
     """Set the agent's memory assignment for a workspace.
 
     Memory is per-workspace: in the agent's home workspace the assignment is
@@ -140,6 +142,7 @@ async def update_agent_memory(agent_id: str, data: AgentMemoryUpdate):
     workspace's metadata override, so instances of a shared agent stay
     independent across workspaces.
     """
+    record_access.require_in_workspace(request, data.workspace)
     from memory.binding import home_workspace
 
     spec = registry.get_agent(agent_id)
@@ -451,8 +454,10 @@ async def list_agent_skills(agent_id: str, workspace: str):
 
 
 @router.post("/{agent_id}/skills")
-async def create_agent_skill(agent_id: str, data: AgentSkillCreate):
+async def create_agent_skill(agent_id: str, data: AgentSkillCreate,
+                             request: Request = cast(Request, None)):
     """Create a new user-authored skill for this agent+workspace."""
+    record_access.require_in_workspace(request, data.workspace)
     from memory.procedural import Procedure, ProcedureStore
     store = ProcedureStore(data.workspace)
     target = data.name.strip().lower()
