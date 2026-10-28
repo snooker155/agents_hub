@@ -109,6 +109,8 @@ describe('RefusalCard, workspace limit raised in place', () => {
   it('offers no inline raise for a person limit', () => {
     show(<RefusalCard refusal={{ code: 'budget', kind: 'person', spent_usd: 5, limit_usd: 5 }} />);
     expect(screen.queryByLabelText('New limit')).toBeNull();
+  });
+});
 
 describe('RefusalCard, guardrail', () => {
   const TRIP = { code: 'guardrail', name: 'no-cards', stage: 'input', kind: 'pii',
