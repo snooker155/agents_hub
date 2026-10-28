@@ -65,7 +65,7 @@ visible on the agent page and in the log rather than pretending it is gone.
   stops checking, warnings included.
 
 A stricter setting sits under the mode: "A per-agent exemption needs a
-no-network container" (`CAPABILITY_OVERRIDE_REQUIRES_CONTAINER`, on by
+no-network container" (`CAPABILITY_OVERRIDE_REQUIRES_CONTAINER`, off by
 default). In block mode, an agent's override is then honoured at build time
 only when the agent runs in a container with the network set to `none`; a
 local run of that agent is still refused, and its page says so next to the

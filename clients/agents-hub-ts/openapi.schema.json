@@ -178,6 +178,7 @@
             "type": "array"
           },
           "id": {
+            "default": "",
             "title": "Id",
             "type": "string"
           },
@@ -221,7 +222,6 @@
           }
         },
         "required": [
-          "id",
           "name"
         ],
         "title": "AgentCreateCustom",
@@ -1245,6 +1245,17 @@
         "title": "AgentSkillsConfigUpdate",
         "type": "object"
       },
+      "AgentStreamingUpdate": {
+        "properties": {
+          "streaming": {
+            "default": false,
+            "title": "Streaming",
+            "type": "boolean"
+          }
+        },
+        "title": "AgentStreamingUpdate",
+        "type": "object"
+      },
       "AgentToolsUpdate": {
         "properties": {
           "tools": {
@@ -1257,6 +1268,26 @@
           }
         },
         "title": "AgentToolsUpdate",
+        "type": "object"
+      },
+      "AgentVersionPin": {
+        "properties": {
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "title": "AgentVersionPin",
         "type": "object"
       },
       "AgentWakeRequest": {
@@ -2384,6 +2415,36 @@
             ],
             "title": "Flow Id"
           },
+          "flow_rerun": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow Rerun"
+          },
+          "flow_start_node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow Start Node"
+          },
+          "flow_summary": {
+            "default": false,
+            "title": "Flow Summary",
+            "type": "boolean"
+          },
           "history": {
             "default": [],
             "items": {
@@ -2406,6 +2467,18 @@
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "notice": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice"
           },
           "overrides": {
             "anyOf": [
@@ -2549,6 +2622,17 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "encrypt_all": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encrypt All"
+          },
           "encrypted": {
             "default": false,
             "title": "Encrypted",
@@ -2556,9 +2640,7 @@
           },
           "mappings": {
             "items": {
-              "additionalProperties": {
-                "type": "string"
-              },
+              "additionalProperties": true,
               "type": "object"
             },
             "title": "Mappings",
@@ -3594,6 +3676,28 @@
       },
       "DecomposeRequest": {
         "properties": {
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
           "max_tokens": {
             "anyOf": [
               {
@@ -4578,6 +4682,17 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
           }
         },
         "required": [
@@ -4819,6 +4934,17 @@
             ],
             "title": "Name"
           },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          },
           "yaml": {
             "title": "Yaml",
             "type": "string"
@@ -4973,6 +5099,25 @@
         "title": "FlowPage",
         "type": "object"
       },
+      "FlowRerun": {
+        "description": "Body of POST /{flow_id}/runs/{run_group}/rerun: the node to start\nfrom, and ``single`` (that node only) or ``rest`` (it and all after it).",
+        "properties": {
+          "mode": {
+            "default": "rest",
+            "title": "Mode",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id"
+        ],
+        "title": "FlowRerun",
+        "type": "object"
+      },
       "FlowResume": {
         "description": "Body of POST /runs/{flow_run_id}/resume.\n\n``answer`` is the person's reply when the run is parked on a\n``human_interrupt`` node; a run that merely died has nothing to answer.",
         "properties": {
@@ -5028,41 +5173,6 @@
           }
         },
         "title": "FlowRun",
-        "type": "object"
-      },
-      "FlowRunNode": {
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "node_id": {
-            "title": "Node Id",
-            "type": "string"
-          },
-          "workspace": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Workspace"
-          }
-        },
-        "required": [
-          "node_id"
-        ],
-        "title": "FlowRunNode",
         "type": "object"
       },
       "FlowSharingUpdate": {
@@ -6735,6 +6845,17 @@
           "kind": {
             "$ref": "#/components/schemas/JobKind"
           },
+          "loop_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loop Id"
+          },
           "max_concurrent": {
             "default": 1,
             "title": "Max Concurrent",
@@ -6840,6 +6961,11 @@
             "title": "Title",
             "type": "string"
           },
+          "use_agent_outcome": {
+            "default": false,
+            "title": "Use Agent Outcome",
+            "type": "boolean"
+          },
           "workspace": {
             "anyOf": [
               {
@@ -6866,7 +6992,8 @@
           "flow",
           "loop",
           "heartbeat",
-          "memory_consolidate"
+          "memory_consolidate",
+          "agent_run"
         ],
         "title": "JobKind",
         "type": "string"
@@ -7104,6 +7231,17 @@
               }
             ],
             "title": "Title"
+          },
+          "use_agent_outcome": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Agent Outcome"
           }
         },
         "title": "JobUpdate",
@@ -8201,6 +8339,17 @@
             "title": "Fingerprint",
             "type": "string"
           },
+          "flow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow Run Id"
+          },
           "hook": {
             "default": "",
             "title": "Hook",
@@ -8221,6 +8370,17 @@
             "default": "",
             "title": "Reason",
             "type": "string"
+          },
+          "team_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Run Id"
           },
           "timeout_s": {
             "default": 600.0,
@@ -9378,6 +9538,24 @@
         "title": "QueryRequest",
         "type": "object"
       },
+      "RagSearchRequest": {
+        "properties": {
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "RagSearchRequest",
+        "type": "object"
+      },
       "ReadySetBody": {
         "properties": {
           "dry_run": {
@@ -9609,6 +9787,28 @@
       },
       "ReplayRequest": {
         "properties": {
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
           "model": {
             "anyOf": [
               {
@@ -12267,6 +12467,28 @@
             ],
             "title": "Agent Version"
           },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "decompose_channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decompose Channel"
+          },
           "depends": {
             "anyOf": [
               {
@@ -12376,6 +12598,17 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "use_agent_outcome": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Agent Outcome"
           },
           "workspace": {
             "anyOf": [
@@ -13129,6 +13362,17 @@
               }
             ],
             "title": "Title"
+          },
+          "use_agent_outcome": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Agent Outcome"
           }
         },
         "title": "TaskUpdate",
@@ -13711,6 +13955,34 @@
         "title": "TriggerIn",
         "type": "object"
       },
+      "TurnSummaryRequest": {
+        "description": "A flow chat turn that ended without a summary: its id (the turn_id of\nits flow_start line, or that line's timestamp for an older record), the\nmessage it answered and what each node answered.",
+        "properties": {
+          "responses": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Responses",
+            "type": "array"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "user_message": {
+            "default": "",
+            "title": "User Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id"
+        ],
+        "title": "TurnSummaryRequest",
+        "type": "object"
+      },
       "UnloadBody": {
         "properties": {
           "file": {
@@ -14220,6 +14492,19 @@
           }
         },
         "title": "UpdateServer",
+        "type": "object"
+      },
+      "UseAgentIn": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "UseAgentIn",
         "type": "object"
       },
       "UserCreate": {
@@ -15015,6 +15300,35 @@
         "title": "WorkspaceRoleUpdate",
         "type": "object"
       },
+      "WorkspaceSyncBody": {
+        "properties": {
+          "encrypted": {
+            "default": false,
+            "title": "Encrypted",
+            "type": "boolean"
+          },
+          "space": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space"
+          },
+          "synced": {
+            "title": "Synced",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "synced"
+        ],
+        "title": "WorkspaceSyncBody",
+        "type": "object"
+      },
       "WorldGenerateIn": {
         "properties": {
           "base_url": {
@@ -15293,10 +15607,26 @@
       },
       "routes__loops__RunIn": {
         "properties": {
+          "attachments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChatAttachment"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
           "goal": {
             "default": "",
             "title": "Goal",
             "type": "string"
+          },
+          "references": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChatReference"
+            },
+            "title": "References",
+            "type": "array"
           },
           "seed": {
             "additionalProperties": true,
@@ -15356,6 +15686,14 @@
       },
       "routes__teams__RunIn": {
         "properties": {
+          "attachments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChatAttachment"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
           "conversation_id": {
             "anyOf": [
               {
@@ -15371,6 +15709,14 @@
             "default": "",
             "title": "Goal",
             "type": "string"
+          },
+          "references": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChatReference"
+            },
+            "title": "References",
+            "type": "array"
           },
           "task_id": {
             "anyOf": [
@@ -19182,7 +19528,7 @@
         ]
       },
       "put": {
-        "description": "Replace the names this agent may receive. Saved through\n``registry.add_agent``, so the capability guard judges the new list.",
+        "description": "Replace the names this agent may receive. Saved through\n``registry.add_agent``, so the capability guard judges the new list.\n\nA system agent may declare secrets too: it is one record serving every\nworkspace, so an operator declares a name once and stores the value in\nthe default workspace (common/secrets.py falls back to it). The save is\nnot a user edit of the agent: the seed does not own ``secrets``, so the\nagent keeps receiving the shipped updates of its tools and prompt.",
         "parameters": [
           {
             "in": "path",
@@ -19686,6 +20032,93 @@
         ]
       }
     },
+    "/api/agents/{agent_id}/streaming": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent Streaming",
+        "tags": [
+          "agents"
+        ]
+      },
+      "post": {
+        "description": "Make the agent always stream tokens in background runs, or follow the flag.\n\nThe field can only force streaming on (agents.agent_factory.resolve_streaming):\noff means the global AGENT_STREAMING setting decides. Chat and the other\ncallers that pass ``streaming=True`` stream either way.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentStreamingUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Agent Streaming",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/api/agents/{agent_id}/tool-policy": {
       "get": {
         "description": "The agent's tool policy, the mode each of its tools resolves to, and\nthe valid modes.",
@@ -19806,6 +20239,62 @@
         ]
       }
     },
+    "/api/agents/{agent_id}/tool-visibility": {
+      "get": {
+        "description": "How many of this agent's tools its model is shown in a chat in\n``workspace``, the threshold above which the rest go behind tool search,\nand which tools are which (agents/loop_ext/tool_search.py). The agent is\nbuilt as a chat would build it, so the count is the real one.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Agent Tool Visibility",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
     "/api/agents/{agent_id}/tools": {
       "post": {
         "parameters": [
@@ -19850,6 +20339,56 @@
           }
         },
         "summary": "Update Agent Tools",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/version-pin": {
+      "put": {
+        "description": "Pin every run of the agent to one stored version (a run's own pin,\nfrom a task, a deployment or a chat request, still wins), or clear it.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentVersionPin"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pin Agent Version",
         "tags": [
           "agents"
         ]
@@ -24364,6 +24903,73 @@
         ]
       }
     },
+    "/api/chats/search": {
+      "get": {
+        "description": "The conversations whose title or messages hold ``q``, newest first,\nwithout transcripts; a message hit carries the text around it (``match``).",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Chats",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
     "/api/chats/{chat_id}": {
       "delete": {
         "description": "Drop one conversation. Its runs stay in the ledger.",
@@ -24501,6 +25107,46 @@
           }
         },
         "summary": "Save Chat",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/{chat_id}/background": {
+      "get": {
+        "description": "The flows, loops and teams the agent started from this chat that are\nstill going: what each is, how far it has got (a flow's nodes passed of\nits longest way to the end, a loop's iteration and score, a team's members\nat work) and the channels it streams on. The composer lists them; the\nchat reloads this on ``flow_runs`` / ``loop_runs`` / ``team_runs``\nchanges (chat/background_runs.py).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chat_id",
+            "required": true,
+            "schema": {
+              "title": "Chat Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Background Runs",
         "tags": [
           "chats"
         ]
@@ -30037,6 +30683,61 @@
         ]
       }
     },
+    "/api/flow-runs/{flow_run_id}/tool-approvals": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_run_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Flow Run Approvals",
+        "tags": [
+          "tool-approvals"
+        ]
+      }
+    },
     "/api/flow-templates": {
       "get": {
         "parameters": [
@@ -30177,7 +30878,7 @@
     },
     "/api/flows": {
       "get": {
-        "description": "The flow list. With no ``limit``/``offset`` this is the full list, exactly\nas before; with either, it is one page: ``{items, total, limit, offset}``.\n\nFlows are file-backed (one YAML+JSON pair per flow via ``flow_store``), not\na queryable store. Visibility filtering happens on the cheapest field that\ncan answer it before anything is parsed off disk, and ``_public_flow`` (the\nonly per-item work here) runs on the resulting page, not the whole catalog:\n\n- An explicit ``allowed_flows`` allowlist *is* the filter, metadata already\n  in hand, so only the ids that land on the requested page get read.\n- Otherwise, ownership (\"global flows + flows owned by this workspace\") is\n  a property of each flow's own record, so every flow still has to be\n  parsed once to know it: flow_store keeps no index for that.\n- With no workspace at all, ``flow_store`` pages the file list itself and\n  parses only those files.",
+        "description": "The flow list. With no ``limit``/``offset`` this is the full list, exactly\nas before; with either, it is one page: ``{items, total, limit, offset}``.\n\nFlows are file-backed (one YAML+JSON pair per flow via ``flow_store``), not\na queryable store. Visibility filtering happens on the cheapest field that\ncan answer it before anything is parsed off disk, and ``_public_flow`` (the\nonly per-item work here) runs on the resulting page, not the whole catalog:\n\n- An explicit ``allowed_flows`` allowlist *is* the filter, metadata already\n  in hand, so only the ids that land on the requested page get read.\n- Otherwise, ownership (the flows this workspace owns, a flow that names\n  no workspace being the default one's) is a property of each flow's own record, so every flow still has to be\n  parsed once to know it: flow_store keeps no index for that.\n- With no workspace at all, ``flow_store`` pages the file list itself and\n  parses only those files.",
         "parameters": [
           {
             "in": "query",
@@ -30933,55 +31634,6 @@
         ]
       }
     },
-    "/api/flows/{flow_id}/run-node": {
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "flow_id",
-            "required": true,
-            "schema": {
-              "title": "Flow Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FlowRunNode"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Run Flow Node",
-        "tags": [
-          "flows"
-        ]
-      }
-    },
     "/api/flows/{flow_id}/runs": {
       "get": {
         "description": "Return the flow's execution history grouped into one record per run.\n\nEach record is either a task run (one flow_start\u2192flow_finish from runtime/flow_run.py)\nor a chat conversation (all turns of one flow chat collapse into a single\nrecord). Records carry their own slice of log events so the dashboard can\nrender per-run logs. Legacy events without a run_group are grouped by\nflow_start boundaries so old logs still surface.",
@@ -31033,6 +31685,220 @@
           }
         },
         "summary": "Get Flow Runs",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/flows/{flow_id}/runs/{run_group}": {
+      "delete": {
+        "description": "Drop one entry from the History tab: a chat, with its conversation, or a\ntask run, with its execution record (it can no longer be resumed).\n\nThe task a run worked on stays on the board, and the run ledger keeps the\nnode runs, as when a chat is deleted on the Chat page. Anything still\nrunning is refused: its next event would write the log back.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_group",
+            "required": true,
+            "schema": {
+              "title": "Run Group",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Flow Chat",
+        "tags": [
+          "flows"
+        ]
+      },
+      "get": {
+        "description": "One History entry with its log events: what a chat that started the\nrun shows of it once the run has ended and the page was reloaded.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_group",
+            "required": true,
+            "schema": {
+              "title": "Run Group",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Flow Run Record",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/flows/{flow_id}/runs/{run_group}/rerun": {
+      "post": {
+        "description": "Run a past task run of the flow again from one node, as a new run\n(flow/launcher.rerun_flow_run). A chat record runs again as a turn of\nits own conversation instead (chat/pipelines.py, ``flow_rerun``).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_group",
+            "required": true,
+            "schema": {
+              "title": "Run Group",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowRerun"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerun Flow Run",
+        "tags": [
+          "flows"
+        ]
+      }
+    },
+    "/api/flows/{flow_id}/runs/{run_group}/summary": {
+      "post": {
+        "description": "Write the summary of one turn of a flow chat after the fact: the turn\nwas sent in the Chat view, and the person switched to the Summary view and\nasked for one. Kept in the chat's log, naming its turn, so a reopened\nchat shows it under that turn (chat/flow_summary.py).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flow_id",
+            "required": true,
+            "schema": {
+              "title": "Flow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_group",
+            "required": true,
+            "schema": {
+              "title": "Run Group",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TurnSummaryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Summarize Flow Chat Turn",
         "tags": [
           "flows"
         ]
@@ -31820,7 +32686,7 @@
     },
     "/api/guardrails/events": {
       "get": {
-        "description": "Recent findings (blocks and warns; passes are not recorded), newest\nfirst, narrowed to the workspaces the caller can see.",
+        "description": "Findings (blocks and warns; passes are not recorded) as ``{items,\ntotal}``: one window of the matching rows, newest first unless ``sort`` /\n``order`` say otherwise (store.EVENT_SORTS), narrowed to the workspaces\nthe caller can see.",
         "parameters": [
           {
             "in": "query",
@@ -31872,12 +32738,74 @@
           },
           {
             "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stage",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 200,
+              "default": 20,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "at",
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "title": "Order",
+              "type": "string"
             }
           }
         ],
@@ -32672,6 +33600,56 @@
           }
         },
         "summary": "Client Run",
+        "tags": [
+          "sync"
+        ]
+      }
+    },
+    "/api/hublink/sync/workspaces/{workspace}": {
+      "put": {
+        "description": "One workspace's mapping, from that workspace's Settings tab.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "title": "Workspace",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceSyncBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Client Configure Workspace",
         "tags": [
           "sync"
         ]
@@ -34942,6 +35920,44 @@
       }
     },
     "/api/loops/runs/{loop_run_id}": {
+      "delete": {
+        "description": "Drop one run from the loop's history, with its iterations. Anything\nstill going is refused: its next pass would write the record back.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "loop_run_id",
+            "required": true,
+            "schema": {
+              "title": "Loop Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Run",
+        "tags": [
+          "loops"
+        ]
+      },
       "get": {
         "parameters": [
           {
@@ -35025,6 +36041,62 @@
           }
         },
         "summary": "Get Iterations",
+        "tags": [
+          "loops"
+        ]
+      }
+    },
+    "/api/loops/runs/{loop_run_id}/log": {
+      "get": {
+        "description": "What each pass did: the flow-log lines of every iteration's own flow\nrun (one file per run, see flow/run_store.py), so the loop page shows the\nwork of a pass above the judgement of it. ``iteration`` narrows it to one\npass, which is what a live page refetches while that pass runs.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "loop_run_id",
+            "required": true,
+            "schema": {
+              "title": "Loop Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "iteration",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Iteration"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Log",
         "tags": [
           "loops"
         ]
@@ -37080,6 +38152,46 @@
           }
         },
         "summary": "Stop Message",
+        "tags": [
+          "messages"
+        ]
+      }
+    },
+    "/api/messages/{run_id}/trail": {
+      "get": {
+        "description": "The run as the chat draws a turn: timeline, file changes, stats.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Message Trail",
         "tags": [
           "messages"
         ]
@@ -41008,7 +42120,7 @@
     },
     "/api/plan/jobs/{job_id}/fires": {
       "get": {
-        "description": "The firing journal for one job, newest first.",
+        "description": "The firing journal for one job, newest first, each firing with what\nthe work it started has come to (plans.service.fire_result).",
         "parameters": [
           {
             "in": "path",
@@ -44399,7 +45511,7 @@
         ]
       },
       "get": {
-        "description": "Return the project's structure graph.\n\nServes a saved (hand-edited or AI-generated) graph when one exists;\notherwise builds it deterministically. ``view=architecture`` is the technical\nstructure (client \u2192 service \u2192 data/dependencies) inferred from config + a\nshallow source scan; ``view=process`` is the business/process flow derived\nfrom the project's task hierarchy and ordering. The response carries a\n``source`` of ``auto`` | ``manual`` | ``generated``.",
+        "description": "Return the project's structure graph.\n\nServes a saved (hand-edited or AI-generated) graph when one exists;\notherwise builds it deterministically. ``view=architecture`` is the technical\nstructure (client \u2192 service \u2192 data/dependencies) inferred from config + a\nshallow source scan; ``view=process`` is the business/process flow, which\nhas no deterministic source (tasks are made from it, never read into it),\nso its auto graph is empty. The response carries a\n``source`` of ``auto`` | ``manual`` | ``generated``.",
         "parameters": [
           {
             "in": "path",
@@ -44707,7 +45819,7 @@
     },
     "/api/projects/{project_id}/graph/messages": {
       "delete": {
-        "description": "Clear the build chat transcript and start a fresh chat session.\n\nWipes the conversation and advances the session epoch so the next turn opens\na new backend session (a clean run-thread in Messages). The graph itself is\nleft untouched.",
+        "description": "Start a new build chat; the current thread is filed in the history.\n\nAdvances the session epoch so the next turn opens a new backend session (a\nclean run-thread in Messages). The graph itself is left untouched.",
         "parameters": [
           {
             "in": "path",
@@ -45040,7 +46152,7 @@
     },
     "/api/projects/{project_id}/tasks/chat": {
       "delete": {
-        "description": "Clear the planner chat and start a fresh session (tasks are left alone).",
+        "description": "Start a new planner chat; the current one stays in the history (tasks\nare left alone).",
         "parameters": [
           {
             "in": "path",
@@ -50895,6 +52007,57 @@
         ]
       }
     },
+    "/api/shared-memory/{memory_id}/rag/search": {
+      "post": {
+        "description": "The pool's indexed passages for a query: the RAG service an agent's\n``recall`` and ``search_memory`` call (memory/rag_query.py\n``search_rag_service``), so a run never loads an embedding model or reads\nthe index itself. ``available`` is false when RAG is off; the agent then\nskips the step.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Memory Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RagSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Rag Passages",
+        "tags": [
+          "memory"
+        ]
+      }
+    },
     "/api/shared-memory/{memory_id}/structured": {
       "get": {
         "parameters": [
@@ -51148,7 +52311,7 @@
     },
     "/api/skills/agents": {
       "get": {
-        "description": "Agents a skill can be installed onto in this workspace, with how many\nskills each already has \u2014 the target picker for the Skills page.",
+        "description": "Agents a skill can be installed onto in this workspace, with how many\nskills each already has and what it does, for the Skills page's agent\npicker.",
         "parameters": [
           {
             "in": "query",
@@ -52220,6 +53383,46 @@
         ]
       }
     },
+    "/api/stream/replay": {
+      "get": {
+        "description": "What a run's live channel (``run:<id>``, ``team:<id>``) has streamed\nso far, numbered: a page that opens in the middle of the run folds this\nfirst, then the live events past its last number (common/run_replay.py).\nAn empty list for a channel that keeps nothing.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "channel",
+            "required": true,
+            "schema": {
+              "title": "Channel",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replay Channel",
+        "tags": [
+          "stream"
+        ]
+      }
+    },
     "/api/stream/{client_id}/channels": {
       "post": {
         "description": "Add/remove channel interest on an existing connection (detail pages).",
@@ -52974,6 +54177,181 @@
         ]
       }
     },
+    "/api/task-planner/chat": {
+      "delete": {
+        "description": "Start a new planner chat for the workspace; the current one stays in\nthe history and the tasks are left alone.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "title": "Workspace",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Workspace Planner Chat",
+        "tags": [
+          "tasks"
+        ]
+      },
+      "get": {
+        "description": "The Tasks page planner's transcript and trace for one workspace.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "title": "Workspace",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Workspace Planner Chat",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/task-planner/generate": {
+      "post": {
+        "description": "One planner turn over the workspace's tasks (SSE), the same stream the\nproject's Tasks tab gets, without the project graphs.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "title": "Workspace",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ProjectTasksChat"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Workspace Tasks",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
+    "/api/task-planner/stop": {
+      "post": {
+        "description": "Stop the workspace planner's run in flight; what it already created stays.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "title": "Workspace",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop Workspace Planner",
+        "tags": [
+          "tasks"
+        ]
+      }
+    },
     "/api/tasks": {
       "get": {
         "description": "The task list. With no ``limit``/``offset`` this is the full list, exactly\nas before; with either, it is one page: ``{items, total, limit, offset}``.",
@@ -53515,7 +54893,47 @@
       }
     },
     "/api/tasks/{task_id}/decompose": {
+      "get": {
+        "description": "Where the task's latest decomposition stands and the tree under it\n(key and title of each task, depth first).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decompose Status",
+        "tags": [
+          "tasks"
+        ]
+      },
       "post": {
+        "description": "Split the task into subtasks, then go over the tree once more\n(routes/task_decompose.py). Returns the first pass's run id at once.",
         "parameters": [
           {
             "in": "path",
@@ -53916,6 +55334,56 @@
         ]
       }
     },
+    "/api/tasks/{task_id}/outcome/use-agent": {
+      "put": {
+        "description": "Turn the agent's default criterion on or off for this task.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UseAgentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Use Agent",
+        "tags": [
+          "outcomes"
+        ]
+      }
+    },
     "/api/tasks/{task_id}/pause": {
       "post": {
         "description": "Pause a container task: stop the active subtask run and freeze dispatch.",
@@ -54299,6 +55767,61 @@
         ]
       }
     },
+    "/api/team-runs/{team_run_id}/tool-approvals": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_run_id",
+            "required": true,
+            "schema": {
+              "title": "Team Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Team Run Approvals",
+        "tags": [
+          "tool-approvals"
+        ]
+      }
+    },
     "/api/teams": {
       "get": {
         "parameters": [
@@ -54478,6 +56001,44 @@
       }
     },
     "/api/teams/runs/{team_run_id}": {
+      "delete": {
+        "description": "Drop one run from the team's history, with its board. Anything still\ngoing is refused: its next turn would write the board back.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_run_id",
+            "required": true,
+            "schema": {
+              "title": "Team Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Run",
+        "tags": [
+          "teams"
+        ]
+      },
       "get": {
         "parameters": [
           {
@@ -54641,6 +56202,46 @@
           }
         },
         "summary": "Stop Team Run",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/api/teams/runs/{team_run_id}/turns": {
+      "get": {
+        "description": "The member turns of a run, oldest first, each one an agent run of its\nown: who spoke, whether it is still working, and how it ended. The page's\nparticipants and run log read them; a turn's steps are its trail.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_run_id",
+            "required": true,
+            "schema": {
+              "title": "Team Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Turns",
         "tags": [
           "teams"
         ]
@@ -57880,6 +59481,24 @@
     },
     "/api/web-logs": {
       "delete": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -57888,6 +59507,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Clear Web Logs",
@@ -58089,6 +59718,24 @@
     },
     "/api/web-logs/stats": {
       "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -58097,6 +59744,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Web Log Stats",

@@ -140,11 +140,13 @@ def _fresh_database(db, path: Path) -> None:
 # import (load_dotenv), and common.config.live_setting reads the file first
 # and the environment second, so without this a guard test would see the
 # operator's "warn" instead of the default "block". The container
-# requirement is pinned to its shipped default too (on in this edition, which
-# has the run sandbox); a test of the other posture switches it itself.
+# requirement is pinned to its shipped default too, off: the shipped exceptions
+# (the SWE agent's run_shell, the orchestrator's delegation) are built on the
+# hub in tests, where a requirement that is on would refuse them. A test of
+# the strict mode switches the setting on itself.
 _PINNED_ENV = {
     "CAPABILITY_GUARD": ("capability_guard", "block"),
-    "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", True),
+    "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", False),
     # A developer's own browser service would answer the "not configured" tests.
     "AGENTS_HUB_BROWSER_URL": ("browser_url", ""),
     "AGENTS_HUB_BROWSER_TOKEN": ("browser_token", ""),

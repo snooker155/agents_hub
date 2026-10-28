@@ -991,6 +991,7 @@
     },
     {
       "id": "scenario_creator",
+      "capability_override": true,
       "name": "Scenario Creator",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",
@@ -1452,6 +1453,7 @@
     },
     {
       "id": "assistant",
+      "capability_override": true,
       "name": "Assistant",
       "type": "langchain",
       "entrypoint": "agents.agent_factory:build_agent_executor",

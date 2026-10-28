@@ -51,7 +51,7 @@ def fake_popen(monkeypatch):
 
     monkeypatch.setattr(carrier.subprocess, "Popen", _popen)
     monkeypatch.setattr(carrier, "_pid_exists", lambda pid: True)
-    monkeypatch.setattr("common.config.agent_execution_mode", lambda: "local")
+    monkeypatch.setattr("common.config.agent_execution_mode", lambda *a, **k: "local")
     return calls
 
 

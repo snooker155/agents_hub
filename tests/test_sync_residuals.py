@@ -156,9 +156,11 @@ def test_deleting_a_global_flow_only_unlists_it(flow_spaces):
     fid = f"flow-{uuid.uuid4().hex[:8]}"
     flow_store.save_flow({"id": fid, "workspace": None, "owner_user": "local", **_flow_doc("Global")})
     update_workspace_metadata(here, {"allowed_flows": [fid]})
-    assert fid in _flows_seen(other)  # every workspace without a list sees it
+    # A flow of no workspace is the default workspace's: another workspace
+    # sees it only through its own list (common/workspace_scope.py).
+    assert fid in _flows_seen("default") and fid not in _flows_seen(other)
     base.get("flow").delete(here, fid)
-    assert flow_store.get_flow(fid) is not None and fid in _flows_seen(other)
+    assert flow_store.get_flow(fid) is not None and fid in _flows_seen("default")
     assert get_workspace_metadata(here)["allowed_flows"] == []
 
 
