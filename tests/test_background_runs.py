@@ -244,10 +244,11 @@ def test_the_launch_note_asks_for_one_line_without_ids():
     assert "Do not give the run id" in note
 
 
-def test_one_flow_run_is_read_with_its_events():
+def test_one_flow_run_is_read_with_its_events(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from flow import run_store
     import main
+    monkeypatch.setattr(run_store, "FLOW_LOGS_DIR", tmp_path / "flow_logs")
     run_store.log_flow_event("flow-bg", "run-bg", {"type": "flow_start"}, kind="task")
     run_store.log_flow_event("flow-bg", "run-bg", {
         "type": "agent_finish", "node_id": "n1", "agent_name": "Researcher", "output": "done",
@@ -258,9 +259,12 @@ def test_one_flow_run_is_read_with_its_events():
     assert client.get("/api/flows/flow-bg/runs/nope").status_code == 404
 
 
-def test_the_files_a_flow_wrote_ride_on_the_notice_and_in_the_prompt():
+def test_the_files_a_flow_wrote_ride_on_the_notice_and_in_the_prompt(tmp_path, monkeypatch):
     from chat.background_runs import notice_of, prompt_of
     from flow import run_store
+    # Its own log folder: a log left in the shared one reaches the flow tests
+    # that run later through the blob mirror (common/blobs.py).
+    monkeypatch.setattr(run_store, "FLOW_LOGS_DIR", tmp_path / "flow_logs")
     run_store.log_flow_event("f1", "fr-files", {
         "type": "agent_finish", "node_id": "n1", "run_id": "node-1",
         "files": [{"op": "add", "path": "out/report.md", "url": "/artifacts?file=1"}],
