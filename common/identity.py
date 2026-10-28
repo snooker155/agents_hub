@@ -1125,8 +1125,10 @@ def _refusal(request, detail: str) -> None:
     if state is not None:
         try:
             state.auth_detail = detail
-        except Exception:  # noqa: BLE001 - a stand-in request without a writable state
-            pass
+        except (AttributeError, TypeError):
+            # A stand-in request whose state takes no attributes: the 403
+            # falls back to the default reason.
+            log.debug("could not record the refusal reason on the request state")
 
 
 def refusal_detail(request, default: str = "Not a member of this workspace") -> str:
