@@ -1403,6 +1403,12 @@ def apply_docker(a: Asker, plan: Plan, start: bool) -> bool:
             shutil.copy2(compose, compose.with_name(f"docker-compose.yml.bak-{datetime.now():%Y%m%d-%H%M%S}"))
         compose.write_text(source, encoding="utf-8")
         a.ok(f"Wrote {compose}.")
+    if plan.shape == "compose":
+        # docker-compose.yml adds the backend to this group (group_add) so it
+        # can drive the daemon; a wrong one fails the first container launch.
+        gid = D.socket_gid(plan.in_docker)
+        if gid is not None:
+            plan.env["DOCKER_GID"] = gid
     backup = write_env(plan.env_file, plan.template, plan.env, plan.fresh)
     a.ok(f"Wrote {plan.env_file}" + (f" (previous: {backup.name})" if backup else "") + ".")
     D.write_compose_extras(a, plan)

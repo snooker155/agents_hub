@@ -568,3 +568,15 @@ def test_a_quickstart_rerun_keeps_keycloak_in_force(tmp_path, fake_probe, no_hub
     assert "keycloak" in env["COMPOSE_PROFILES"].split(",")
     for key in ("AUTH_OIDC_ISSUER", "AUTH_OIDC_CLIENT_SECRET", "KEYCLOAK_ADMIN_PASSWORD", "AUTH_PUBLIC_URL"):
         assert env[key] == first[key], key
+
+
+def test_socket_gid_is_read_where_the_view_is_the_containers(tmp_path, monkeypatch):
+    sock = tmp_path / "docker.sock"
+    sock.write_text("")
+    gid = str(sock.stat().st_gid)
+    assert D.socket_gid(True, sock) == gid
+    monkeypatch.setattr(D.sys, "platform", "darwin")
+    assert D.socket_gid(False, sock) is None
+    monkeypatch.setattr(D.sys, "platform", "linux")
+    assert D.socket_gid(False, sock) == gid
+    assert D.socket_gid(True, tmp_path / "missing.sock") is None

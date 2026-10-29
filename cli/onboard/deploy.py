@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import re
 import secrets
 import shutil
@@ -958,6 +959,21 @@ def hand_back(target: Path, since: float) -> None:
 _BACKUP = re.compile(r"\.bak-\d{8}-\d{6}$")
 
 
+def socket_gid(in_docker: bool, sock: Path = Path("/var/run/docker.sock")) -> Optional[str]:
+    """The Docker socket's group as a container sees it, for DOCKER_GID: the
+    backend runs as uid 1000 and reaches the socket only through that group,
+    and the default 999 is not what every Linux gives it. Only where the view
+    from here is the container's: inside the setup container, or on Linux.
+    On a Mac host the socket is a per-user link whose group means nothing to
+    the VM (Docker Desktop needs 0, which the setup container sees)."""
+    if not (in_docker or sys.platform.startswith("linux")):
+        return None
+    try:
+        return str(sock.stat().st_gid)
+    except OSError:
+        return None
+
+
 def api_base(base_url: str, in_docker: bool) -> str:
     """Where this process reaches the published dashboard: through the host
     gateway from inside the setup container."""
@@ -969,5 +985,5 @@ def api_base(base_url: str, in_docker: bool) -> str:
 
 __all__ = ["OVERLAY", "TOPOLOGIES", "api_base", "apply_kubernetes", "hand_back", "keycloak_realm",
            "kubernetes_command", "kubernetes_values", "overlay_text", "read_kubernetes", "state_copy",
-           "state_move", "state_move_back", "step_scale", "step_sso", "sync_keycloak_client", "worker_compose_text", "worker_env",
+           "state_move", "state_move_back", "step_scale", "step_sso", "socket_gid", "sync_keycloak_client", "worker_compose_text", "worker_env",
            "worker_host_notes", "write_compose_extras", "write_kubernetes", "SetupError"]
