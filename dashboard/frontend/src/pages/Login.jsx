@@ -18,7 +18,8 @@ const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm '
  *
  * On a first run it is a bootstrap form instead: with no accounts there is no
  * administrator to create the first one, so the backend keeps
- * `POST /api/auth/bootstrap` open until exactly one exists.
+ * `POST /api/auth/bootstrap` open until exactly one exists, to whoever has
+ * the setup code (common/identity.py), not to whoever arrives first.
  *
  * With single sign-on configured (`auth.oidc`) it offers the provider's
  * button, and the password form only while `features.local_passwords` is on.
@@ -46,6 +47,7 @@ const BOOTSTRAP_ERRORS = [
   ['username must be one word', 'usernameInvalid'],
   ['password must not be empty', 'passwordRequired'],
   ['already has users', 'alreadyBootstrapped'],
+  ['setup code', 'setupCodeWrong'],
 ];
 
 function loginErrorMessage(t, err) {
@@ -65,6 +67,7 @@ function LoginForm() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [setupCode, setSetupCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(() => {
     const code = parseFragment(window.location.hash).error;
@@ -86,7 +89,7 @@ function LoginForm() {
     }
     setBusy(true);
     try {
-      if (firstRun) await bootstrap(username, password);
+      if (firstRun) await bootstrap(username, password, '', setupCode);
       else await login(username, password);
       enterApp(LOGIN_LANDING);
     } catch (err) {
@@ -139,11 +142,22 @@ function LoginForm() {
 
         {passwordForm && (
           <>
+            {firstRun && (
+              <div>
+                <label htmlFor="auth-setup-code" className="text-sm font-medium text-gray-700">
+                  {t('auth.fields.setupCode')}
+                </label>
+                <input id="auth-setup-code" value={setupCode} autoComplete="off" spellCheck={false} autoFocus
+                  onChange={(e) => setSetupCode(e.target.value)} className={`${inputCls} font-mono`} />
+                <p className="mt-1 text-xs text-gray-500">{t('auth.login.setupCodeHint')}</p>
+              </div>
+            )}
+
             <div>
               <label htmlFor="auth-username" className="text-sm font-medium text-gray-700">
                 {t('auth.fields.username')}
               </label>
-              <input id="auth-username" value={username} autoComplete="username" autoFocus
+              <input id="auth-username" value={username} autoComplete="username" autoFocus={!firstRun}
                 onChange={(e) => setUsername(e.target.value)} className={inputCls} />
             </div>
 
@@ -168,7 +182,7 @@ function LoginForm() {
 
             {error && <p className="text-xs text-red-600">{error}</p>}
 
-            <button type="submit" disabled={busy || !username || !password}
+            <button type="submit" disabled={busy || !username || !password || (firstRun && !setupCode.trim())}
               className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
               {busy ? <Loader className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
               {firstRun ? t('auth.login.createAdmin') : t('auth.login.submit')}

@@ -73,9 +73,9 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
-  const bootstrap = useCallback(async (username, password, displayName = '') => {
+  const bootstrap = useCallback(async (username, password, displayName = '', setupCode = '') => {
     const { data } = await authBootstrap({
-      username, password, display_name: displayName,
+      username, password, display_name: displayName, setup_code: setupCode,
     });
     setSessionToken(data.token);
     setState((prev) => ({ ...prev, user: data.user, bootstrapRequired: false }));

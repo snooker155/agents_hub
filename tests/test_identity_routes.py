@@ -131,6 +131,42 @@ def test_bootstrap_then_login_then_me(multi, client):
     assert again.status_code == 400
 
 
+@pytest.mark.setup_code
+def test_bootstrap_needs_the_setup_code(multi, client, monkeypatch):
+    from common import identity
+    monkeypatch.delenv(identity.BOOTSTRAP_TOKEN_ENV, raising=False)
+    monkeypatch.setattr("common.config.read_dot_env", lambda: {})
+    code = identity.bootstrap_code()
+    path = identity.bootstrap_code_file()
+    assert path.read_text().strip() == code and path.stat().st_mode & 0o777 == 0o600
+    # The same code on every read, so replicas sharing the state agree.
+    assert identity.bootstrap_code() == code
+
+    for wrong in ({}, {"setup_code": "0000-0000-0000-0000"}):
+        refused = client.post("/api/auth/bootstrap",
+                              json={"username": "mallory", "password": PASSWORD, **wrong})
+        assert refused.status_code == 403
+    assert identity.user_count() == 0
+
+    # Spaces, dashes and case do not matter to the person typing it.
+    typed = code.replace("-", " ").upper()
+    made = client.post("/api/auth/bootstrap",
+                       json={"username": "root", "password": PASSWORD, "setup_code": typed})
+    assert made.status_code == 200, made.text
+    assert not path.exists()
+
+
+@pytest.mark.setup_code
+def test_bootstrap_takes_the_code_setup_wrote(multi, client, monkeypatch):
+    from common import identity
+    monkeypatch.setenv(identity.BOOTSTRAP_TOKEN_ENV, "from-ah-setup-1234")
+    assert client.post("/api/auth/bootstrap", json={
+        "username": "root", "password": PASSWORD,
+        "setup_code": identity.bootstrap_code_file().name}).status_code == 403
+    assert client.post("/api/auth/bootstrap", json={
+        "username": "root", "password": PASSWORD, "setup_code": "from-ah-setup-1234"}).status_code == 200
+
+
 def test_login_refuses_a_wrong_password(multi, client):
     _admin(client)
     bad = client.post("/api/auth/login",

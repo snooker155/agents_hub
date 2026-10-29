@@ -62,6 +62,8 @@ import pytest
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "sqlite_only: the test opens the SQLite file directly; skipped on Postgres")
+    config.addinivalue_line(
+        "markers", "setup_code: the bootstrap checks the real setup code (see setup_code_accepted)")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -355,6 +357,17 @@ def no_launch(monkeypatch):
     import agents.agent_launcher as launcher
     monkeypatch.setattr(launcher, "start_run", _fake_start_run)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def setup_code_accepted(request, monkeypatch):
+    """Tests make their first administrator in one call, without the setup
+    code (common/identity.py bootstrap_code); the ones about the code itself
+    are marked setup_code and get the real check."""
+    if request.node.get_closest_marker("setup_code"):
+        return
+    from common import identity
+    monkeypatch.setattr(identity, "check_bootstrap_code", lambda code: True)
 
 
 @pytest.fixture(autouse=True)

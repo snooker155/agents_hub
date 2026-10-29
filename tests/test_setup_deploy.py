@@ -48,7 +48,7 @@ def _ha_run(tmp_path, **extra):
     return target
 
 
-def test_ha_run_writes_overlay_realm_caddy_and_env(tmp_path, fake_probe):
+def test_ha_run_writes_overlay_realm_caddy_and_env(tmp_path, fake_probe, no_hub):
     target = _ha_run(tmp_path)
     env = W.read_env(target / ".env")
     assert env["COMPOSE_FILE"] == f"docker-compose.yml:{D.OVERLAY}"
@@ -64,6 +64,8 @@ def test_ha_run_writes_overlay_realm_caddy_and_env(tmp_path, fake_probe):
     assert env["AUTH_OIDC_ISSUER"] == "https://hub.example.com:8443/realms/agents-hub"
     assert env["AUTH_OIDC_INTERNAL_URL"] == D.KEYCLOAK_INTERNAL
     assert env["KEYCLOAK_ADMIN_PASSWORD"]
+    # The first administrator is made through the API, which asks for this.
+    assert len(env["AUTH_BOOTSTRAP_TOKEN"].replace("-", "")) == 16
 
     overlay = (target / D.OVERLAY).read_text()
     assert "replicas: 3" in overlay and "replicas: 4" in overlay and "replicas: 0" in overlay

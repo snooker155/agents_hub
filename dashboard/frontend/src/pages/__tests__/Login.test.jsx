@@ -131,6 +131,27 @@ describe('Login with single sign-on', () => {
     expect(login).toHaveBeenCalledWith('bob', 'pw');
   });
 
+  it('makes the first administrator only with the setup code, and says a wrong one plainly', async () => {
+    enterApp.mockClear();
+    const bootstrap = vi.fn()
+      .mockImplementationOnce(() => Promise.reject({ response: { status: 403, data: { detail: 'the setup code is missing or wrong' } } }))
+      .mockImplementationOnce(() => Promise.resolve({ id: 'u1', username: 'root' }));
+    mockAuth.current = baseAuth({ bootstrapRequired: true, bootstrap });
+    show();
+    fireEvent.change(document.getElementById('auth-username'), { target: { value: 'root' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } });
+    fireEvent.change(screen.getByLabelText('Repeat password'), { target: { value: 'pw' } });
+    const submit = screen.getByRole('button', { name: /Create administrator/ });
+    expect(submit.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Setup code'), { target: { value: 'nope' } });
+    fireEvent.submit(submit.closest('form'));
+    await waitFor(() => expect(screen.getByText('The setup code is missing or wrong.')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Setup code'), { target: { value: 'ab12-cd34-ef56-0789' } });
+    fireEvent.submit(submit.closest('form'));
+    await waitFor(() => expect(enterApp).toHaveBeenCalledWith('/chat'));
+    expect(bootstrap).toHaveBeenLastCalledWith('root', 'pw', '', 'ab12-cd34-ef56-0789');
+  });
+
   it('hides the password form when local passwords are off, behind an admin link', () => {
     mockAuth.current = baseAuth({ features: { login: true, local_passwords: false, oidc: true } });
     show();

@@ -10,6 +10,7 @@ export default {
     username: 'Имя пользователя',
     password: 'Пароль',
     confirmPassword: 'Повторите пароль',
+    setupCode: 'Код установки',
     role: 'Роль',
   },
 
@@ -39,6 +40,8 @@ export default {
     bootstrapTitle: 'Создайте первого администратора',
     bootstrapHint: 'Сюда ещё никто не входил. Эта запись будет управлять остальными.',
     createAdmin: 'Создать администратора',
+    setupCodeHint: 'Его показывает ah setup в конце, он есть в логе бэкенда (docker compose logs backend) и в файле bootstrap-code в папке состояния хаба.',
+    setupCodeWrong: 'Код установки не указан или неверен.',
   },
 
   users: {

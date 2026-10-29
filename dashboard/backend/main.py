@@ -119,6 +119,17 @@ async def lifespan(app: FastAPI):
     from common.logging_config import configure_logging_for_active_workspace
     log.info(f"✓ Log level: {configure_logging_for_active_workspace()}")
 
+    # An empty multi-user hub waits for its first administrator, who needs
+    # the setup code (common/identity.py): the person installing it reads it
+    # here, `docker compose logs backend`, or in the file named.
+    try:
+        from common import identity as _identity
+        if _identity.bootstrap_required():
+            log.warning("First administrator: open the dashboard and enter the setup code %s "
+                        "(also in %s).", _identity.bootstrap_code(), _identity.bootstrap_code_file())
+    except Exception as e:  # noqa: BLE001 - the dashboard still asks; this is only the hint
+        log.warning(f"⚠ Setup code not ready: {e}")
+
     # Accounts made from now on get the welcome (common/member_welcome.py).
     from common import member_welcome
     member_welcome.mark_since()

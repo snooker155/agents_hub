@@ -10,6 +10,7 @@ export default {
     username: 'User name',
     password: 'Password',
     confirmPassword: 'Repeat password',
+    setupCode: 'Setup code',
     role: 'Role',
   },
 
@@ -39,6 +40,8 @@ export default {
     bootstrapTitle: 'Create the first administrator',
     bootstrapHint: 'Nobody has signed in here yet. This account will manage the others.',
     createAdmin: 'Create administrator',
+    setupCodeHint: 'Shown at the end of ah setup, in the backend log (docker compose logs backend) and in the file bootstrap-code in the state folder of the hub.',
+    setupCodeWrong: 'The setup code is missing or wrong.',
   },
 
   users: {

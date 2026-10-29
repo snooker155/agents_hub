@@ -257,6 +257,68 @@ def bootstrap_required() -> bool:
     return current_mode() == MULTI and user_count() == 0
 
 
+# ── the setup code ───────────────────────────────────────────────────────────
+# Whoever reaches an empty hub first would otherwise become its administrator,
+# which on a server open to the network is anyone. The bootstrap takes a code
+# only the person installing it can see: AUTH_BOOTSTRAP_TOKEN when set (`ah
+# setup` writes it), otherwise one made on first need and kept in the state
+# directory, mode 600, and written to the backend's log at start.
+
+BOOTSTRAP_TOKEN_ENV = "AUTH_BOOTSTRAP_TOKEN"
+
+
+def bootstrap_code_file():
+    from common.paths import AGENTS_HUB_ROOT
+    return AGENTS_HUB_ROOT / "bootstrap-code"
+
+
+def _configured_bootstrap_code() -> str:
+    from common.config import read_dot_env
+    return (os.environ.get(BOOTSTRAP_TOKEN_ENV) or read_dot_env().get(BOOTSTRAP_TOKEN_ENV) or "").strip()
+
+
+def bootstrap_code() -> str:
+    """The code ``POST /api/auth/bootstrap`` asks for, made on first need.
+
+    The file is created exclusively, so replicas sharing the state directory
+    agree on one code."""
+    configured = _configured_bootstrap_code()
+    if configured:
+        return configured
+    path = bootstrap_code_file()
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        pass
+    raw = secrets.token_hex(8)
+    code = "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path.read_text(encoding="utf-8").strip()
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(code + "\n")
+    return code
+
+
+def _normalise_code(code: str) -> str:
+    return "".join(ch for ch in (code or "").lower() if ch.isalnum())
+
+
+def check_bootstrap_code(code: str) -> bool:
+    expected = _normalise_code(bootstrap_code())
+    return bool(expected) and hmac.compare_digest(_normalise_code(code), expected)
+
+
+def forget_bootstrap_code() -> None:
+    """Once the first administrator exists the code opens nothing; drop it."""
+    try:
+        bootstrap_code_file().unlink()
+    except OSError:
+        pass
+
+
 def list_users() -> List[Dict[str, Any]]:
     rows = db.get_conn().execute(
         "SELECT * FROM users ORDER BY username").fetchall()
@@ -1248,7 +1310,7 @@ __all__ = [
     "DEFAULT_LANGUAGE", "LANGUAGES", "LoginThrottled", "PBKDF2_ITERATIONS", "SERVICE_PRINCIPAL", "SERVICE_TOKEN_ENV",
     "SESSION_BOOTSTRAP", "SESSION_OIDC", "SESSION_PASSWORD",
     "SOURCE_LOCAL", "SOURCE_OIDC", "SOURCE_SCIM",
-    "authorize_request", "bootstrap_required", "claim_workspace", "client_ip",
+    "authorize_request", "bootstrap_code", "bootstrap_code_file", "bootstrap_required", "check_bootstrap_code", "claim_workspace", "client_ip", "forget_bootstrap_code",
     "create_first_admin", "create_user", "current_mode", "current_principal",
     "current_user_id", "delete_user", "get_preferences", "get_user", "get_user_by_email",
     "get_user_by_external", "get_user_by_external_id", "get_user_by_username",

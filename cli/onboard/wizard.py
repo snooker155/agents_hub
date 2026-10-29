@@ -85,6 +85,12 @@ def _gen_password() -> str:
     return secrets.token_urlsafe(15)
 
 
+def _setup_code() -> str:
+    """AUTH_BOOTSTRAP_TOKEN, in the shape common/identity.py makes its own."""
+    raw = secrets.token_hex(8)
+    return "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
+
+
 def _gen_fernet_key() -> str:
     # A Fernet key is 32 random bytes, url-safe base64: the same thing
     # `ah secrets keygen` prints, without needing cryptography importable here.
@@ -562,8 +568,14 @@ def step_access(a: Asker, plan: Plan) -> None:
     else:
         plan.env["AGENTS_HUB_API_TOKEN"] = ""
         existing = _existing_users(plan)
+        if not existing and plan.shape != "local":
+            # The first administrator is made through the API (below, or on the
+            # dashboard's first page), which asks for this code; a local hub
+            # gets its accounts straight in the database.
+            plan.env["AUTH_BOOTSTRAP_TOKEN"] = plan.cur("AUTH_BOOTSTRAP_TOKEN") or _setup_code()
         if plan.shape == "kubernetes":
             a.note("The dashboard asks for the first administrator when it is first opened.")
+            plan.generated.append(("setup code for the first administrator", plan.env["AUTH_BOOTSTRAP_TOKEN"]))
         elif existing:
             a.note("This hub already has accounts, so there is no first administrator to create. "
                    "Add people on the Accounts page or with `ah user create`.")
@@ -1324,7 +1336,7 @@ def _bootstrap_http(a: Asker, plan: Plan) -> Optional[str]:
         return None
     r = requests.post(f"{plan.api_base}/api/auth/bootstrap", timeout=20, json={
         "username": plan.admin["username"], "password": plan.admin["password"],
-        "display_name": plan.admin["display_name"]})
+        "display_name": plan.admin["display_name"], "setup_code": plan.cur("AUTH_BOOTSTRAP_TOKEN")})
     if not r.ok:
         a.warn(f"Could not create {plan.admin['username']}: {r.text[:200]}")
         return None
@@ -1660,7 +1672,9 @@ def _run_steps(a: Asker, plan: Plan, shape: Optional[str], directory: Optional[s
         # hand out passwords for them.
         plan.generated = [g for g in plan.generated if not g[0].startswith("password for")]
         a.note("No accounts were created, since the stack is not running yet. The dashboard asks for "
-               "the first administrator when it is first opened, or run `ah setup` again once it is up.")
+               "the first administrator when it is first opened, with the setup code "
+               f"{plan.cur('AUTH_BOOTSTRAP_TOKEN')} (also in .env as AUTH_BOOTSTRAP_TOKEN), "
+               "or run `ah setup` again once it is up.")
     if not started and plan.voice.get("speech"):
         a.note("The assistant's voice is set once the stack runs: run `ah setup` again then, or add it on "
                "the Models page, Special models tab.")

@@ -61,8 +61,16 @@ and record-level access. Each is described on its own page; the section
 
 With no accounts, there is no administrator to create the first one, so
 `POST /api/auth/bootstrap` is open until exactly one account exists and refuses
-for good afterwards. The dashboard shows that form instead of the login screen
-on a first visit, and signs the new administrator straight in. Everything after
+for good afterwards. Open to whoever holds the setup code, not to whoever
+reaches the page first: on a server the network can reach, that would be
+anyone. The code is `AUTH_BOOTSTRAP_TOKEN` when set (`ah setup` writes it for
+the Docker and Kubernetes shapes, sends it itself and prints it when the stack
+was not up yet), otherwise one the backend makes on first need, keeps in
+`bootstrap-code` in the state directory (mode 600, deleted once the
+administrator exists) and writes to its log at start, so
+`docker compose logs backend` shows it. The dashboard shows that form, with a
+field for the code, instead of the login screen on a first visit, and signs
+the new administrator straight in. Everything after
 that goes through Accounts, in the sidebar's Records and admin group.
 
 ## Roles and what each may do
@@ -413,7 +421,8 @@ along with a note on where it is set.
 - **Changing `AUTH_MODE` needs a backend restart.** The value is read from the
   environment at startup.
 - **Switching to `multi` does not create accounts.** The first visit after the
-  restart shows the bootstrap form; until somebody completes it, the API is
+  restart shows the bootstrap form, which asks for the setup code from the
+  backend's log; until somebody completes it, the API is
   closed to everything but the three public auth routes.
 - **Switching back to `single` opens the API again immediately.** The accounts
   and memberships stay in the database, unused, and come back if the mode does.

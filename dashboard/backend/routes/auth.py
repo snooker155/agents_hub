@@ -50,6 +50,9 @@ class BootstrapRequest(BaseModel):
     username: str
     password: str
     display_name: str = ""
+    # The setup code (common/identity.py bootstrap_code): in the backend's
+    # log, in the state directory, or the one `ah setup` printed.
+    setup_code: str = ""
 
 
 class UserCreate(BaseModel):
@@ -152,14 +155,22 @@ async def bootstrap(request: Request, payload: BootstrapRequest):
     """Create the first administrator. Available exactly once.
 
     With no users there is no admin to create a user, so this route is open
-    until one account exists and refuses forever after.
+    until one account exists and refuses forever after. Open means to the
+    holder of the setup code, not to whoever reaches the page first.
     """
     _require_multi()
+    # Checked only while the route is open; once an account exists it says so.
+    if identity.bootstrap_required() and not identity.check_bootstrap_code(payload.setup_code):
+        audit.record("auth.bootstrap", actor={"actor_id": None, "actor_kind": "anonymous",
+                                              "actor_name": payload.username},
+                     result="denied", ip=identity.client_ip(request))
+        raise HTTPException(status_code=403, detail="the setup code is missing or wrong")
     try:
         user = identity.create_first_admin(payload.username, payload.password,
                                            payload.display_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    identity.forget_bootstrap_code()
     session = identity.open_session(
         user["id"], kind=identity.SESSION_BOOTSTRAP, ip=identity.client_ip(request),
         user_agent=request.headers.get("user-agent"))
