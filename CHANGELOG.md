@@ -15,6 +15,16 @@ turns that section into the next release.
 
 ### Added
 
+- A welcome for an account an administrator made (`multi` mode): on the first
+  sign in the hub's mark puts itself together and greets the person by name,
+  then shows what is set up for them, read only (workspaces and roles, the
+  model and its policy, effort, voice, web search, personal memory, the
+  monthly limit), with their own language and look as the only choices.
+  Once per person (`common/member_welcome.py`, `/api/first-run/welcome`);
+  the first administrator and older accounts are not stopped. A section of its
+  own under Docs, Changelog, **Welcome**, brings it back (members do not see
+  Settings). "Welcome to" is typed in each language in turn before a blue
+  Agents Hub, the name on its own line.
 - Accounts have a first name, a last name and a language (migration 0051):
   set on the Users page when the account is made and in its new **Edit**
   window. With a name the display name is the two together. The welcome opens

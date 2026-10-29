@@ -5,7 +5,7 @@ import {
   Activity, AudioLines, Box, Boxes, Brain, CalendarClock, CheckSquare, ClipboardCheck, Cpu,
   Database, DollarSign, Download, Factory, FileText, FlaskConical, Folder, FolderGit2, Gamepad2,
   Gauge, Globe, GraduationCap, HardDriveDownload, HelpCircle, History, Images, KeyRound, Layers,
-  MessageCircle, MessageSquareCode, Navigation, Network, Plug, Radio, Repeat, Rocket,
+  MessageCircle, MessageSquareCode, Navigation, Network, PartyPopper, Plug, Radio, Repeat, Rocket,
   ScrollText, Send, Server, ServerCog, SettingsIcon, Share2, ShieldCheck, Sparkles, Store,
   Target, Terminal, Users, UsersRound, Webhook, Wrench,
 } from 'lucide-react';
@@ -20,6 +20,7 @@ import {
   ModelsDoc, OrchestratorDoc, PlanDoc, PlaygroundDoc, ProvidersDoc, TeamsDoc, ToolboxDoc,
 } from './PlatformDocs';
 import { CliGuide, Installation } from './SetupDocs';
+import WelcomeDoc from './WelcomeDoc';
 
 // Registry entry for a GuideDoc section: its label is docsGuide.<k>.nav.
 const guide = (id, k, icon, refs) => ({
@@ -38,6 +39,8 @@ export const GROUPS = [
       { id: 'concepts', key: 'concepts', icon: Boxes, render: Concepts },
       { id: 'features', key: 'overview', icon: Sparkles, render: Features },
       { id: 'changelog', key: 'changelog', icon: ScrollText, render: ChangelogDoc },
+      // A person's welcome, seen again (multi mode only: no welcome elsewhere).
+      { id: 'welcome', key: 'welcome', icon: PartyPopper, render: WelcomeDoc, multiOnly: true },
     ],
   },
   {

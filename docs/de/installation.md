@@ -240,8 +240,34 @@ anderen Browser geht es an derselben Stelle weiter, und ein neuer Browser
 **Einstellungen, Ersteinrichtung** startet sie bewusst erneut. Eine
 Installation, die vor dem Update schon genutzt wurde (ein Chat oder eine
 begonnene Einrichtung mit dem Assistenten), hält sie nicht an. Im Modus
-`multi` wird der erste Administrator auf dem Anmeldebildschirm angelegt, und
-jede Person bekommt das unten beschriebene Willkommensfenster.
+`multi` wird der erste Administrator auf dem Anmeldebildschirm angelegt und
+richtet den Hub über das unten beschriebene Willkommensfenster ein; alle
+anderen bekommen die Begrüßung für ein neues Konto.
+
+### Die Begrüßung für ein neues Konto
+
+Im Modus `multi` hat ein Konto, das ein Administrator angelegt hat (auf der
+Seite Benutzer, per SSO oder SCIM), nichts einzurichten. Bei der ersten
+Anmeldung öffnet sich darum einmal eine eigene Begrüßung statt der App, in der
+Sprache, die der Administrator dem Konto gegeben hat (Englisch, wenn keine
+gesetzt ist): das Zeichen des Hubs setzt sich zusammen, „Willkommen bei Agents
+Hub“ wird nacheinander in jeder Sprache getippt und der Name steht darunter,
+danach
+zeigt ein Bildschirm, was der Administrator für sie eingerichtet hat, nur zum
+Lesen: ihre Arbeitsbereiche und ihre Rolle darin, das Modell (festgelegt, eine
+Auswahl aus mehreren oder frei oben im Chat wählbar), den Aufwand, die Stimme,
+die Websuche, das persönliche Gedächtnis und das Monatslimit. Sprache und
+Darstellung gehören der Person selbst und lassen sich dort gleich ändern; die
+gewählte Sprache wird im Konto gespeichert. Vor- und Nachname und Sprache eines
+Kontos legt der Administrator auf der Seite Benutzer fest, beim Anlegen oder
+später im Fenster **Bearbeiten**.
+**Loslegen** öffnet den Chat, **Rundgang starten** den Rundgang.
+
+Der Bildschirm wird pro Person im Hub gespeichert, nach einem Neuladen geht es
+an derselben Stelle weiter. Den ersten Administrator und Konten, die es vor
+dem Update mit der Begrüßung schon gab, hält sie nicht an.
+Der Abschnitt **Dokumentation, Begrüßung** unter den Änderungen zeigt sie
+erneut, auch Mitgliedern, die die Einstellungen nicht sehen.
 
 ### Nach der Installation: Der Assistent übernimmt
 

@@ -1,7 +1,8 @@
 import { BookOpen } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageContainer, PageHeader } from '../components/PageLayout';
-import { GROUPS, SECTIONS } from '../components/docs/sections';
+import { GROUPS as ALL_GROUPS, SECTIONS as ALL_SECTIONS } from '../components/docs/sections';
+import { isMultiUser, useAuth } from '../components/auth';
 import { useI18n } from '../i18n';
 
 // ---------------------------------------------------------------------------
@@ -19,6 +20,11 @@ export default function Docs() {
   const { t } = useI18n();
   const { section } = useParams();
   const navigate = useNavigate();
+  // A section marked multiOnly (the welcome) is there only on a multi mode hub.
+  const multi = isMultiUser(useAuth());
+  const shown = (s) => multi || !s.multiOnly;
+  const GROUPS = ALL_GROUPS.map((g) => ({ ...g, items: g.items.filter(shown) }));
+  const SECTIONS = ALL_SECTIONS.filter(shown);
   const active = SECTIONS.find((s) => s.id === section) || SECTIONS[0];
   const Content = active.render;
 

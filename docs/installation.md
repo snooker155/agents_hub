@@ -474,8 +474,32 @@ it stopped; the language and look chosen there are what a new browser starts
 with. Once finished it does not come back; **Settings, First setup** runs
 it again on purpose. An install that was already in use when it was
 upgraded (a chat, or a guided setup started) is never stopped by it. In
-`multi` mode the first administrator is made on the login screen and each
-person gets the welcome window below instead.
+`multi` mode the first administrator is made on the login screen and sets
+the hub up through the welcome window below; everyone else gets the welcome
+for a new account.
+
+### The welcome for a new account
+
+In `multi` mode an account an administrator made (on the Users page, by SSO
+or SCIM) has nothing to set up, so its first sign in opens a welcome of its
+own instead of the app, once, in the language the administrator gave the
+account (English unless set): the hub's mark puts itself together, "Welcome
+to Agents Hub" is typed in each language in turn and the person's name stands
+under it, then a screen shows what the administrator set up for
+them, read only: their workspaces and their role in each, the model they
+think with (fixed, a choice of several, or free to change in the chat
+header), the effort, the voice, web search, personal memory and their monthly
+limit. The language and the look are theirs and can be changed right there;
+the language picked is saved to the account. The administrator gives an
+account its first and last name and its language on the Users page, when
+making it or later in its **Edit** window.
+**Start working** opens the chat, **Take the tour** the tour.
+
+The screen is saved per person on the hub, so a reload goes on where it
+stopped. The first administrator, and accounts that existed before the
+welcome came with an upgrade, are never stopped by it. The section
+**Docs, Welcome**, under the changelog, brings it back, for members too, who do
+not see Settings.
 
 ### After the install: the assistant takes over
 

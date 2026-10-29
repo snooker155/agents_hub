@@ -20,6 +20,71 @@
 }
 .first-run { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 
+/* The welcome's mark putting itself together (MarkReveal.jsx). Times line up
+   with the delays set inline there: two waves and the core first, then from
+   1000 ms, once the second wave is out, each satellite with its spoke, the
+   shine and the breath once it has settled. */
+.mark-reveal * { transform-box: view-box; }
+.mark-reveal-halo { transform-origin: 24px 24px; animation: mark-reveal-halo 1400ms ease-out 2050ms both; }
+.mark-reveal-wave { transform-origin: 24px 24px; animation: mark-reveal-wave 1200ms cubic-bezier(.2,.7,.3,1) both; }
+.mark-reveal-core { transform-origin: 24px 24px; animation: mark-reveal-core 700ms cubic-bezier(.34,1.56,.64,1) 120ms both; }
+.mark-reveal-shine { transform-origin: 24px 24px; animation: mark-reveal-shine 900ms ease-out 2100ms both; }
+/* The spoke and its satellite share the delay and the length; the spoke's
+   easing must not overshoot (a dash offset past 0 shows the gap). */
+.mark-reveal-spoke { stroke-dasharray: 1; animation: mark-reveal-spoke 840ms cubic-bezier(.3,.8,.4,1) both; }
+.mark-reveal-sat { animation: mark-reveal-sat 840ms cubic-bezier(.3,1.25,.5,1) both; }
+.mark-reveal-breath { transform-origin: 24px 24px; animation: mark-reveal-breath 4200ms ease-in-out 3000ms infinite; }
+
+@keyframes mark-reveal-wave {
+  from { opacity: 0.9; transform: scale(0.2); }
+  to { opacity: 0; transform: scale(2.8); }
+}
+@keyframes mark-reveal-core {
+  from { opacity: 0; transform: scale(0); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes mark-reveal-spoke {
+  from { stroke-dashoffset: 1; opacity: 0; }
+  15% { opacity: 1; }
+  to { stroke-dashoffset: 0; opacity: 1; }
+}
+@keyframes mark-reveal-sat {
+  from { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.35); }
+  15% { opacity: 1; }
+  to { opacity: 1; transform: none; }
+}
+@keyframes mark-reveal-shine {
+  from { opacity: 0; transform: scale(0.4); }
+  35% { opacity: 0.35; }
+  to { opacity: 0; transform: scale(1.5); }
+}
+@keyframes mark-reveal-halo {
+  from { opacity: 0; transform: scale(0.6); }
+  40% { opacity: 1; }
+  to { opacity: 0.35; transform: none; }
+}
+@keyframes mark-reveal-breath {
+  0%, 100% { transform: none; }
+  50% { transform: scale(1.15); }
+}
+
+/* The greeting under the mark (Welcome.jsx). */
+.welcome-rise { animation: first-run-fade 700ms ease-out both; }
+/* The typing caret: a thin brand bar that blinks. */
+.welcome-caret {
+  display: inline-block;
+  width: 3px;
+  height: 0.9em;
+  margin-left: 2px;
+  vertical-align: -0.08em;
+  border-radius: 2px;
+  background: var(--brand-500, #3f66d8);
+  animation: welcome-caret 1s steps(1) infinite;
+}
+@keyframes welcome-caret { 50% { opacity: 0; } }
+
 @media (prefers-reduced-motion: reduce) {
-  .first-run-enter, .first-run-fade { animation: none; }
+  .first-run-enter, .first-run-fade, .welcome-rise, .welcome-caret,
+  .mark-reveal *, .mark-reveal-breath { animation: none !important; }
+  .mark-reveal-wave, .mark-reveal-shine { opacity: 0; }
 }

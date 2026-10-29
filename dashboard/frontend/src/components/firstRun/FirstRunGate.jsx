@@ -3,7 +3,9 @@
  * whole app until it is finished, the same way AuthGate shows the login
  * screen: no shell behind it and no route past it.
  *
- * Only outside multi mode, and never in the recorded demo or inside the
+ * Outside multi mode the install's first run; in multi mode a new account's
+ * welcome (Welcome.jsx, common/member_welcome.py), which sets nothing up and
+ * shows what the administrator did. Never in the recorded demo or inside the
  * assistant's "show on screen" frame. An unreachable backend or an older one
  * without the route lets the app through: the first run must never be what
  * keeps someone out of a working hub.
@@ -18,12 +20,13 @@ import { isMultiUser, useAuth } from '../auth';
 import { isEmbedded } from '../embed';
 import { useI18n } from '../../i18n';
 import { useTheme } from '../theme';
-import { getFirstRun } from '../../api/firstRun';
+import { getFirstRun, getWelcome } from '../../api/firstRun';
 import { setupGuideAction } from '../../api/setupGuide';
 import { ONBOARDING_SEEN_KEY } from '../docs/OnboardingModal';
 import { useWelcomeTour } from '../docs/WelcomeTour';
 
 const FirstRun = lazy(() => import('./FirstRun'));
+const Welcome = lazy(() => import('./Welcome'));
 
 const IS_DEMO = import.meta.env.VITE_DEMO === '1';
 const LANGUAGE_KEY = 'agents_hub_language';
@@ -47,7 +50,8 @@ export default function FirstRunGate({ children }) {
   const tour = useWelcomeTour();
   const { setLanguage } = useI18n();
   const { setTheme } = useTheme();
-  const skip = IS_DEMO || isEmbedded() || isMultiUser(auth);
+  const multi = isMultiUser(auth);
+  const skip = IS_DEMO || isEmbedded() || (multi && !auth.user);
   const [state, setState] = useState(skip ? { required: false } : null);
   const [after, setAfter] = useState('');
   // Read on mount, before anything here can have written them.
@@ -56,6 +60,17 @@ export default function FirstRunGate({ children }) {
   useEffect(() => {
     if (skip) return undefined;
     let live = true;
+    if (multi) {
+      getWelcome()
+        .then(({ data }) => {
+          if (!live) return;
+          // The welcome opens in the language the administrator gave the account.
+          if (data?.applies && data.required && auth.user?.language) setLanguage(auth.user.language);
+          setState(data && data.applies ? { ...data, welcome: true } : { required: false });
+        })
+        .catch(() => { if (live) setState({ required: false }); });
+      return () => { live = false; };
+    }
     getFirstRun()
       .then(({ data }) => {
         if (!live) return;
@@ -67,7 +82,7 @@ export default function FirstRunGate({ children }) {
     return () => { live = false; };
     // setTheme is a new function each render of ThemeProvider; one read is enough.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skip]);
+  }, [skip, multi]);
 
   // The tour points at the sidebar and header, so it starts once they are drawn.
   useEffect(() => {
@@ -93,6 +108,14 @@ export default function FirstRunGate({ children }) {
     }
     setState({ ...state, required: false });
   };
+
+  if (state.welcome) {
+    return (
+      <Suspense fallback={<Fallback />}>
+        <Welcome initial={{ ...state, name: auth.user?.display_name || '' }} onFinish={onFinish} />
+      </Suspense>
+    );
+  }
 
   return (
     <Suspense fallback={<Fallback />}>

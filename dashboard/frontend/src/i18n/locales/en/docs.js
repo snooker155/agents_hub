@@ -565,6 +565,7 @@ export default {
     cli: 'CLI',
     cliApi: 'API & Stream',
     changelog: 'Changelog',
+    welcome: 'Welcome',
     faq: 'Troubleshooting',
   },
   start: {
