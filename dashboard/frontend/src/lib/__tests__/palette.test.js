@@ -103,6 +103,17 @@ describe('applyPalette / clearPalette', () => {
     expect(root.style.getPropertyValue('--hue-red-rgb')).toMatch(/^\d+, \d+, \d+$/);
   });
 
+  it('drops the colors the previous palette set and the new one does not name', () => {
+    applyPalette({ brand: '#e20074', neutral: '#484f56', ok: '#16a34a', danger: '#dc2626' }, 'light');
+    applyPalette({ brand: '#3f66d8' }, 'light');
+    const root = document.documentElement;
+    expect(root.style.getPropertyValue('--brand-600')).toMatch(/^#[0-9a-f]{6}$/);
+    expect(root.style.getPropertyValue('--neutral-500')).toBe('');
+    expect(root.style.getPropertyValue('--surface-page')).toBe('');
+    expect(root.style.getPropertyValue('--hue-green-rgb')).toBe('');
+    expect(root.style.getPropertyValue('--danger')).toBe('');
+  });
+
   it('clearPalette removes everything applyPalette set', () => {
     applyPalette({ brand: '#2a4fbd', neutral: '#6b7280', ok: '#16a34a', danger: '#dc2626' }, 'dark');
     clearPalette();

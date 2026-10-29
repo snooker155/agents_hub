@@ -344,15 +344,20 @@ function allPropertyNames() {
 
 /**
  * Set every custom property a `{brand, neutral, ok, danger}` palette
- * computes to, for the given `mode` ('light' | 'dark'). Missing keys are
- * left alone (their built-in default keeps showing). Dispatches
- * `PALETTE_EVENT` on `window` so anything reading colors through
- * `src/lib/themeColors.js` re-reads them.
+ * computes to, for the given `mode` ('light' | 'dark'). The palette is the
+ * whole answer: a key it does not name shows its built-in default, even when
+ * the palette painted before (another workspace's) had set it, so switching
+ * from a workspace with a neutral to one with only a brand does not keep the
+ * first one's greys on the sidebar and header. Dispatches `PALETTE_EVENT` on
+ * `window` so anything reading colors through `src/lib/themeColors.js`
+ * re-reads them.
  */
 export function applyPalette(palette, mode = 'light') {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
   const { brand, neutral, ok, danger } = palette || {};
+  // Same tick as the writes below, so the defaults never paint in between.
+  for (const name of allPropertyNames()) root.style.removeProperty(name);
 
   if (brand) {
     const roles = deriveDarkRoles(brand, BRAND_DARK);
