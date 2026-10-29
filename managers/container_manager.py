@@ -299,8 +299,10 @@ def _env_flags(env: Optional[Dict[str, str]] = None) -> List[str]:
 # (common/run_tokens.py); the hub-wide tokens never reach a run's environment.
 # AGENTS_HUB_ROOT and AGENTS_HUB_STATE_VOLUME name where the *hub* keeps its
 # state; a container finds it at CONTAINER_STATE_DIR, its own default.
+# AGENTS_HUB_CALLBACK_URL names the API on the compose network, which a run
+# container is not on: it reaches the hub through the host gateway instead.
 _HOST_ONLY_EXACT = {"HOST_PROJECT_ROOT", "SSH_AUTH_SOCK", "HOME", "PATH",
-                    "AGENTS_HUB_ROOT", "AGENTS_HUB_STATE_VOLUME"}
+                    "AGENTS_HUB_ROOT", "AGENTS_HUB_STATE_VOLUME", "AGENTS_HUB_CALLBACK_URL"}
 _HOST_ONLY_PREFIXES = ("DOCKER_", "npm_", "VIRTUAL_ENV", "CONDA_")
 #: The hub's secret encryption key (common/config.py ``secret_key``).
 _SECRET_KEY_VARS = frozenset({"AGENTS_HUB_SECRET_KEY", "secret_key"})

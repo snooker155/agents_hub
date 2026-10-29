@@ -125,3 +125,24 @@ class TestTheCustomBackends:
 
     def test_and_is_left_alone_on_a_host_run_backend(self, on_the_host):
         assert hostnet.host_service_url("http://localhost:8000/v1") == "http://localhost:8000/v1"
+
+
+class TestTheHubsOwnAddress:
+    """hub_base_url: where a process calls the API back. In the `ha` compose
+    profile backend-api publishes no host port, so the gateway alias reaches
+    nothing; AGENTS_HUB_CALLBACK_URL names the API on the compose network."""
+
+    def test_a_container_without_the_override_goes_through_the_gateway(self, in_a_container):
+        in_a_container.delenv("AGENTS_HUB_CALLBACK_URL", raising=False)
+        in_a_container.setenv("DASHBOARD_PORT", "8000")
+        assert hostnet.hub_base_url() == "http://host.docker.internal:8000"
+
+    def test_the_override_wins_in_a_container(self, in_a_container):
+        in_a_container.setenv("AGENTS_HUB_CALLBACK_URL", "http://backend-api:8000/")
+        assert hostnet.hub_base_url() == "http://backend-api:8000"
+
+    def test_a_run_container_never_gets_the_override(self):
+        from managers import container_manager as cm
+
+        env = cm.container_env({"AGENTS_HUB_CALLBACK_URL": "http://backend-api:8000", "AGENTS_HUB_RUN_TOKEN": "t"})
+        assert "AGENTS_HUB_CALLBACK_URL" not in env and env["AGENTS_HUB_RUN_TOKEN"] == "t"

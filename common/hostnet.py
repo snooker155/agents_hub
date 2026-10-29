@@ -70,8 +70,18 @@ def host_service_url(url: str) -> str:
 
 def hub_base_url() -> str:
     """The hub's base URL for a process calling back into it (relays, run
-    state): ``localhost`` on the API port, rewritten to the host gateway
-    alias when this process is itself containerized."""
+    state, a chat replica's turn events): ``AGENTS_HUB_CALLBACK_URL`` when
+    set, else ``localhost`` on the API port, rewritten to the host gateway
+    alias when this process is itself containerized.
+
+    The override is for the ``ha`` compose profile: ``backend-api`` publishes
+    no port on the host, so the gateway alias reaches nothing there, and a
+    worker has no API of its own to reach on ``localhost``; both name
+    ``http://backend-api:8000`` instead. Run containers are not on the compose
+    network and never get it (managers/container_manager.py)."""
     import os
+    explicit = (os.environ.get("AGENTS_HUB_CALLBACK_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
     port = os.environ.get("DASHBOARD_PORT", "8000")
     return host_service_url(f"http://localhost:{port}").rstrip("/")

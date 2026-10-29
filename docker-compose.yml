@@ -454,6 +454,9 @@ services:
       PYTHONPATH: /app
       HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT:-$PWD}
       AGENTS_HUB_ROLE: api
+      # Where this container's own processes (chat replicas, runs on a worker)
+      # call the API back: backend-api publishes no host port in this profile.
+      AGENTS_HUB_CALLBACK_URL: ${AGENTS_HUB_CALLBACK_URL:-http://backend-api:8000}
       AGENTS_HUB_BROKER_URL: ${AGENTS_HUB_BROKER_URL:-redis://redis:6379/0}
       AGENTS_HUB_DATABASE_URL: ${AGENTS_HUB_DATABASE_URL:-postgresql://agents_hub:agents_hub@postgres:5432/agents_hub}
       AGENTS_HUB_BLOB_URL: ${AGENTS_HUB_BLOB_URL:-}
@@ -495,6 +498,9 @@ services:
       PYTHONPATH: /app
       HOST_PROJECT_ROOT: ${HOST_PROJECT_ROOT:-$PWD}
       AGENTS_HUB_ROLE: worker
+      # Where this container's own processes (chat replicas, runs on a worker)
+      # call the API back: backend-api publishes no host port in this profile.
+      AGENTS_HUB_CALLBACK_URL: ${AGENTS_HUB_CALLBACK_URL:-http://backend-api:8000}
       AGENTS_HUB_WORKER_MODES: ${AGENTS_HUB_WORKER_MODES:-local,docker}
       AGENTS_HUB_WORKER_CONCURRENCY: ${AGENTS_HUB_WORKER_CONCURRENCY:-4}
       AGENTS_HUB_BROKER_URL: ${AGENTS_HUB_BROKER_URL:-redis://redis:6379/0}
