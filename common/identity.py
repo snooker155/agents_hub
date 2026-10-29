@@ -92,6 +92,11 @@ SOURCE_LOCAL = "local"
 SOURCE_OIDC = "oidc"
 SOURCE_SCIM = "scim"
 
+#: The languages an account can be given, and the one an account without its
+#: own is in (migration 0051).
+LANGUAGES = ("en", "ru", "de")
+DEFAULT_LANGUAGE = "en"
+
 #: How a session was opened.
 SESSION_PASSWORD = "password"
 SESSION_OIDC = "oidc"
@@ -225,6 +230,9 @@ def _row_to_user(row) -> Dict[str, Any]:
         "external_subject": col("external_subject"),
         "external_id": col("external_id"),
         "role_source": col("role_source") or "manual",
+        "first_name": col("first_name") or "",
+        "last_name": col("last_name") or "",
+        "language": col("language") if col("language") in LANGUAGES else DEFAULT_LANGUAGE,
         # Whether a password login is possible at all: an account provisioned
         # by SSO or SCIM has no password until an admin sets one.
         "has_password": bool(col("password_hash")),
@@ -305,12 +313,28 @@ def _validate_username(username: str) -> str:
     return username
 
 
+def _language(value: Optional[str]) -> str:
+    value = str(value or "").strip().lower()
+    if value not in LANGUAGES:
+        raise ValueError(f"language must be one of {', '.join(LANGUAGES)}")
+    return value
+
+
+def _full_name(first: str, last: str) -> str:
+    return " ".join(p for p in ((first or "").strip(), (last or "").strip()) if p)
+
+
 def create_user(username: str, password: Optional[str], *, role: str = ROLE_MEMBER,
                 display_name: str = "", email: str = "", source: str = SOURCE_LOCAL,
                 external_issuer: Optional[str] = None,
                 external_subject: Optional[str] = None,
-                external_id: Optional[str] = None) -> Dict[str, Any]:
-    """Add a user. Raises ValueError on a bad or taken username.
+                external_id: Optional[str] = None,
+                first_name: str = "", last_name: str = "",
+                language: str = DEFAULT_LANGUAGE) -> Dict[str, Any]:
+    """Add a user. Raises ValueError on a bad or taken username or language.
+
+    With a first or last name and no display name, the display name is the
+    two together.
 
     ``password`` may be None for an account that arrives from single sign-on
     or SCIM: it then has no password at all (``has_password`` is false) until
@@ -319,6 +343,9 @@ def create_user(username: str, password: Optional[str], *, role: str = ROLE_MEMB
     username = _validate_username(username)
     if role not in (ROLE_ADMIN, ROLE_MEMBER):
         raise ValueError(f"unknown role '{role}'")
+    language = _language(language or DEFAULT_LANGUAGE)
+    first_name, last_name = (first_name or "").strip(), (last_name or "").strip()
+    display_name = (display_name or "").strip() or _full_name(first_name, last_name)
     if password:
         record = hash_password(password)
     else:
@@ -334,12 +361,13 @@ def create_user(username: str, password: Optional[str], *, role: str = ROLE_MEMB
             "INSERT INTO users (user_id, username, display_name, role, "
             "password_hash, password_salt, password_iterations, disabled, "
             "created_at, updated_at, email, source, external_issuer, external_subject, "
-            "external_id, role_source) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (user_id, username, (display_name or "").strip() or username, role,
+            "external_id, role_source, first_name, last_name, language) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, username, display_name or username, role,
              record["password_hash"], record["password_salt"],
              record["password_iterations"], now, now, (email or "").strip().lower(),
              source or SOURCE_LOCAL, external_issuer, external_subject, external_id,
-             "manual"),
+             "manual", first_name or None, last_name or None, language),
         )
     return get_user(user_id)  # type: ignore[return-value]
 
@@ -353,8 +381,14 @@ def update_user(user_id: str, *, role: Optional[str] = None,
                 external_issuer: Optional[str] = None,
                 external_subject: Optional[str] = None,
                 external_id: Optional[str] = None,
-                source: Optional[str] = None) -> Optional[Dict[str, Any]]:
+                source: Optional[str] = None,
+                first_name: Optional[str] = None,
+                last_name: Optional[str] = None,
+                language: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Change a user's role, display name, enabled state or identity fields.
+
+    A changed first or last name with no display name given makes the display
+    name the two together (or the username, both cleared).
 
     Refuses to remove the last admin: an installation with no admin has no way
     back short of editing the database by hand. Disabling an account drops
@@ -372,6 +406,15 @@ def update_user(user_id: str, *, role: Optional[str] = None,
         raise ValueError("this is the last admin: promote another user first")
     new_username = _validate_username(username) if username is not None else user["username"]
     now_disabled = user["disabled"] if disabled is None else bool(disabled)
+    new_language = _language(language) if language is not None else user["language"]
+    new_first = first_name.strip() if first_name is not None else user["first_name"]
+    new_last = last_name.strip() if last_name is not None else user["last_name"]
+    if display_name is not None:
+        new_display = display_name.strip()
+    elif first_name is not None or last_name is not None:
+        new_display = _full_name(new_first, new_last) or new_username
+    else:
+        new_display = user["display_name"]
     with db.transaction() as conn:
         if new_username != user["username"]:
             taken = conn.execute("SELECT 1 FROM users WHERE username = ? AND user_id <> ?",
@@ -381,10 +424,11 @@ def update_user(user_id: str, *, role: Optional[str] = None,
         conn.execute(
             "UPDATE users SET role = ?, display_name = ?, disabled = ?, "
             "updated_at = ?, email = ?, username = ?, role_source = ?, "
-            "external_issuer = ?, external_subject = ?, external_id = ?, source = ? "
+            "external_issuer = ?, external_subject = ?, external_id = ?, source = ?, "
+            "first_name = ?, last_name = ?, language = ? "
             "WHERE user_id = ?",
             (role if role is not None else user["role"],
-             display_name.strip() if display_name is not None else user["display_name"],
+             new_display,
              1 if now_disabled else 0,
              _iso(_now()),
              email.strip().lower() if email is not None else user["email"],
@@ -395,6 +439,7 @@ def update_user(user_id: str, *, role: Optional[str] = None,
              external_subject if external_subject is not None else user["external_subject"],
              external_id if external_id is not None else user["external_id"],
              source if source is not None else user["source"],
+             new_first or None, new_last or None, new_language,
              str(user_id)),
         )
         if now_disabled and not user["disabled"]:
@@ -1200,7 +1245,7 @@ def client_ip(request) -> Optional[str]:
 
 
 __all__ = [
-    "LoginThrottled", "PBKDF2_ITERATIONS", "SERVICE_PRINCIPAL", "SERVICE_TOKEN_ENV",
+    "DEFAULT_LANGUAGE", "LANGUAGES", "LoginThrottled", "PBKDF2_ITERATIONS", "SERVICE_PRINCIPAL", "SERVICE_TOKEN_ENV",
     "SESSION_BOOTSTRAP", "SESSION_OIDC", "SESSION_PASSWORD",
     "SOURCE_LOCAL", "SOURCE_OIDC", "SOURCE_SCIM",
     "authorize_request", "bootstrap_required", "claim_workspace", "client_ip",

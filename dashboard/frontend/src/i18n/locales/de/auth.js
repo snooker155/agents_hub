@@ -4,6 +4,9 @@ export default {
   logout: 'Abmelden',
 
   fields: {
+    firstName: 'Vorname',
+    lastName: 'Nachname',
+    language: 'Sprache',
     username: 'Benutzername',
     password: 'Passwort',
     confirmPassword: 'Passwort wiederholen',
@@ -39,6 +42,9 @@ export default {
   },
 
   users: {
+    edit: 'Bearbeiten',
+    editTitle: 'Konto',
+    languageHint: 'Darin öffnet sich der erste Start. Die Person kann sie später ändern.',
     title: 'Konten',
     description: 'Wer sich anmelden darf und wer diesen Hub verwaltet. Der Zugriff auf einen einzelnen Arbeitsbereich wird dort vergeben, im Reiter Agenten.',
     add: 'Konto anlegen',

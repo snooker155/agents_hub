@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  KeyRound, Link2, Loader, Plus, RefreshCw, ShieldCheck, Trash2, UserPlus, Users as UsersIcon,
+  KeyRound, Link2, Loader, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, UserPlus, Users as UsersIcon,
   UsersRound,
 } from 'lucide-react';
 import {
@@ -13,6 +13,7 @@ import { useAuth } from '../components/auth';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 import MemberMenuSection from '../components/users/MemberMenuSection';
+import EditUserModal, { LanguageSelect } from '../components/users/EditUserModal';
 
 const inputCls = 'border border-gray-200 rounded-lg px-3 py-2 text-sm '
   + ' focus:outline-none';
@@ -37,7 +38,8 @@ export default function Users() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [draft, setDraft] = useState({ username: '', password: '', role: 'member' });
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
+  const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [limits, setLimits] = useState(null);
   const [defaultDraft, setDefaultDraft] = useState('');
@@ -81,7 +83,7 @@ export default function Users() {
     setBusy(true);
     try {
       await createUser(draft);
-      setDraft({ username: '', password: '', role: 'member' });
+      setDraft(EMPTY_DRAFT);
       setError('');
       await load();
     } catch (err) {
@@ -204,6 +206,27 @@ export default function Users() {
             onChange={(e) => setDraft({ ...draft, password: e.target.value })} className={inputCls} />
         </div>
         <div>
+          <label htmlFor="new-first-name" className="block text-xs font-medium text-gray-500 mb-1">
+            {t('auth.fields.firstName')}
+          </label>
+          <input id="new-first-name" value={draft.first_name} autoComplete="off"
+            onChange={(e) => setDraft({ ...draft, first_name: e.target.value })} className={inputCls} />
+        </div>
+        <div>
+          <label htmlFor="new-last-name" className="block text-xs font-medium text-gray-500 mb-1">
+            {t('auth.fields.lastName')}
+          </label>
+          <input id="new-last-name" value={draft.last_name} autoComplete="off"
+            onChange={(e) => setDraft({ ...draft, last_name: e.target.value })} className={inputCls} />
+        </div>
+        <div>
+          <label htmlFor="new-language" className="block text-xs font-medium text-gray-500 mb-1">
+            {t('auth.fields.language')}
+          </label>
+          <LanguageSelect id="new-language" value={draft.language} className={inputCls}
+            onChange={(language) => setDraft({ ...draft, language })} />
+        </div>
+        <div>
           <label htmlFor="new-role" className="block text-xs font-medium text-gray-500 mb-1">
             {t('auth.fields.role')}
           </label>
@@ -296,6 +319,10 @@ export default function Users() {
                     </td>
                   )}
                   <td className="px-4 py-2 text-right whitespace-nowrap">
+                    <button type="button" onClick={() => setEditing(user)} data-testid={`edit-${user.username}`}
+                      className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 mr-3">
+                      <Pencil className="w-3.5 h-3.5" /> {t('auth.users.edit')}
+                    </button>
                     {canUsePassword(user) && (
                       <button type="button" onClick={() => resetPassword(user)}
                         className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 mr-3">
@@ -317,12 +344,17 @@ export default function Users() {
         <Plus className="w-3 h-3" /> {t('auth.users.membershipHint')}
       </p>
 
+      {editing && <EditUserModal user={editing} onClose={() => setEditing(null)} onSaved={load} />}
+
       {features?.groups !== false && <GroupsAndMappings users={users} />}
 
       <MemberMenuSection />
     </PageContainer>
   );
 }
+
+// A new account's form; English unless the administrator picks another.
+const EMPTY_DRAFT = { username: '', password: '', role: 'member', first_name: '', last_name: '', language: 'en' };
 
 // A local account signs in with a password. One from SSO or SCIM does only
 // when it already has one (a linked local account, or one an administrator

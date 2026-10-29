@@ -60,6 +60,10 @@ class UserCreate(BaseModel):
     role: str = "member"
     display_name: str = ""
     email: str = ""
+    first_name: str = ""
+    last_name: str = ""
+    # The language the account's welcome opens in (migration 0051).
+    language: str = "en"
 
 
 class UserPatch(BaseModel):
@@ -67,6 +71,9 @@ class UserPatch(BaseModel):
     display_name: Optional[str] = None
     disabled: Optional[bool] = None
     email: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    language: Optional[str] = None
     # Own monthly spend limit (common/user_budget.py). Sent as null it clears
     # the person's own value, so the hub default applies; 0 is unlimited.
     spend_limit_usd: Optional[float] = None
@@ -253,6 +260,9 @@ async def me(request: Request):
         user = identity.get_user(principal.id) or {}
         payload["display_name"] = user.get("display_name") or principal.username
         payload["email"] = user.get("email") or ""
+        payload["first_name"] = user.get("first_name") or ""
+        payload["last_name"] = user.get("last_name") or ""
+        payload["language"] = user.get("language") or identity.DEFAULT_LANGUAGE
         payload["source"] = user.get("source") or "local"
         payload["has_password"] = bool(user.get("has_password"))
         from common import groups
@@ -280,7 +290,8 @@ async def post_user(request: Request, payload: UserCreate):
         user = identity.create_user(payload.username, payload.password or None,
                                     role=payload.role,
                                     display_name=payload.display_name,
-                                    email=payload.email)
+                                    email=payload.email, first_name=payload.first_name,
+                                    last_name=payload.last_name, language=payload.language)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     audit.record("user.create", principal=_principal(request), object_type="user",
@@ -296,7 +307,9 @@ async def patch_user(request: Request, user_id: str, payload: UserPatch):
     try:
         user = identity.update_user(user_id, role=payload.role,
                                     display_name=payload.display_name,
-                                    disabled=payload.disabled, email=payload.email)
+                                    disabled=payload.disabled, email=payload.email,
+                                    first_name=payload.first_name, last_name=payload.last_name,
+                                    language=payload.language)
         if user is not None and "spend_limit_usd" in payload.model_fields_set:
             user = identity.set_spend_limit(user_id, payload.spend_limit_usd)
     except ValueError as exc:

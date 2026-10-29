@@ -43,6 +43,7 @@ const api = vi.hoisted(() => ({
   getSpendLimits: vi.fn(),
   setDefaultSpendLimit: vi.fn(),
   updateUser: vi.fn(),
+  createUser: vi.fn(),
 }));
 
 // The member menu section has its own client and its own test.
@@ -53,7 +54,6 @@ vi.mock('../../api/memberMenu', () => ({
 
 vi.mock('../../api', () => ({
   ...Object.fromEntries(Object.keys(api).map((k) => [k, (...a) => api[k](...a)])),
-  createUser: vi.fn(),
   deleteUser: vi.fn(),
   resetUserPassword: vi.fn(),
 }));
@@ -167,5 +167,35 @@ describe('Users page', () => {
     fireEvent.change(screen.getByLabelText('Name', { selector: 'input' }), { target: { value: 'qa' } });
     fireEvent.click(screen.getByRole('button', { name: /Add group/ }));
     await waitFor(() => expect(api.createGroup).toHaveBeenCalledWith({ name: 'qa', display_name: '' }));
+  });
+
+  it('makes an account with a first and last name and English unless another language is picked', async () => {
+    api.createUser.mockImplementation(() => ok({}));
+    show();
+    await screen.findByTestId('group-count-devs');
+    fireEvent.change(screen.getByLabelText('User name'), { target: { value: 'anna' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret-pass-1' } });
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Anna' } });
+    fireEvent.change(screen.getByLabelText('Last name'), { target: { value: 'Petrova' } });
+    expect(screen.getByLabelText('Language').value).toBe('en');
+    fireEvent.click(screen.getByRole('button', { name: /Add account/ }));
+    await waitFor(() => expect(api.createUser).toHaveBeenCalledWith(expect.objectContaining({
+      username: 'anna', first_name: 'Anna', last_name: 'Petrova', language: 'en',
+    })));
+  });
+
+  it('edits an account\'s names and language in a window', async () => {
+    api.updateUser.mockImplementation(() => ok({}));
+    show();
+    fireEvent.click(await screen.findByTestId('edit-alice'));
+    const modal = screen.getByTestId('edit-user-modal');
+    fireEvent.change(within(modal).getByLabelText('First name'), { target: { value: 'Alice' } });
+    fireEvent.change(within(modal).getByLabelText('Last name'), { target: { value: 'Smith' } });
+    fireEvent.change(within(modal).getByLabelText('Language'), { target: { value: 'de' } });
+    fireEvent.click(within(modal).getByTestId('edit-user-save'));
+    await waitFor(() => expect(api.updateUser).toHaveBeenCalledWith('u2', {
+      first_name: 'Alice', last_name: 'Smith', email: 'alice@example.com', language: 'de',
+    }));
+    await waitFor(() => expect(screen.queryByTestId('edit-user-modal')).toBeNull());
   });
 });

@@ -13,6 +13,14 @@ turns that section into the next release.
 
 ## [Unreleased]
 
+### Added
+
+- Accounts have a first name, a last name and a language (migration 0051):
+  set on the Users page when the account is made and in its new **Edit**
+  window. With a name the display name is the two together. The welcome opens
+  in the account's language (English unless set), and the one the person
+  picks there is saved back to the account.
+
 ### Changed
 
 - In a chat the agent's avatar shows the thinking mark while it is just

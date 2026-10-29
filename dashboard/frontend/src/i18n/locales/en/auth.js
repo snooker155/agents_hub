@@ -4,6 +4,9 @@ export default {
   logout: 'Sign out',
 
   fields: {
+    firstName: 'First name',
+    lastName: 'Last name',
+    language: 'Language',
     username: 'User name',
     password: 'Password',
     confirmPassword: 'Repeat password',
@@ -39,6 +42,9 @@ export default {
   },
 
   users: {
+    edit: 'Edit',
+    editTitle: 'Account',
+    languageHint: 'The first run opens in it. The person can change it later.',
     title: 'Accounts',
     description: 'Who can sign in, and who administers this hub. Access to an individual workspace is granted on that workspace, under its Agents tab.',
     add: 'Add account',
