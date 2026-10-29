@@ -2360,6 +2360,9 @@ export type UserCreate = {
   "role"?: string;
   "display_name"?: string;
   "email"?: string;
+  "first_name"?: string;
+  "last_name"?: string;
+  "language"?: string;
 };
 
 export type UserPatch = {
@@ -2367,6 +2370,9 @@ export type UserPatch = {
   "display_name"?: string | null;
   "disabled"?: boolean | null;
   "email"?: string | null;
+  "first_name"?: string | null;
+  "last_name"?: string | null;
+  "language"?: string | null;
   "spend_limit_usd"?: number | null;
 };
 
@@ -2426,6 +2432,12 @@ export type WatcherUpdate = {
 export type WebDomainsUpdate = {
   "allowed_domains"?: string[] | null;
   "blocked_domains"?: string[] | null;
+};
+
+export type WelcomeAction = {
+  "action": string;
+  "step"?: string | null;
+  "language"?: string | null;
 };
 
 export type WidgetCreate = {
@@ -3467,6 +3479,13 @@ export interface ApiPaths {
     post: { body: FirstRunOp; response: unknown };
   };
   "/api/first-run/options": {
+    get: { response: unknown };
+  };
+  "/api/first-run/welcome": {
+    get: { response: unknown };
+    post: { body: WelcomeAction; response: unknown };
+  };
+  "/api/first-run/welcome/overview": {
     get: { response: unknown };
   };
   "/api/flow-entities": {

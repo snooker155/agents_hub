@@ -17,6 +17,10 @@ search, a workspace's personal memory, ``/api/demo``):
 * ``POST /api/first-run/op``: one setup operation (choose_model, voice_cloud,
   voice_local, seed_demo), the same the assistant's ``setup_step`` makes after
   a yes; here pressing the button is the yes.
+
+In ``multi`` mode a new account gets the welcome instead (common/member_welcome.py):
+``GET``/``POST /api/first-run/welcome`` for the person's own record and
+``GET /api/first-run/welcome/overview`` for what is set up for them, read only.
 """
 from __future__ import annotations
 
@@ -39,6 +43,12 @@ class FirstRunAction(BaseModel):
     step: Optional[str] = None
     language: Optional[str] = None
     theme: Optional[str] = None
+
+
+class WelcomeAction(BaseModel):
+    action: str
+    step: Optional[str] = None
+    language: Optional[str] = None
 
 
 class FirstRunOp(BaseModel):
@@ -66,6 +76,33 @@ async def act(body: FirstRunAction):
                                        language=body.language, theme=body.theme)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/welcome")
+async def get_welcome(request: Request):
+    from common import member_welcome
+    principal = identity.request_principal(request)
+    return await run_in_threadpool(member_welcome.status, principal)
+
+
+@router.post("/welcome")
+async def welcome_act(body: WelcomeAction, request: Request):
+    from common import member_welcome
+    principal = identity.request_principal(request)
+    try:
+        return await run_in_threadpool(member_welcome.act, principal, body.action, step=body.step,
+                                       language=body.language)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/welcome/overview")
+async def welcome_overview(request: Request):
+    from common import member_welcome
+    principal = identity.request_principal(request)
+    if not member_welcome.applies(principal):
+        raise HTTPException(status_code=404, detail="the welcome is for a person signed in to a multi mode hub")
+    return await run_in_threadpool(member_welcome.overview, principal)
 
 
 @router.get("/context")

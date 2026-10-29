@@ -107,6 +107,10 @@ async def lifespan(app: FastAPI):
     from common.logging_config import configure_logging_for_active_workspace
     log.info(f"✓ Log level: {configure_logging_for_active_workspace()}")
 
+    # Accounts made from now on get the welcome (common/member_welcome.py).
+    from common import member_welcome
+    member_welcome.mark_since()
+
     # The orchestrator node is started on demand by the user, not at startup.
 
     from common.config import hub_role

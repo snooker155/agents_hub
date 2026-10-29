@@ -10,9 +10,10 @@ not come back (Settings, First setup, starts it again on purpose).
 
 **One per install, single operator only.** The record is one document,
 ``install``, in the ``first_run`` collection. In ``multi`` mode the first
-administrator is made on the login screen and each person gets the welcome
-window and the guided setup (common/setup_guide.py), so the first run does not
-apply there.
+administrator is made on the login screen and sets the hub up through the
+welcome window and the guided setup (common/setup_guide.py); an account an
+administrator made gets a welcome of its own with nothing to set up
+(common/member_welcome.py). The first run does not apply there.
 
 **An install that is already in use is never stopped.** The first time the
 record is read and there is none, the hub looks for signs of use (a guided

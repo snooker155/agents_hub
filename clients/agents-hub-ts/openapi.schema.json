@@ -14530,6 +14530,21 @@
             "title": "Email",
             "type": "string"
           },
+          "first_name": {
+            "default": "",
+            "title": "First Name",
+            "type": "string"
+          },
+          "language": {
+            "default": "en",
+            "title": "Language",
+            "type": "string"
+          },
+          "last_name": {
+            "default": "",
+            "title": "Last Name",
+            "type": "string"
+          },
           "password": {
             "anyOf": [
               {
@@ -14591,6 +14606,39 @@
               }
             ],
             "title": "Email"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
           },
           "role": {
             "anyOf": [
@@ -14938,6 +14986,41 @@
           }
         },
         "title": "WebDomainsUpdate",
+        "type": "object"
+      },
+      "WelcomeAction": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "WelcomeAction",
         "type": "object"
       },
       "WidgetCreate": {
@@ -20950,7 +21033,7 @@
     },
     "/api/audit": {
       "get": {
-        "description": "A page of audit rows this caller may read, newest first.",
+        "description": "A page of audit rows this caller may read, newest first (``order=asc``:\noldest first). ``limit`` goes up to 2000, the most rows a \"load more\"\nlist holds (frontend listPagingState.js).",
         "parameters": [
           {
             "in": "query",
@@ -21114,6 +21197,16 @@
               "default": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "title": "Order",
+              "type": "string"
             }
           }
         ],
@@ -30562,6 +30655,78 @@
           }
         },
         "summary": "Get Options",
+        "tags": [
+          "first-run"
+        ]
+      }
+    },
+    "/api/first-run/welcome": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Welcome",
+        "tags": [
+          "first-run"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WelcomeAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Welcome Act",
+        "tags": [
+          "first-run"
+        ]
+      }
+    },
+    "/api/first-run/welcome/overview": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Welcome Overview",
         "tags": [
           "first-run"
         ]
@@ -50370,7 +50535,7 @@
     },
     "/api/settings/test-provider": {
       "post": {
-        "description": "Test connectivity for any provider. Falls back to env-file credentials.",
+        "description": "Test connectivity for any provider. Falls back to env-file credentials.\n\nOpen to members (common/auth.py ``ADMIN_WRITE_EXEMPT``) for the header\nmodel picker's status dots, but only against the saved settings: a key or\nbase URL in the body is an administrator's test of a new connection, and\nfrom a member it would have the hub call an address of their choosing.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -62558,7 +62723,7 @@
         ]
       },
       "put": {
-        "description": "Set workspace-scoped model override.\nprovider='global' forces global DEFAULT_PROVIDER even if workspace has a default model.\nprovider='' or 'workspace_default' clears the override (falls back to workspace settings then global).",
+        "description": "Set workspace-scoped model override.\nprovider='global' forces global DEFAULT_PROVIDER even if workspace has a default model.\nprovider='' or 'workspace_default' clears the override (falls back to workspace settings then global).\nA member (multi mode, not an administrator) changes it for the whole\nworkspace, so only within the listed models and never the effort\n(see :func:`_member_model_refusal`).",
         "parameters": [
           {
             "in": "path",
