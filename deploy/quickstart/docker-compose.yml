@@ -275,8 +275,10 @@ services:
 
   # S3 compatible object store for AGENTS_HUB_BLOB_URL, so the replicas share
   # files without sharing a disk. No port is published.
+  # pgsty/minio and pgsty/mc: the community fork's images, since MinIO stopped
+  # publishing minio/minio and minio/mc (Docker Hub answers 404 for both).
   minio:
-    image: minio/minio
+    image: pgsty/minio
     profiles:
       - ha
     command: server /data --console-address :9001
@@ -295,7 +297,7 @@ services:
   # One-shot: creates the bucket AGENTS_HUB_BLOB_URL names and exits. Safe on
   # every `up`; the api and worker replicas wait for it.
   minio-init:
-    image: minio/mc
+    image: pgsty/mc
     profiles:
       - ha
     depends_on:

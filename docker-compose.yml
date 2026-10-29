@@ -388,8 +388,10 @@ services:
   # port is published by default — only the compose network reaches it —
   # since the console (9001) and API (9000) have no business being open on
   # the host in a default setup; add "9001:9001" yourself to browse it.
+  # pgsty/minio and pgsty/mc: the community fork's images, since MinIO stopped
+  # publishing minio/minio and minio/mc (Docker Hub answers 404 for both).
   minio:
-    image: minio/minio
+    image: pgsty/minio
     profiles:
       - ha
     command: server /data --console-address :9001
@@ -412,7 +414,7 @@ services:
   # 0 before they start (see their `depends_on` below), so the bucket always
   # exists before anything tries to write a blob into it.
   minio-init:
-    image: minio/mc
+    image: pgsty/mc
     profiles:
       - ha
     depends_on:
