@@ -34,6 +34,9 @@ import LiveMark from '../liveMark/LiveMark';
 import { stateForTurn } from '../liveMark/activity';
 import { Bot, Mic, Square, User } from 'lucide-react';
 
+// The live mark while an agent in a chat is just working: the thinking pose.
+const CHAT_WORKING_STATE = 'think';
+
 function WorkingDots({ label }) {
   return (
     <span className="flex items-center gap-2">
@@ -128,7 +131,9 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
     ? t('toolApproval.waiting', { tool: waitingOn.tool })
     : runningTool ? toolActivity(t, runningTool, runningInput) : msg.working_label || t('chat.workingLabel');
   // While the turn is live the avatar is the live mark, showing the step.
-  const markState = isStreaming
+  // Plain working (nothing reported yet, or a tool with no scene of its own)
+  // shows the thinking mark in a chat, not the orbits.
+  const turnState = isStreaming
     ? stateForTurn({
       waiting: !!waitingOn,
       thinking: !!liveThought,
@@ -137,6 +142,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
       text: !!text,
     })
     : null;
+  const markState = turnState === 'working' ? CHAT_WORKING_STATE : turnState;
   const done = !isStreaming;
   // A turn the guard or a limit refused: a card with the action, not the error text.
   const refusal = done && msg.error ? msg.refusal : null;
@@ -154,7 +160,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
           three lines at most, in full on hover. A compact chat has one agent and no room for the gutter. */}
       {!compact && <div className="flex flex-col items-center gap-1 flex-shrink-0 w-14">
         {markState ? (
-          <LiveMark state={markState} initial="working" size={32} className="w-8 h-8" />
+          <LiveMark state={markState} initial={CHAT_WORKING_STATE} size={32} className="w-8 h-8" />
         ) : (
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-white bg-gray-800">
             <Bot className="w-4 h-4" />
@@ -241,7 +247,7 @@ function TypingIndicator({ agentName, compact = false }) {
       {/* The same avatar column as an answer, so the indicator lines up with it. */}
       {!compact && (
         <div className="flex-shrink-0 w-14 flex justify-center">
-          <LiveMark state="working" size={32} className="w-8 h-8" />
+          <LiveMark state={CHAT_WORKING_STATE} size={32} className="w-8 h-8" />
         </div>
       )}
       <div className={`bg-white border border-gray-200 rounded-tl-sm shadow-sm flex items-center gap-2 ${compact ? 'rounded-xl px-3 py-2' : 'rounded-2xl px-4 py-3'}`}>

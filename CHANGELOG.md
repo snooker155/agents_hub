@@ -15,6 +15,8 @@ turns that section into the next release.
 
 ### Changed
 
+- In a chat the agent's avatar shows the thinking mark while it is just
+  working, instead of the orbits.
 - The first run's voice screen lets an OpenAI voice pick its speech model:
   `gpt-4o-mini-tts` (default), `tts-1` (fastest) or `tts-1-hd`; the voices
   offered follow the model (`setup_step voice_cloud` takes `model` too).
