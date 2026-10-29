@@ -122,6 +122,7 @@ export function buildMenu({ t, auth, features = {} }) {
         { name: t('nav.agents'), path: '/agents', icon: Bot, simple: true },
         { name: t('nav.models'), path: '/models', icon: Brain, simple: true },
         { name: t('nav.memory'), path: '/memory', icon: Database, simple: true },
+        { name: t('nav.skills'), path: '/skills', icon: GraduationCap, simple: true },
         { name: t('nav.marketplace'), path: '/marketplace', icon: Store, simple: true },
         // The linked hub's agents, skills, flows, teams and loops, to install here.
         { name: t('nav.catalog'), path: '/catalog', icon: Library, home: '/marketplace' },

@@ -353,3 +353,30 @@ def test_a_quickstart_compose_rerun_keeps_redis_and_its_url():
     fresh = W.Plan(shape="compose", quick=True, fresh=True, current=dict(plan.current))
     W.step_features(_asker({}), fresh)
     assert fresh.profiles == []
+
+
+def test_the_execution_question_explains_docker_desktop(monkeypatch):
+    """Where agent containers cannot share the database of a hub run from
+    this checkout, the question says what docker mode gives here and how the
+    volume setup behaves (common/state_sync.py)."""
+    monkeypatch.setattr(W, "_containers_share_db", lambda: False)
+    asker = _asker({"demo": False, "execution": "docker", "rag": False})
+    W.step_features(asker, W.Plan(quick=False, fresh=True))
+    text = asker.console.export_text()
+    assert "only the agents' shell commands" in text
+    assert "docker-compose.volume.yml" in text
+    assert ".agents_hub.prev" in text and "agents_hub_state" in text
+
+
+def test_the_execution_question_stays_short_where_containers_share_it(monkeypatch):
+    monkeypatch.setattr(W, "_containers_share_db", lambda: True)
+    asker = _asker({"demo": False, "execution": "docker", "rag": False})
+    W.step_features(asker, W.Plan(quick=False, fresh=True))
+    assert "docker-compose.volume.yml" not in asker.console.export_text()
+
+
+def test_web_search_is_asked_once(monkeypatch):
+    monkeypatch.setattr(W, "_containers_share_db", lambda: True)
+    asker = _asker({"demo": False, "execution": "local", "rag": False})
+    W.step_features(asker, W.Plan(quick=False, fresh=True))
+    assert asker.console.export_text().count("Web search for the web_search tool") == 1

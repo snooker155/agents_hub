@@ -1020,9 +1020,17 @@ def step_features(a: Asker, plan: Plan) -> None:
         return
 
     if plan.shape in ("local", "compose"):
+        # A hub run from this checkout may not share its database with agent
+        # containers (Docker Desktop); under compose the hub is a container too.
+        shared = plan.shape != "local" or _containers_share_db()
+        if not shared:
+            from common.state_sync import describe
+            a.note(_DOCKER_DESKTOP_NOTE.format(how=describe()))
         plan.env["AGENT_EXECUTION_MODE"] = a.choose("execution", "Where do agents run?", [
             ("local", "As processes of the backend", "simplest"),
-            ("docker", "Each in its own container", "needs a reachable Docker daemon"),
+            ("docker", "Each in its own container",
+             "needs a reachable Docker daemon" if shared
+             else "on this machine only the agents' shell commands; see the note above"),
         ], default=plan.cur("AGENT_EXECUTION_MODE", "local"))
 
     # Off by default in the service; offered on where runs are containers,
@@ -1034,22 +1042,6 @@ def step_features(a: Asker, plan: Plan) -> None:
                       "enforces environment network policies, and a secret bound to hosts reaches a run "
                       "only as a placeholder the proxy swaps for the real value", proxy_default)
     plan.env["AGENTS_HUB_EGRESS_PROXY"] = "1" if proxy else "0"
-
-    search = a.choose("web_search", "Web search for the web_search tool", [
-        ("auto", "Automatic", "an Anthropic or OpenAI key searches through that provider; fetch_url always works"),
-        ("anthropic", "Anthropic", "its own search tool, on the model key"),
-        ("openai", "OpenAI", "its own search tool, on the model key"),
-        ("brave", "Brave Search", "API key"),
-        ("tavily", "Tavily", "API key"),
-        ("exa", "Exa", "API key"),
-    ], default=plan.cur("WEB_SEARCH_PROVIDER") or "auto")
-    if search in ("anthropic", "openai"):
-        plan.env.update({"WEB_SEARCH_PROVIDER": search})
-    elif search != "auto":
-        key = a.secret("web_search_key", "Its API key", current=plan.cur("WEB_SEARCH_API_KEY"))
-        plan.env.update({"WEB_SEARCH_PROVIDER": search, "WEB_SEARCH_API_KEY": key})
-    elif plan.cur("WEB_SEARCH_PROVIDER"):
-        plan.env.update({"WEB_SEARCH_PROVIDER": "", "WEB_SEARCH_API_KEY": ""})
 
     search = a.choose("web_search", "Web search for the web_search tool", [
         ("auto", "Automatic", "an Anthropic or OpenAI key searches through that provider; fetch_url always works"),
