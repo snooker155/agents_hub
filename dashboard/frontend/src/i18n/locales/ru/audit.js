@@ -42,9 +42,4 @@ export default {
     ip: 'IP',
   },
 
-  pagination: {
-    showing: 'Показано {{from}}–{{to}} из {{total}}',
-    prev: 'Назад',
-    next: 'Далее',
-  },
 };

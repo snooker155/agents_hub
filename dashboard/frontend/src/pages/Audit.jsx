@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  ChevronDown, ChevronLeft, ChevronRight, Download, History, RefreshCw,
-} from 'lucide-react';
+import { ChevronDown, Download, History, RefreshCw } from 'lucide-react';
 import {
   getAuditLog, getAuditActions, auditExportUrl, getWorkspaces, navigateWithAuthTicket,
 } from '../api';
@@ -9,11 +7,16 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import DateInput from '../components/DateInput';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import { ListLoadMore, ListPagingControls } from '../components/ListPaging';
+import { useListPaging } from '../components/listPagingState';
 
 const inputCls = 'border border-gray-200 rounded-lg px-3 py-2 text-sm w-full '
   + ' focus:outline-none';
 
-const PAGE_SIZE = 50;
+// The rows come in the order they were written (common/audit.py sorts by id),
+// so time is the one sort; the direction and the batch size are the
+// viewer's, as on every other long list.
+const SORTS = ['created'];
 
 const EMPTY_FILTERS = {
   actor: '', action: '', workspace: '', since: '', until: '', text: '', result: '',
@@ -32,39 +35,43 @@ export default function Audit() {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [actions, setActions] = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [openRow, setOpenRow] = useState(null);
 
+  // "Load more" (components/listPagingState.js): the window is always read
+  // from the top, `limit` rows long, and a filter change goes back to one
+  // batch in the same render.
+  const paging = useListPaging('audit', {
+    sorts: SORTS, defaultSort: 'created', defaultOrder: 'desc', resetOn: [filters],
+  });
+  const { limit, order } = paging.params;
+
   // Promise chain rather than try/await: the lint rule cannot tell that no
   // state is set before the first await of an async function with a catch.
-  // The effect calls the fetch directly (`loading` starts true); paging and
-  // Refresh go through `load`, which raises the busy flag first.
-  const fetchPage = useCallback((nextOffset) => {
-    const params = { ...filters, limit: PAGE_SIZE, offset: nextOffset };
+  // The effect calls the fetch directly (`loading` starts true); "load more"
+  // and Refresh go through `load`, which raises the busy flag first.
+  const fetchPage = useCallback(() => {
+    const params = { ...filters, limit, offset: 0, order };
     Object.keys(params).forEach((k) => { if (params[k] === '') delete params[k]; });
     return getAuditLog(params)
       .then(({ data }) => {
         setRows(Array.isArray(data.items) ? data.items : []);
         setTotal(Number(data.total) || 0);
-        setOffset(nextOffset);
         setError('');
       })
       .catch((err) => setError(err?.response?.data?.detail || t('audit.loadFailed')))
       .finally(() => setLoading(false));
-  }, [filters, t]);
+  }, [filters, limit, order, t]);
 
-  const load = useCallback((nextOffset) => {
+  const load = useCallback(() => {
     setLoading(true);
-    return fetchPage(nextOffset);
+    return fetchPage();
   }, [fetchPage]);
 
-  // A filter change always restarts at the first page: an offset kept from
-  // the previous filter set would land on an arbitrary, unrelated page.
-  useEffect(() => { fetchPage(0); }, [fetchPage]);
+  useEffect(() => { fetchPage(); }, [fetchPage]);
 
   useEffect(() => {
     getAuditActions().then(({ data }) => setActions(Array.isArray(data) ? data : [])).catch(() => {});
@@ -74,9 +81,6 @@ export default function Audit() {
   const setField = (key) => (value) => setFilters((f) => ({ ...f, [key]: value }));
 
   const clearFilters = () => setFilters(EMPTY_FILTERS);
-
-  const canPrev = offset > 0;
-  const canNext = offset + rows.length < total;
 
   return (
     <PageContainer>
@@ -100,7 +104,7 @@ export default function Audit() {
             >
               <Download className="w-3.5 h-3.5" /> {t('audit.exportJsonl')}
             </button>
-            <button type="button" onClick={() => load(offset)}
+            <button type="button" onClick={() => load()}
               className="flex items-center gap-1.5 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700">
               <RefreshCw className="w-3.5 h-3.5" /> {t('common.refresh')}
             </button>
@@ -114,7 +118,7 @@ export default function Audit() {
         </p>
       )}
 
-      <div className="mb-4 bg-white border border-gray-200 rounded-xl p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+      <div className="mb-4 bg-white border border-gray-200 rounded-xl p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-3">
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1">{t('audit.filters.actor')}</label>
           <input value={filters.actor} onChange={(e) => setField('actor')(e.target.value)}
@@ -158,7 +162,8 @@ export default function Audit() {
           <input value={filters.text} onChange={(e) => setField('text')(e.target.value)}
             placeholder={t('audit.filters.textPlaceholder')} className={inputCls} />
         </div>
-        <div className="col-span-2 sm:col-span-3 lg:col-span-7 flex justify-end">
+        <ListPagingControls paging={paging} options={SORTS} labels={{ created: t('audit.columns.time') }} />
+        <div className="col-span-2 sm:col-span-3 lg:col-span-9 flex justify-end">
           <button type="button" onClick={clearFilters}
             className="text-xs font-medium text-gray-500 hover:text-gray-800">
             {t('audit.filters.clear')}
@@ -167,7 +172,8 @@ export default function Audit() {
       </div>
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        {loading ? (
+        {/* The rows stay while the next batch loads; the button shows it. */}
+        {loading && rows.length === 0 ? (
           <PageLoader />
         ) : rows.length === 0 ? (
           <p className="p-6 text-sm text-gray-500">{t('audit.empty')}</p>
@@ -235,21 +241,9 @@ export default function Audit() {
         )}
       </div>
 
-      {total > 0 && (
-        <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-          <span>{t('audit.pagination.showing', { from: offset + 1, to: offset + rows.length, total })}</span>
-          <div className="flex items-center gap-2">
-            <button type="button" disabled={!canPrev} onClick={() => load(Math.max(0, offset - PAGE_SIZE))}
-              className="inline-flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1 disabled:opacity-40 hover:bg-gray-50">
-              <ChevronLeft className="w-3.5 h-3.5" /> {t('audit.pagination.prev')}
-            </button>
-            <button type="button" disabled={!canNext} onClick={() => load(offset + PAGE_SIZE)}
-              className="inline-flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1 disabled:opacity-40 hover:bg-gray-50">
-              {t('audit.pagination.next')} <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
+      <div className="mt-3">
+        <ListLoadMore paging={paging} shown={rows.length} total={total} loading={loading} />
+      </div>
     </PageContainer>
   );
 }

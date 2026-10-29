@@ -180,8 +180,9 @@ def query(*, actor: Optional[str] = None, action: Optional[str] = None,
           object_type: Optional[str] = None, object_id: Optional[str] = None,
           since: Optional[str] = None, until: Optional[str] = None,
           text: Optional[str] = None, result: Optional[str] = None,
-          limit: int = 200, offset: int = 0) -> Dict[str, Any]:
-    """A page of rows, newest first: ``{items, total, limit, offset}``.
+          limit: int = 200, offset: int = 0, order: str = "desc") -> Dict[str, Any]:
+    """A page of rows, newest first (``order="asc"``: oldest first):
+    ``{items, total, limit, offset}``.
 
     ``action`` matches a prefix (``auth.`` selects every auth event);
     ``workspaces`` restricts to a list (an owner reading their own
@@ -227,7 +228,7 @@ def query(*, actor: Optional[str] = None, action: Optional[str] = None,
     limit = max(1, min(int(limit), 5000))
     offset = max(0, int(offset))
     rows = conn.execute(
-        f"SELECT * FROM audit_log{clause} ORDER BY id DESC LIMIT ? OFFSET ?",
+        f"SELECT * FROM audit_log{clause} ORDER BY id {'ASC' if order == 'asc' else 'DESC'} LIMIT ? OFFSET ?",
         tuple(args) + (limit, offset)).fetchall()
     return {"items": [_row_to_entry(r) for r in rows], "total": total,
             "limit": limit, "offset": offset}

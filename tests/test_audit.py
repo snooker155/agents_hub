@@ -116,6 +116,23 @@ def test_query_filters_by_actor_workspace_and_action_prefix():
     assert audit.query(workspaces=[])["items"] == []
 
 
+def test_query_and_merge_follow_the_order():
+    from common import audit
+    sys_path_backend = str(Path(__file__).resolve().parents[1] / "dashboard" / "backend")
+    if sys_path_backend not in sys.path:
+        sys.path.insert(0, sys_path_backend)
+    from routes.audit import _merge_pages
+
+    first = audit.record("order.first")
+    second = audit.record("order.second")
+    newest = [r["id"] for r in audit.query(action="order.")["items"]]
+    oldest = [r["id"] for r in audit.query(action="order.", order="asc")["items"]]
+    assert newest == [second, first] and oldest == [first, second]
+    page = audit.query(action="order.", order="asc")
+    assert [r["id"] for r in _merge_pages(page, page, order="asc")] == [first, second]
+    assert [r["id"] for r in _merge_pages(page)] == [second, first]
+
+
 def test_prune_drops_rows_older_than_retention_and_keeps_the_rest():
     from common import audit
     from common import db

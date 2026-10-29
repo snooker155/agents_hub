@@ -80,18 +80,19 @@ def _filters(actor: Optional[str], action: Optional[str], workspace: Optional[st
     }
 
 
-def _merge_pages(*pages: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _merge_pages(*pages: Dict[str, Any], order: str = "desc") -> List[Dict[str, Any]]:
     """Rows from several :func:`audit.query` results, deduplicated by id and
-    newest first: a row that is both in the owner's workspace and by the
-    reader themselves must not appear twice."""
+    newest first (``order="asc"``: oldest first): a row that is both in the
+    owner's workspace and by the reader themselves must not appear twice."""
     merged: Dict[Any, Dict[str, Any]] = {}
     for page in pages:
         for row in page.get("items", []):
             merged[row["id"]] = row
-    return sorted(merged.values(), key=lambda r: r["id"], reverse=True)
+    return sorted(merged.values(), key=lambda r: r["id"], reverse=order != "asc")
 
 
-def _accessible_page(principal, filters: Dict[str, Any], limit: int, offset: int) -> Dict[str, Any]:
+def _accessible_page(principal, filters: Dict[str, Any], limit: int, offset: int,
+                     order: str = "desc") -> Dict[str, Any]:
     """One page of rows this principal may read.
 
     An admin (or the token / local principal, both admin by construction)
@@ -99,7 +100,7 @@ def _accessible_page(principal, filters: Dict[str, Any], limit: int, offset: int
     described in the module docstring, re-paged in Python.
     """
     if principal.is_admin:
-        return audit.query(limit=limit, offset=offset, **filters)
+        return audit.query(limit=limit, offset=offset, order=order, **filters)
     owned = _owned_workspaces(principal)
     # The reader's own scope IS the actor filter for the second query, so an
     # ``actor`` the caller also passed in (an admin-shaped filter this route
@@ -108,10 +109,10 @@ def _accessible_page(principal, filters: Dict[str, Any], limit: int, offset: int
     wanted_actor = filters.get("actor")
     scoped = {k: v for k, v in filters.items() if k != "actor"}
     fetch = min(offset + limit, 5000)
-    by_workspace = (audit.query(workspaces=owned, limit=fetch, offset=0, **scoped)
+    by_workspace = (audit.query(workspaces=owned, limit=fetch, offset=0, order=order, **scoped)
                     if owned else {"items": [], "total": 0})
-    by_actor = audit.query(actor=principal.id, limit=fetch, offset=0, **scoped)
-    ordered = _merge_pages(by_workspace, by_actor)
+    by_actor = audit.query(actor=principal.id, limit=fetch, offset=0, order=order, **scoped)
+    ordered = _merge_pages(by_workspace, by_actor, order=order)
     if wanted_actor:
         ordered = [r for r in ordered
                   if r.get("actor_id") == wanted_actor or r.get("actor_name") == wanted_actor]
@@ -199,14 +200,18 @@ async def get_audit(
     result: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    order: str = "desc",
 ):
-    """A page of audit rows this caller may read, newest first."""
+    """A page of audit rows this caller may read, newest first (``order=asc``:
+    oldest first). ``limit`` goes up to 2000, the most rows a "load more"
+    list holds (frontend listPagingState.js)."""
     _require_enabled()
     principal = _principal(request)
-    limit = max(1, min(int(limit), 1000))
+    limit = max(1, min(int(limit), 2000))
     offset = max(0, int(offset))
+    order = "asc" if str(order).lower() == "asc" else "desc"
     filters = _filters(actor, action, workspace, object_type, object_id, since, until, text, result)
-    return _accessible_page(principal, filters, limit, offset)
+    return _accessible_page(principal, filters, limit, offset, order)
 
 
 @router.get("/api/audit/actions")

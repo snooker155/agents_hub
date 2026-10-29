@@ -100,4 +100,16 @@ describe('Audit', () => {
     expect(lastCall.actor).toBe('alice');
     expect(lastCall.offset).toBe(0);
   });
+
+  it('loads the next batch below the list instead of paging', async () => {
+    getAuditLog.mockImplementation(({ limit }) => ok({
+      items: ROWS.slice(0, Math.min(limit, ROWS.length)), total: 45, limit, offset: 0,
+    }));
+    show();
+    await waitFor(() => expect(getAuditLog).toHaveBeenCalledTimes(1));
+    expect(getAuditLog.mock.calls[0][0]).toMatchObject({ limit: 20, offset: 0, order: 'desc' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Load 20 more' }));
+    await waitFor(() => expect(getAuditLog).toHaveBeenCalledTimes(2));
+    expect(getAuditLog.mock.calls.at(-1)[0]).toMatchObject({ limit: 40, offset: 0 });
+  });
 });
