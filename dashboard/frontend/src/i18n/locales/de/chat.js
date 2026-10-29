@@ -124,7 +124,7 @@ export default {
   nodeCount: '{{count}} Knoten',
   fileCount: '{{count}} Dateien',
   bytes: '{{count}} Bytes',
-  ws: 'WS',
+  ws: 'Workspace dieses Chats',
   noProject: 'Kein Projekt',
   model: 'MODELL',
   global: 'Global',

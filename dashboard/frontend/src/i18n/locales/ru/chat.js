@@ -128,7 +128,7 @@ export default {
   nodeCount: 'узлов: {{count}}',
   fileCount: 'файлов: {{count}}',
   bytes: '{{count}} байт',
-  ws: 'ПР',
+  ws: 'Пространство этого чата',
   noProject: 'Без проекта',
   model: 'МОДЕЛЬ',
   global: 'Глобально',

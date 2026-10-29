@@ -1,5 +1,5 @@
 import { AgentDropdown, FlowDropdown, ModeDropdown, ProjectDropdown, TeamDropdown } from './targetPickers';
-import { Activity, AlertCircle, AlertTriangle, Bot, FileText, MessageSquare, PanelLeftOpen, Terminal, UsersRound, Workflow } from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, Bot, FileText, Folder, MessageSquare, PanelLeftOpen, Terminal, UsersRound, Workflow } from 'lucide-react';
 import { useChatPage } from './context';
 import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
@@ -165,11 +165,14 @@ export default function ChatTopBar() {
       {/* The active chat's workspace is redundant when a specific workspace is
           selected in the header — only surface it in the default (all) view. */}
       {(!selectedWorkspace || selectedWorkspace === 'default') && (currentConv?.workspace || selectedWorkspace) && (
-        <div className="hidden md:flex items-center gap-1.5 text-xs text-gray-500">
-          <span className="font-semibold text-gray-400 uppercase tracking-wider text-[10px]">{t('chat.ws')}</span>
-          <span className="font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
-            {currentConv?.workspace || selectedWorkspace}
-          </span>
+        <div
+          className="hidden md:flex items-center gap-1.5 text-xs font-medium text-gray-700 bg-gray-100 px-2 py-0.5 rounded"
+          title={t('chat.ws')}
+          data-testid="chat-workspace"
+        >
+          {/* The Workspaces menu item's icon (navMenu.js). */}
+          <Folder className="w-3.5 h-3.5 text-gray-400 shrink-0" aria-label={t('chat.ws')} />
+          {currentConv?.workspace || selectedWorkspace}
         </div>
       )}
 

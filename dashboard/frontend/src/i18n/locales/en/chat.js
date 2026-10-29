@@ -124,7 +124,7 @@ export default {
   nodeCount: '{{count}} nodes',
   fileCount: '{{count}} files',
   bytes: '{{count}} bytes',
-  ws: 'WS',
+  ws: 'Workspace of this chat',
   noProject: 'No project',
   model: 'MODEL',
   global: 'Global',
