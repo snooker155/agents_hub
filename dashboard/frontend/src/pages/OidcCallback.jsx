@@ -3,7 +3,7 @@ import { AlertTriangle, Loader } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../components/auth';
 import {
-  parseFragment, safeNextPath, ssoErrorMessage, writeSessionMeta,
+  enterApp, parseFragment, safeNextPath, ssoErrorMessage, writeSessionMeta,
 } from '../components/sessionMeta';
 import { useI18n } from '../i18n';
 
@@ -85,9 +85,10 @@ export default function OidcCallback() {
           setError('unknown');
           return;
         }
+        // A full load, as after a password sign-in (sessionMeta.js enterApp).
         // The pending destination stays for the router's own mount of this
-        // page, which may run before or after this line.
-        navigate(next, { replace: true });
+        // page, which may run before this line.
+        enterApp(next);
       } catch {
         writeSessionMeta(null);
         setError('unknown');

@@ -49,6 +49,21 @@ export const safeNextPath = (value) => {
   return next;
 };
 
+/** Where a sign-in lands: the main chat, whatever page was open before. The
+ * page the last person left may be one the new one cannot see. */
+export const LOGIN_LANDING = '/chat';
+
+/**
+ * Open the app after a sign-in with a full page load, not a router move: the
+ * workspace check (api/workspaceSummary.js) and every cache keyed by
+ * workspace ran for the signed-out page, and a reload has them run again for
+ * the person now signed in, so a workspace remembered from the last person
+ * and not visible to this one is dropped.
+ */
+export const enterApp = (path = LOGIN_LANDING) => {
+  window.location.replace(safeNextPath(path));
+};
+
 /** The key/value pairs of a URL fragment (`#a=1&b=2`). */
 export const parseFragment = (hash) => {
   const out = {};

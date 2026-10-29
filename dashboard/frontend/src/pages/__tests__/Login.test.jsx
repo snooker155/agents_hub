@@ -16,6 +16,14 @@ import { I18nProvider } from '../../i18n';
 
 const mockAuth = { current: {} };
 
+// A sign-in opens the app with a full page load (sessionMeta.js enterApp),
+// which jsdom cannot do: the call itself is what these tests check.
+const enterApp = vi.hoisted(() => vi.fn());
+vi.mock('../../components/sessionMeta', async (importOriginal) => ({
+  ...(await importOriginal()),
+  enterApp,
+}));
+
 vi.mock('../../components/auth', async (importOriginal) => ({
   ...(await importOriginal()),
   useAuth: () => mockAuth.current,
@@ -85,17 +93,42 @@ describe('Login with single sign-on', () => {
     mockAuth.current = baseAuth();
     show();
     const button = screen.getByRole('link', { name: /Sign in with Keycloak/ });
-    expect(button.getAttribute('href')).toBe('/api/auth/oidc/start');
+    expect(button.getAttribute('href')).toBe(`/api/auth/oidc/start?next=${encodeURIComponent('/chat')}`);
     expect(screen.getByLabelText('Password')).toBeTruthy();
   });
 
-  it('keeps where the person was going in the start URL', () => {
+  it('lands on the main chat, not on the page the last person left open', () => {
     mockAuth.current = baseAuth();
     setUrl('/tasks?view=board');
     show('/tasks?view=board');
     const button = screen.getByRole('link', { name: /Sign in with Keycloak/ });
     expect(button.getAttribute('href'))
-      .toBe(`/api/auth/oidc/start?next=${encodeURIComponent('/tasks?view=board')}`);
+      .toBe(`/api/auth/oidc/start?next=${encodeURIComponent('/chat')}`);
+  });
+
+  it('says a refused sign-in in the page language, not the server English', async () => {
+    enterApp.mockClear();
+    const login = vi.fn(() => Promise.reject({ response: { status: 401, data: { detail: 'Wrong username or password' } } }));
+    mockAuth.current = baseAuth({ login });
+    show();
+    fireEvent.change(document.getElementById('auth-username'), { target: { value: 'bob' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'bad' } });
+    fireEvent.submit(screen.getByLabelText('Password').closest('form'));
+    await waitFor(() => expect(screen.getByText('Wrong username or password.')).toBeTruthy());
+    expect(enterApp).not.toHaveBeenCalled();
+  });
+
+  it('opens the main chat after a password sign-in', async () => {
+    enterApp.mockClear();
+    const login = vi.fn(() => Promise.resolve({ id: 'u2', username: 'bob' }));
+    mockAuth.current = baseAuth({ login });
+    setUrl('/tasks');
+    show('/tasks');
+    fireEvent.change(document.getElementById('auth-username'), { target: { value: 'bob' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } });
+    fireEvent.submit(screen.getByLabelText('Password').closest('form'));
+    await waitFor(() => expect(enterApp).toHaveBeenCalledWith('/chat'));
+    expect(login).toHaveBeenCalledWith('bob', 'pw');
   });
 
   it('hides the password form when local passwords are off, behind an admin link', () => {
@@ -136,7 +169,7 @@ describe('OIDC callback', () => {
     await waitFor(() => expect(adoptSession).toHaveBeenCalledWith('tok-123'));
     expect(window.location.hash).toBe('');
     expect(readSessionMeta()).toEqual({ kind: 'oidc', expires_at: expires });
-    await waitFor(() => expect(screen.getByTestId('arrived')).toBeTruthy());
+    await waitFor(() => expect(enterApp).toHaveBeenCalledWith('/tasks'));
   });
 
   it('refuses a next that leaves the site', async () => {

@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { oidcStartUrl } from '../api';
 import { useAuth } from '../components/auth';
-import { parseFragment, ssoErrorMessage } from '../components/sessionMeta';
+import { LOGIN_LANDING, enterApp, parseFragment, ssoErrorMessage } from '../components/sessionMeta';
 import { useI18n } from '../i18n';
 import OidcCallback from './OidcCallback';
 
@@ -37,12 +37,25 @@ export default function Login() {
   return <LoginForm />;
 }
 
-/** Where to go after signing in: here, unless "here" is a login path. */
-const currentPath = () => {
-  const { pathname, search } = window.location;
-  if (!pathname || pathname === '/' || pathname.startsWith('/login')) return '';
-  return `${pathname}${search || ''}`;
-};
+// The server's sign-in refusals (routes/auth.py, common/identity.py) are
+// English; the form says them in the page's language. Anything else (an
+// unreachable server, a message added later) is the general "could not
+// sign in".
+const BOOTSTRAP_ERRORS = [
+  ['username is required', 'usernameRequired'],
+  ['username must be one word', 'usernameInvalid'],
+  ['password must not be empty', 'passwordRequired'],
+  ['already has users', 'alreadyBootstrapped'],
+];
+
+function loginErrorMessage(t, err) {
+  const status = err?.response?.status;
+  if (status === 401) return t('auth.login.wrongCredentials');
+  if (status === 429) return t('auth.login.throttled');
+  const detail = String(err?.response?.data?.detail || '');
+  const known = BOOTSTRAP_ERRORS.find(([text]) => detail.includes(text));
+  return known ? t(`auth.login.${known[1]}`) : t('auth.login.failed');
+}
 
 function LoginForm() {
   const { t } = useI18n();
@@ -75,9 +88,9 @@ function LoginForm() {
     try {
       if (firstRun) await bootstrap(username, password);
       else await login(username, password);
+      enterApp(LOGIN_LANDING);
     } catch (err) {
-      const detail = err?.response?.data?.detail;
-      setError(detail || t('auth.login.failed'));
+      setError(loginErrorMessage(t, err));
     } finally {
       setBusy(false);
     }
@@ -103,7 +116,7 @@ function LoginForm() {
         </div>
 
         {oidc && !firstRun && (
-          <a href={oidcStartUrl(currentPath())}
+          <a href={oidcStartUrl(LOGIN_LANDING)}
             className="w-full flex items-center justify-center gap-2 border border-gray-200 hover:bg-gray-50 text-gray-800 px-3 py-2 rounded-lg text-sm font-medium">
             <Building2 className="w-4 h-4" />
             {t('auth.sso.signInWith', { provider: oidc.provider_name })}
