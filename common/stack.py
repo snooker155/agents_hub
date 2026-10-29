@@ -126,7 +126,7 @@ def probe_broker() -> Dict[str, Any]:
         # Redis is pinged whether or not this process holds a bridge: the
         # question is whether Redis answers, and a CLI process never has one.
         bridge = broker_bridge.get_redis() is not None
-        import redis  # pyright: ignore[reportMissingImports] - optional (requirements-broker)
+        import redis  # pyright: ignore[reportMissingImports] - optional (requirements-broker.txt)
         # The bridge's own client is async and bound to its loop; a probe from
         # a worker thread uses a short-lived sync client on the same URL.
         client = redis.from_url(url, socket_timeout=PROBE_TIMEOUT_SECONDS,

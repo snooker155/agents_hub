@@ -47,9 +47,13 @@ RUN apt-get update \
 # It is not part of requirements.lock (see that file's header), so it is
 # still installed from its own requirement file.
 # The connector drivers (requirements-connectors.txt) ride along the same way:
-# imported lazily, inert until a connector is configured.
-COPY requirements.lock requirements-postgres.txt requirements-connectors.txt /tmp/
-RUN pip install --no-cache-dir -r /tmp/requirements.lock -r /tmp/requirements-postgres.txt -r /tmp/requirements-connectors.txt
+# imported lazily, inert until a connector is configured. So do the Redis and
+# S3 clients the `ha` profile needs (requirements-broker.txt for
+# AGENTS_HUB_BROKER_URL, requirements-blobs.txt for AGENTS_HUB_BLOB_URL).
+COPY requirements.lock requirements-postgres.txt requirements-connectors.txt \
+     requirements-broker.txt requirements-blobs.txt /tmp/
+RUN pip install --no-cache-dir -r /tmp/requirements.lock -r /tmp/requirements-postgres.txt \
+    -r /tmp/requirements-connectors.txt -r /tmp/requirements-broker.txt -r /tmp/requirements-blobs.txt
 
 # ---------- the same stack plus the RAG extras ----------
 # Torch comes from the CPU-only index first so the image does not carry the

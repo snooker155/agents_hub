@@ -1,0 +1,5 @@
+# The Redis client, used only when AGENTS_HUB_BROKER_URL is set: the
+# cross-replica session-broker bridge (common/broker_bridge.py) and the
+# Redis probe on the Cluster page (common/stack.py, docs/scaling.md).
+# Install with `pip install -r requirements-broker.txt` or `pip install -e ".[broker]"`.
+redis>=5,<6

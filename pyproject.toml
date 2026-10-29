@@ -52,6 +52,8 @@ postgres = { file = ["requirements-postgres.txt"] }
 connectors = { file = ["requirements-connectors.txt"] }
 # S3 client, for AGENTS_HUB_BLOB_URL=s3://... (common/blobs.py, docs/storage.md).
 blobs = { file = ["requirements-blobs.txt"] }
+# Redis client, for AGENTS_HUB_BROKER_URL=redis://... (common/broker_bridge.py).
+broker = { file = ["requirements-broker.txt"] }
 # The playground (simulation worlds/scenarios) needs nothing beyond backend/
 # agents already installs; this extra is a marker, not a dependency source —
 # PLAYGROUND_ENABLED is what actually makes the feature optional at runtime.

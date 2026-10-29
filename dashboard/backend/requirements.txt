@@ -20,6 +20,6 @@ python-pptx>=1.0.2
 # cross-replica session-broker bridge (common/broker_bridge.py, docs/scaling.md).
 # A plain requirements.txt has no "extra" mechanism, so this stays commented
 # out rather than installed everywhere; a deployment that scales the backend
-# installs it explicitly with `pip install redis>=5,<6` (or its own image
-# layer) instead of uncommenting it here.
+# installs requirements-broker.txt at the repo root (the Docker image does)
+# instead of uncommenting it here.
 # redis>=5,<6
