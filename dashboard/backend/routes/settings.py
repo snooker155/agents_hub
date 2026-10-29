@@ -7,10 +7,10 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, cast
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from common.config import agent_execution_mode, chat_execution, live_setting, settings as _cfg
@@ -614,9 +614,19 @@ class TestProviderRequest(BaseModel):
 
 
 @router.post("/test-provider")
-async def test_provider(data: TestProviderRequest):
-    """Test connectivity for any provider. Falls back to env-file credentials."""
+async def test_provider(data: TestProviderRequest, request: Request = cast(Request, None)):
+    """Test connectivity for any provider. Falls back to env-file credentials.
+
+    Open to members (common/auth.py ``ADMIN_WRITE_EXEMPT``) for the header
+    model picker's status dots, but only against the saved settings: a key or
+    base URL in the body is an administrator's test of a new connection, and
+    from a member it would have the hub call an address of their choosing."""
     import time
+    if data.api_key or data.base_url:
+        from common import identity, record_access
+        if request is not None and record_access.restricted(identity.request_principal(request)):
+            raise HTTPException(status_code=403,
+                                detail="Only an administrator can test a key or an address of their own")
     env = _read_env()
     start = time.time()
 

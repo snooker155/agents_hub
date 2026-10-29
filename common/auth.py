@@ -211,11 +211,14 @@ ADMIN_WRITE_SEGMENTS = frozenset({"model-policy"})
 ADMIN_WRITE_PREFIXES = ("/api/models", "/api/settings")
 
 #: Writes under :data:`ADMIN_WRITE_PREFIXES` that stay open to members: the
-#: browser's own workspace selection, and the voices a person records for
-#: their assistant.
+#: browser's own workspace selection, the voices a person records for their
+#: assistant, and the header model picker's reachability check, which a
+#: member may run against the hub's saved settings only (the route refuses a
+#: key or address of the member's own: routes/settings.py ``test_provider``).
 ADMIN_WRITE_EXEMPT = (
     ("PUT", "/api/settings/workspace"),
     ("*", "/api/models/local/runtime/voices"),
+    ("POST", "/api/settings/test-provider"),
 )
 
 #: Path segments directly under ``/api/workspaces/`` that are routes, not

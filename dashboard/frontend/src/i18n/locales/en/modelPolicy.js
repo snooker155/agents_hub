@@ -37,6 +37,7 @@ export default {
   },
   picker: {
     fixedEffort: 'The workspace policy fixes the reasoning effort.',
+    adminEffort: 'The reasoning effort is set by an administrator.',
     policyBadge: 'Policy',
     onlyModel: 'The only model this workspace allows.',
   },

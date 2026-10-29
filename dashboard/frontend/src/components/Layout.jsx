@@ -4,7 +4,7 @@ import { useWorkspace } from './workspace';
 import { useTheme } from './theme';
 import { useStream, useLiveRefetch } from './stream';
 import { useFeatures } from './features';
-import { MULTI, useAuth } from './auth';
+import { MULTI, canAdminister, useAuth } from './auth';
 import { buildMenu, visibleGroups, hiddenCount, defaultMenuMode, readMenuMode, writeMenuMode, isItemActive, SIMPLE, FULL } from './navMenu';
 import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog, getModelReasoning } from '../api';
 import { EffortSlider } from './EffortSelect';
@@ -216,6 +216,15 @@ const Layout = ({ children }) => {
   // the picker offers its models only, and its default is the workspace default.
   const policy = workspaceModel.policy?.models?.length ? workspaceModel.policy : null;
   const pickerModels = policy ? policyModels(policy) : availableModels;
+  // A member (multi mode, not an administrator) changes the model for the
+  // whole workspace from here, so only within what the hub offers: the
+  // global model only when it is one of the listed models, and the reasoning
+  // effort not at all (PUT /api/workspaces/{name}/model refuses the same).
+  const member = !canAdminister(auth);
+  const globalListed = availableModels.some(
+    (m) => m.provider === globalDefault.provider && m.model === globalDefault.model,
+  );
+  const offerGlobal = !policy && (!member || globalListed);
   const workspaceDefaultIsGlobal = !policy && Boolean(
     wsDefault.provider &&
     wsDefault.provider === globalDefault.provider &&
@@ -564,7 +573,7 @@ const Layout = ({ children }) => {
                 <div className="header-sheet absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-64 py-1">
                   {/* Global — DEFAULT_PROVIDER from .env, lowest priority fallback.
                       Not offered under a model policy: the policy's default replaces it. */}
-                  {!policy && <button
+                  {offerGlobal && <button
                     onClick={() => handleModelSwitch('global', '')}
                     className={`w-full text-left flex items-center gap-2 px-4 py-2 text-xs hover:bg-gray-50 transition-colors ${
                       displayModel.source === 'global' ? 'bg-indigo-50' : ''
@@ -627,10 +636,16 @@ const Layout = ({ children }) => {
                       leftmost stop is the model's own default */}
                   {displayProfile?.profile?.efforts?.length > 0 && (
                     <div className="border-t border-gray-100 mt-1 px-4 pt-2 pb-1.5">
-                      {policy?.effort ? (
-                        <div className="flex items-baseline justify-between gap-2 opacity-60 cursor-not-allowed" title={t('modelPolicy.picker.fixedEffort')} data-testid="policy-fixed-effort">
+                      {policy?.effort || member ? (
+                        <div
+                          className="flex items-baseline justify-between gap-2 opacity-60 cursor-not-allowed"
+                          title={policy?.effort ? t('modelPolicy.picker.fixedEffort') : t('modelPolicy.picker.adminEffort')}
+                          data-testid="policy-fixed-effort"
+                        >
                           <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{t('effort.headerTitle')}</span>
-                          <span className="text-xs font-medium text-gray-600">{effortLabel(t, effortShown || policy.effort)}</span>
+                          <span className="text-xs font-medium text-gray-600">
+                            {effortLabel(t, effortShown || policy?.effort) || effortLabel(t, displayProfile.value) || '—'}
+                          </span>
                         </div>
                       ) : (
                       <EffortSlider
@@ -715,9 +730,10 @@ const Layout = ({ children }) => {
             {!narrow && themeButton}
             {/* Interface language */}
             {!narrow && <LanguageSwitcher />}
-            {!narrow && userControls}
             {/* Help (docs/help.md): the Support agent, for a user who is lost */}
             <HelpPanel />
+            {/* Who is signed in and the way out: the last thing in the header. */}
+            {!narrow && userControls}
           </div>
         </header>
         {/* Data the person synced into this workspace end-to-end encrypted: said

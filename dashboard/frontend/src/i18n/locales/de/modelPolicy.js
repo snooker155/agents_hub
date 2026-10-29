@@ -38,6 +38,7 @@ export default {
   },
   picker: {
     fixedEffort: 'Die Richtlinie des Arbeitsbereichs legt den Denkaufwand fest.',
+    adminEffort: 'Die Denktiefe legt ein Administrator fest.',
     policyBadge: 'Richtlinie',
     onlyModel: 'Das einzige Modell, das dieser Arbeitsbereich erlaubt.',
   },

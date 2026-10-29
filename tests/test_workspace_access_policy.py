@@ -265,6 +265,47 @@ def test_the_policy_limits_the_header_the_default_and_an_agents_model(multi, cli
                       json={"models": []}).json() == {"policy": None}
 
 
+def test_without_a_policy_a_member_picks_only_listed_models_and_no_effort(multi, client, monkeypatch):
+    from tools import delegation
+    admin = _admin(client)
+    alice, _bob = _two_workspaces(client, admin)
+    glob = client.get("/api/workspaces/w1/model", headers=alice).json()["global_default"]
+    listed = [{"id": "openai/gpt-a", "provider": "openai", "model": "gpt-a", "context_window": 0}]
+    monkeypatch.setattr(delegation, "_enabled_catalog_models", lambda: list(listed))
+
+    def put(body, who=alice):
+        return client.put("/api/workspaces/w1/model", headers=who, json=body).status_code
+
+    assert put({"effort": "high"}) == 403
+    assert put({"provider": "openai", "model": "gpt-z"}) == 403
+    assert put({"provider": "global"}) == 403          # the global model is not listed
+    assert put({"provider": "openai", "model": "gpt-a"}) == 200
+    assert put({"provider": ""}) == 200                # back to the workspace default
+    # Listed, the global model is a choice like any other.
+    listed.append({"id": f"{glob['provider']}/{glob['model']}", "provider": glob["provider"],
+                   "model": glob["model"], "context_window": 0})
+    assert put({"provider": "global"}) == 200
+    # The administrator is not held to it.
+    assert put({"effort": "high"}, admin) == 200
+    assert put({"provider": "openai", "model": "gpt-z"}, admin) == 200
+
+
+def test_a_member_checks_the_saved_providers_but_not_a_key_of_their_own(multi, client, monkeypatch):
+    from routes import settings as settings_routes
+    admin = _admin(client)
+    alice, _bob = _two_workspaces(client, admin)
+    monkeypatch.setattr(settings_routes, "_read_env", lambda: {})
+    monkeypatch.setattr(settings_routes._cfg, "openai_api_key", "", raising=False)
+
+    saved = client.post("/api/settings/test-provider", headers=alice, json={"provider": "openai"})
+    assert saved.status_code == 200 and saved.json() == {"ok": False, "error": "No API key configured"}
+    for extra in ({"api_key": "sk-mine"}, {"base_url": "http://10.0.0.5/v1"}):
+        assert client.post("/api/settings/test-provider", headers=alice,
+                           json={"provider": "openai", **extra}).status_code == 403
+    # Other settings writes stay the administrator's.
+    assert client.put("/api/settings/member-menu", headers=alice, json={"hidden": []}).status_code == 403
+
+
 def test_catalog_picks_follow_the_policy(monkeypatch):
     from tools import delegation
     catalog = [{"id": "openai/gpt-a", "provider": "openai", "model": "gpt-a", "context_window": 0},

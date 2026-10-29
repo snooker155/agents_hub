@@ -3,7 +3,7 @@ Workspace-related API routes.
 """
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from pathlib import Path
 import mimetypes
 import os
@@ -750,6 +750,30 @@ def _audit_model_policy(request: Request, name: str, stored: Optional[dict]) -> 
         log.debug("model policy: audit failed", exc_info=True)
 
 
+def _member_model_refusal(request: Optional[Request], name: str, payload: dict) -> None:
+    """403 when a member asks the header for more than an administrator
+    allows: the reasoning effort is the administrator's, and without a model
+    policy a model must be one of the enabled catalog models (tools/
+    delegation.py ``enabled_models``), the global default included. Under a
+    policy its own list decides (``_policy_refusal``, a 400)."""
+    from common import identity, record_access
+    if request is None or not record_access.restricted(identity.request_principal(request)):
+        return
+    if "effort" in payload:
+        raise HTTPException(status_code=403, detail="The reasoning effort is set by an administrator")
+    provider = str(payload.get("provider") or "").strip()
+    if not provider or provider == "workspace_default" or _has_model_policy(name):
+        return
+    model = str(payload.get("model") or "").strip()
+    if provider == "global":
+        glob = _model_state(name, get_workspace_metadata(name) or {})["global_default"]
+        provider, model = glob["provider"], glob["model"]
+    from tools.delegation import enabled_models
+    if not any(m["provider"] == provider and m["model"] == model for m in enabled_models(name)):
+        raise HTTPException(status_code=403,
+                            detail=f"'{provider}/{model}' is not one of the models this workspace offers")
+
+
 def _has_model_policy(name: str) -> bool:
     """Whether a model policy applies to ``name``, its own or inherited."""
     from workspace.model_policy import for_workspace
@@ -765,12 +789,16 @@ def _policy_refusal(name: str, provider: str, model: str) -> None:
 
 
 @router.put("/{name}/model")
-async def set_workspace_model(name: str, payload: dict):
+async def set_workspace_model(name: str, payload: dict, request: Request = cast(Request, None)):
     """Set workspace-scoped model override.
     provider='global' forces global DEFAULT_PROVIDER even if workspace has a default model.
     provider='' or 'workspace_default' clears the override (falls back to workspace settings then global).
+    A member (multi mode, not an administrator) changes it for the whole
+    workspace, so only within the listed models and never the effort
+    (see :func:`_member_model_refusal`).
     """
     _ensure_writable_workspace(name)
+    _member_model_refusal(request, name, payload)
     if "effort" in payload:
         # The header's effort, for agents that inherit the model: "" or
         # "inherit" goes back to each model's own default. Kept apart from the
