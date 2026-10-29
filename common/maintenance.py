@@ -111,14 +111,12 @@ def prune_orphan_files() -> int:
                     log.debug("blob cleanup failed for %s", f, exc_info=True)
 
     # Registry snapshots written for run containers (common/snapshot.py):
-    # gone once their run has finished. Node snapshots (node-<id>) stay while
-    # the node record exists.
+    # gone once their run has finished.
     try:
         from common import snapshot
         live = {row["run_id"] for row in conn.execute(
             "SELECT run_id FROM runs WHERE status IN ('running', 'pending', 'stop', 'awaiting_approval')"
         ).fetchall()}
-        live |= {f"node-{row['node_id']}" for row in conn.execute("SELECT node_id FROM nodes").fetchall()}
         removed += snapshot.prune_snapshots(live)
     except Exception:  # noqa: BLE001 - isolated cleanup pass, must not block orphan file pruning
         log.debug("snapshot pruning failed", exc_info=True)

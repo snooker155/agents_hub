@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 # Core stores whose row counts say how much state has accumulated.
 _COUNTED_TABLES = (
-    "runs", "run_payloads", "tasks", "sessions", "chats", "nodes",
+    "runs", "run_payloads", "tasks", "sessions", "chats", "instances",
     "continuations", "task_activity",
 )
 

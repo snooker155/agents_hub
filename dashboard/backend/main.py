@@ -146,8 +146,10 @@ async def lifespan(app: FastAPI):
         def _load():
             from common import db as _dbm
             try:
+                # A run records its host in ``extra`` (runtime/agent_run.py).
                 running = _dbm.get_conn().execute(
-                    "SELECT COUNT(*) FROM runs WHERE status = 'running' AND host = ?",
+                    "SELECT COUNT(*) FROM runs WHERE status = 'running' "
+                    f"AND {_dbm.json_text('extra', 'host')} = ?",
                     (__import__("socket").gethostname(),)).fetchone()[0]
             except Exception:  # noqa: BLE001 - unreadable or unavailable input falls back to the default
                 log.debug("_load: falling back after a failure", exc_info=True)
