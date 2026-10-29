@@ -23,22 +23,18 @@ function Landed({ onRender }) {
 vi.mock('../../components/settings/ToolPolicySettings', () => ({ default: () => null }));
 vi.mock('../../components/settings/LoopSettingsWorkspace', () => ({ default: () => null }));
 
-vi.mock('axios', () => ({
-  default: {
-    create: () => ({
-      get: () => ok({ env_defined_fields: [], backends: [], adapters: [] }),
-      post: () => ok({ ok: true }),
-      put: () => ok({}),
-      delete: () => ok({}),
-    }),
-  },
-}));
 
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ selectedWorkspace: 'default' }),
 }));
 
 vi.mock('../../api', () => ({
+  default: {
+    get: () => ok({ env_defined_fields: [], backends: [], adapters: [] }),
+    post: () => ok({ ok: true }),
+    put: () => ok({}),
+    delete: () => ok({}),
+  },
   getSettings: () => ok({ env_defined_fields: [] }),
   testProvider: () => ok({ ok: true }),
   testLocalModel: () => ok({ ok: true, models: [] }),

@@ -17,22 +17,18 @@ vi.mock('../../components/workspace/WorkspaceDataClass', () => ({
   default: ({ workspace }) => <div data-testid="dc-card">data class of {workspace}</div>,
 }));
 
-vi.mock('axios', () => ({
-  default: {
-    create: () => ({
-      get: () => ok({ env_defined_fields: [], backends: [], adapters: [] }),
-      post: () => ok({ ok: true }),
-      put: () => ok({}),
-      delete: () => ok({}),
-    }),
-  },
-}));
 
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ selectedWorkspace: 'team-a' }),
 }));
 
 vi.mock('../../api', () => ({
+  default: {
+    get: () => ok({ env_defined_fields: [], backends: [], adapters: [] }),
+    post: () => ok({ ok: true }),
+    put: () => ok({}),
+    delete: () => ok({}),
+  },
   getSettings: () => ok({ env_defined_fields: [] }),
   getWorkspaceSettingsOverrides: () => ok({ overrides: {} }),
   updateWorkspaceSettingsOverrides: () => ok({}),

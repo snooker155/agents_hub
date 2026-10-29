@@ -27,20 +27,11 @@ const CONTAINERS = [
 ];
 
 const get = vi.fn((url) => {
-  if (url === '/api/containers/agents-status') return ok({ agents: [] });
-  if (url === '/api/containers') return ok({ containers: CONTAINERS });
+  if (url === '/containers/agents-status') return ok({ agents: [] });
+  if (url === '/containers') return ok({ containers: CONTAINERS });
   return ok({});
 });
 
-vi.mock('axios', () => ({
-  default: {
-    create: () => ({
-      get: (...a) => get(...a),
-      post: () => ok({}),
-      delete: () => ok({}),
-    }),
-  },
-}));
 
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ workspaceFilter: null }),
@@ -51,6 +42,11 @@ vi.mock('../../components/stream', () => ({
 }));
 
 vi.mock('../../api', () => ({
+  default: {
+    get: (...a) => get(...a),
+    post: () => ok({}),
+    delete: () => ok({}),
+  },
   getAgents: () => ok({ agents: [] }),
 }));
 
@@ -65,7 +61,7 @@ beforeEach(() => {
 describe('Containers — remote rows', () => {
   it('shows every container on the Containers tab, switching from the default Agent Images tab', async () => {
     show();
-    await waitFor(() => expect(get).toHaveBeenCalledWith('/api/containers'));
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/containers'));
     screen.getByText('Containers', { selector: 'button span' }).closest('button').click();
     await waitFor(() => expect(screen.getByText('agents-hub-agent-local')).toBeInTheDocument());
     expect(screen.getByText('agents-hub-agent-remote')).toBeInTheDocument();

@@ -653,12 +653,100 @@ def _with_rag() -> str:
     return "true" if str(raw).strip().lower() in ("1", "true", "yes", "on") else "false"
 
 
-def build_base_image(no_cache: bool = False) -> Dict[str, Any]:
-    """Build the unified base image (agents-hub/base:latest): the ``agents``
-    target of the repository's Dockerfile.
+# The release workflow publishes the ``agents`` target under this name, tagged
+# with the release version (X.Y.Z, and X.Y.Z-rag for the RAG flavour). A hub
+# running from a release image takes its base image from there instead of
+# building it: the build needs BuildKit, a gigabyte of wheels and far longer
+# than a request may stay open. AGENTS_HUB_AGENTS_IMAGE names a mirror.
+AGENTS_RELEASE_REPO = "ghcr.io/snooker155/agents-hub-agents"
 
-    Returns a result dict with keys: success, image, log, error.
+# Long enough for a first build with the RAG stack on a slow line.
+BASE_BUILD_TIMEOUT = 3600
+
+
+def release_base_image() -> str:
+    """The published agents image of this release, or "" when this process
+    is not a release image (a checkout, whose base image is built from its own
+    source so the code inside matches)."""
+    version = (os.environ.get("AGENTS_HUB_VERSION") or "").strip().lstrip("v")
+    if not version:
+        return ""
+    try:
+        from common.config import live_setting
+        repo = str(live_setting("AGENTS_HUB_AGENTS_IMAGE", "") or "").strip()
+    except Exception:  # noqa: BLE001 - no config module in a stripped-down process; the default stands
+        repo = ""
+    suffix = "-rag" if _with_rag() == "true" else ""
+    return f"{repo or AGENTS_RELEASE_REPO}:{version}{suffix}"
+
+
+def _stream(cmd: List[str], on_line, timeout: int) -> tuple[int, str]:
+    """Run ``cmd``, handing each output line to ``on_line`` as it comes.
+    Returns (exit code, the whole output); raises TimeoutExpired past
+    ``timeout`` seconds, after killing the command."""
+    import threading
+    proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+    lines: List[str] = []
+
+    def read() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            lines.append(line)
+            if on_line:
+                on_line(line)
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        reader.join(timeout=5)
+    return proc.returncode, "\n".join(lines)
+
+
+def pull_base_image(image: str, on_line=None) -> Dict[str, Any]:
+    """Pull a published agents image and tag it as the base image."""
+    code, log = _stream(["docker", "pull", image], on_line, timeout=BASE_BUILD_TIMEOUT)
+    if code == 0:
+        tagged = _run(["docker", "tag", image, BASE_IMAGE], timeout=QUERY_TIMEOUT)
+        log += "\n" + (tagged.stdout or "") + (tagged.stderr or "")
+        code = tagged.returncode
+    return {"success": code == 0, "log": log,
+            "error": None if code == 0 else (log.strip().splitlines() or ["docker pull failed"])[-1]}
+
+
+def build_base_image(no_cache: bool = False, on_line=None) -> Dict[str, Any]:
+    """Make the unified base image (agents-hub/base:latest) exist here.
+
+    A release image pulls the matching published agents image and tags it
+    (unless ``no_cache`` asks for a fresh build); otherwise, or when the pull
+    fails, the ``agents`` target of the repository's Dockerfile is built.
+    ``on_line`` receives the output as it comes.
+
+    Returns a result dict with keys: success, image, source, log, error.
     """
+    log = ""
+    release = "" if no_cache else release_base_image()
+    if release:
+        if on_line:
+            on_line(f"$ docker pull {release}")
+        try:
+            pulled = pull_base_image(release, on_line)
+        except (OSError, subprocess.SubprocessError) as exc:
+            pulled = {"success": False, "log": "", "error": str(exc)}
+        if pulled["success"]:
+            return {"success": True, "image": BASE_IMAGE, "source": release, "log": pulled["log"],
+                    "error": None, "built_at": _utc_now_iso()}
+        log = pulled["log"] + f"\nPull failed ({pulled['error']}); building from source instead.\n"
+        if on_line:
+            on_line(f"Pull failed ({pulled['error']}); building from source instead.")
+
     cmd = ["docker", "build", "-t", BASE_IMAGE, "--target", "agents"]
     if no_cache:
         cmd.append("--no-cache")
@@ -666,19 +754,39 @@ def build_base_image(no_cache: bool = False) -> Dict[str, Any]:
     # unless WITH_RAG=true, the same switch docker-compose.yml passes to the
     # backend image (Dockerfile, docs/memory.md).
     cmd += ["--build-arg", f"WITH_RAG={_with_rag()}", "."]
+    if on_line:
+        on_line("$ " + " ".join(cmd))
     try:
-        result = _run(cmd, timeout=600)
-        success = result.returncode == 0
-        log = (result.stdout or "") + (result.stderr or "")
-        return {
-            "success": success,
-            "image": BASE_IMAGE if success else None,
-            "log": log,
-            "error": None if success else log.splitlines()[-1] if log else "build failed",
-            "built_at": _utc_now_iso() if success else None,
-        }
+        code, out = _stream(cmd, on_line, timeout=BASE_BUILD_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return {"success": False, "image": None, "source": "build", "log": log,
+                "error": f"The build did not finish within {BASE_BUILD_TIMEOUT // 60} minutes", "built_at": None}
     except (OSError, subprocess.SubprocessError) as exc:
-        return {"success": False, "image": None, "log": "", "error": str(exc), "built_at": None}
+        return {"success": False, "image": None, "source": "build", "log": log, "error": str(exc), "built_at": None}
+    log += out
+    success = code == 0
+    return {
+        "success": success,
+        "image": BASE_IMAGE if success else None,
+        "source": "build",
+        "log": log,
+        "error": None if success else (out.strip().splitlines() or ["build failed"])[-1],
+        "built_at": _utc_now_iso() if success else None,
+    }
+
+
+def missing_image_hint(image: str, error: str) -> str:
+    """``error`` from docker run, with what to do when the image is one of
+    ours that is not here: the daemon then tries Docker Hub, where no
+    agents-hub image exists, and says only that the pull was denied."""
+    if not image.startswith(IMAGE_PREFIX + "/"):
+        return error
+    if "Unable to find image" not in error and "pull access denied" not in error:
+        return error
+    return (f"The image {image} is not on this Docker host. Build or pull the base image on "
+            f"the Containers page (Agent images, Build base image), or on this host run "
+            f"`docker pull {release_base_image() or AGENTS_RELEASE_REPO + ':<version>'}` and tag it "
+            f"{BASE_IMAGE}. Docker said: {error}")
 
 
 def build_image(
@@ -1287,7 +1395,7 @@ def start_container(
             "container_id": None,
             "container_name": container_name,
             "image": image,
-            "error": (result.stderr or result.stdout or "docker run failed").strip(),
+            "error": missing_image_hint(image, (result.stderr or result.stdout or "docker run failed").strip()),
         }
     except (OSError, subprocess.SubprocessError) as exc:
         return {

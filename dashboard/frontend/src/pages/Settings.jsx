@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import axios from 'axios';
 import {
   RefreshCw, Key, Cpu, Activity, Wrench, Database, CheckCircle, AlertCircle, Wifi, Lock, Save, Trash2, Server, X, ScrollText, Settings as SettingsIcon, Link2, Sparkles, Globe, MonitorSmartphone, Thermometer, RotateCcw, Shield, CheckSquare, UserRound,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { MULTI, TOKEN, canAdminister, useAuth } from '../components/auth';
-import { getApiToken, setApiToken, API_ORIGIN } from '../api';
+import api, { getApiToken, setApiToken, API_ORIGIN } from '../api';
 import { getDemo, setDemo } from '../api/demo';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -25,7 +24,6 @@ import { AccessNotice, EditLock } from '../components/access/EditLock';
 import FirstRunSettings from '../components/firstRun/FirstRunSettings';
 import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
 import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
-const api = axios.create({ baseURL: 'http://localhost:8000' });
 
 
 // Sections, grouped and laid out the way the Docs page lays out its chapters:
@@ -219,7 +217,7 @@ function CustomBackendsTab() {
   const load = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/api/settings/custom-backends');
+      const { data } = await api.get('/settings/custom-backends');
       setBackends(data.backends || []);
       setAdapters(data.adapters || []);
     } catch (e) {
@@ -258,7 +256,7 @@ function CustomBackendsTab() {
       };
       // Only send api_key when the user typed one (blank keeps the stored key).
       if (form.api_key) payload.api_key = form.api_key;
-      await api.post('/api/settings/custom-backends', payload);
+      await api.post('/settings/custom-backends', payload);
       setForm(BLANK_BACKEND);
       setEditingId(null);
       await load();
@@ -271,7 +269,7 @@ function CustomBackendsTab() {
 
   const remove = async (id) => {
     if (!window.confirm(t('settings.confirmDeleteBackend', { id }))) return;
-    try { await api.delete(`/api/settings/custom-backends/${encodeURIComponent(id)}`); await load(); }
+    try { await api.delete(`/settings/custom-backends/${encodeURIComponent(id)}`); await load(); }
     catch (e) { setError(e.response?.data?.detail || e.message); }
   };
 
@@ -279,7 +277,7 @@ function CustomBackendsTab() {
     setTesting(s => ({ ...s, [id]: true }));
     setTests(s => ({ ...s, [id]: null }));
     try {
-      const { data } = await api.post('/api/settings/test-provider', { provider: id });
+      const { data } = await api.post('/settings/test-provider', { provider: id });
       setTests(s => ({ ...s, [id]: data }));
     } catch (e) {
       setTests(s => ({ ...s, [id]: { ok: false, error: e.response?.data?.detail || e.message } }));

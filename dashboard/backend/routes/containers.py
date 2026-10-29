@@ -4,7 +4,8 @@ Endpoints
 ---------
 GET  /api/containers/images              list built agents-hub images
 GET  /api/containers                     list all managed containers (running + stopped)
-POST /api/containers/build-base          build the unified base image
+POST /api/containers/build-base          start pulling or building the unified base image
+GET  /api/containers/build-base          where that pull or build stands
 POST /api/containers/build/{agent_id}    build per-agent image
 GET  /api/containers/{name}/logs         get container logs
 POST /api/containers/{name}/stop         stop a running container
@@ -14,8 +15,13 @@ GET  /api/containers/dockerfile/{agent_id}   return generated Dockerfile (previe
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
@@ -78,23 +84,101 @@ def get_dockerfile(agent_id: str):
     )
 
 
-@router.post("/build-base")
-async def build_base_image(body: BuildRequest, background_tasks: BackgroundTasks):
-    """Trigger a build of the unified base image (agents-hub/base:latest).
+# The base image takes minutes to pull and far longer to build, more than a
+# request may stay open behind a proxy (a dropped one surfaced as "Network
+# Error" with the build still going and its result lost). So it runs in a
+# thread and leaves its state in a file under the state directory, where any
+# API replica sharing that directory can answer for it.
+_BASE_BUILD_LOG_LINES = 400
+# A build whose file has not been written for this long belongs to a process
+# that is gone (the runner rewrites it at least every few seconds).
+_BASE_BUILD_STALE_S = 120
+_base_build_lock = threading.Lock()
 
-    Runs synchronously — may take several minutes on first build.
-    """
+
+def _base_build_file() -> Path:
+    return _mgr().DOCKERFILE_DIR / "base-build.json"
+
+
+def _read_base_build() -> dict:
     try:
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: _mgr().build_base_image(no_cache=body.no_cache)
-        )
-        if not result["success"]:
-            raise HTTPException(status_code=500, detail=result.get("error", "build failed"))
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 - reported to the client as an HTTP error
-        raise HTTPException(status_code=500, detail=str(exc))
+        state = json.loads(_base_build_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"state": "idle"}
+    if state.get("state") == "running" and time.time() - float(state.get("heartbeat") or 0) > _BASE_BUILD_STALE_S:
+        state.update(state="failed", error="The build stopped: the backend that ran it restarted")
+    return state
+
+
+def _write_base_build(state: dict) -> None:
+    path = _base_build_file()
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _run_base_build(no_cache: bool, started_at: str) -> None:
+    lines: list[str] = []
+    state = {"state": "running", "no_cache": no_cache, "started_at": started_at,
+             "heartbeat": time.time(), "log": "", "error": None}
+    last_write = [0.0]
+
+    def flush(force: bool = False) -> None:
+        if not force and time.time() - last_write[0] < 2:
+            return
+        last_write[0] = time.time()
+        state.update(heartbeat=time.time(), log="\n".join(lines[-_BASE_BUILD_LOG_LINES:]))
+        _write_base_build(state)
+
+    def on_line(line: str) -> None:
+        lines.append(line)
+        flush()
+
+    # The pull or a cached build step can go quiet for minutes; the heartbeat
+    # must not, or the state reads as abandoned.
+    done = threading.Event()
+
+    def beat() -> None:
+        while not done.wait(15):
+            flush(force=True)
+
+    threading.Thread(target=beat, daemon=True).start()
+    try:
+        result = _mgr().build_base_image(no_cache=no_cache, on_line=on_line)
+    except Exception as exc:  # noqa: BLE001 - the failure is the job's result, read by the page
+        result = {"success": False, "error": str(exc)}
+    finally:
+        done.set()
+    state.update(state="done" if result.get("success") else "failed",
+                 error=result.get("error"), source=result.get("source"),
+                 finished_at=datetime.now(timezone.utc).isoformat())
+    flush(force=True)
+
+
+@router.get("/build-base")
+def base_build_status():
+    """Where the last base image pull or build stands: ``state`` is idle,
+    running, done or failed, with its log tail and error."""
+    return _read_base_build()
+
+
+@router.post("/build-base", status_code=202)
+def build_base_image(body: BuildRequest):
+    """Start making the unified base image (agents-hub/base:latest): a release
+    pulls its published agents image, a checkout builds the Dockerfile's
+    ``agents`` target. Returns at once; GET this path for progress. A second
+    request while one runs returns the running one."""
+    with _base_build_lock:
+        current = _read_base_build()
+        if current.get("state") == "running":
+            return current
+        started_at = datetime.now(timezone.utc).isoformat()
+        state = {"state": "running", "no_cache": body.no_cache, "started_at": started_at,
+                 "heartbeat": time.time(), "log": "", "error": None}
+        _write_base_build(state)
+        threading.Thread(target=_run_base_build, args=(body.no_cache, started_at),
+                         name="base-image-build", daemon=True).start()
+        return state
 
 
 @router.post("/build/{agent_id}")

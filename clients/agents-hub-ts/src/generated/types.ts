@@ -306,6 +306,7 @@ export type BootstrapRequest = {
   "username": string;
   "password": string;
   "display_name"?: string;
+  "setup_code"?: string;
 };
 
 export type BudgetSettings = {
@@ -3233,6 +3234,7 @@ export interface ApiPaths {
     get: { response: unknown };
   };
   "/api/containers/build-base": {
+    get: { response: unknown };
     post: { body: BuildRequest; response: unknown };
   };
   "/api/containers/build/{agent_id}": {

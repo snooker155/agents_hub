@@ -54,6 +54,20 @@ turns that section into the next release.
 
 ### Fixed
 
+- The agents base image on a server. The Containers page, and Settings,
+  called `http://localhost:8000` directly, which on a server is the visitor's
+  own machine, so every request there failed with "Network Error"; they use
+  the dashboard's own address now (the agent creator's stream too). The
+  base image is made in the background (`GET /api/containers/build-base`
+  follows it, the page shows the log as it comes): a hub running from the
+  release images pulls the published `agents-hub-agents` image of its version
+  and tags it `agents-hub/base:latest` (`AGENTS_HUB_AGENTS_IMAGE` names a
+  mirror), a checkout builds it. The backend image carries buildx, so that
+  build skips the stages it does not need instead of going through the legacy
+  builder past its time limit. A runner or instance that finds no
+  `agents-hub/base` says how to get it instead of Docker Hub's "pull access
+  denied".
+
 - The first assistant turn on a fresh runner replica no longer pays 15 to 35
   seconds of imports (the agent stack, litellm's model map): the replica
   imports them once it is ready.

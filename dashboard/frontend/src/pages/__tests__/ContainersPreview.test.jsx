@@ -32,20 +32,11 @@ const CONTAINERS = [
 ];
 
 const get = vi.fn((url) => {
-  if (url === '/api/containers/agents-status') return ok({ agents: [] });
-  if (url === '/api/containers') return ok({ containers: CONTAINERS });
+  if (url === '/containers/agents-status') return ok({ agents: [] });
+  if (url === '/containers') return ok({ containers: CONTAINERS });
   return ok({});
 });
 
-vi.mock('axios', () => ({
-  default: {
-    create: () => ({
-      get: (...a) => get(...a),
-      post: () => ok({}),
-      delete: () => ok({}),
-    }),
-  },
-}));
 
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ workspaceFilter: null }),
@@ -56,6 +47,11 @@ vi.mock('../../components/stream', () => ({
 }));
 
 vi.mock('../../api', () => ({
+  default: {
+    get: (...a) => get(...a),
+    post: () => ok({}),
+    delete: () => ok({}),
+  },
   getAgents: () => ok({ agents: [] }),
 }));
 

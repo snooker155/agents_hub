@@ -42,6 +42,8 @@ import {
   addAgentToWorkspace,
   getServices,
   startInstance,
+  API_ORIGIN,
+  authFetchHeaders,
 } from '../api';
 import ImportAgentModal from '../components/ImportAgentModal';
 import DeployServiceModal from '../components/services/DeployServiceModal';
@@ -249,9 +251,9 @@ const AgentManager = () => {
     setCreatorDone(false);
 
     try {
-      const response = await fetch('http://localhost:8000/api/chat/stream', {
+      const response = await fetch(`${API_ORIGIN}/api/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authFetchHeaders() },
         body: JSON.stringify({
           agent_id: 'agent_creator',
           message: creatorInput.trim(),

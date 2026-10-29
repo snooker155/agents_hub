@@ -79,6 +79,11 @@ ARG DOCKER_CLI_VERSION=27.5.1
 # stack it just configured through the mounted socket, and the overlay it
 # writes uses the !reset and !override tags, which need Compose 2.24 or newer.
 ARG DOCKER_COMPOSE_VERSION=2.32.4
+# And buildx: without it `docker build` falls back to the legacy builder,
+# which builds every stage above a --target (the RAG stack, this one, the
+# backend) before the one asked for, so the agents base image built from the
+# Containers page ran past its time limit.
+ARG DOCKER_BUILDX_VERSION=0.19.3
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends curl ca-certificates; \
@@ -95,8 +100,11 @@ RUN set -eux; \
     mkdir -p /usr/local/lib/docker/cli-plugins; \
     curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${docker_arch}" -o /usr/local/lib/docker/cli-plugins/docker-compose; \
     chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose; \
+    curl -fsSL "https://github.com/docker/buildx/releases/download/v${DOCKER_BUILDX_VERSION}/buildx-v${DOCKER_BUILDX_VERSION}.linux-${TARGETARCH:-amd64}" -o /usr/local/lib/docker/cli-plugins/docker-buildx; \
+    chmod 755 /usr/local/lib/docker/cli-plugins/docker-buildx; \
     docker --version; \
-    docker compose version
+    docker compose version; \
+    docker buildx version
 
 # ============================================================
 # backend: the service
@@ -105,6 +113,7 @@ FROM deps-${WITH_RAG} AS backend
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+COPY --from=docker-cli /usr/local/lib/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx
 
 # `ah` on PATH, so `docker compose exec backend ah ...` works the way it does on
 # a local install. A wrapper rather than `pip install -e .`: the source under

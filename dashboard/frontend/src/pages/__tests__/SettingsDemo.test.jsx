@@ -10,22 +10,18 @@ import { I18nProvider } from '../../i18n';
 
 const ok = (data) => Promise.resolve({ data });
 
-vi.mock('axios', () => ({
-  default: {
-    create: () => ({
-      get: () => ok({ env_defined_fields: [], backends: [], adapters: [] }),
-      post: () => ok({ ok: true }),
-      put: () => ok({}),
-      delete: () => ok({}),
-    }),
-  },
-}));
 
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ selectedWorkspace: 'default' }),
 }));
 
 vi.mock('../../api', () => ({
+  default: {
+    get: () => ok({ env_defined_fields: [], backends: [], adapters: [] }),
+    post: () => ok({ ok: true }),
+    put: () => ok({}),
+    delete: () => ok({}),
+  },
   getSettings: () => ok({ env_defined_fields: [] }),
   testProvider: () => ok({ ok: true }),
   testLocalModel: () => ok({ ok: true, models: [] }),

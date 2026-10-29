@@ -1742,6 +1742,11 @@
             "title": "Password",
             "type": "string"
           },
+          "setup_code": {
+            "default": "",
+            "title": "Setup Code",
+            "type": "string"
+          },
           "username": {
             "title": "Username",
             "type": "string"
@@ -21448,7 +21453,7 @@
     },
     "/api/auth/bootstrap": {
       "post": {
-        "description": "Create the first administrator. Available exactly once.\n\nWith no users there is no admin to create a user, so this route is open\nuntil one account exists and refuses forever after.",
+        "description": "Create the first administrator. Available exactly once.\n\nWith no users there is no admin to create a user, so this route is open\nuntil one account exists and refuses forever after. Open means to the\nholder of the setup code, not to whoever reaches the page first.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -26611,8 +26616,25 @@
       }
     },
     "/api/containers/build-base": {
+      "get": {
+        "description": "Where the last base image pull or build stands: ``state`` is idle,\nrunning, done or failed, with its log tail and error.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Base Build Status",
+        "tags": [
+          "containers"
+        ]
+      },
       "post": {
-        "description": "Trigger a build of the unified base image (agents-hub/base:latest).\n\nRuns synchronously \u2014 may take several minutes on first build.",
+        "description": "Start making the unified base image (agents-hub/base:latest): a release\npulls its published agents image, a checkout builds the Dockerfile's\n``agents`` target. Returns at once; GET this path for progress. A second\nrequest while one runs returns the running one.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -26624,7 +26646,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {}

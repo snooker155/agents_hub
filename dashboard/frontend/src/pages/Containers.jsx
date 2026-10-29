@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
 import { useChannel } from '../components/stream';
 import {
   Box, RefreshCw, Play, Square, Trash2, Eye, Terminal,
@@ -7,13 +6,12 @@ import {
   ChevronDown, ChevronRight, Loader, Network, Globe,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
-import { getAgents } from '../api';
+import api, { getAgents } from '../api';
 import PreviewFrame from '../components/preview/PreviewFrame';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
-const api = axios.create({ baseURL: 'http://localhost:8000' });
 
 const TABS = [
   { id: 'agents',     labelKey: 'containers.tabs.agents',     icon: Package },
@@ -67,7 +65,7 @@ function LogViewer({ name, onClose }) {
 
   // A promise chain, not an async function: the React Compiler lint treats an
   // async function called from an effect as a synchronous setState.
-  const loadLogs = useCallback(() => api.get(`/api/containers/${name}/logs`, { params: { tail } })
+  const loadLogs = useCallback(() => api.get(`/containers/${name}/logs`, { params: { tail } })
     .then(({ data }) => setLogs(data))
     .catch((e) => setLogs(`Error fetching logs: ${e.message}`))
     .then(() => {
@@ -128,7 +126,7 @@ function DockerfileViewer({ agentId, onClose }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get(`/api/containers/dockerfile/${agentId}`)
+    api.get(`/containers/dockerfile/${agentId}`)
       .then(({ data }) => setContent(data))
       .catch(e => setContent(`Error: ${e.message}`))
       .finally(() => setLoading(false));
@@ -180,8 +178,8 @@ export default function Containers() {
   // A promise chain, not an async function: the React Compiler lint treats an
   // async function called from an effect as a synchronous setState.
   const loadAll = useCallback(() => Promise.all([
-    api.get('/api/containers/agents-status'),
-    api.get('/api/containers'),
+    api.get('/containers/agents-status'),
+    api.get('/containers'),
   ])
     .then(([agRes, ctrRes]) => {
       setError('');
@@ -218,17 +216,50 @@ export default function Containers() {
       .catch(() => setWsAgents({ filter: workspaceFilter, ids: null }));
   }, [workspaceFilter]);
 
+  // The base image is pulled or built in the background (it can take far
+  // longer than a request may stay open): start it, then follow its state.
+  // A finished build is reported only when this page saw it run, so an old
+  // failure does not greet every visit.
+  const followBaseBuild = useCallback((started = false) => {
+    let stopped = false;
+    let seen = started;
+    const poll = () => api.get('/containers/build-base')
+      .then(({ data }) => {
+        if (stopped) return;
+        if (data.state === 'running') {
+          seen = true;
+          setBuildingBase(true);
+          setBuildLog(data.log || '');
+          setTimeout(poll, 2000);
+          return;
+        }
+        setBuildingBase(false);
+        if (!seen) return;
+        setBuildLog(data.log || '');
+        if (data.state === 'failed') setError(data.error || 'build failed');
+        if (data.state === 'done') loadAll();
+      })
+      .catch((e) => {
+        if (stopped) return;
+        setBuildingBase(false);
+        if (seen) setError(e.response?.data?.detail || e.message);
+      });
+    poll();
+    return () => { stopped = true; };
+  }, [loadAll]);
+
+  // A build started earlier (or from another tab) is picked up on open.
+  useEffect(() => followBaseBuild(), [followBaseBuild]);
+
   const buildBase = async () => {
     setBuildingBase(true);
     setBuildLog('');
     setError('');
     try {
-      const { data } = await api.post('/api/containers/build-base', { no_cache: noCache });
-      setBuildLog(data.log || '');
-      await refresh();
+      await api.post('/containers/build-base', { no_cache: noCache });
+      followBaseBuild(true);
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
-    } finally {
       setBuildingBase(false);
     }
   };
@@ -238,7 +269,7 @@ export default function Containers() {
     setBuildLog('');
     setError('');
     try {
-      const { data } = await api.post(`/api/containers/build/${agentId}`, { no_cache: noCache });
+      const { data } = await api.post(`/containers/build/${agentId}`, { no_cache: noCache });
       setBuildLog(data.log || '');
       await refresh();
     } catch (e) {
@@ -251,7 +282,7 @@ export default function Containers() {
   const stopContainer = async (name) => {
     setStopping(s => ({ ...s, [name]: true }));
     try {
-      await api.post(`/api/containers/${name}/stop`);
+      await api.post(`/containers/${name}/stop`);
       await refresh();
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
@@ -264,7 +295,7 @@ export default function Containers() {
     if (!window.confirm(`Remove container "${name}"?`)) return;
     setRemoving(s => ({ ...s, [name]: true }));
     try {
-      await api.delete(`/api/containers/${name}`);
+      await api.delete(`/containers/${name}`);
       await refresh();
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
@@ -275,7 +306,7 @@ export default function Containers() {
 
   const ensureNetwork = async () => {
     try {
-      await api.post('/api/containers/network/ensure');
+      await api.post('/containers/network/ensure');
       alert(t('containers.networkReady'));
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
