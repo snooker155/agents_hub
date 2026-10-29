@@ -77,11 +77,26 @@ services:
   # The image runs as an unprivileged user (uid 1000) and a fresh named
   # volume belongs to root, so this one-shot step hands the state directory
   # over before the backend starts. Idempotent.
+  # The same goes for .env, which the backend reads at start and Settings
+  # writes: on Linux a bind mount keeps the host owner, and `ah setup` writes
+  # it with mode 600. One owned by root (a fresh server where everything runs
+  # as root) is handed to uid 1000, which root can still edit; one owned by
+  # another person keeps its owner and is shared with group 1000 instead.
   init:
     image: busybox:1.36
-    command: ["sh", "-c", "chown -R 1000:1000 /data"]
+    command:
+      - sh
+      - -c
+      - >-
+        chown -R 1000:1000 /data;
+        if [ -f /hub/.env ]; then
+        owner=$$(stat -c %u /hub/.env);
+        if [ "$$owner" = 0 ]; then chown 1000:1000 /hub/.env;
+        elif [ "$$owner" != 1000 ]; then chgrp 1000 /hub/.env && chmod g+rw /hub/.env; fi;
+        fi
     volumes:
       - agents_hub_data:/data
+      - ./.env:/hub/.env
 
   backend:
     image: ghcr.io/snooker155/agents-hub-backend:${AGENTS_HUB_TAG:-latest}

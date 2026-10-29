@@ -34,7 +34,19 @@ import os
 # pick up saved settings on startup (pydantic BaseSettings reads .env into its
 # own fields but does NOT populate os.environ).
 from dotenv import load_dotenv
-load_dotenv(project_root / ".env", override=False)
+
+# In a container the backend runs as uid 1000 and .env is usually a file bind
+# mounted from the host, which keeps the host owner on Linux. Say so plainly
+# instead of a bare PermissionError from the first read.
+_env_file = project_root / ".env"
+if _env_file.is_file() and not os.access(_env_file, os.R_OK | os.W_OK):
+    _fix = (f"{_env_file} is not readable and writable by uid {os.getuid()}. "
+            f"On the host, in the folder with docker-compose.yml: sudo chown {os.getuid()}:{os.getgid()} .env "
+            f"(or rerun `docker compose up -d`, whose init step hands it over).")
+    if not os.access(_env_file, os.R_OK):
+        sys.exit(_fix)
+    logging.getLogger(__name__).warning("%s Settings cannot be saved until then.", _fix)
+load_dotenv(_env_file, override=False)
 
 # Seed first-run state (agents.json + default workspace) from bootstrap/ before
 # any route imports trigger the registry cache.
