@@ -131,7 +131,6 @@ export default function Chat() {
   const stream = useStream();
   const { clientId } = stream;
   const [agents, setAgents] = useState([]);
-  const [workspaceAllowedAgentIds, setWorkspaceAllowedAgentIds] = useState(null);
   // Whether the workspace has personal memory (memory/personal.py) at all.
   const [personalMemoryOn, setPersonalMemoryOn] = useState(true);
   const [selectedAgent, setSelectedAgent] = useState('');
@@ -455,11 +454,10 @@ export default function Chat() {
   // provider/model are top-level fields on AgentSpec
   const agentProvider = _agentObj.provider || 'inherit';
   const agentModel = _agentObj.model || '';
-  const selectableAgents = useMemo(() => {
-    if (!selectedWorkspace) return agents;
-    const allowedSet = new Set(workspaceAllowedAgentIds || []);
-    return agents.filter((a) => allowedSet.has(a.id));
-  }, [agents, selectedWorkspace, workspaceAllowedAgentIds]);
+  // GET /api/agents?workspace= already applies the workspace's
+  // allowed_agents (system agents and its own agents always pass, no list
+  // means no restriction), so the list it returns is the list to offer.
+  const selectableAgents = agents;
 
   const allCommands = useMemo(() => {
     const agentCmds = agents.find((a) => a.id === selectedAgent)?.commands || [];
@@ -545,14 +543,13 @@ export default function Chat() {
   });
   // ---- load projects for selected workspace ----
   // Leaving every workspace clears what was loaded for the last one (adjusted
-  // while rendering); the allowed agents below reset with it.
+  // while rendering).
   const [seenWorkspace, setSeenWorkspace] = useState(selectedWorkspace);
   if (selectedWorkspace !== seenWorkspace) {
     setSeenWorkspace(selectedWorkspace);
     if (!selectedWorkspace) {
       setProjects([]);
       setSelectedProject('');
-      setWorkspaceAllowedAgentIds(null);
     }
   }
   useEffect(() => {
@@ -560,20 +557,6 @@ export default function Chat() {
     getProjects(selectedWorkspace)
       .then((r) => setProjects(r.data || []))
       .catch(() => setProjects([]));
-  }, [selectedWorkspace]);
-
-  // ---- load allowed agents for selected workspace ----
-  useEffect(() => {
-    if (!selectedWorkspace) return;
-    // One summary request shared with the header and the palette
-    // (api/workspaceSummary.js), not the full record with its task list.
-    loadWorkspaceSummary(selectedWorkspace)
-      .then((summary) => {
-        setWorkspaceAllowedAgentIds(summary?.allowed_agents || []);
-      })
-      .catch(() => {
-        setWorkspaceAllowedAgentIds([]);
-      });
   }, [selectedWorkspace]);
 
   // ---- the open conversation decides what the page talks to ----
