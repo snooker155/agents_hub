@@ -3,7 +3,7 @@
  * waves leave the centre one after the other, the core springs up, and once
  * the second wave is out the three satellites ride out of it along their spokes to their places, each spoke
  * drawn behind its satellite, then one glow runs round the whole mark and it
- * settles into a slow breath.
+ * settles into a slow breath with a glow spreading out at its fullest.
  *
  * Drawn on the exact logo coordinates (public/logo.svg, liveMark/poses.js
  * LOGO_SATS, LOGO_SPOKES), so the settled mark is the logo itself. The motion
@@ -52,6 +52,11 @@ export default function MarkReveal({ size = 272, onDone, label = 'Agents Hub' })
           <stop offset="0%" stopColor={GLOW} stopOpacity="0.45" />
           <stop offset="100%" stopColor={GLOW} stopOpacity="0" />
         </radialGradient>
+        <radialGradient id="mark-reveal-pulse">
+          <stop offset="0%" stopColor={GLOW} stopOpacity="0.5" />
+          <stop offset="55%" stopColor={GLOW} stopOpacity="0.22" />
+          <stop offset="100%" stopColor={GLOW} stopOpacity="0" />
+        </radialGradient>
       </defs>
       <g>
         <circle className="mark-reveal-halo" cx="24" cy="21" r="24" fill="url(#mark-reveal-halo)" />
@@ -59,6 +64,7 @@ export default function MarkReveal({ size = 272, onDone, label = 'Agents Hub' })
           <circle key={at} className="mark-reveal-wave" cx="24" cy="24" r="9" stroke={GLOW} strokeWidth="0.6"
             style={{ animationDelay: `${at}ms` }} />
         ))}
+        <circle className="mark-reveal-pulse" cx="24" cy="24" r="9" fill="url(#mark-reveal-pulse)" />
         <g className="mark-reveal-breath">
           <g stroke={FILL} strokeWidth="2.5" strokeLinecap="round" strokeOpacity="0.55">
             {LOGO_SPOKES.map(([x1, y1, x2, y2], i) => (
