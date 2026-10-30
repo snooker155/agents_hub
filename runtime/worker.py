@@ -332,6 +332,11 @@ def main(argv: Optional[List[str]] = None, *, run: Callable[[Worker], None] = No
 
     modes = [m.strip() for m in args.modes.split(",")] if args.modes else None
     worker = Worker(concurrency=args.concurrency, modes=modes)
+    if not args.once:
+        # The connector tools of the containers this worker starts run here,
+        # where the connectors' secrets can be read (runtime/tool_host.py).
+        from runtime import tool_host
+        tool_host.serve_in_thread()
     if args.once:
         n = worker.tick()
         _diag_log.info(f"worker tick: launched {n}, tracking {len(worker.tracked)}")

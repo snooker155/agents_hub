@@ -103,8 +103,23 @@ must be one of it.
 
 Tracing keys (Langfuse) and the OTLP export settings never reach a container:
 a run's spans are exported on the hub, where the run is closed. Neither does
-the host's deployment (`AGENTS_HUB_ROLE`, compose and setup variables). Left in
-the container: its own workspace's connector secrets.
+the host's deployment (`AGENTS_HUB_ROLE`, compose and setup variables).
+
+Connector tools (trackers, Google Workspace, Microsoft Graph, Notion,
+Confluence, databases, chat channels: `runtime/tool_host.py`) need the
+connector's secrets, OAuth tokens they refresh, a database password they
+connect with. They run on the container's tool host instead: the worker that
+started it (its own small server on `AGENTS_HUB_WORKER_TOOL_PORT`, 8090, which
+containers reach at the worker's alias `agents-hub-worker-<host>` on the
+agents-hub network, or the host gateway for a worker on the host), or the
+backend where no worker runs. In the container each such tool is a stand-in
+that sends the call there (`AGENTS_HUB_TOOL_HOST_URL`) with the run token; the
+host runs the same tool in the token's workspace, as the run's agent (a
+runner's call names its agent, which must be available in the workspace and
+hold the tool). The API backend carries none of this load where workers run.
+A connector's documents reach a container with every secret masked
+(`hub-gateway`, so "is it configured" still answers), and a write-back keeps
+the stored secrets.
 
 This is why docker mode works on Postgres and on Docker Desktop alike: SQLite's
 locks never have to cross the Docker Desktop VM, and the database password

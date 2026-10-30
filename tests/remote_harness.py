@@ -84,8 +84,11 @@ def _app(script: Optional[List[Any]] = None) -> Any:
     from fastapi import FastAPI
     from routes import run_state
 
+    from runtime import tool_host
     app = FastAPI()
     app.include_router(run_state.router)
+    # The tool host a container's launcher serves (runtime/tool_host.py).
+    app.include_router(tool_host.router())
     seen: List[Dict[str, Any]] = []
     app.state.seen = seen
     steps = list(script or [])
@@ -155,6 +158,7 @@ def child_env(hub_url: str, token: str, *, workspace: str, root: Path,
         "AGENTS_HUB_DATABASE_URL": "",
         "AGENTS_HUB_RUN_TOKEN": token,
         "AGENTS_HUB_CALLBACK_URL": hub_url,
+        "AGENTS_HUB_TOOL_HOST_URL": hub_url,
         "AGENT_RUN_STATE_TRANSPORT": "http",
         "AGENT_WORKSPACE": workspace,
         "OPENAI_API_KEY": "sk-fake",

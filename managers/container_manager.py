@@ -385,6 +385,9 @@ def remote_container_env(env: Dict[str, str]) -> Dict[str, str]:
     out = llm_gateway.container_env(out, workspace=out.get("AGENT_WORKSPACE"))
     out[REMOTE_STATE_ENV] = "1"
     out["AGENTS_HUB_CALLBACK_URL"] = container_hub_url()
+    # Its connector tools run on the process starting it (runtime/tool_host.py).
+    from runtime.tool_host import URL_ENV, url_for_containers
+    out[URL_ENV] = url_for_containers()
     # Its own run and task records go through /api/run-state as well
     # (common/state_transport.py).
     out["AGENT_RUN_STATE_TRANSPORT"] = "http"
@@ -681,7 +684,9 @@ def _attach_self_to_network() -> None:
     if not me:
         return
     from common.config import hub_role
-    alias = [] if hub_role() == "worker" else ["--alias", HUB_NETWORK_ALIAS]
+    # A worker joins under an alias of its own: the containers it starts run
+    # their connector tools on it (runtime/tool_host.py).
+    alias = ["--alias", worker_network_alias() if hub_role() == "worker" else HUB_NETWORK_ALIAS]
     result = _run(["docker", "network", "connect", *alias, NETWORK_NAME, me], timeout=15)
     err = (result.stderr or "")
     if result.returncode == 0:
@@ -689,17 +694,25 @@ def _attach_self_to_network() -> None:
     if "already exists in network" not in err:
         logger.debug("could not join %s as %s: %s", NETWORK_NAME, me, err.strip())
         return
-    if alias and not _has_alias(me):
+    if not _has_alias(me):
         # Joined by an older backend without the alias: join again with it.
         _run(["docker", "network", "disconnect", NETWORK_NAME, me], timeout=15)
         _run(["docker", "network", "connect", *alias, NETWORK_NAME, me], timeout=15)
 
 
+def worker_network_alias() -> str:
+    """This worker's name on the agents-hub network (its hostname, the
+    container id in compose)."""
+    return "agents-hub-worker-" + (socket.gethostname().strip()[:12] or "local")
+
+
 def _has_alias(container: str) -> bool:
+    from common.config import hub_role
+    want = worker_network_alias() if hub_role() == "worker" else HUB_NETWORK_ALIAS
     result = _run(["docker", "inspect", "-f",
                    "{{json (index .NetworkSettings.Networks \"" + NETWORK_NAME + "\").Aliases}}",
                    container], timeout=15)
-    return HUB_NETWORK_ALIAS in (result.stdout or "")
+    return want in (result.stdout or "")
 
 
 # ── Dockerfile generation ─────────────────────────────────────────────────────

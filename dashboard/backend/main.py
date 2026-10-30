@@ -707,6 +707,9 @@ app.include_router(run_groups_router.router)
 # Run state: the write surface a run container uses instead of opening the
 # database itself, when AGENT_RUN_STATE_TRANSPORT=http (see docs/containers.md)
 app.include_router(run_state_router.router)
+# Connector tools of the agent containers this backend starts (role all).
+from runtime import tool_host as _tool_host  # noqa: E402
+app.include_router(_tool_host.router())
 
 # Teams domain: a bounded roster of agents that know each other and talk
 app.include_router(teams.router)

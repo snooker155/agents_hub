@@ -85,6 +85,10 @@ replica at start); a worker on another machine sets
 process opens the database directly. Deployments without workers (the `all`
 role) need none of this: the backend starts the containers.
 
+A worker also serves the connector tools of the containers it starts
+(`runtime/tool_host.py`, port `AGENTS_HUB_WORKER_TOOL_PORT`, 8090): they need
+the connectors' secrets, which a worker can read and a container never gets.
+
 ## Heartbeats instead of pids
 
 Every agent run and every entity run stamps `heartbeat_at` every `RUN_HEARTBEAT_SECONDS`

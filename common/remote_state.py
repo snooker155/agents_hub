@@ -981,9 +981,11 @@ HOST_WORKSPACE_ENV = "AGENTS_HUB_HOST_WORKSPACE"
 def _local_workspace_dir() -> Optional[Path]:
     """Where this process's own code looks for its workspace folder
     (WORKSPACES_ROOT/<name>), which in a container is a link to /workspace."""
+    # Imported at this module's own import in a container: common.paths only
+    # (common.workspace_context imports the database, which imports this).
     from common.paths import WORKSPACES_ROOT
-    from common.workspace_context import normalize_workspace_name
-    name = normalize_workspace_name(os.environ.get("AGENT_WORKSPACE"))
+    raw = (os.environ.get("AGENT_WORKSPACE") or "").strip()
+    name = Path(raw).name if raw else ""
     return Path(WORKSPACES_ROOT) / name if name else None
 
 

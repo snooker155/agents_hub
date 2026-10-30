@@ -50,7 +50,10 @@ def connector_tools() -> List[Any]:
             log.warning("connector tools %s skipped: %s", mod_name, exc)
             continue
         tools.extend(getattr(mod, "CONNECTOR_TOOLS", []) or [])
-    return tools
+    # In an agent container the ones that need a connector's secrets run on
+    # the process that launched it (runtime/tool_host.py).
+    from runtime.tool_host import container_tools
+    return container_tools(tools)
 
 
 __all__ = ["connector_tools", "MODULES"]

@@ -498,11 +498,47 @@ def _channel_exists(name: str, workspace: str) -> bool:
     return DocStore(f"channel_{name}").exists(_key_for(workspace))
 
 
-@remote_state.hub_call(_own_or_default)
+_SECRET_NAME = __import__("re").compile(
+    r"(token|secret|password|passwd|api_?key|private_?key|credential|dsn|refresh|cookie|auth)", 2)
+
+
+def _masked(value: Any, key: str = "") -> Any:
+    """A connector document as an agent container gets it: every value under
+    a secret-looking key, and every URL with a password in it, replaced by a
+    placeholder (non-empty, so "is it configured" still answers). The
+    connector's tools run where the secrets are (runtime/tool_host.py)."""
+    from common.llm_gateway import SENTINEL
+    from tools.shell import _CREDENTIAL_URL
+    if isinstance(value, dict):
+        return {k: _masked(v, str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_masked(v, key) for v in value]
+    if isinstance(value, str) and value and (_SECRET_NAME.search(key) or _CREDENTIAL_URL.match(value)):
+        return SENTINEL
+    return value
+
+
+@remote_state.hub_call(_own_or_default, result_scope=lambda token, doc: _masked(doc))
 def _channel_doc(name: str, workspace: str) -> Any:
     return DocStore(f"channel_{name}").get(_key_for(workspace))
 
 
 @remote_state.hub_call(_own_or_default)
 def _channel_put(name: str, workspace: str, data: dict) -> None:
-    DocStore(f"channel_{name}").put(_key_for(workspace), data)
+    # The container saw placeholders for the secrets: what it writes back
+    # keeps the stored ones wherever it still holds a placeholder.
+    from common.llm_gateway import SENTINEL
+    store = DocStore(f"channel_{name}")
+    stored = store.get(_key_for(workspace))
+    store.put(_key_for(workspace), _unmask(data, stored, SENTINEL))
+
+
+def _unmask(new: Any, old: Any, placeholder: str) -> Any:
+    if new == placeholder:
+        return old
+    if isinstance(new, dict):
+        base = old if isinstance(old, dict) else {}
+        return {k: _unmask(v, base.get(k), placeholder) for k, v in new.items()}
+    if isinstance(new, list) and isinstance(old, list) and len(new) == len(old):
+        return [_unmask(n, o, placeholder) for n, o in zip(new, old)]
+    return new

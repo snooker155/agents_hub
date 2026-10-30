@@ -33,6 +33,10 @@ turns that section into the next release.
 
 ### Changed
 
+- Connector tools of an agent container (trackers, Google, Microsoft, Notion,
+  Confluence, databases, channels) run on the worker that started it (the
+  backend where no worker runs), which can read the connectors' secrets; the
+  container sees them masked (runtime/tool_host.py).
 - An agent container holds no provider key, browser token or tracing key:
   model calls, web searches (Brave, Exa, Tavily, or a model provider's
   search) and the browser service (its own workspace's sessions only, with a
