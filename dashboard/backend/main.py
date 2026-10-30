@@ -338,8 +338,22 @@ async def lifespan(app: FastAPI):
         except Exception as e:  # noqa: BLE001 - the hub starts without it; deployments stay down
             log.warning(f"⚠ Could not start the deployment supervisor: {e}")
 
+    # Worker autoscaling (common/worker_autoscale.py): only an API replica
+    # decides, under a lease, and only once the Cluster page turned it on.
+    if hub_role() == "api":
+        try:
+            from common.worker_autoscale import autoscaler as _worker_autoscaler
+            _worker_autoscaler.start()
+        except Exception as e:  # noqa: BLE001 - the hub starts without autoscaling; logged
+            log.warning(f"⚠ Could not start worker autoscaling: {e}")
+
     yield
 
+    try:
+        from common.worker_autoscale import autoscaler as _worker_autoscaler
+        _worker_autoscaler.stop()
+    except Exception:  # noqa: BLE001 - shutdown goes on without it
+        log.debug("worker autoscaling stop failed", exc_info=True)
     try:
         from hublink import runtime as _hublink_runtime
         _hublink_runtime.stop()

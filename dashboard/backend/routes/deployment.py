@@ -465,3 +465,94 @@ async def forget_member(member_id: str):
         raise HTTPException(status_code=409, detail="That member is still alive")
     members.forget(member_id)
     return {"forgotten": member_id}
+
+
+# ── workers started and stopped from here, and their autoscaling ─────────────
+
+def _audit(request: Request, action: str, object_id: Optional[str] = None, **details: Any) -> None:
+    from common import audit, identity
+    audit.record(action, principal=identity.request_principal(request), object_type="worker",
+                 object_id=object_id, details=details or None)
+
+
+@router.get("/workers")
+@deployment_alias_router.get("/workers")
+async def workers_overview():
+    """The live workers (who started each, what it runs and carries, whether
+    it may be stopped), how this hub starts one, and the autoscaling."""
+    import asyncio
+    from common import worker_autoscale, worker_fleet
+
+    def _read() -> Dict[str, Any]:
+        return {"launcher": worker_fleet.launcher(), "workers": worker_fleet.workers(),
+                "autoscale": worker_autoscale.status()}
+    return await asyncio.to_thread(_read)
+
+
+@router.post("/workers")
+@deployment_alias_router.post("/workers")
+async def add_workers(request: Request):
+    """Start workers: ``{"count": n}`` (1 to 10, default 1)."""
+    import asyncio
+    from common import worker_fleet
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    count = int((body or {}).get("count") or 1)
+    if not 1 <= count <= 10:
+        raise HTTPException(status_code=400, detail="count must be between 1 and 10")
+    try:
+        started = await asyncio.to_thread(worker_fleet.add, count)
+    except worker_fleet.FleetError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _audit(request, "cluster.worker.add", started=started)
+    return {"started": started}
+
+
+@router.post("/workers/{member_id}/stop")
+@deployment_alias_router.post("/workers/{member_id}/stop")
+async def stop_worker(member_id: str, request: Request):
+    """Ask a worker to finish its runs and exit. 409 for one that carries
+    live instances: their containers reach their state through it."""
+    import asyncio
+    from common import worker_fleet
+    try:
+        out = await asyncio.to_thread(worker_fleet.stop, member_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except worker_fleet.WorkerBusy as exc:
+        raise HTTPException(status_code=409, detail={"reason": "carries_instances",
+                                                     "carriers": exc.carriers}) from exc
+    _audit(request, "cluster.worker.stop", member_id)
+    return out
+
+
+@router.delete("/workers/{member_id}/stop")
+@deployment_alias_router.delete("/workers/{member_id}/stop")
+async def cancel_worker_stop(member_id: str, request: Request):
+    """Take a stop back while the worker still lives."""
+    import asyncio
+    from common import worker_fleet
+    if not await asyncio.to_thread(worker_fleet.cancel_stop, member_id):
+        raise HTTPException(status_code=404, detail="Unknown member")
+    _audit(request, "cluster.worker.stop_cancel", member_id)
+    return {"member_id": member_id, "draining": False}
+
+
+@router.put("/autoscale")
+@deployment_alias_router.put("/autoscale")
+async def update_autoscale(request: Request):
+    """Change the autoscaling policy (common/worker_autoscale.py)."""
+    import asyncio
+    from common import worker_autoscale
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    try:
+        pol = await asyncio.to_thread(worker_autoscale.save_policy, body or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _audit(request, "cluster.autoscale", **pol)
+    return pol
