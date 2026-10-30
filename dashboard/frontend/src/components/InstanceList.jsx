@@ -160,6 +160,15 @@ function InstanceRow({ instance, showAgent, onStop, onTerminal, busy, t }) {
   );
 }
 
+const LIVE_STATES = ['starting', 'active', 'standby'];
+
+/** The states the picked chips stand for, comma-separated for the API. */
+function chipStates(chips) {
+  const states = new Set();
+  chips.forEach((c) => (c === 'live' ? LIVE_STATES : [c]).forEach((s) => states.add(s)));
+  return [...states].join(',');
+}
+
 export default function InstanceList({
   agentId = null,
   serviceId = null,
@@ -178,15 +187,13 @@ export default function InstanceList({
   const [busyIds, setBusyIds] = useState({});
   const [collapsed, setCollapsed] = useState({});
 
-  const [filterState, setFilterState] = useState('');
   const [filterKind, setFilterKind] = useState('');
-  const [liveOnly, setLiveOnly] = useState(defaultLiveOnly);
+  // The state chips picked; they add up (`live` stands for every working state).
+  const [chips, setChips] = useState(defaultLiveOnly ? ['live'] : []);
   const [query, setQuery] = useState('');
   const [grouped, setGrouped] = useState(false);
 
   const showAgent = showAgentColumn && !agentId;
-  // Stopped, finished or failed copies the live filter hides.
-  const stoppedCount = (counts.stopped ?? 0) + (counts.finished ?? 0) + (counts.failed ?? 0);
   // Sort keys the backend orders by (instances/store.py INSTANCE_SORTS);
   // `live` is its default, working copies first.
   const sortKeys = [
@@ -196,19 +203,18 @@ export default function InstanceList({
   const paging = useListPaging('instances', {
     sorts: sortKeys,
     defaultSort: 'live',
-    resetOn: [workspace, agentId, serviceId, filterState, filterKind, liveOnly, query.trim()],
+    resetOn: [workspace, agentId, serviceId, chips.join(','), filterKind, query.trim()],
   });
 
   const params = useMemo(() => ({
     workspace,
     agent_id: agentId || undefined,
     service_id: serviceId || undefined,
-    state: filterState || undefined,
+    state: chipStates(chips) || undefined,
     kind: filterKind || undefined,
-    live: liveOnly ? true : undefined,
     q: query.trim() || undefined,
     ...paging.params,
-  }), [workspace, agentId, serviceId, filterState, filterKind, liveOnly, query, paging.params]);
+  }), [workspace, agentId, serviceId, chips, filterKind, query, paging.params]);
 
   const fetchPage = useCallback(async () => {
     setLoading(true);
@@ -326,12 +332,10 @@ export default function InstanceList({
           <button
             key={key}
             type="button"
-            onClick={() => {
-              if (key === 'live') { setLiveOnly((v) => !v); setFilterState(''); }
-              else { setFilterState((v) => (v === key ? '' : key)); setLiveOnly(false); }
-            }}
+            aria-pressed={chips.includes(key)}
+            onClick={() => setChips((v) => (v.includes(key) ? v.filter((k) => k !== key) : [...v, key]))}
             className={`px-2.5 py-1 rounded-lg border text-xs transition-colors ${
-              (key === 'live' && liveOnly) || filterState === key
+              chips.includes(key)
                 ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
                 : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
             }`}
@@ -353,17 +357,22 @@ export default function InstanceList({
               className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg w-64 bg-white"
             />
           </div>
-          <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)}
-                  className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white">
-            <option value="">{t('instances.filters.allKinds')}</option>
-            {Object.keys(KIND_ICONS).map((k) => (
-              <option key={k} value={k}>{t(`instances.kinds.${k}`)}</option>
-            ))}
-          </select>
-          <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 px-2">
-            <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
-            {t('instances.filters.groupByAgent')}
-          </label>
+          {/* A service's copies are all its own agent's replicas: no kind or agent to pick. */}
+          {!serviceId && (
+            <>
+              <select value={filterKind} onChange={(e) => setFilterKind(e.target.value)}
+                      className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg bg-white">
+                <option value="">{t('instances.filters.allKinds')}</option>
+                {Object.keys(KIND_ICONS).map((k) => (
+                  <option key={k} value={k}>{t(`instances.kinds.${k}`)}</option>
+                ))}
+              </select>
+              <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 px-2">
+                <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
+                {t('instances.filters.groupByAgent')}
+              </label>
+            </>
+          )}
           <ListPagingControls paging={paging} options={sortKeys} compact />
           <button type="button" onClick={() => fetchPage()}
                   className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
@@ -379,12 +388,14 @@ export default function InstanceList({
         ) : !items.length ? (
           <div className="p-8 text-center">
             <Activity className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            {liveOnly && stoppedCount > 0 ? (
+            {chips.length > 0 && (counts.total ?? 0) > 0 ? (
               <>
-                <div className="text-sm text-gray-500">{t('instances.empty.noLive')}</div>
-                <button type="button" onClick={() => setLiveOnly(false)}
+                <div className="text-sm text-gray-500">
+                  {chips.length === 1 && chips[0] === 'live' ? t('instances.empty.noLive') : t('instances.empty.noMatch')}
+                </div>
+                <button type="button" onClick={() => setChips([])}
                         className="text-xs text-indigo-600 hover:underline mt-1">
-                  {t('instances.empty.showAll', { count: stoppedCount })}
+                  {t('instances.empty.showAll', { count: counts.total })}
                 </button>
               </>
             ) : (

@@ -156,6 +156,17 @@ def test_counts_group_states_and_agents():
     assert by_agent["reviewer"] == {"live": 0, "total": 1}
 
 
+def test_list_takes_several_states_at_once():
+    registry.ensure_instance("swe_agent", workspace="ws", state="active")
+    registry.ensure_instance("swe_agent", workspace="ws", state="stopped")
+    registry.ensure_instance("reviewer", workspace="ws", state="failed")
+
+    picked = store.list_instances(workspace="ws", state="stopped,failed")
+    assert picked["total"] == 2
+    assert {r["state"] for r in picked["items"]} == {"stopped", "failed"}
+    assert store.list_instances(workspace="ws", state="active")["total"] == 1
+
+
 def test_retention_archives_old_copies_but_keeps_them_reachable():
     ids = [registry.ensure_instance("swe_agent", workspace="ws", state="finished")["instance_id"]
            for _ in range(5)]

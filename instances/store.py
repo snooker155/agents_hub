@@ -158,8 +158,10 @@ def _where(
         clauses.append(f"kind IN ({', '.join('?' * len(kinds))})")
         params.extend(kinds)
     if state:
-        clauses.append("state = ?")
-        params.append(state)
+        # One state or several, comma-separated (the list's chips add up).
+        states = [s.strip() for s in str(state).split(",") if s.strip()]
+        clauses.append(f"state IN ({', '.join('?' * len(states))})")
+        params.extend(states)
     if live is True:
         clauses.append(f"state IN ({', '.join('?' * len(LIVE_STATES))})")
         params.extend(LIVE_STATES)

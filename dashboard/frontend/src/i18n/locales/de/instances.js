@@ -6,7 +6,8 @@ export default {
   groupCount: '{{live}} aktiv · {{total}} gesamt',
   empty: {
     noLive: 'Keine laufenden Instanzen',
-    showAll: 'Auch gestoppte zeigen ({{count}})',
+    noMatch: 'Keine Instanzen in den gewählten Zuständen',
+    showAll: 'Alle zeigen ({{count}})',
     title: 'Noch keine Instanzen',
     hint: 'Eine Kopie erscheint hier, sobald ein Agent zu arbeiten beginnt, aus einer Aufgabe, einem Chat, einer residenten Instanz oder einem Flow.',
   },
