@@ -27,8 +27,9 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
+from common import remote_state
 from common.paths import AGENT_DEFINITIONS_DIR
 
 log = logging.getLogger(__name__)
@@ -62,9 +63,66 @@ def agent_dir(agent_id: str, definitions_dir: Optional[Path] = None) -> Path:
     return _layers(definitions_dir)[0] / agent_id
 
 
+# ── the written layer in an agent container ──────────────────────────────────
+#
+# A container has the shipped definitions (they are in its image) but not the
+# hub's written layer, which lives in the state dir it does not mount. The
+# files of one agent are fetched from the hub on first use and laid out in the
+# container's own state root, so every path-based read below works unchanged;
+# a fetch is good for a few seconds, then the next read fetches again.
+
+_MATERIALIZED: Dict[str, float] = {}
+_MATERIALIZE_SECONDS = 5.0
+_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def _materialize(agent_id: str, definitions_dir: Optional[Path]) -> None:
+    if not remote_state.is_remote() or definitions_dir not in (None, SYSTEM_DEFINITIONS_DIR):
+        return
+    import time
+    now = time.monotonic()
+    if now - _MATERIALIZED.get(agent_id, -1e9) < _MATERIALIZE_SECONDS:
+        return
+    _MATERIALIZED[agent_id] = now
+    try:
+        files = written_files(agent_id)
+    except Exception:  # noqa: BLE001 - the shipped layer still answers; logged
+        log.warning("could not fetch the written definition of %s from the hub", agent_id,
+                    exc_info=True)
+        return
+    folder = USER_DEFINITIONS_DIR / agent_id
+    for name in (*PART_FILES, EXAMPLES_FILE):
+        target = folder / name
+        text = files.get(name)
+        if text is None:
+            if target.is_file():
+                target.unlink()
+            continue
+        folder.mkdir(parents=True, exist_ok=True)
+        if not target.is_file() or target.read_text(encoding="utf-8") != text:
+            target.write_text(text, encoding="utf-8")
+
+
+@remote_state.hub_call("global")
+def written_files(agent_id: str) -> Dict[str, str]:
+    """The hub's written layer of one agent (its prompt files and examples),
+    for an agent container. Definitions are the service's catalog, like the
+    registry; only a plain agent id names a folder."""
+    if not _SAFE_ID.match(str(agent_id or "")) or ".." in str(agent_id):
+        raise ValueError(f"not an agent id: {agent_id!r}")
+    folder = USER_DEFINITIONS_DIR / agent_id
+    out: Dict[str, str] = {}
+    for name in (*PART_FILES, EXAMPLES_FILE):
+        path = folder / name
+        if path.is_file():
+            out[name] = path.read_text(encoding="utf-8")
+    return out
+
+
 def part_path(agent_id: str, filename: str, definitions_dir: Optional[Path] = None) -> Optional[Path]:
     """The file that holds one part of the definition: the written layer's
     when it has one, else the shipped one, else None."""
+    _materialize(agent_id, definitions_dir)
     for layer in _layers(definitions_dir):
         path = layer / agent_id / filename
         if path.is_file():
@@ -75,6 +133,7 @@ def part_path(agent_id: str, filename: str, definitions_dir: Optional[Path] = No
 def part_paths(agent_id: str, definitions_dir: Optional[Path] = None) -> List[Path]:
     """Every place a part of the definition may be read from, present or not.
     The agent cache keys on these, so writing or removing any of them is seen."""
+    _materialize(agent_id, definitions_dir)
     return [layer / agent_id / name for layer in _layers(definitions_dir) for name in PART_FILES]
 
 
@@ -90,6 +149,7 @@ def is_system_definition(agent_id: str, definitions_dir: Optional[Path] = None) 
 
 def is_customized(agent_id: str, definitions_dir: Optional[Path] = None) -> bool:
     """True when a system agent's shipped text is shadowed by an edit."""
+    _materialize(agent_id, definitions_dir)
     folder = agent_dir(agent_id, definitions_dir)
     return (is_system_definition(agent_id, definitions_dir)
             and any((folder / name).is_file() for name in PART_FILES))

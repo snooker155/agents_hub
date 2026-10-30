@@ -294,11 +294,9 @@ def prepare_run(
     # workspace's own override (Settings → workspace → agent_mode) wins over
     # the global setting, both read live so a Settings-page change reaches the
     # next run without a restart.
-    # Local where a container cannot share the database (Docker Desktop with
-    # SQLite): the run opens it itself, and a read-only relay does not cover
-    # what an agent build reads (common.config.run_execution_mode).
+    # A service agent stays local whatever the mode (common.config.run_execution_mode).
     from common.config import run_execution_mode
-    execution_mode = run_execution_mode(ws_name)
+    execution_mode = run_execution_mode(ws_name, agent_id)
 
     # Two optional contributions to the launch, each a module that may be
     # absent or fail without changing the launch: the per-run money cap
@@ -311,6 +309,9 @@ def prepare_run(
     launch_env, docker_options, environment_id, env_mode = _launch_extras(task, ws_name)
     if env_mode in ("local", "docker"):
         execution_mode = env_mode
+    from common.workspace_scope import is_service_wide
+    if is_service_wide(agent_id):
+        execution_mode = "local"  # sees every workspace; an environment cannot change that
 
     # Audit trail (common/audit.py): who launched this run. No HTTP request is
     # in flight here (a launch may be re-queued by a worker), so the actor

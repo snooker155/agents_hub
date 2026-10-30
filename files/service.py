@@ -255,6 +255,7 @@ def _fetch(file_id: str, *, include_deleted: bool = False) -> Optional[Any]:
     return db.get_conn().execute(sql, (str(file_id),)).fetchone()
 
 
+@remote_state.hub_call("file:file_id")
 def get_file(file_id: str, *, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
     """The record, or None when it does not exist or was deleted (unless
     ``include_deleted``, which returns the tombstone with ``deleted_at``)."""
@@ -262,6 +263,7 @@ def get_file(file_id: str, *, include_deleted: bool = False) -> Optional[Dict[st
     return _row_to_record(row) if row else None
 
 
+@remote_state.hub_call("file:file_ids")
 def get_files(file_ids: Iterable[str]) -> List[Dict[str, Any]]:
     """The live records for ``file_ids``, in the order given; unknown or
     deleted ids are skipped."""
@@ -278,6 +280,7 @@ def get_files(file_ids: Iterable[str]) -> List[Dict[str, Any]]:
     return out
 
 
+@remote_state.hub_call("workspace")
 def find_duplicate(workspace: str, sha256: str) -> Optional[Dict[str, Any]]:
     """The live file in ``workspace`` with exactly these bytes, if any."""
     row = db.get_conn().execute(
@@ -302,6 +305,7 @@ def _like_pattern(text: str) -> str:
     return f"%{escaped.lower()}%"
 
 
+@remote_state.hub_call("workspace")
 def list_files(workspace: str, *, source: Optional[str] = None, q: Optional[str] = None,
                limit: int = 200) -> List[Dict[str, Any]]:
     """The live files of ``workspace``, newest first, optionally narrowed to a
@@ -327,6 +331,7 @@ def list_files(workspace: str, *, source: Optional[str] = None, q: Optional[str]
 
 # ── create / read / delete ───────────────────────────────────────────────────
 
+@remote_state.hub_call("workspace")
 def create_file(workspace: str, name: str, data: bytes, *, mime_type: Optional[str] = None,
                 source: str = "upload", created_by: Optional[str] = None,
                 meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -417,6 +422,7 @@ def read_bytes(file_id: str) -> bytes:
     return data
 
 
+@remote_state.hub_call("file:file_id")
 def delete_file(file_id: str) -> bool:
     """Mark the file deleted and remove its content. False when there was no
     live file with this id."""
@@ -608,6 +614,7 @@ def _emit_file_event(ws: str, record: Optional[Dict[str, Any]], change: str) -> 
         log.debug("file event dispatch failed for %s", record.get("file_id"), exc_info=True)
 
 
+@remote_state.hub_call("workspace")
 def register_path(workspace: str, rel_path: str, *, source: str = "agent",
                   created_by: Optional[str] = None,
                   meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -968,6 +975,7 @@ def locate_copy(record: Dict[str, Any], dest_dir: Any) -> Optional[Path]:
     return target if target.exists() else None
 
 
+@remote_state.hub_call("file:file_ids")
 def materialize(file_ids: List[str], dest_dir: Any) -> List[Path]:
     """Copy the files into ``dest_dir`` under safe names and return the paths.
 

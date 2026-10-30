@@ -143,7 +143,12 @@ def child_env(hub_url: str, token: str, *, workspace: str, root: Path,
                  "AGENT_SESSION_ID", "AGENTS_HUB_SNAPSHOT_DIR"):
         env.pop(name, None)
     root.mkdir(parents=True, exist_ok=True)
+    # The developer's .env stays out, as it does from a real container (the
+    # image has none): an empty one of its own.
+    empty_env = root / "empty.env"
+    empty_env.write_text("", encoding="utf-8")
     env.update({
+        "AGENTS_HUB_ENV_FILE": str(empty_env),
         "AGENTS_HUB_REMOTE_STATE": "1",
         "AGENTS_HUB_ROOT": str(root),
         "AGENTS_HUB_DATABASE_URL": "",

@@ -755,7 +755,8 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         case_sensitive=False,
-        env_file=str(PROJECT_ROOT / ".env"),
+        # The same file common.dotenv reads (AGENTS_HUB_ENV_FILE may name another).
+        env_file=str(Path(os.environ.get("AGENTS_HUB_ENV_FILE", "").strip() or PROJECT_ROOT / ".env")),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -899,13 +900,21 @@ def chat_execution() -> str:
     return mode if mode in ("instances", "inprocess") else "instances"
 
 
-def run_execution_mode(workspace: Optional[str] = None) -> str:
+def run_execution_mode(workspace: Optional[str] = None, agent_id: Optional[str] = None) -> str:
     """How a hub process that runs an agent (a task run, an instance, a team,
     flow, loop or scenario run) is launched: ``agent_execution_mode``. In
     ``docker`` it gets a container of its own with no database: its store
     calls go to the hub over HTTP (common/remote_state.py), so this holds on
     Postgres and on Docker Desktop alike. ``local`` is a subprocess of the
-    backend or the worker that opens the database itself."""
+    backend or the worker that opens the database itself.
+
+    The service's own agents (common.workspace_scope.SERVICE_WIDE_AGENTS) are
+    always local: they see every workspace, which a container's token, bound
+    to one workspace, never reaches."""
+    if agent_id:
+        from common.workspace_scope import is_service_wide
+        if is_service_wide(agent_id):
+            return "local"
     return agent_execution_mode(workspace)
 
 

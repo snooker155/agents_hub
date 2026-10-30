@@ -95,7 +95,7 @@ def actor_fields(principal: Any) -> Dict[str, Optional[str]]:
     }
 
 
-@remote_state.hub_call("workspace")
+@remote_state.hub_call("admin_workspace")
 def record(action: str, *, principal: Any = None, actor: Optional[Dict[str, Any]] = None,
            object_type: Optional[str] = None, object_id: Optional[str] = None,
            workspace: Optional[str] = None, ip: Optional[str] = None,

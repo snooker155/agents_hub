@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 from evals.models import (
     Case, EvalResult, EvalRun, EvalSet, GraderSpec, PromptSuggestion, RunConfig, utc_iso,
 )
@@ -11,6 +11,7 @@ from evals.models import (
 
 # ── Eval sets ─────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call(("eval_set:evalset.eval_set_id", "workspace:evalset.workspace"))
 def save_eval_set(evalset: EvalSet) -> EvalSet:
     """Insert or replace a set. Bumps ``updated_at``."""
     evalset.updated_at = utc_iso()
@@ -63,6 +64,7 @@ def _row_to_set(row) -> EvalSet:
     )
 
 
+@remote_state.hub_call("eval_set:eval_set_id")
 def get_eval_set(eval_set_id: str) -> Optional[EvalSet]:
     row = db.get_conn().execute(
         "SELECT * FROM eval_sets WHERE eval_set_id = ?", (eval_set_id,)
@@ -70,6 +72,7 @@ def get_eval_set(eval_set_id: str) -> Optional[EvalSet]:
     return _row_to_set(row) if row else None
 
 
+@remote_state.hub_call("workspace")
 def list_eval_sets(workspace: Optional[str] = None) -> List[EvalSet]:
     """Sets for a workspace, plus workspace-less (global) ones."""
     conn = db.get_conn()
@@ -84,6 +87,7 @@ def list_eval_sets(workspace: Optional[str] = None) -> List[EvalSet]:
     return [_row_to_set(r) for r in rows]
 
 
+@remote_state.hub_call("eval_set:eval_set_id")
 def delete_eval_set(eval_set_id: str) -> bool:
     """Delete a set and every run and result under it."""
     with db.transaction() as conn:
@@ -99,6 +103,7 @@ def delete_eval_set(eval_set_id: str) -> bool:
         return cur.rowcount > 0
 
 
+@remote_state.hub_call("eval_set:eval_set_id")
 def add_case(eval_set_id: str, case: Case) -> Optional[EvalSet]:
     """Append a case to an existing set — the "save this run as an eval case" path."""
     evalset = get_eval_set(eval_set_id)
@@ -108,6 +113,7 @@ def add_case(eval_set_id: str, case: Case) -> Optional[EvalSet]:
     return save_eval_set(evalset)
 
 
+@remote_state.hub_call("eval_set:eval_set_id")
 def remove_case(eval_set_id: str, case_id: str) -> Optional[EvalSet]:
     evalset = get_eval_set(eval_set_id)
     if not evalset:
@@ -118,6 +124,7 @@ def remove_case(eval_set_id: str, case_id: str) -> Optional[EvalSet]:
 
 # ── Eval runs ─────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call(("eval_run:run.eval_run_id", "workspace:run.workspace"))
 def save_eval_run(run: EvalRun) -> EvalRun:
     with db.transaction() as conn:
         conn.execute(
@@ -153,6 +160,7 @@ def _row_to_run(row) -> EvalRun:
     )
 
 
+@remote_state.hub_call("eval_run:eval_run_id")
 def get_eval_run(eval_run_id: str) -> Optional[EvalRun]:
     row = db.get_conn().execute(
         "SELECT * FROM eval_runs WHERE eval_run_id = ?", (eval_run_id,)
@@ -160,6 +168,7 @@ def get_eval_run(eval_run_id: str) -> Optional[EvalRun]:
     return _row_to_run(row) if row else None
 
 
+@remote_state.hub_call(("eval_set:eval_set_id",), result_scope="workspace")
 def list_eval_runs(eval_set_id: Optional[str] = None, limit: int = 50) -> List[EvalRun]:
     conn = db.get_conn()
     if eval_set_id:
@@ -176,6 +185,7 @@ def list_eval_runs(eval_set_id: Optional[str] = None, limit: int = 50) -> List[E
 
 # ── Results ───────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call("eval_run:result.eval_run_id")
 def save_result(result: EvalResult) -> EvalResult:
     with db.transaction() as conn:
         conn.execute(
@@ -222,6 +232,7 @@ def _row_to_result(row) -> EvalResult:
     )
 
 
+@remote_state.hub_call("global", result_scope="workspace")
 def get_result(result_id: str) -> Optional[EvalResult]:
     row = db.get_conn().execute(
         "SELECT * FROM eval_results WHERE result_id = ?", (result_id,)
@@ -229,6 +240,7 @@ def get_result(result_id: str) -> Optional[EvalResult]:
     return _row_to_result(row) if row else None
 
 
+@remote_state.hub_call("eval_run:eval_run_id")
 def list_results(eval_run_id: str) -> List[EvalResult]:
     rows = db.get_conn().execute(
         "SELECT * FROM eval_results WHERE eval_run_id = ?", (eval_run_id,)
@@ -236,6 +248,7 @@ def list_results(eval_run_id: str) -> List[EvalResult]:
     return [_row_to_result(r) for r in rows]
 
 
+@remote_state.hub_call("eval_run:eval_run_id")
 def build_matrix(eval_run_id: str) -> Dict[str, Any]:
     """Results reshaped as ``{case_id: {config_label: result}}`` for the matrix UI."""
     matrix: Dict[str, Dict[str, Any]] = {}
@@ -246,6 +259,7 @@ def build_matrix(eval_run_id: str) -> Dict[str, Any]:
 
 # ── Prompt suggestions ───────────────────────────────────────────────────────
 
+@remote_state.hub_call("eval_run:s.eval_run_id")
 def save_prompt_suggestion(s: PromptSuggestion) -> PromptSuggestion:
     """Insert or replace a suggestion. Bumps ``updated_at``."""
     s.updated_at = utc_iso()
@@ -290,6 +304,7 @@ def _row_to_suggestion(row) -> PromptSuggestion:
     )
 
 
+@remote_state.hub_call("global", result_scope="workspace")
 def get_prompt_suggestion(suggestion_id: str) -> Optional[PromptSuggestion]:
     row = db.get_conn().execute(
         "SELECT * FROM prompt_suggestions WHERE suggestion_id = ?", (suggestion_id,)
@@ -297,6 +312,7 @@ def get_prompt_suggestion(suggestion_id: str) -> Optional[PromptSuggestion]:
     return _row_to_suggestion(row) if row else None
 
 
+@remote_state.hub_call("eval_run:eval_run_id")
 def list_prompt_suggestions(eval_run_id: str) -> List[PromptSuggestion]:
     rows = db.get_conn().execute(
         "SELECT * FROM prompt_suggestions WHERE eval_run_id = ? ORDER BY created_at DESC",

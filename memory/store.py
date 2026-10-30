@@ -94,8 +94,12 @@ class MemoryStore:
         than an extra generic ``update`` on top of it.
         """
         if remote_state.is_remote():
-            # The whole collection, every workspace's pools: never from a container.
-            raise remote_state.RemoteStateError("replacing every memory pool is the hub's to do")
+            # A container loaded only the pools its workspace sees: writing
+            # them back one by one changes those and never touches the rest
+            # (replace_all would drop every pool it was not shown).
+            for mem in memories:
+                _add_pool(mem, record_history=record_history)
+            return
         if record_history:
             for mem in memories:
                 _record_history(self.get(mem.id), mem)

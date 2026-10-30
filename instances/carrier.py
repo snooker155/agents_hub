@@ -186,14 +186,19 @@ def _environment_fields(workspace: Optional[str], environment_id: Optional[str])
     return fields_for(env, workspace, owner={"kind": "instance"}) if env is not None else {}
 
 
-def _execution_mode(workspace: Optional[str], env_fields: Optional[Dict[str, Any]] = None) -> str:
+def _execution_mode(workspace: Optional[str], env_fields: Optional[Dict[str, Any]] = None,
+                    agent_id: Optional[str] = None) -> str:
     """Workspace override, else the live setting; an environment pins it.
     In docker the carrier gets a container of its own with no database
     (common/remote_state.py); an isolated workspace keeps it local."""
     from common.config import run_execution_mode
-    mode = run_execution_mode(workspace)
+    mode = run_execution_mode(workspace, agent_id)
     if (env_fields or {}).get("execution_mode") in ("local", "docker"):
         mode = env_fields["execution_mode"]
+    if agent_id:
+        from common.workspace_scope import is_service_wide
+        if is_service_wide(agent_id):
+            return "local"  # sees every workspace; an environment cannot change that
     from common import isolation
     if isolation.is_isolated(workspace):
         # An isolated workspace's agent loop runs on the hub, next to the
@@ -360,7 +365,8 @@ def _enqueue(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: st
     run_queue.enqueue(
         instance_id, QUEUE_KIND,
         {"instance_id": instance_id, "reason": reason, "after_stop": previous_live},
-        workspace=workspace, execution_mode=_execution_mode(workspace, env_fields),
+        workspace=workspace,
+        execution_mode=_execution_mode(workspace, env_fields, instance.get("agent_id")),
     )
     append_log(instance, f"[carrier_queued] reason={reason} for a worker"
                          + (" once the previous carrier has stopped" if previous_live else ""))
@@ -438,7 +444,7 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     # reaches only the relay routes (common/run_tokens.py), never the shared
     # API token or the service credential the copied environment may hold. A
     # restart retires the previous carrier's token.
-    mode = _execution_mode(workspace, env_fields)
+    mode = _execution_mode(workspace, env_fields, agent_id)
     from common import run_tokens
     run_tokens.retire_for_instance(instance_id)
     # A carrier in a container has no database: the token is how it reaches

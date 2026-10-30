@@ -166,3 +166,14 @@ def test_the_hub_alias_is_the_containers_address_in_compose(monkeypatch):
     monkeypatch.setattr("common.config.live_setting",
                         lambda key, default="": "http://10.0.0.5:8000/" if key == cm.CONTAINER_HUB_URL_SETTING else "")
     assert cm.container_hub_url() == "http://10.0.0.5:8000"
+
+
+def test_service_agents_stay_local_in_docker_mode(monkeypatch):
+    """They see every workspace, which a container's token never reaches."""
+    monkeypatch.setattr("common.config.agent_execution_mode", lambda workspace=None: "docker")
+    from common.config import run_execution_mode
+    from instances.carrier import _execution_mode
+    assert run_execution_mode("w", "service_agent") == "local"
+    assert run_execution_mode("w", "swe_agent") == "docker"
+    assert _execution_mode("w", {"execution_mode": "docker"}, "system_doctor") == "local"
+    assert _execution_mode("w", None, "swe_agent") == "docker"

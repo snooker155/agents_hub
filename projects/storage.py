@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Optional
 
+from common import remote_state
+
 from pydantic import BaseModel
 
 from common.docstore import DocStore
@@ -48,6 +50,8 @@ class ProjectStore:
         self.docs = DocStore("projects", legacy_file=self.path, legacy_key=_record_key)
 
     def load(self, timeout: float = 10.0) -> List[Project]:
+        if remote_state.is_remote():
+            return _projects()
         items: List[Project] = []
         for obj in self.docs.all().values():
             parsed = self._parse_or_none(obj)
@@ -59,15 +63,21 @@ class ProjectStore:
         return self.load(timeout=timeout)
 
     def get(self, project_id: str, timeout: float = 10.0) -> Optional[Project]:
+        if remote_state.is_remote():
+            return _project(str(project_id))
         doc = self.docs.get(str(project_id))
         return self._parse_or_none(doc) if doc is not None else None
 
     def add(self, project: Project, timeout: float = 10.0) -> Project:
+        if remote_state.is_remote():
+            return _add_project(project)
         self.docs.put(str(project.id), _model_to_dict(project))
         return project
 
     def update(self, project_id: str, *, timeout: float = 10.0, **fields) -> Optional[Project]:
         pid = str(project_id)
+        if remote_state.is_remote():
+            return _update_project(pid, **fields)
         with self.docs.transaction():
             doc = self.docs.get(pid)
             if not isinstance(doc, dict):
@@ -87,6 +97,8 @@ class ProjectStore:
             return updated
 
     def delete(self, project_id: str, timeout: float = 10.0) -> bool:
+        if remote_state.is_remote():
+            return _delete_project(str(project_id))
         return self.docs.delete(str(project_id))
 
     def _parse_or_none(self, data: Any) -> Optional[Project]:
@@ -94,3 +106,30 @@ class ProjectStore:
             return _parse_project(dict(data))
         except (TypeError, ValueError):
             return None
+
+
+# ── the hub's half of an agent container's calls ─────────────────────────────
+
+@remote_state.hub_call("global", result_scope="workspace")
+def _projects() -> List[Project]:
+    return ProjectStore().load()
+
+
+@remote_state.hub_call("project:project_id")
+def _project(project_id: str) -> Optional[Project]:
+    return ProjectStore().get(project_id)
+
+
+@remote_state.hub_call(("project:project.id", "workspace:project.workspace"))
+def _add_project(project: Project) -> Project:
+    return ProjectStore().add(project)
+
+
+@remote_state.hub_call(("project:project_id", "workspace?:workspace"))
+def _update_project(project_id: str, **fields: Any) -> Optional[Project]:
+    return ProjectStore().update(project_id, **fields)
+
+
+@remote_state.hub_call("project:project_id")
+def _delete_project(project_id: str) -> bool:
+    return ProjectStore().delete(project_id)

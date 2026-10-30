@@ -1,6 +1,12 @@
 .git
 .gitignore
+# Every .env file and its backups (ah setup leaves .env.bak-<time> beside it):
+# an image must never carry the operator's secrets. The example stays.
 .env
+.env.*
+!.env.example
+# Written by ah setup for this one install.
+docker-compose.setup.yml
 .agents_hub
 .DS_Store
 __pycache__

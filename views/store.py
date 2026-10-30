@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common import blobs, db
+from common import blobs, db, remote_state
 from common.paths import workspace_views_dir
 from views.models import ViewEnvelope, ViewOwner, ViewValidationError, normalize_envelope, base_spec_for
 from views import ops as vops
@@ -91,6 +91,7 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+@remote_state.hub_call("workspace")
 def create_view(
     kind: str,
     title: str = "",
@@ -209,6 +210,7 @@ def _row(view_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+@remote_state.hub_call("view:view_id")
 def view_index_row(view_id: str) -> Optional[Dict[str, Any]]:
     """The index row for a view (kind, title, workspace, timestamps) without
     reading its envelope file — enough to label a link to it. ``None`` when the
@@ -216,6 +218,7 @@ def view_index_row(view_id: str) -> Optional[Dict[str, Any]]:
     return _row(view_id)
 
 
+@remote_state.hub_call("view:view_id")
 def get_view(view_id: str) -> Optional[Dict[str, Any]]:
     """Return the full view: the stored envelope merged with its saved ``state``.
 
@@ -258,6 +261,7 @@ def get_view(view_id: str) -> Optional[Dict[str, Any]]:
     return env
 
 
+@remote_state.hub_call("workspace")
 def list_views(
     workspace: Optional[str] = None,
     *,
@@ -299,6 +303,7 @@ def list_views(
     return [dict(r) for r in rows]
 
 
+@remote_state.hub_call("global", result_scope="workspace")
 def views_owned_by(kind: str, id: str, *, limit: int = 200) -> List[Dict[str, Any]]:  # noqa: A002 - matches the model field name
     """Index rows for every view produced by one run, across all workspaces.
 
@@ -308,6 +313,7 @@ def views_owned_by(kind: str, id: str, *, limit: int = 200) -> List[Dict[str, An
     return list_views(owner_kind=kind, owner_id=id, limit=limit)
 
 
+@remote_state.hub_call("view:view_id")
 def set_view_state(view_id: str, state: Dict[str, Any]) -> bool:
     """Persist per-user view state (control values, selection, camera pose).
 
@@ -324,6 +330,7 @@ def set_view_state(view_id: str, state: Dict[str, Any]) -> bool:
     return True
 
 
+@remote_state.hub_call("view:view_id")
 def update_spec(view_id: str, spec: Dict[str, Any], *, title: Optional[str] = None,
                 summary: Optional[str] = None) -> bool:
     """Replace a (non live) view's spec in place, validated against its kind.
@@ -365,6 +372,7 @@ def update_spec(view_id: str, spec: Dict[str, Any], *, title: Optional[str] = No
     return True
 
 
+@remote_state.hub_call("view:view_id")
 def delete_view(view_id: str) -> bool:
     """Remove a view's dir (local and mirrored) and index row.
 
@@ -397,6 +405,7 @@ def delete_view(view_id: str) -> bool:
     return True
 
 
+@remote_state.hub_call("view:view_id")
 def view_dir(view_id: str) -> Optional[Path]:
     """The view's own directory, created if missing; None for an unknown view.
 
@@ -412,6 +421,7 @@ def view_dir(view_id: str) -> Optional[Path]:
     return path
 
 
+@remote_state.hub_call("view:view_id")
 def add_asset(view_id: str, src_abs: str, dest_name: Optional[str] = None) -> str:
     """Copy a file into a view's asset dir; return its ``asset://<name>`` ref.
 
@@ -438,6 +448,7 @@ def add_asset(view_id: str, src_abs: str, dest_name: Optional[str] = None) -> st
     return f"asset://{rel}"
 
 
+@remote_state.hub_call("view:view_id")
 def set_snapshot(view_id: str, png_bytes: bytes) -> Optional[str]:
     """Store a PNG snapshot for a view and set it as ``fallback.image``.
 
@@ -466,6 +477,7 @@ def set_snapshot(view_id: str, png_bytes: bytes) -> Optional[str]:
     return "asset://snapshot.png"
 
 
+@remote_state.hub_call("view:view_id")
 def save_clip(view_id: str, name: str, clip: Dict[str, Any]) -> Optional[str]:
     """Persist a recorded compute clip under ``.views/<id>/clips/<name>.json``.
 
@@ -487,6 +499,7 @@ def save_clip(view_id: str, name: str, clip: Dict[str, Any]) -> Optional[str]:
     return f"clip://{safe}"
 
 
+@remote_state.hub_call("view:view_id")
 def get_clip(view_id: str, name: str) -> Optional[Dict[str, Any]]:
     """Load a recorded clip by name (None if unknown / traversal)."""
     row = _row(view_id)
@@ -504,6 +517,7 @@ def get_clip(view_id: str, name: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+@remote_state.hub_call("view:view_id")
 def list_clips(view_id: str) -> List[str]:
     """Names of recorded clips for a view."""
     row = _row(view_id)
@@ -515,6 +529,7 @@ def list_clips(view_id: str) -> List[str]:
     return sorted(p.stem for p in clips_dir.glob("*.json"))
 
 
+@remote_state.hub_call("view:view_id")
 def view_asset_path(view_id: str, rel_path: str) -> Optional[Path]:
     """Resolve an asset path inside a view dir, guarding against traversal.
 
@@ -558,6 +573,7 @@ def _contained(base: Path, rel_path: str) -> Path:
 MAX_OPS_PER_VIEW = 5000
 
 
+@remote_state.hub_call("workspace")
 def create_live_view(
     kind: str,
     title: str = "",
@@ -603,6 +619,7 @@ def _next_seq(conn, view_id: str) -> int:
     return int((row["m"] or 0)) + 1
 
 
+@remote_state.hub_call("view:view_id")
 def get_ops(view_id: str, after_seq: int = 0) -> List[Dict[str, Any]]:
     """Return this view's ops (seq > ``after_seq``) in order, each as a dict with
     its ``seq``/``ts``/``run_id`` merged in — the wire shape the client applies."""
@@ -621,6 +638,7 @@ def get_ops(view_id: str, after_seq: int = 0) -> List[Dict[str, Any]]:
     return out
 
 
+@remote_state.hub_call("view:view_id")
 def append_ops(
     view_id: str,
     ops: Any,
@@ -695,6 +713,7 @@ def _checkpoints_file(view_id: str, workspace: Optional[str]) -> Path:
     return _view_dir(workspace, view_id) / "checkpoints.json"
 
 
+@remote_state.hub_call("view:view_id")
 def list_checkpoints(view_id: str) -> Dict[str, int]:
     """Named checkpoints for a view: ``{name: seq}`` (empty for unknown views)."""
     row = _row(view_id)
@@ -710,6 +729,7 @@ def list_checkpoints(view_id: str) -> Dict[str, int]:
         return {}
 
 
+@remote_state.hub_call("view:view_id")
 def save_checkpoint(view_id: str, name: str) -> Optional[int]:
     """Record the view's current op seq under ``name``; return that seq.
 
@@ -730,6 +750,7 @@ def save_checkpoint(view_id: str, name: str) -> Optional[int]:
     return seq
 
 
+@remote_state.hub_call("view:view_id")
 def checkpoint_seq(view_id: str, name: str) -> Optional[int]:
     """The seq a named checkpoint points at, or None."""
     return list_checkpoints(view_id).get(str(name).strip())
@@ -749,6 +770,7 @@ def _prune_checkpoints_after(view_id: str, workspace: Optional[str], seq: int) -
         f.write_text(json.dumps(kept, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+@remote_state.hub_call("view:view_id")
 def revert_to(view_id: str, seq: int) -> bool:
     """Undo: drop ops after ``seq`` and re-materialize the document from the base.
 
@@ -844,6 +866,7 @@ def _seed_code_version(view_id: str, workspace: Optional[str], body: str) -> Non
     _write_json_list(_code_versions_file(view_id, workspace), [entry])
 
 
+@remote_state.hub_call("view:view_id")
 def list_code_versions(view_id: str) -> List[Dict[str, Any]]:
     """Every recorded version of a code view's body, oldest first. Empty for an
     unknown view id or one with no recorded versions."""
@@ -853,6 +876,7 @@ def list_code_versions(view_id: str) -> List[Dict[str, Any]]:
     return _read_json_list(_code_versions_file(view_id, row.get("workspace")))
 
 
+@remote_state.hub_call("view:view_id")
 def add_code_version(view_id: str, body: str, *, author: str, note: str = "") -> Optional[Dict[str, Any]]:
     """Record a new version of a code view's body; return the updated envelope.
 
@@ -889,6 +913,7 @@ def add_code_version(view_id: str, body: str, *, author: str, note: str = "") ->
     return get_view(view_id)
 
 
+@remote_state.hub_call("view:view_id")
 def replace_code_body(view_id: str, body: str, *, author: str = "user") -> Optional[Dict[str, Any]]:
     """Overwrite the current version's body in place; return the updated envelope.
 
@@ -938,11 +963,13 @@ def _snippet_versions_file(key: str, workspace: Optional[str]) -> Path:
     return workspace_views_dir(workspace) / "_snippets" / digest / "code_versions.json"
 
 
+@remote_state.hub_call("workspace")
 def list_snippet_versions(key: str, workspace: Optional[str] = None) -> List[Dict[str, Any]]:
     """Every recorded version of a keyed snippet, oldest first; empty when none."""
     return _read_json_list(_snippet_versions_file(key, workspace))
 
 
+@remote_state.hub_call("workspace")
 def add_snippet_version(key: str, body: str, *, workspace: Optional[str] = None, author: str = "user",
                         note: str = "", base: Optional[str] = None) -> List[Dict[str, Any]]:
     """Record a new version of a keyed snippet; return the whole history.
@@ -962,6 +989,7 @@ def add_snippet_version(key: str, body: str, *, workspace: Optional[str] = None,
     return versions
 
 
+@remote_state.hub_call("view:view_id")
 def list_code_runs(view_id: str) -> List[Dict[str, Any]]:
     """The recorded run results for a code view, oldest first (capped at
     MAX_CODE_RUNS). Empty for an unknown view id or one never run."""
@@ -971,6 +999,7 @@ def list_code_runs(view_id: str) -> List[Dict[str, Any]]:
     return _read_json_list(_code_runs_file(view_id, row.get("workspace")))
 
 
+@remote_state.hub_call("view:view_id")
 def add_code_run(view_id: str, run_record: Dict[str, Any]) -> bool:
     """Append one run result, keeping only the last MAX_CODE_RUNS. False for an
     unknown view id."""
@@ -987,6 +1016,7 @@ def add_code_run(view_id: str, run_record: Dict[str, Any]) -> bool:
     return True
 
 
+@remote_state.hub_call("view:view_id")
 def list_code_saves(view_id: str) -> List[Dict[str, Any]]:
     """Every recorded save-to-project of a code view, oldest first."""
     row = _row(view_id)
@@ -995,6 +1025,7 @@ def list_code_saves(view_id: str) -> List[Dict[str, Any]]:
     return _read_json_list(_code_saves_file(view_id, row.get("workspace")))
 
 
+@remote_state.hub_call("view:view_id")
 def add_code_save(view_id: str, save_record: Dict[str, Any]) -> bool:
     """Append one save-to-project record (``project_id``, ``path``, ``version``).
     False for an unknown view id."""
@@ -1018,6 +1049,7 @@ OP_COMPACT_THRESHOLD = 1000
 OP_COMPACT_KEEP_TAIL = 200
 
 
+@remote_state.hub_call("view:view_id")
 def compact_view_ops(view_id: str, keep_tail: int = OP_COMPACT_KEEP_TAIL) -> int:
     """Fold this view's older ops into its base, keeping only the tail. Returns
     the number of ops compacted (0 if under threshold or unknown view)."""

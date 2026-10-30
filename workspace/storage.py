@@ -149,7 +149,7 @@ def is_valid_workspace_name(name: str) -> bool:
     return candidate.name == name and not candidate.is_absolute()
 
 
-@remote_state.hub_call("workspace:name")
+@remote_state.hub_call("admin_workspace:name")
 def create_workspace_folder(name: Optional[str] = None) -> Path:
     """
     Create a new workspace folder in the workspaces directory and initialize metadata.
@@ -286,11 +286,13 @@ def attach_workspace_folder(target: Path | str, name: Optional[str] = None) -> P
     return link
 
 
+@remote_state.hub_call("admin_workspace:name")
 def is_attached_workspace(name: str) -> bool:
     """True when this workspace is a link to a directory outside the state root."""
     return (WORKSPACES_ROOT / name).is_symlink()
 
 
+@remote_state.hub_call("admin_workspace:name")
 def workspace_target(name: str) -> Optional[Path]:
     """The real directory behind a workspace — the link target when attached."""
     link = WORKSPACES_ROOT / name
@@ -450,7 +452,7 @@ def _own_default_model_config(meta: Dict[str, Any] | None) -> Dict[str, str]:
     return {"provider": provider, "model": model}
 
 
-@remote_state.hub_call("workspace:name", cache_seconds=2.0)
+@remote_state.hub_call("admin_workspace:name", cache_seconds=2.0)
 def get_workspace_metadata(name: str) -> Dict[str, Any]:
     """Get metadata for a workspace from the central store."""
     _migrate_legacy_metadata()
@@ -464,6 +466,7 @@ def get_workspace_metadata(name: str) -> Dict[str, Any]:
     return normalized
 
 
+@remote_state.hub_call("admin_workspace:name")
 def update_workspace_metadata(name: str, updates: Dict[str, Any]) -> Dict[str, Any]:
     """Update metadata for a workspace in the central store.
 
@@ -484,6 +487,7 @@ def update_workspace_metadata(name: str, updates: Dict[str, Any]) -> Dict[str, A
     return meta
 
 
+@remote_state.hub_call("admin_workspace:name")
 def get_workspace_folder(name: str) -> Optional[Path]:
     """
     Get the path to an existing workspace folder.
@@ -502,6 +506,17 @@ def get_workspace_folder(name: str) -> Optional[Path]:
     return None
 
 
+def _own_folders(token: Dict[str, Any], folders: Any) -> Any:
+    """A container sees its own workspace's folder; the default workspace's
+    runs, where workspaces are managed from, see all of them."""
+    from common.remote_state import _same_workspace
+    ws = token.get("workspace")
+    if _same_workspace(ws, None) or not isinstance(folders, list):
+        return folders
+    return [f for f in folders if _same_workspace(Path(str(f)).name, ws)]
+
+
+@remote_state.hub_call("global", result_scope=_own_folders)
 def list_workspace_folders() -> list[Path]:
     """
     List all existing workspace folders.
@@ -513,6 +528,7 @@ def list_workspace_folders() -> list[Path]:
     return [p for p in WORKSPACES_ROOT.iterdir() if p.is_dir()]
 
 
+@remote_state.hub_call("admin_workspace:name")
 def delete_workspace_folder(name: str) -> bool:
     """Delete an existing workspace folder recursively and its central metadata.
 
@@ -941,6 +957,7 @@ def delete_plan(workspace_name: str, plan_id: str) -> bool:
 INSTRUCTIONS_FILENAME = "INSTRUCTIONS.md"
 
 
+@remote_state.hub_call("admin_workspace:name")
 def get_workspace_instructions(name: str) -> str:
     """Return the workspace-level instructions markdown, or empty string if none."""
     folder = get_workspace_folder(name)
@@ -952,6 +969,7 @@ def get_workspace_instructions(name: str) -> str:
     return ""
 
 
+@remote_state.hub_call("admin_workspace:name")
 def set_workspace_instructions(name: str, content: str) -> None:
     """Write workspace-level instructions markdown to INSTRUCTIONS.md."""
     folder = create_workspace_folder(name)

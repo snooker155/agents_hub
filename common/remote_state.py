@@ -29,6 +29,8 @@ all pass):
   ``run``, ``instance``, ...); a resolver registered with
   :func:`register_resolver` gives that record's workspace. A record that does
   not exist passes: the function finds nothing either.
+- ``"admin_workspace:<arg>"``: like ``workspace``, and a run of the default
+  workspace may name any workspace (where workspaces are managed from).
 - ``"own_instance:<arg>"``: the argument is the instance the token was minted
   for (a carrier's own row), not merely one of its workspace;
   ``"own_message:<arg>"`` a message of that instance's mailbox.
@@ -89,6 +91,7 @@ _OWN_PACKAGES = frozenset({
 #: imports them (and only them) to fill the registry; a function in a module
 #: missing here is refused even when it is marked.
 REMOTE_MODULES: Tuple[str, ...] = (
+    "agents.prompt_assembly",
     "agents.registry",
     "agents.roles",
     "common.audit",
@@ -97,6 +100,8 @@ REMOTE_MODULES: Tuple[str, ...] = (
     "common.entity_runs",
     "common.session_service",
     "common.steering",
+    "connectors.channels.store",
+    "evals.store",
     "connectors.consent.store",
     "files.service",
     "flow.registry",
@@ -112,17 +117,22 @@ REMOTE_MODULES: Tuple[str, ...] = (
     "managers.runs.lifecycle",
     "managers.runs.store",
     "managers.runs.task_finalize",
+    "memory.episodic",
+    "memory.graph",
     "memory.injection",
     "memory.personal",
     "memory.procedural",
     "memory.store",
     "plans.service",
+    "projects.storage",
     "playground.store",
     "providers.catalog",
     "tasks.service",
     "teams.store",
     "tools.langchain_tools",
     "tools.permission_policy",
+    "tools.web_log",
+    "views.store",
     "workspace.storage",
 )
 
@@ -232,7 +242,7 @@ class Entry:
     fn: Callable[..., Any]
     scope: Any
     signature: inspect.Signature
-    result_scope: Optional[str] = None
+    result_scope: Any = None
 
 
 _REGISTRY: Dict[str, Entry] = {}
@@ -247,7 +257,7 @@ def _key(fn: Callable[..., Any]) -> str:
 
 
 def hub_call(scope: Union[ScopeRule, Tuple[str, ...]], *, cache_seconds: float = 0.0,
-             result_scope: Optional[str] = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+             result_scope: Any = None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Mark a store function as callable from a remote agent process.
 
     On the hub (and in any process with a database) the function runs as
@@ -259,7 +269,8 @@ def hub_call(scope: Union[ScopeRule, Tuple[str, ...]], *, cache_seconds: float =
     the items of the token's workspace (an item's ``workspace`` attribute or
     key): for a listing with no workspace argument that callers on the hub
     filter themselves. ``"workspace_or_shared"`` also keeps items with no
-    workspace at all (a memory pool shared between workspaces).
+    workspace at all (a memory pool shared between workspaces). A callable
+    ``(token_row, result) -> result`` filters anything else.
 
     ``cache_seconds`` keeps a remote process's answer for that long, per
     arguments: for the reads a build repeats many times a second (a change
@@ -270,7 +281,7 @@ def hub_call(scope: Union[ScopeRule, Tuple[str, ...]], *, cache_seconds: float =
     for rule in rules:
         if isinstance(rule, str):
             _parse_scope(rule)  # a typo fails at import, not at the first remote call
-    if result_scope not in (None, "workspace", "workspace_or_shared"):
+    if result_scope not in (None, "workspace", "workspace_or_shared") and not callable(result_scope):
         raise ValueError(f"unknown result_scope {result_scope!r}")
 
     def wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -386,7 +397,7 @@ def _parse_scope(scope: str) -> Tuple[str, bool, Optional[str]]:
         raise ValueError(f"empty hub_call scope {scope!r}")
     if kind == "global":
         return kind, False, None
-    if kind == "workspace":
+    if kind in ("workspace", "admin_workspace"):
         return kind, optional, (arg.strip() or "workspace")
     if not arg.strip():
         raise ValueError(f"hub_call scope {scope!r} names no argument")
@@ -519,6 +530,36 @@ def _default_resolvers() -> None:
         # bound to it.
         return getattr(found, "workspace", None) or token_ws
 
+    def project(project_id: str) -> Any:
+        from projects.storage import ProjectStore
+        found = ProjectStore().get(project_id)
+        return MISSING if found is None else getattr(found, "workspace", None)
+
+    def eval_set(eval_set_id: str) -> Any:
+        from evals.store import get_eval_set
+        found = get_eval_set(eval_set_id)
+        return MISSING if found is None else getattr(found, "workspace", None)
+
+    def eval_run(eval_run_id: str) -> Any:
+        from evals.store import get_eval_run
+        found = get_eval_run(eval_run_id)
+        return MISSING if found is None else getattr(found, "workspace", None)
+
+    def view(view_id: str) -> Any:
+        from views.store import view_index_row
+        found = view_index_row(view_id)
+        return MISSING if not found else found.get("workspace")
+
+    def file(file_id: str) -> Any:
+        from files.service import get_file
+        found = get_file(file_id, include_deleted=True)
+        return MISSING if not found else found.get("workspace")
+
+    _RESOLVERS.setdefault("project", project)
+    _RESOLVERS.setdefault("eval_set", eval_set)
+    _RESOLVERS.setdefault("eval_run", eval_run)
+    _RESOLVERS.setdefault("view", view)
+    _RESOLVERS.setdefault("file", file)
     _RESOLVERS.setdefault("pool", pool)
     _RESOLVERS.setdefault("entity_run", entity_run)
     _RESOLVERS.setdefault("loop", loop)
@@ -571,14 +612,19 @@ def _check_rule(entry: Entry, rule: str, token_row: Mapping[str, Any],
         if not own or str(value or "") != str(own):
             raise ScopeError(f"{entry.key}: instance '{value}' is not this carrier's")
         return
-    if kind == "workspace":
+    if kind in ("workspace", "admin_workspace"):
         if value in (None, ""):
             if not optional:
                 _arg_set(entry, bound, arg, token_ws or None)
             return
-        if not _same_workspace(str(value), token_ws):
-            raise ScopeError(f"{entry.key}: workspace '{value}' is not this run's workspace")
-        return
+        if _same_workspace(str(value), token_ws):
+            return
+        if kind == "admin_workspace" and _same_workspace(token_ws, None):
+            # Workspaces are managed from a run of the default workspace
+            # (common/workspace_scope.py WORKSPACE_ADMIN_TOOLS: the main agent
+            # only, checked where the tool is built).
+            return
+        raise ScopeError(f"{entry.key}: workspace '{value}' is not this run's workspace")
     resolver = _RESOLVERS.get(kind)
     if resolver is None:
         raise ScopeError(f"{entry.key}: no resolver for record kind '{kind}'")
@@ -605,6 +651,8 @@ def _filter_result(entry: Entry, token_row: Mapping[str, Any], result: Any) -> A
     another workspace becomes None (not found, as the tools say for it)."""
     if entry.result_scope is None or result is None:
         return result
+    if callable(entry.result_scope):
+        return entry.result_scope(dict(token_row), result)
     token_ws = token_row.get("workspace")
     shared_ok = entry.result_scope == "workspace_or_shared"
 
@@ -650,6 +698,39 @@ def dispatch(token_row: Mapping[str, Any], payload: Mapping[str, Any]) -> Dict[s
     except TypeError as exc:
         log.warning("remote call %s returned what cannot be sent back: %s", key, exc)
         return {"ok": False, "error": _encode_error(exc)}
+
+
+# ── stores that are objects ──────────────────────────────────────────────────
+
+class RemoteObject:
+    """What an agent container gets instead of a store object bound to one
+    record (a memory pool's episodes or graph): every public method call goes
+    to the hub through ``call(key, method, *args, **kwargs)``, a function
+    marked with :func:`hub_call` whose scope checks ``key``."""
+
+    def __init__(self, call: Callable[..., Any], key: str, methods: frozenset,
+                 attrs: Optional[Dict[str, Any]] = None) -> None:
+        self._call = call
+        self._key = key
+        self._methods = methods
+        for name, value in (attrs or {}).items():
+            setattr(self, name, value)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_") or name not in self._methods:
+            raise AttributeError(name)
+
+        def method(*args: Any, **kwargs: Any) -> Any:
+            kwargs.pop("timeout", None)
+            return self._call(self._key, name, *args, **kwargs)
+
+        return method
+
+
+def public_methods(cls: type) -> frozenset:
+    """The names :class:`RemoteObject` forwards for ``cls``."""
+    return frozenset(n for n, v in vars(cls).items()
+                     if not n.startswith("_") and callable(v) and not isinstance(v, (staticmethod, classmethod)))
 
 
 # ── codec ────────────────────────────────────────────────────────────────────
@@ -897,17 +978,75 @@ CONTAINER_WORKSPACE = "/workspace"
 HOST_WORKSPACE_ENV = "AGENTS_HUB_HOST_WORKSPACE"
 
 
-def _hub_path(value: Any) -> Any:
-    """A path argument under the container's /workspace as the hub sees it
-    (the folder is mounted there; the hub knows it by its own path)."""
-    host = os.environ.get(HOST_WORKSPACE_ENV, "").strip()
-    if not host or not isinstance(value, (str, PurePath)):
+def _local_workspace_dir() -> Optional[Path]:
+    """Where this process's own code looks for its workspace folder
+    (WORKSPACES_ROOT/<name>), which in a container is a link to /workspace."""
+    from common.paths import WORKSPACES_ROOT
+    from common.workspace_context import normalize_workspace_name
+    name = normalize_workspace_name(os.environ.get("AGENT_WORKSPACE"))
+    return Path(WORKSPACES_ROOT) / name if name else None
+
+
+def link_container_workspace() -> None:
+    """In an agent container, make WORKSPACES_ROOT/<workspace> a link to the
+    mounted /workspace, so code that finds the folder by the workspace's name
+    (a view's files under .views, a project folder) finds the mounted one.
+    Never raises."""
+    if _mode() != "1" or not os.environ.get(HOST_WORKSPACE_ENV):
+        return
+    try:
+        mount = Path(CONTAINER_WORKSPACE)
+        local = _local_workspace_dir()
+        if local is None or not mount.is_dir() or local.exists() or local.is_symlink():
+            return
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.symlink_to(mount, target_is_directory=True)
+    except OSError:
+        log.debug("could not link the workspace folder", exc_info=True)
+
+
+def _prefixes_to_hub() -> list:
+    host = os.environ.get(HOST_WORKSPACE_ENV, "").strip().rstrip("/")
+    if not host:
+        return []
+    out = [(CONTAINER_WORKSPACE, host)]
+    local = _local_workspace_dir()
+    if local is not None:
+        out.append((str(local), host))
+    return out
+
+
+def _swap_prefix(value: Any, pairs: list) -> Any:
+    if not isinstance(value, (str, PurePath)):
         return value
     text = str(value)
-    if text != CONTAINER_WORKSPACE and not text.startswith(CONTAINER_WORKSPACE + "/"):
+    for old, new in pairs:
+        if text == old or text.startswith(old + "/"):
+            out = new + text[len(old):]
+            return Path(out) if isinstance(value, PurePath) else out
+    return value
+
+
+def _hub_path(value: Any) -> Any:
+    """A path argument under the container's workspace folder (/workspace, or
+    its link under WORKSPACES_ROOT) as the hub knows the folder."""
+    return _swap_prefix(value, _prefixes_to_hub())
+
+
+def _local_paths(value: Any, depth: int = 0) -> Any:
+    """A result with the hub's paths of this workspace's folder turned into
+    this container's: a returned Path, or a string that is one."""
+    host = os.environ.get(HOST_WORKSPACE_ENV, "").strip().rstrip("/")
+    if not host or depth > 6:
         return value
-    out = host.rstrip("/") + text[len(CONTAINER_WORKSPACE):]
-    return Path(out) if isinstance(value, PurePath) else out
+    if isinstance(value, (str, PurePath)):
+        local = _local_workspace_dir()
+        return _swap_prefix(value, [(host, str(local or CONTAINER_WORKSPACE))])
+    if isinstance(value, list):
+        return [_local_paths(v, depth + 1) for v in value]
+    if isinstance(value, dict):
+        return {k: _local_paths(v, depth + 1) for k, v in value.items()}
+    return value
 
 
 def _client_call(key: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
@@ -915,7 +1054,7 @@ def _client_call(key: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any
     kwargs = {k: _hub_path(v) for k, v in kwargs.items()}
     body = _post({"fn": key, "args": encode(list(args)), "kwargs": encode(kwargs)})
     if body.get("ok"):
-        return decode(body.get("result"))
+        return _local_paths(decode(body.get("result")))
     error = body.get("error")
     if isinstance(error, dict):
         raise _rebuild_error(error)
@@ -924,7 +1063,10 @@ def _client_call(key: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any
 
 __all__ = [
     "CALL_PATH", "ENV", "Entry", "MISSING", "REMOTE_MODULES", "RemoteCallError",
-    "RemoteStateError", "ScopeError", "TokenRefused", "check_scope", "decode", "dispatch", "encode", "hub_call",
-    "forget_cached", "hub_side", "is_remote", "refuse_database", "register_resolver",
+    "RemoteObject", "RemoteStateError", "ScopeError", "TokenRefused", "check_scope", "decode", "dispatch", "encode", "hub_call",
+    "forget_cached", "hub_side", "is_remote", "public_methods", "refuse_database", "register_resolver",
     "registered",
 ]
+
+
+link_container_workspace()

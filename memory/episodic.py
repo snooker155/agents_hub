@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+from common import remote_state
 from common.docstore import DocStore
 from common.paths import pool_episodes_file
 
@@ -63,6 +64,14 @@ class EpisodeStore:
     """Store for Episode objects, scoped to one shared-memory pool, kept in
     the ``documents`` table (one row per episode, collection
     ``episodes:<pool_id>``) through :class:`common.docstore.DocStore`."""
+
+    def __new__(cls, pool_id: str, *args: Any, **kwargs: Any) -> Any:
+        # In an agent container the pool's data is on the hub: a stand-in that
+        # sends every public method there (_episodes_op, scoped to the pool).
+        if remote_state.is_remote():
+            return remote_state.RemoteObject(_episodes_op, str(pool_id), _EPISODESTORE_METHODS,
+                                              {"pool_id": str(pool_id)})
+        return super().__new__(cls)
 
     def __init__(self, pool_id: str):
         self.pool_id = str(pool_id)
@@ -224,3 +233,14 @@ def _score(episode: Episode, query_lower: str) -> float:
     if overlap == 0:
         return 1.0 if query_lower in haystack else 0.0
     return overlap / len(q_words)
+
+
+_EPISODESTORE_METHODS = remote_state.public_methods(EpisodeStore)
+
+
+@remote_state.hub_call("pool:pool_id")
+def _episodes_op(pool_id: str, method: str, *args: Any, **kwargs: Any) -> Any:
+    """The hub's half of an agent container's EpisodeStore call."""
+    if method not in _EPISODESTORE_METHODS:
+        raise ValueError(f"unknown EpisodeStore method {method!r}")
+    return getattr(EpisodeStore(pool_id), method)(*args, **kwargs)

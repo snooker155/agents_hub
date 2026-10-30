@@ -39,6 +39,12 @@ def ws_echo(workspace: Optional[str] = None, value: int = 0):
     return {"workspace": workspace, "value": value}
 
 
+@hub_call("workspace")
+def hub_saw(workspace: str):
+    """What arrived on the hub, as a plain string (not translated back)."""
+    return "seen:" + str(workspace)
+
+
 @hub_call("task:task_id")
 def task_title(task_id: str):
     from uuid import UUID
@@ -247,11 +253,13 @@ def test_the_route_needs_a_run_token_and_checks_scope(monkeypatch, client, mode)
 def test_a_container_path_reaches_the_hub_as_the_hubs_path(remote, monkeypatch):
     """The workspace folder is mounted at /workspace; the hub knows it by its
     own path, and finds the workspace from where that path sits (a project
-    folder inside it included)."""
+    folder inside it included). A path the hub sends back is the container's
+    again."""
     from common.paths import WORKSPACES_ROOT
     host = WORKSPACES_ROOT / "acme"
     monkeypatch.setenv(remote_state.HOST_WORKSPACE_ENV, str(host))
-    assert ws_echo("/workspace") == {"workspace": str(host), "value": 0}
+    monkeypatch.setenv("AGENT_WORKSPACE", "acme")
+    assert hub_saw("/workspace/projects/site") == "seen:" + str(host / "projects" / "site")
     assert ws_echo("/workspace/projects/site")["workspace"] == str(host / "projects" / "site")
     with pytest.raises(ScopeError):
         ws_echo(str(WORKSPACES_ROOT / "other" / "x"))

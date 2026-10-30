@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 from uuid import uuid4
 
+from common import remote_state
 from common.docstore import DocStore
 from common.paths import WEB_LOG_FILE
 
@@ -352,6 +353,7 @@ def _ensure_legacy_imported() -> None:
     _store.import_legacy(docs, WEB_LOG_FILE)
 
 
+@remote_state.hub_call("workspace:record.workspace")
 def append(record: Dict[str, Any]) -> None:
     enabled, max_entries, body_chars = _config()
     if not enabled:
@@ -407,6 +409,7 @@ SORT_KEYS = {
 }
 
 
+@remote_state.hub_call("workspace")
 def query(
     *,
     limit: int = 200,
@@ -460,11 +463,13 @@ def query(
     }
 
 
+@remote_state.hub_call("global", result_scope="workspace")
 def get(entry_id: str) -> Optional[Dict[str, Any]]:
     _ensure_legacy_imported()
     return _store.get(entry_id)
 
 
+@remote_state.hub_call("workspace")
 def stats(workspace: Optional[str] = None) -> Dict[str, Any]:
     """Counters for the log header: volume, failures, flagged calls, top hosts,
     over the calls made in ``workspace`` (every workspace when None)."""
@@ -508,6 +513,7 @@ def stats(workspace: Optional[str] = None) -> Dict[str, Any]:
     }
 
 
+@remote_state.hub_call("workspace")
 def clear(workspace: Optional[str] = None) -> int:
     """Delete every entry, or only the calls made in ``workspace``. Returns
     how many were removed."""

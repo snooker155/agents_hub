@@ -21,6 +21,7 @@ rewrite a file fast enough to land on the same mtime.
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -42,14 +43,16 @@ _ESCAPE_RE = re.compile(r"\\(.)")
 _cache: Dict[str, Tuple[Tuple[int, int], Dict[str, str]]] = {}
 
 
-def env_path() -> Path:
-    """Canonical .env location: <project root>/.env.
+#: Names another file to read instead of <project root>/.env (the remote
+#: state harness gives an agent process an empty one, tests/remote_harness.py).
+ENV_FILE_ENV = "AGENTS_HUB_ENV_FILE"
 
-    No env var overrides this today (grepped the repo; nothing reads one), so
-    none is added here — a module that needs a different file passes its own
-    ``path`` to ``read_env`` instead.
-    """
-    return PROJECT_ROOT / ".env"
+
+def env_path() -> Path:
+    """Canonical .env location: <project root>/.env, or the file
+    ``AGENTS_HUB_ENV_FILE`` names."""
+    override = os.environ.get(ENV_FILE_ENV, "").strip()
+    return Path(override) if override else PROJECT_ROOT / ".env"
 
 
 def _unescape_double_quoted(body: str) -> str:

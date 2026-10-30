@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from common import db
+from common import db, remote_state
 from common.docstore import DocStore
 from common.paths import pool_graph_file
 
@@ -79,6 +79,14 @@ class GraphStore:
     Node identity = (type, name) lowercased — `upsert_node` merges by that key.
     Edge identity = (source_id, target_id, relation) — `add_edge` merges by that key.
     """
+
+    def __new__(cls, pool_id: str, *args: Any, **kwargs: Any) -> Any:
+        # In an agent container the pool's data is on the hub: a stand-in that
+        # sends every public method there (_graph_op, scoped to the pool).
+        if remote_state.is_remote():
+            return remote_state.RemoteObject(_graph_op, str(pool_id), _GRAPHSTORE_METHODS,
+                                              {"pool_id": str(pool_id)})
+        return super().__new__(cls)
 
     def __init__(self, pool_id: str):
         self.pool_id = str(pool_id)
@@ -507,3 +515,14 @@ def _apply_retention(nodes: List[Node], edges: List[Edge]) -> Tuple[List[Node], 
         nodes = kept
 
     return nodes, edges
+
+
+_GRAPHSTORE_METHODS = remote_state.public_methods(GraphStore)
+
+
+@remote_state.hub_call("pool:pool_id")
+def _graph_op(pool_id: str, method: str, *args: Any, **kwargs: Any) -> Any:
+    """The hub's half of an agent container's GraphStore call."""
+    if method not in _GRAPHSTORE_METHODS:
+        raise ValueError(f"unknown GraphStore method {method!r}")
+    return getattr(GraphStore(pool_id), method)(*args, **kwargs)

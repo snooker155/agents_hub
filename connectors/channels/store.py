@@ -59,6 +59,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
+from common import remote_state
 from common.docstore import DocStore
 
 _STATE_KEY = "state"
@@ -142,9 +143,14 @@ class ChannelStore:
         if self.workspace is not None:
             return self.workspace
         ws = scope_workspace()
-        if ws and ws != DEFAULT_WORKSPACE and self._store.exists(_key_for(ws)):
+        if ws and ws != DEFAULT_WORKSPACE and self._exists(ws):
             return ws
         return DEFAULT_WORKSPACE
+
+    def _exists(self, workspace: str) -> bool:
+        if remote_state.is_remote():
+            return _channel_exists(self.name, workspace)
+        return self._store.exists(_key_for(workspace))
 
     def defined_workspaces(self) -> list[str]:
         """The workspaces other than the default that define this connector."""
@@ -199,9 +205,20 @@ class ChannelStore:
 
     def load(self) -> dict[str, Any]:
         """The full state, secrets included (internal use only)."""
+        if remote_state.is_remote():
+            return self._coerce(_channel_doc(self.name, self.effective_workspace()))
         return self._coerce(self._store.get(self._key()))
 
     def _update(self, fn) -> Any:
+        if remote_state.is_remote():
+            # In an agent container: read, change here, write back through the
+            # hub. Not atomic across the two calls; a container's writes are a
+            # sync cursor or a binding, never the config people edit.
+            ws = self.effective_workspace()
+            data = self._coerce(_channel_doc(self.name, ws))
+            result = fn(data)
+            _channel_put(self.name, ws, data)
+            return result
         key = self._key()
         with self._store.transaction():
             data = self._coerce(self._store.get(key))
@@ -462,3 +479,30 @@ class ChannelStore:
 
 
 __all__ = ["ChannelStore"]
+
+
+# ── the hub's half of an agent container's calls ─────────────────────────────
+
+def _own_or_default(token: dict, arguments: dict) -> None:
+    """A container reads and writes its own workspace's document of a
+    connector, or the default workspace's, which every workspace inherits."""
+    from common.remote_state import ScopeError, _same_workspace
+    ws = arguments.get("workspace")
+    if _same_workspace(ws, DEFAULT_WORKSPACE) or _same_workspace(ws, token.get("workspace")):
+        return
+    raise ScopeError(f"connector '{arguments.get('name')}' of workspace '{ws}' is not this run's")
+
+
+@remote_state.hub_call(_own_or_default)
+def _channel_exists(name: str, workspace: str) -> bool:
+    return DocStore(f"channel_{name}").exists(_key_for(workspace))
+
+
+@remote_state.hub_call(_own_or_default)
+def _channel_doc(name: str, workspace: str) -> Any:
+    return DocStore(f"channel_{name}").get(_key_for(workspace))
+
+
+@remote_state.hub_call(_own_or_default)
+def _channel_put(name: str, workspace: str, data: dict) -> None:
+    DocStore(f"channel_{name}").put(_key_for(workspace), data)
