@@ -89,8 +89,11 @@ token. The hub proxies only hosts it knows (the providers at their configured
 base URLs, custom providers with a key, not the local network), puts in the
 real key (the agent's, the custom provider's, the workspace's own, else the
 hub's) and streams the answer back. Google models use the REST transport in a
-container so the gateway carries them. Left in the container: a web search
-provider's own key (`WEB_SEARCH_API_KEY`) and the tracing keys.
+container so the gateway carries them. Web search goes the same way: through
+the model provider it searches on, or with `WEB_SEARCH_API_KEY` to Brave
+(`X-Subscription-Token`), Exa (`x-api-key`) or Tavily (`api_key` in the JSON
+body, put in by the hub). Answers reach the container decoded. Left in the
+container: the tracing keys and its own workspace's connector secrets.
 
 This is why docker mode works on Postgres and on Docker Desktop alike: SQLite's
 locks never have to cross the Docker Desktop VM, and the database password

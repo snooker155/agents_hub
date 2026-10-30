@@ -39,12 +39,12 @@ HOSTS_ENV = "AGENTS_HUB_LLM_HOSTS"
 ROUTE = "/api/run-state/llm"
 
 #: Headers that carry a provider key in one SDK or another.
-_KEY_HEADERS = ("authorization", "x-api-key", "x-goog-api-key", "api-key")
+_KEY_HEADERS = ("authorization", "x-api-key", "x-goog-api-key", "api-key", "x-subscription-token")
 
 #: Provider keys an agent container never gets (replaced by SENTINEL when the
 #: hub has one, dropped otherwise).
 PROVIDER_KEY_VARS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
-                     "RAG_EMBEDDING_API_KEY")
+                     "RAG_EMBEDDING_API_KEY", "WEB_SEARCH_API_KEY")
 
 #: Workspace settings fields that hold a provider key.
 SETTINGS_KEY_FIELDS = ("openai_api_key", "anthropic_api_key", "google_api_key")
@@ -53,7 +53,14 @@ DEFAULT_HOSTS = {
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com",
     "google": "https://generativelanguage.googleapis.com",
+    # The web search providers that take WEB_SEARCH_API_KEY (tools/web.py).
+    "brave": "https://api.search.brave.com",
+    "tavily": "https://api.tavily.com",
+    "exa": "https://api.exa.ai",
 }
+
+#: Search providers: the key is WEB_SEARCH_API_KEY, sent the provider's way.
+SEARCH_KINDS = frozenset({"brave", "tavily", "exa"})
 
 
 # ── the hub's side ───────────────────────────────────────────────────────────
@@ -216,17 +223,42 @@ def resolve_auth(netloc: str, headers: Mapping[str, str], query: str,
         key = str(backend.get("api_key") or "")
         extra.update({str(k): str(v) for k, v in (backend.get("headers") or {}).items()})
         kind = "openai"
+    elif kind in SEARCH_KINDS:
+        key = _setting("web_search_api_key")
     else:
         key = _workspace_key(kind, workspace)
     if not key:
         raise LookupError(f"no key for {netloc}")
-    if kind == "anthropic":
+    if kind == "brave":
+        extra["x-subscription-token"] = key
+    elif kind == "exa":
+        extra["x-api-key"] = key
+    elif kind == "tavily":
+        pass  # in the body (patch_body)
+    elif kind == "anthropic":
         extra["x-api-key"] = key
     elif kind == "google":
         extra["x-goog-api-key"] = key
     else:
         extra["authorization"] = f"Bearer {key}"
     return extra, query
+
+
+def patch_body(netloc: str, body: bytes, workspace: Optional[str]) -> bytes:
+    """The request body with a key the provider reads from it put in: Tavily
+    takes ``api_key`` in its JSON. Any other body is returned as it is."""
+    kind = provider_hosts(workspace).get(netloc, ("", ""))[0]
+    if kind != "tavily" or not body:
+        return body
+    import json
+    try:
+        doc = json.loads(body)
+    except ValueError:
+        return body
+    if isinstance(doc, dict):
+        doc["api_key"] = _setting("web_search_api_key")
+        return json.dumps(doc).encode("utf-8")
+    return body
 
 
 #: Request headers never forwarded to the provider.
@@ -341,5 +373,5 @@ def _patch_requests() -> None:
 
 
 __all__ = ["AGENT_PREFIX", "BACKEND_PREFIX", "HOSTS_ENV", "ROUTE", "SENTINEL", "container_env",
-           "forward_headers", "install", "provider_hosts", "resolve_auth", "strip_backend_key",
+           "forward_headers", "install", "patch_body", "provider_hosts", "resolve_auth", "strip_backend_key",
            "strip_record_key", "strip_settings_keys"]

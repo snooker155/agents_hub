@@ -33,7 +33,8 @@ turns that section into the next release.
 
 ### Changed
 
-- An agent container holds no provider key: model calls go through the hub
+- An agent container holds no provider key: model calls and web searches
+  (Brave, Exa, Tavily, or a model provider's search) go through the hub
   (common/llm_gateway.py), which puts the agent's, the custom provider's,
   the workspace's or the hub's key in and streams the answer back. The
   drivers are unchanged; their requests to provider hosts are redirected in

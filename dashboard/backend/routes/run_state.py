@@ -432,14 +432,17 @@ async def model_gateway_route(scheme: str, host: str, path: str, request: Reques
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     url = f"{scheme}://{host}/{path}" + (f"?{query}" if query else "")
     headers = llm_gateway.forward_headers(request.headers.items(), auth)
-    body = await request.body()
+    body = await asyncio.to_thread(llm_gateway.patch_body, host.lower(), await request.body(),
+                                   row.get("workspace"))
     client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=20.0))
     upstream = await client.send(client.build_request(request.method, url, headers=headers, content=body),
                                  stream=True)
 
     async def relay():
         try:
-            async for chunk in upstream.aiter_raw():
+            # Decoded: httpx asked the provider for gzip itself, and the
+            # encoding header is not passed on, so the container gets plain bytes.
+            async for chunk in upstream.aiter_bytes():
                 yield chunk
         finally:
             await upstream.aclose()

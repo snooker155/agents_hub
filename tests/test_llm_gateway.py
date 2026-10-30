@@ -18,7 +18,7 @@ def hub_settings_from_env(monkeypatch):
     the developer's .env (a real key must not reach a test, or its output)."""
     monkeypatch.setattr(llm_gateway, "_setting", lambda name: os.environ.get(name.upper(), ""))
     for name in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OPENAI_BASE_URL",
-                 "ANTHROPIC_BASE_URL"):
+                 "ANTHROPIC_BASE_URL", "WEB_SEARCH_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -94,3 +94,60 @@ def test_each_provider_gets_its_own_header(monkeypatch):
     auth, query = llm_gateway.resolve_auth("generativelanguage.googleapis.com", {},
                                            "alt=sse&key=hub-gateway", None)
     assert list(auth) == ["x-goog-api-key"] and query == "alt=sse"
+
+
+def test_search_providers_get_the_search_key_their_way(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_API_KEY", "sk-real")
+    env = llm_gateway.container_env({"WEB_SEARCH_API_KEY": "sk-real"})
+    assert env["WEB_SEARCH_API_KEY"] == llm_gateway.SENTINEL
+    for host in ("api.search.brave.com", "api.tavily.com", "api.exa.ai"):
+        assert host in env[llm_gateway.HOSTS_ENV]
+    auth, _ = llm_gateway.resolve_auth("api.search.brave.com",
+                                       {"x-subscription-token": "hub-gateway"}, "", None)
+    assert list(auth) == ["x-subscription-token"]
+    assert _masked("Bearer " + auth["x-subscription-token"]) == "Bearer sk-real"
+    auth, _ = llm_gateway.resolve_auth("api.exa.ai", {"x-api-key": "hub-gateway"}, "", None)
+    assert list(auth) == ["x-api-key"]
+    body = llm_gateway.patch_body("api.tavily.com", b'{"api_key": "hub-gateway", "query": "q"}', None)
+    import json
+    doc = json.loads(body)
+    assert doc["query"] == "q" and _masked("Bearer " + doc["api_key"]) == "Bearer sk-real"
+    assert llm_gateway.patch_body("api.exa.ai", b'{"a": 1}', None) == b'{"a": 1}'
+
+
+def test_a_compressed_answer_reaches_the_container_readable(acme, tmp_path, monkeypatch):
+    """A provider answering gzip (the gateway's own client asks for it): the
+    container gets plain bytes, since the encoding header is not passed on."""
+    import gzip
+    import json as _json
+    from fastapi import FastAPI, Response
+    from fastapi.testclient import TestClient
+    import uvicorn, threading, time, socket
+
+    app = FastAPI()
+
+    @app.post("/v1/responses")
+    async def responses():
+        return Response(gzip.compress(_json.dumps({"ok": True}).encode()), media_type="application/json",
+                        headers={"content-encoding": "gzip"})
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning",
+                                           lifespan="off"))
+    threading.Thread(target=server.run, daemon=True).start()
+    while not server.started:
+        time.sleep(0.05)
+    try:
+        monkeypatch.setenv(llm_gateway.LOCAL_ENV, "1")
+        monkeypatch.setenv("OPENAI_BASE_URL", f"http://127.0.0.1:{port}/v1")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-real")
+        from dashboard.backend.main import app as hub_app
+        token = run_tokens.mint(run_id="run-gz", workspace="acme")
+        client = TestClient(hub_app)
+        resp = client.post(f"/api/run-state/llm/http/127.0.0.1:{port}/v1/responses", content=b"{}",
+                           headers={"Authorization": f"Bearer {token}", "x-api-key": "Bearer hub-gateway"})
+        assert resp.status_code == 200 and resp.json() == {"ok": True}
+    finally:
+        server.should_exit = True
