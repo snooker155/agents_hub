@@ -64,8 +64,7 @@ NEVER_INHERITED: Tuple[str, ...] = (
     "id", "name", "description", "domain", "capacity", "definition_id", "memory_type",
     "memory_data", "owner_workspace", "owner_user", "shared", "review_status", "review_note",
     "reviewed_by", "reviewed_at", "system", "user_modified", "is_default_chat_agent",
-    "proactive", "api_key", "github_identity", "http_expose", "http_port", "http_host_port",
-    "node_type", "remote", "default_workspace_only", "capability_override",
+    "proactive", "api_key", "github_identity", "remote", "default_workspace_only", "capability_override",
     "pinned_version", "link_refusals",
 )
 

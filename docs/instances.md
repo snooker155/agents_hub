@@ -8,9 +8,9 @@ Most instances come and go with their work: a chat conversation, a task run, a
 flow step. A **resident instance** is the one you start on purpose: **Run** on
 an agent's page (or `POST /api/instances`) starts a copy that lives in a
 process of its own until you stop it, and that you can talk to and give tasks
-to. It replaces what used to be a node. A **replica** is a resident instance
-a [service](services.md) started to match its desired state; a **runner** is
-a replica bound to no agent, which answers any agent's chat turn in its own
+to. It replaces what used to be a node. An instance a [service](services.md)
+started to match its desired state belongs to that service; a **runner** is
+an instance bound to no agent, which answers any agent's chat turn in its own
 process, and is where the chat, `/v1`, the widget and Telegram run since the
 backend itself runs no agent.
 
@@ -48,7 +48,7 @@ POST /api/instances
 ### The carrier
 
 One resident instance is one process, `runtime/instance_run.py`, or one
-container running it: the environment decides which. A replica of a service
+container running it: the environment decides which. An instance of a service
 carries the service's id (`service_id`) and shows it on its page and in the
 list; a runner's process is started without an agent. Two instances never share
 a process, because the environment, the process variables and the working
@@ -126,11 +126,13 @@ Past the limit the route answers `429` with `Retry-After`. Tokens are compared
 in constant time. Every call lands in the instance's connection history
 (`GET /api/instances/{id}/connections`), shown on its Access tab.
 
-An agent that asks for its own HTTP port (`http_expose`, or a `service` node
-type in its definition), or an instance started with `direct_port`, also
-answers on its container port (`runtime/http_server.py`: `POST /run` with
-`{"prompt", "conversation_id"}`, `GET /health`, `/status`, `/logs`). Messages
-sent there land in the same mailbox.
+The public address is the only way in from outside. An instance opens no
+port of its own, so its carrier can run on any worker and move between them
+([workers](workers.md), "Instances on workers") without its address changing,
+and every call passes the hub's token check, rate limit and connection
+history. The direct port instances once had (`http_expose`, `http_port`,
+`http_host_port` and `node_type` on the agent, `direct_port` at start) is
+gone; a definition that still carries those keys loads and ignores them.
 
 ### Live output
 
@@ -150,8 +152,8 @@ stuck instance usually shows the same tool call repeating.
 
 Messages are queued to an instance and claimed atomically, so none is answered
 twice. A mailbox holds two kinds of message: a plain `message`, answered with
-the conversation's history (a service replica uses the service conversation's
-history, across replicas), and a `turn`, a whole chat request written there
+the conversation's history (a service instance uses the service conversation's
+history, across instances), and a `turn`, a whole chat request written there
 by the backend (chat/routing.py, [services](services.md)) and executed by
 the carrier as the chat pipeline, its events posted back to the backend for
 the conversation's channel and the instance's. A `job` is one agent

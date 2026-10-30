@@ -25,7 +25,7 @@ import { useI18n } from '../../i18n';
 // (POST /api/preview/tickets/renew) and swap the src, so the page reloads
 // at most about once per ticket lifetime.
 //
-// `target` is {kind: 'container', name}, {kind: 'project', project_id} or
+// `target` is {kind: 'project', project_id} or
 // {kind: 'deployment', deployment_id, service?} (docs/project-deployments.md).
 export const RENEW_EVERY_MS = 4 * 60 * 1000;
 const RENEW_MARGIN_MS = 60 * 1000;

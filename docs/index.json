@@ -567,7 +567,7 @@
         "Where a chat turn runs",
         "The desired state",
         "The supervisor",
-        "Replicas",
+        "Instances",
         "Writing to one directly",
         "Jobs",
         "API and CLI"

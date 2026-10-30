@@ -93,7 +93,6 @@ export default {
     secondsAgo: '{{count}} с назад',
     environment: 'Окружение',
     environmentDefault: 'По умолчанию для пространства',
-    directUrl: 'Прямой URL',
     inputs: 'Входные параметры',
     save: 'Сохранить',
     saved: 'Сохранено',

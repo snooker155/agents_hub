@@ -536,7 +536,7 @@ export default function InstanceDetail() {
         <Stat label={t('instanceDetail.stats.lastActivity')} value={relativeTime(instance.last_activity_at, t)} />
       </div>
 
-      <div className="flex gap-1 border-b border-gray-200">
+      <div className="flex items-center gap-1 border-b border-gray-200">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -551,18 +551,20 @@ export default function InstanceDetail() {
             <tab.icon className="w-3.5 h-3.5" />{t(`instanceDetail.tabs.${tab.key}`)}
           </button>
         ))}
+        {/* The conversation's view, in the tab row: a row of its own left a
+            gap between the tabs and the conversation. */}
+        {activeTab === 'timeline' && (journal.length > 0 || liveMessages.length > 0) && (
+          <div className="ml-auto pb-1">
+            <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
+          </div>
+        )}
       </div>
 
       {activeTab === 'timeline' && (
         // The conversation as the Chat page draws one, in the view chosen there.
-        <div className="mt-3">
-          {(journal.length > 0 || liveMessages.length > 0) && (
-            <div className="flex justify-end mb-2">
-              <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
-            </div>
-          )}
+        <div>
           {!journal.length && !liveMessages.length ? (
-            <div className="bg-white border border-gray-200 rounded-xl py-8 text-center text-sm text-gray-400">{t('instanceDetail.emptyTimeline')}</div>
+            <div className="mt-3 bg-white border border-gray-200 rounded-xl py-8 text-center text-sm text-gray-400">{t('instanceDetail.emptyTimeline')}</div>
           ) : (
             <AgentTranscript
               messages={[...journal, ...liveMessages]}

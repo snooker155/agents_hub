@@ -82,8 +82,6 @@ def launched(monkeypatch):
 
     class _Spec:
         name = "Code Reviewer"
-        node_type = "worker"
-        http_expose = False
 
     # The test state root holds no agents.json, and which agent this is does
     # not matter to the mode decision.

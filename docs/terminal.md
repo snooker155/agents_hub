@@ -1,17 +1,17 @@
 # Terminal
 
-A shell in a running container, from the dashboard: the container of a run started in Docker, or the container of a service replica. For looking at what an agent left on disk, checking a package, reading a log the run wrote, or poking at a replica that answers oddly, without leaving the hub or reaching for `docker exec` on the host.
+A shell in a running container, from the dashboard: the container of a run started in Docker, or the container of a service instance. For looking at what an agent left on disk, checking a package, reading a log the run wrote, or poking at an instance that answers oddly, without leaving the hub or reaching for `docker exec` on the host.
 
 ## Opening one
 
 - **A run**: the run page (Messages, then the run) shows **Terminal** in its header while the run is working and has a container. A run in local mode runs in the hub's own process and has no container, so the button is not there; asked directly, the hub answers that the run executes in local mode.
-- **A service replica**: on the service page, each replica row whose carrier is a container has a terminal button next to Stop.
+- **A service instance**: on the service page, each instance row whose carrier is a container has a terminal button next to Stop.
 
 The panel docks at the bottom of the page. It is a real terminal (xterm.js): colours, cursor movement, full-screen programs such as `top` or `vi`, copy and paste, and it follows the panel's size.
 
 The shell is `bash -l` when the image has bash, else `sh -l`, started with `docker exec -it` in the container as its own user and working directory. Nothing about the container changes: a hardened run container keeps its read-only root, dropped capabilities and network posture ([containers](containers.md), [environments](environments.md)). The shell can see what the run sees, including its environment variables.
 
-A finished run's container is removed with the run, so there is nothing to open: the hub says the run has finished. A replica that has stopped is the same. A container on another host (a run launched by a worker elsewhere, see [workers](workers.md)) is refused with the host's name, because only the hub process on that host talks to its Docker daemon.
+A finished run's container is removed with the run, so there is nothing to open: the hub says the run has finished. An instance that has stopped is the same. A container on another host (a run launched by a worker elsewhere, see [workers](workers.md)) is refused with the host's name, because only the hub process on that host talks to its Docker daemon.
 
 ## Reconnecting
 
@@ -28,7 +28,7 @@ When the grace period passes with nobody attached, the shell is closed. A shell 
 A shell reaches everything the run can, so the rule is strict:
 
 - Outside `multi` mode, the one operator (or the shared token) may.
-- In `multi` mode, an admin may. Otherwise the person must own the run (the chat's owner, the person who filed the task; for a replica, whoever deployed the service) and hold at least the editor role in its workspace. A run whose owner is not known is left to admins.
+- In `multi` mode, an admin may. Otherwise the person must own the run (the chat's owner, the person who filed the task; for an instance, whoever deployed the service) and hold at least the editor role in its workspace. A run whose owner is not known is left to admins.
 - An agent's own credential (the service principal a run's process carries) never may.
 - A personal API key narrowed to some workspaces reaches only those.
 
@@ -59,7 +59,7 @@ Behind a proxy the socket needs the upgrade forwarded. The dashboard image's ngi
 
 ## Limits
 
-- The hub must reach the container's Docker daemon: the host that started the run or the replica. A run on another worker host is refused rather than relayed.
+- The hub must reach the container's Docker daemon: the host that started the run or the instance. A run on another worker host is refused rather than relayed.
 - Sessions live in the hub process that opened them. With several API replicas behind a load balancer, a reconnect that lands on another replica cannot resume and starts a new shell; pin WebSockets to one replica (sticky sessions) if that matters.
 - A restart of the hub closes every shell.
 - Needs a POSIX host (Linux or macOS) for the pseudo-terminal.

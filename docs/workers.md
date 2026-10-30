@@ -35,7 +35,7 @@ AGENTS_HUB_WORKER_MODES=local ah worker --concurrency 8
 ## The queue
 
 `run_queue` is one table. A row is a launch request: the run id, its kind
-(`task`, `flow`, `loop`, `team` or `scenario`), the workspace, whether it wants a
+(`task`, `flow`, `loop`, `team`, `scenario` or `instance`), the workspace, whether it wants a
 container, a priority, and a JSON spec that is everything the launcher needs.
 A worker claims the highest-priority oldest row it can run under a lease it
 renews every couple of seconds while the child is alive, then closes the row
@@ -51,6 +51,27 @@ the run fails with the last error the workers saw.
 On `SIGTERM` a worker stops claiming, keeps the rows of its running children
 leased for up to `AGENTS_HUB_WORKER_DRAIN_SECONDS` (default 300) so a
 replacement never double-launches them, releases its leases and exits.
+
+## Instances on workers
+
+In the `api` role the backend runs no agent of its own. A resident instance
+(the agent page's Run) and a service instance (the runners chat turns go to,
+[services](services.md)) are launches too: the start writes the instance
+(carrier `queued`, "waiting for a worker") and puts a row of kind `instance`
+on the queue, keyed by the instance id. A worker claims it in a pass of its
+own before the one-shot runs, so a carrier never waits for a free slot and
+never takes one (it lives until stopped, and `AGENTS_HUB_WORKER_CONCURRENCY`
+is for runs that end), spawns the process or container on its own host and
+closes the row at once. From then on the carrier's heartbeat says whether it
+lives, and a stop reaches it through `stop_requested_at` on the instance
+row; a carrier stopped while still queued just has its row withdrawn. A
+restart asks the old carrier to stop and leaves the new launch on the queue:
+the worker that claims it waits, a few seconds at a time, until the old one
+has gone. A launch no worker could start fails the instance with the
+workers' last error.
+
+With no worker running, a carrier stays `queued`; in the `all` role the
+backend spawns it itself, as before.
 
 ## Heartbeats instead of pids
 

@@ -38,7 +38,7 @@ and setting it counts as the child overriding that key.
 `domain`, `capacity`, `definition_id`, `memory_type`, `memory_data`,
 `owner_workspace`, `owner_user`, `shared`, the review fields, `system`,
 `user_modified`, `is_default_chat_agent`, `proactive`, `api_key`,
-`github_identity`, the `http_*` fields, `node_type`, `remote`,
+`github_identity`, `remote`,
 `default_workspace_only`, and `capability_override` — a security exemption is
 granted per agent, reviewed on its own terms, never picked up from a parent.
 

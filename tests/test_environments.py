@@ -593,8 +593,6 @@ def launched(monkeypatch):
 
     class _Spec:
         name = "Code Reviewer"
-        node_type = "worker"
-        http_expose = False
 
     monkeypatch.setattr(agent_registry, "get_agent", lambda agent_id: _Spec())
 

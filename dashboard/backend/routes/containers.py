@@ -77,11 +77,7 @@ def get_dockerfile(agent_id: str):
     spec = get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-    return _mgr().generate_dockerfile(
-        agent_id, spec.name,
-        http_expose=getattr(spec, "http_expose", False),
-        http_port=getattr(spec, "http_port", 8080),
-    )
+    return _mgr().generate_dockerfile(agent_id, spec.name)
 
 
 # The base image takes minutes to pull and far longer to build, more than a
@@ -199,8 +195,6 @@ async def build_agent_image(agent_id: str, body: BuildRequest):
                 agent_id,
                 agent_name=spec.name,
                 no_cache=body.no_cache,
-                http_expose=getattr(spec, "http_expose", False),
-                http_port=getattr(spec, "http_port", 8080),
             ),
         )
         if not result["success"]:
@@ -216,30 +210,9 @@ async def build_agent_image(agent_id: str, body: BuildRequest):
 
 @router.get("")
 def list_containers():
-    """Return all agents-hub managed containers (running and stopped).
-
-    Enriches each container entry with HTTP URL info from the resident
-    instance record when the container is a managed instance's carrier.
-    """
+    """Return all agents-hub managed containers (running and stopped)."""
     try:
-        containers = _mgr().list_containers()
-        # Enrich with HTTP URL from the resident instance's carrier state
-        try:
-            from instances.carrier import list_resident
-            instances_by_container = {
-                i["container_name"]: i
-                for i in list_resident()
-                if i.get("container_name")
-            }
-            for c in containers:
-                instance = instances_by_container.get(c.get("name", ""))
-                if instance:
-                    c["http_expose"] = bool(instance.get("http_port"))
-                    c["http_url"] = instance.get("http_url")
-                    c["http_host_port"] = instance.get("http_host_port")
-        except Exception:  # noqa: BLE001 - best-effort step, the request goes on without it
-            log.debug("list_containers: best-effort step failed", exc_info=True)
-        return {"containers": containers}
+        return {"containers": _mgr().list_containers()}
     except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
         raise _docker_error(exc)
 
@@ -320,8 +293,5 @@ def agents_build_status():
             "image_exists": per_agent_tag in tags,
             "base_exists": base_exists,
             "dockerfile_path": str(cm.DOCKERFILE_DIR / f"{spec.id}.Dockerfile"),
-            "http_expose": getattr(spec, "http_expose", False),
-            "http_port": getattr(spec, "http_port", 8080),
-            "http_host_port": getattr(spec, "http_host_port", None),
         })
     return {"agents": result}

@@ -1,6 +1,6 @@
 export default {
   serviceDown: 'Service {{name}} is paused: chat turns will not run',
-  serviceDownHint: 'Chat turns run on the replicas of this service. Resume it on its page.',
+  serviceDownHint: 'Chat turns run on the instances of this service. Resume it on its page.',
   chat: 'Chat',
   chats: 'Chats',
   notSaved: 'Not saved',

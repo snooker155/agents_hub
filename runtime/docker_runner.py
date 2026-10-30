@@ -42,9 +42,6 @@ def start_node_container(
     inner_cmd: List[str],
     workspace: Optional[str] = None,
     env: Optional[Dict[str, str]] = None,
-    http_expose: bool = False,
-    http_port: int = 8080,
-    http_host_port: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Start a detached container for a persistent agent node.
 
@@ -58,9 +55,6 @@ def start_node_container(
         cmd=inner_cmd,
         workspace=workspace,
         env=env,
-        http_expose=http_expose,
-        http_port=http_port,
-        http_host_port=http_host_port,
         snapshot_dir=str(snapshot.write_snapshots(f"node-{node_id}")),
     )
 

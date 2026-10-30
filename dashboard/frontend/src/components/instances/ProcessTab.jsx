@@ -105,7 +105,6 @@ export default function ProcessTab({ instance, onInstanceUpdated }) {
             {heartbeatAge != null ? t('instanceDetail.process.secondsAgo', { count: heartbeatAge }) : '—'}
           </Field>
           <Field label={t('instanceDetail.process.environment')}>{instance.environment_name || t('instanceDetail.process.environmentDefault')}</Field>
-          <Field label={t('instanceDetail.process.directUrl')}>{instance.http_url || '—'}</Field>
         </div>
         {instance.carrier_error && (
           <div className="mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">

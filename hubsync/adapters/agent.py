@@ -33,7 +33,7 @@ from hubsync.adapters.base import Adapter, AdapterError, register
 
 #: Record fields that describe this hub's copy, not the agent.
 _LOCAL_FIELDS = ("id", "owner_workspace", "owner_user", "shared", "system", "user_modified",
-                 "review_status", "review_note", "reviewed_by", "reviewed_at", "http_host_port")
+                 "review_status", "review_note", "reviewed_by", "reviewed_at")
 
 #: Keys of the remote descriptor that would hold a credential. The descriptor
 #: names an environment variable for its token (auth_token_env), so this finds
@@ -106,7 +106,7 @@ class AgentAdapter(Adapter):
             # Publication and review are decided per hub and stay as they are.
             kept = {"shared": existing.shared, "review_status": existing.review_status,
                     "review_note": existing.review_note, "reviewed_by": existing.reviewed_by,
-                    "reviewed_at": existing.reviewed_at, "http_host_port": existing.http_host_port}
+                    "reviewed_at": existing.reviewed_at}
             record.update({k: v for k, v in kept.items() if v is not None})
         try:
             spec = registry._validate_agent_dict(record)

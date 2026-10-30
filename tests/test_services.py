@@ -29,8 +29,7 @@ class _Spec(SimpleNamespace):
 
 @pytest.fixture
 def fake_agent(monkeypatch):
-    spec = _Spec(id="swe_agent", name="SWE", http_expose=False, http_port=8080,
-                 http_host_port=None, node_type="worker")
+    spec = _Spec(id="swe_agent", name="SWE")
     monkeypatch.setattr("agents.registry.get_agent",
                         lambda agent_id: spec if agent_id == "swe_agent" else None)
     return spec
@@ -260,7 +259,7 @@ def test_reconcile_stops_idle_replicas_beyond_the_minimum(monkeypatch):
     counts = supervisor.reconcile_service(svc)
     assert counts["stopped"] == 2
     assert {i for i, _ in stopped} == {a["instance_id"], b["instance_id"]}
-    assert all(reason == "idle" for _, reason in stopped)
+    assert all(reason.startswith("idle for ") and "over the 60 s limit" in reason for _, reason in stopped)
     assert fresh["instance_id"] not in {i for i, _ in stopped}
 
 
@@ -299,7 +298,7 @@ def test_reconcile_stops_everything_of_a_paused_service(monkeypatch):
     monkeypatch.setattr(replicas, "stop_replica",
                         lambda service, rep, reason="": stopped.append(reason) or True)
     assert supervisor.reconcile_service(svc)["stopped"] == 1
-    assert stopped == ["paused"]
+    assert stopped == ["the service is paused (maintenance)"]
 
 
 def test_replicas_that_keep_dying_pause_the_service(monkeypatch):
@@ -449,7 +448,7 @@ def test_update_pause_resume_and_delete_routes(services_client, monkeypatch):
     assert inputs == [(True, 6)]
 
     assert services_client.post(f"/api/services/{sid}/pause").json()["status"] == "paused"
-    assert stopped == ["paused"]
+    assert stopped == ["the service was paused from its page"]
     assert services_client.post(f"/api/services/{sid}/resume").json()["status"] == "active"
     assert services_client.delete(f"/api/services/{sid}").json()["ok"] is True
     assert services_client.get(f"/api/services/{sid}").status_code == 404
@@ -570,3 +569,90 @@ def test_settings_expose_and_validate_chat_execution(monkeypatch):
     assert client.put("/api/settings", json={"chat_execution": "sometimes"}).status_code == 400
     assert client.put("/api/settings", json={"chat_execution": "inprocess"}).status_code == 200
     assert written == {"AGENTS_HUB_CHAT_EXECUTION": "inprocess"}
+
+
+# ── runners kept only for when they are used ─────────────────────────────────
+
+def _aged(service, minutes=30):
+    """The service as if made ``minutes`` ago and not touched since."""
+    then = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    from common import db
+    with db.transaction() as conn:
+        conn.execute("UPDATE services SET created_at = ?, updated_at = ? WHERE service_id = ?",
+                     (then, then, service["service_id"]))
+    return store.get(service["service_id"])
+
+
+def test_a_personal_runner_keeps_no_instance_while_idle_and_goes_once_unused(monkeypatch):
+    monkeypatch.setattr("common.personal_workspace.is_personal", lambda ws: ws == "personal-u1")
+    runner = _aged(store.ensure_runner("personal-u1"))
+    assert supervisor.on_demand(runner)
+    old = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+    rep = _replica(runner, last_activity_at=old, started_at=old)
+    stopped = []
+
+    def _stop(service, replica, reason=""):
+        stopped.append(reason)
+        istore.update(replica["instance_id"], state="stopped", carrier_status="stopped", finished_at=old)
+        return True
+
+    monkeypatch.setattr(replicas, "stop_replica", _stop)
+    counts = supervisor.reconcile_service(runner)
+    # Minimum 0: the idle instance stops, nothing starts in its place, and
+    # with no use for longer than its idle time the runner is removed.
+    assert len(stopped) == 1 and "keeps no instance while unused" in stopped[0]
+    assert counts["started"] == 0
+    assert counts.get("removed") == 1 and store.get(runner["service_id"]) is None
+    assert istore.get(rep["instance_id"])["service_id"] is None
+    # The next chat turn there makes it again.
+    assert store.ensure_runner("personal-u1")["service_id"] != runner["service_id"]
+
+
+def test_a_runner_just_made_for_a_turn_is_not_removed_before_it_answers(monkeypatch):
+    monkeypatch.setattr("common.personal_workspace.is_personal", lambda ws: True)
+    runner = store.ensure_runner("personal-u2")
+    counts = supervisor.reconcile_service(runner)
+    assert counts["started"] == 0 and not counts.get("removed")
+    assert store.get(runner["service_id"]) is not None
+
+
+def test_a_runner_for_another_environment_is_on_demand_the_default_one_is_not(monkeypatch):
+    monkeypatch.setattr("common.personal_workspace.is_personal", lambda ws: False)
+    monkeypatch.setattr(routing, "default_environment", lambda ws: ("env-main", "main"))
+    main = store.ensure_runner("team", "env-main", "main")
+    other = store.ensure_runner("team", "env-gpu", "gpu")
+    assert not supervisor.on_demand(main) and supervisor.on_demand(other)
+
+    started = []
+    monkeypatch.setattr(replicas, "start_replica",
+                        lambda service, reason="": started.append(service["service_id"]) or {"instance_id": "x"})
+    supervisor.reconcile_service(_aged(main))
+    supervisor.reconcile_service(_aged(other))
+    # The workspace's own runner keeps its warm instance; the other is removed.
+    assert started == [main["service_id"]]
+    assert store.get(main["service_id"]) is not None and store.get(other["service_id"]) is None
+
+
+def test_a_runner_someone_made_by_hand_is_never_removed(monkeypatch):
+    monkeypatch.setattr("common.personal_workspace.is_personal", lambda ws: True)
+    manual = _aged(store.create(name="mine", agent_id=None, workspace="personal-u3",
+                                kind=store.KIND_RUNNER, replicas_min=0, idle_stop_seconds=60))
+    assert not supervisor.on_demand(manual)
+    supervisor.reconcile_service(manual)
+    assert store.get(manual["service_id"]) is not None
+
+
+def test_removing_an_unused_runner_leaves_its_reason_in_the_instance_log_and_the_audit(monkeypatch):
+    monkeypatch.setattr("common.personal_workspace.is_personal", lambda ws: True)
+    runner = _aged(store.ensure_runner("personal-u4"))
+    old = (datetime.now(timezone.utc) - timedelta(minutes=40)).isoformat()
+    rep = _replica(runner, last_activity_at=old, started_at=old)
+    istore.update(rep["instance_id"], state="stopped", carrier_status="stopped", finished_at=old,
+                  carrier_log_file=str(carrier.CARRIER_LOGS_DIR / f"instance_{rep['instance_id']}.log"))
+    recorded = []
+    monkeypatch.setattr("common.audit.record", lambda action, **kw: recorded.append((action, kw)))
+    assert supervisor.reconcile_service(store.get(runner["service_id"])).get("removed") == 1
+    log = open(istore.get(rep["instance_id"])["carrier_log_file"]).read()
+    assert "[service] runner 'personal-u4 runner' removed: no instance and no use for" in log
+    assert recorded and recorded[0][0] == "service.removed"
+    assert "next chat turn in personal-u4" in recorded[0][1]["details"]["reason"]

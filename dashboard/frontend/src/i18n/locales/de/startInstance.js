@@ -1,5 +1,5 @@
 export default {
-  serviceHint: 'Der Agent startet in seinem eigenen Dienst, sonst im Runner des Arbeitsbereichs; die Replikat-Grenzen dieses Dienstes gelten.',
+  serviceHint: 'Der Agent startet in seinem eigenen Dienst, sonst im Runner des Arbeitsbereichs; die Instanzgrenzen dieses Dienstes gelten.',
   title: 'Starten',
   agent: 'Agent',
   selectAgent: 'Agent auswählen',

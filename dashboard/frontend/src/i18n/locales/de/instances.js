@@ -33,7 +33,7 @@ export default {
     flow_node: 'Flow-Knoten',
     team_member: 'Teamplatz',
   },
-  replicaOf: 'Replikat von {{service}}',
+  replicaOf: 'Instanz von {{service}}',
   columns: {
     instance: 'Instanz',
     agent: 'Agent',

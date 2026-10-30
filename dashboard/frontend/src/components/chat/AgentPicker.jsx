@@ -17,6 +17,9 @@
  * row for no agent at all, and the counts are whatever the page counts.
  * A form with no use for the right half (the workspace secrets) turns it off
  * with `details={false}`: the panel is then the list alone, as on a phone.
+ *
+ * `placement="up"` opens the bar's panel above the button, for a picker at
+ * the bottom of the screen (an instance's message box).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -205,7 +208,7 @@ const NONE = { id: '', none: true };
  */
 export default function AgentPicker({
   agents, value, onChange, conversations = [], variant = 'bar', placeholder = '', noneOption = null,
-  recent: recentIds = null, counts: countsIn = null, labels = {}, details = true,
+  recent: recentIds = null, counts: countsIn = null, labels = {}, details = true, placement = 'down',
 }) {
   const { t } = useI18n();
   const isField = variant === 'field';
@@ -350,7 +353,7 @@ export default function AgentPicker({
           data-testid="agent-picker-panel"
           className={`${isField
             ? 'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[61]'
-            : 'absolute top-full left-0 mt-1 z-50'} ${details
+            : placement === 'up' ? 'absolute bottom-full left-0 mb-1 z-50' : 'absolute top-full left-0 mt-1 z-50'} ${details
             ? 'w-[min(660px,calc(100vw-1.5rem))]'
             : 'w-[min(360px,calc(100vw-1.5rem))]'} h-[min(460px,70vh)] flex bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden`}
         >

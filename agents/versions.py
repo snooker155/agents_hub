@@ -61,7 +61,7 @@ def _spec_parts(spec: Any) -> Dict[str, Any]:
     """The registry fields that determine agent *behaviour*, in a stable shape.
 
     Deliberately excludes pure bookkeeping (name, description, domain,
-    owner_workspace, shared, capacity, node_type, http_*, commands,
+    owner_workspace, shared, capacity, commands,
     is_default_chat_agent, system/user_modified) that does not change what the
     agent does when it runs.
     """

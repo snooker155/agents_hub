@@ -91,7 +91,6 @@ export default {
     secondsAgo: '{{count}}s ago',
     environment: 'Environment',
     environmentDefault: 'Workspace default',
-    directUrl: 'Direct URL',
     inputs: 'Inputs',
     save: 'Save',
     saved: 'Saved',

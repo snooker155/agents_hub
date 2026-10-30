@@ -1,8 +1,8 @@
 export default {
   servicePausedHint: 'The service this agent runs in is paused; resume it to start a copy.',
   services: 'Services',
-  replicasOfServices: 'replicas of its services',
-  replicaLimitReached: 'Replica limit reached',
+  replicasOfServices: 'instances of its services',
+  replicaLimitReached: 'Instance limit reached',
   servicePaused: 'service paused',
   runnerServing: 'runner: {{name}}',
   noServiceYet: 'no service yet; Run starts it in the runner',

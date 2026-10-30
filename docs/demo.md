@@ -36,7 +36,7 @@ like any other, and you can open it, poke at it, and delete it like one.
   of the answers carry a view (the chart and the table).
 - **Instances and a service**: a finished resident copy of the writer with
   the runs it performed on its timeline, a finished task copy of the reviewer,
-  and a paused "Demo Writer service" with one stopped replica and its event
+  and a paused "Demo Writer service" with one stopped instance and its event
   journal. Records to look at, nothing running.
 - **Workspace files**: the project's four files, registered the way an
   agent's writes are, plus two uploads (`supplier-questions.md`, used by the

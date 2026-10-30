@@ -1,8 +1,7 @@
-// Feature 7a: previewing a project's or a container's web page inside the
+// Feature 7a: previewing a project's or a deployment's web page inside the
 // hub, through an authenticated proxy and a sandboxed iframe
 // (dashboard/backend/routes/preview.py, src/components/preview/PreviewFrame.jsx).
 export default {
-  previewButton: 'Preview',
   pathPlaceholder: '/path (optional)',
   go: 'Go',
   reload: 'Reload',

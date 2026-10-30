@@ -6,7 +6,7 @@ Started by the carrier as::
     python -m runtime.instance_run \\
         --instance-id <id> --agent-id <agent> \\
         [--workspace <abs_path>] [--log-file <path>] \\
-        [--write-stdout-to-log] [--http-port <port>]
+        [--write-stdout-to-log]
 
 One process per instance, alive until stopped. What it listens to:
 
@@ -853,7 +853,7 @@ class InstanceLoop:
                 continue
             if inst.get("stop_requested_at"):
                 # Stop asked from a host that cannot signal this one.
-                log("Stop requested through the instance record")
+                log(f"Stop requested through the instance record: {inst.get('stop_reason') or 'no reason given'}")
                 os.kill(os.getpid(), signal.SIGTERM)
                 return
 
@@ -872,13 +872,27 @@ def _build_counts() -> Dict[str, Any]:
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
+def _stop_reason(instance_id: str) -> str:
+    """Why this carrier is being stopped: what the hub wrote on the row
+    (instances/carrier.stop), else a stop from outside the hub."""
+    try:
+        from instances import store
+        reason = (store.get(instance_id) or {}).get("stop_reason")
+    except Exception:  # noqa: BLE001 - exiting anyway, the generic reason stands
+        _logger.debug("could not read the stop reason of %s", instance_id, exc_info=True)
+        reason = None
+    return reason or ("SIGTERM from outside the hub (its container or worker was stopped, "
+                      "or the process was killed)")
+
+
 def _on_sigterm(instance_id: str):
     def handler(signum, frame):
         if _stopping.is_set():
             return
         _stopping.set()
-        log("SIGTERM received, stopping")
-        _set_status(instance_id, "stopped", exit_code=0)
+        reason = _stop_reason(instance_id)
+        log(f"Stopping: {reason}")
+        _set_status(instance_id, "stopped", exit_code=0, error=reason)
         try:
             from instances import store
             store.update(instance_id, stop_requested_at=None)
@@ -939,8 +953,6 @@ def main() -> None:
     parser.add_argument("--log-file", default=None)
     parser.add_argument("--write-stdout-to-log", action="store_true",
                         help="Mirror stdout into --log-file (used in Docker)")
-    parser.add_argument("--http-port", type=int, default=None,
-                        help="Also answer on this port directly (runtime/http_server.py)")
     args = parser.parse_args()
 
     if args.write_stdout_to_log and args.log_file:
@@ -952,15 +964,6 @@ def main() -> None:
     os.environ.setdefault("AGENT_INSTANCE_ID", args.instance_id)
     log(f"=== Instance {args.instance_id} starting, agent={args.agent_id or 'runner'} ===")
     signal.signal(signal.SIGTERM, _on_sigterm(args.instance_id))
-
-    if args.http_port and args.agent_id:
-        try:
-            from runtime.http_server import start_http_server_thread
-            start_http_server_thread(args.instance_id, args.agent_id, args.http_port,
-                                     workspace=args.workspace, log_file=args.log_file)
-            log(f"Direct HTTP port {args.http_port} open")
-        except Exception as exc:  # noqa: BLE001 - the instance serves its inbox without the direct port
-            log(f"[warn] Could not start the HTTP server: {exc}")
 
     try:
         InstanceLoop(args.instance_id, args.agent_id, args.workspace).run()

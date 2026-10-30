@@ -14,10 +14,10 @@ Agent unless you changed it.
 
 ## Where a turn runs
 
-The backend does not run the agent itself. A turn is handed to a replica of a
+The backend does not run the agent itself. A turn is handed to an instance of a
 [service](services.md): the agent's own service in the workspace when it has
 one, else the workspace's runner, a process kept warm for exactly this. The
-replica runs the whole pipeline (prompt, attachments, compaction, tools,
+instance runs the whole pipeline (prompt, attachments, compaction, tools,
 handoffs, the run record) and streams its events back; the page sees what it
 always saw. The first turn in a workspace that has no runner yet waits for
 one to boot, up to `AGENTS_HUB_TURN_START_TIMEOUT` seconds; after that the

@@ -121,9 +121,6 @@ class InstanceStart(BaseModel):
     take_tasks: bool = False
     publish: bool = False
     concurrency: Optional[int] = None
-    # Open the agent's own HTTP port next to the hub's address; None = the
-    # agent's own setting.
-    direct_port: Optional[bool] = None
 
 
 class InstanceInputs(BaseModel):
@@ -303,7 +300,7 @@ async def start_instance(body: InstanceStart, request: Request):
     if not env_id:
         env_id, env_name = service_routing.default_environment(workspace)
 
-    needs_own = bool(body.take_tasks or body.publish or body.direct_port)
+    needs_own = bool(body.take_tasks or body.publish)
     service = service_store.find_agent_service(workspace, agent_id, env_id)
     if service is None and needs_own:
         service = service_store.create(

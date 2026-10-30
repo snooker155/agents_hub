@@ -251,7 +251,7 @@ async def pause_service(service_id: str, request: Request):
     if service is None:
         raise HTTPException(status_code=404, detail="Service not found")
     for rep in replicas.live_replicas(service):
-        await asyncio.to_thread(replicas.stop_replica, service, rep, reason="paused")
+        await asyncio.to_thread(replicas.stop_replica, service, rep, reason="the service was paused from its page")
     return _enrich(store.get(service_id) or service, request)
 
 
@@ -275,7 +275,7 @@ async def delete_service(service_id: str):
     stay readable."""
     service = _get_or_404(service_id)
     for rep in replicas.live_replicas(service):
-        await asyncio.to_thread(replicas.stop_replica, service, rep, reason="service deleted")
+        await asyncio.to_thread(replicas.stop_replica, service, rep, reason="the service was deleted from its page")
     return {"ok": store.delete(service_id)}
 
 
@@ -346,7 +346,7 @@ async def message_service(service_id: str, body: ServiceMessage):
     except replicas.ServiceUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"could not start a replica: {exc}")
+        raise HTTPException(status_code=500, detail=f"could not start an instance: {exc}")
     channel = delivery.channel_for(str(replica["instance_id"]))
     if body.client_id:
         broker.add_channel(body.client_id, channel)

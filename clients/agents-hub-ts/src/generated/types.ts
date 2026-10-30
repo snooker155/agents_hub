@@ -1135,7 +1135,6 @@ export type InstanceStart = {
   "take_tasks"?: boolean;
   "publish"?: boolean;
   "concurrency"?: number | null;
-  "direct_port"?: boolean | null;
 };
 
 export type InterruptRequest = {
@@ -1488,16 +1487,14 @@ export type PlanBody = {
 
 export type PreviewRenewRequest = {
   "ticket"?: string | null;
-  "kind"?: "container" | "project" | "deployment" | null;
-  "name"?: string | null;
+  "kind"?: "project" | "deployment" | null;
   "project_id"?: string | null;
   "deployment_id"?: string | null;
   "service"?: string | null;
 };
 
 export type PreviewTicketRequest = {
-  "kind": "container" | "project" | "deployment";
-  "name"?: string | null;
+  "kind": "project" | "deployment";
   "project_id"?: string | null;
   "deployment_id"?: string | null;
   "service"?: string | null;

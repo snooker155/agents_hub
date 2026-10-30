@@ -96,7 +96,7 @@ def test_consumed_nonces_are_pruned_after_expiry(monkeypatch):
 
 def test_kinds_do_not_cross():
     auth = preview_tickets.mint_auth(_user_principal())
-    preview = preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id="u1")
+    preview = preview_tickets.mint({"kind": "project", "id": "demo"}, principal_id="u1")
     assert preview_tickets.verify(auth) is None
     assert preview_tickets.verify_auth(preview) is None
     assert preview_tickets.verify_auth("garbage") is None
@@ -179,7 +179,7 @@ def test_the_browser_websocket_takes_a_ticket(multi, client):
 
 def test_preview_ttl_is_ten_minutes():
     assert preview_tickets.DEFAULT_TTL_SECONDS == 600
-    ticket = preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id="local")
+    ticket = preview_tickets.mint({"kind": "project", "id": "demo"}, principal_id="local")
     assert 590 < preview_tickets.expires_at(ticket) - time.time() <= 600
 
 

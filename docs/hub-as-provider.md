@@ -131,7 +131,7 @@ A completion with an agent model runs the agent through the web chat's own
 pipeline (`chat.pipelines.run_chat_pipeline`), so its tools, memory,
 guardrails, budget and model settings apply exactly as in the chat, and the
 turn is a run on the Messages page with `message_origin="api"`. Like a chat
-turn it runs on a replica of a [service](services.md), the agent's own or
+turn it runs on an instance of a [service](services.md), the agent's own or
 the workspace's runner, never in the backend process; the key's owner and
 the key itself travel with the turn, so the run is stamped and charged as
 before. The

@@ -59,9 +59,9 @@ CARRIER_KINDS = ("resident", "runner", "node", "container")
 # None is ignored, so a partial update never wipes a field by accident.
 CLEARABLE = (
     "current_run_id", "task_id", "error", "pid", "container_name", "service_id",
-    "expose_token", "exposed_at", "inbound_secret", "http_url",
+    "expose_token", "exposed_at", "inbound_secret",
     "carrier_error", "carrier_exit_code", "carrier_finished_at",
-    "stop_requested_at", "finished_at",
+    "stop_requested_at", "stop_reason", "finished_at",
 )
 
 # How many terminal instances a workspace keeps in its listing before older ones

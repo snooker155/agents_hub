@@ -6585,17 +6585,6 @@
             ],
             "title": "Concurrency"
           },
-          "direct_port": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Direct Port"
-          },
           "environment_id": {
             "anyOf": [
               {
@@ -8902,7 +8891,6 @@
             "anyOf": [
               {
                 "enum": [
-                  "container",
                   "project",
                   "deployment"
                 ],
@@ -8913,17 +8901,6 @@
               }
             ],
             "title": "Kind"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
           },
           "project_id": {
             "anyOf": [
@@ -8977,23 +8954,11 @@
           },
           "kind": {
             "enum": [
-              "container",
               "project",
               "deployment"
             ],
             "title": "Kind",
             "type": "string"
-          },
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
           },
           "project_id": {
             "anyOf": [
@@ -26579,7 +26544,7 @@
     },
     "/api/containers": {
       "get": {
-        "description": "Return all agents-hub managed containers (running and stopped).\n\nEnriches each container entry with HTTP URL info from the resident\ninstance record when the container is a managed instance's carrier.",
+        "description": "Return all agents-hub managed containers (running and stopped).",
         "responses": {
           "200": {
             "content": {
@@ -44280,7 +44245,7 @@
     },
     "/api/preview/tickets": {
       "post": {
-        "description": "Mint a ticket for a running container or a project's frontend.\n\nAuthorization beyond the standard guard: in ``multi`` mode, the caller\nmust be able to see the target's workspace (``common.access``, the same\nrecord-level visibility check a get/delete route uses once it has loaded\na record and knows its workspace); an admin, the local operator, the\nshared token and the service credential always pass. 404 when the\ncontainer is not running or exposes nothing, or the project has no\npreview URL or port configured.",
+        "description": "Mint a ticket for a project's frontend or a deployment's service.\n\nAuthorization beyond the standard guard: in ``multi`` mode, the caller\nmust be able to see the target's workspace (``common.access``, the same\nrecord-level visibility check a get/delete route uses once it has loaded\na record and knows its workspace); an admin, the local operator, the\nshared token and the service credential always pass. 404 when the\nproject has no preview URL or port configured, or the deployment is not\nrunning.",
         "requestBody": {
           "content": {
             "application/json": {

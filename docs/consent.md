@@ -103,7 +103,7 @@ scope (`common/secrets.py`, `set_end_user`):
 | Slack, Discord, Teams, mail | `channel:<channel>:<chat_key>` |
 | Telegram | `channel:telegram:<chat_id>` |
 
-A turn relayed to a service replica carries it in the turn's payload.
+A turn relayed to a service instance carries it in the turn's payload.
 
 The grant is a secret named `CONSENT_GOOGLE` or `CONSENT_MICROSOFT`, scoped
 to the workspace, the agent and, as `user_id`, the principal. Its value (a

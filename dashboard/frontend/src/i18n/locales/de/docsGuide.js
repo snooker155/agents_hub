@@ -346,24 +346,24 @@ export default {
   "services": {
     "nav": "Services",
     "title": "Services",
-    "lead": "Ein Service hält einen Agenten dauerhaft als Menge von Kopien am Laufen, statt als eine von Hand gestartete Instanz: wie viele Replicas, wo sie laufen und wie viel sie ausgeben dürfen. Die Seite **Dienste** listet auch Runner: Services ohne Agent, die den Chat für jeden Agenten beantworten.",
+    "lead": "Ein Service hält einen Agenten dauerhaft als Menge von Kopien am Laufen, statt als eine von Hand gestartete Instanz: wie viele Instanzen, wo sie laufen und wie viel sie ausgeben dürfen. Die Seite **Dienste** listet auch Runner: Services ohne Agent, die den Chat für jeden Agenten beantworten.",
     "s0": {
       "h": "Deploy und Run",
-      "p": "**Run** auf der Seite eines Agenten startet eine Instanz, mit der Sie sprechen. **Deploy** auf der Seite [Dienste](/services) erstellt einen Service: den Agenten, den Workspace und das [Environment](/environments), eine minimale und maximale Anzahl von Replicas, wie viele Gespräche jede Replica gleichzeitig beantwortet, ob Replicas Aufgaben übernehmen, wann eine untätige Replica gestoppt wird, ein Geldlimit pro Turn und eine feste Version."
+      "p": "**Run** auf der Seite eines Agenten startet eine Instanz, mit der Sie sprechen. **Deploy** auf der Seite [Dienste](/services) erstellt einen Service: den Agenten, den Workspace und das [Environment](/environments), eine minimale und maximale Anzahl von Instanzen, wie viele Gespräche jede Instanz gleichzeitig beantwortet, ob Instanzen Aufgaben übernehmen, wann eine untätige Instanz gestoppt wird, ein Geldlimit pro Turn und eine feste Version."
     },
     "s1": {
       "h": "Wo ein Chat-Turn läuft",
       "points": [
-        "Jeder Chat-Turn, ob von der Chat-Seite, einem eingebetteten Widget, Telegram oder `/v1/chat/completions` mit einem Agenten-Modell, wird an eine Service-Replica übergeben statt im Backend selbst zu laufen.",
+        "Jeder Chat-Turn, ob von der Chat-Seite, einem eingebetteten Widget, Telegram oder `/v1/chat/completions` mit einem Agenten-Modell, wird an eine Service-Instanz übergeben statt im Backend selbst zu laufen.",
         "Ein Agent mit eigenem Service nutzt diesen; ein Agent ohne eigenen Service nutzt den Runner des Workspace, der bei erster Nutzung automatisch angelegt wird.",
-        "Dasselbe Gespräch kehrt immer zur bereits antwortenden Replica zurück, damit der Verlauf in der richtigen Reihenfolge bleibt."
+        "Dasselbe Gespräch kehrt immer zur bereits antwortenden Instanz zurück, damit der Verlauf in der richtigen Reihenfolge bleibt."
       ]
     },
     "s2": {
-      "h": "Replicas und der Supervisor",
+      "h": "Instanzen und der Supervisor",
       "points": [
-        "Eine Replica ist eine resident instance mit eigener Seite, eigenen Gesprächen, Prozess und Logs; die Liste **Instanzen** lässt sich nach Service filtern.",
-        "Ein Supervisor bringt jeden Service auf sein Minimum, stoppt Replicas, die länger als `idle_stop_seconds` untätig waren, und pausiert einen Service, dessen Replicas ständig abstürzen, statt ihn endlos neu zu starten.",
+        "Jede Instanz eines Services ist eine residente Instanz mit eigener Seite, eigenen Gesprächen, Prozess und Logs; die Liste **Instanzen** lässt sich nach Service filtern.",
+        "Ein Supervisor bringt jeden Service auf sein Minimum, stoppt Instanzen, die länger als `idle_stop_seconds` untätig waren, und pausiert einen Service, dessen Instanzen ständig abstürzen, statt ihn endlos neu zu starten.",
         "Alles, was der Supervisor tut, wird im Events-Tab des Service protokolliert."
       ]
     },
@@ -375,7 +375,7 @@ export default {
         "Eine Nachricht kann einem Service auch direkt über die API geschickt werden, ohne über den Chat zu gehen."
       ]
     },
-    "callout": "Das Pausieren eines Service stoppt jede Replica und weist neue Turns für dessen Agent zurück, statt sie an den Runner zu senden."
+    "callout": "Das Pausieren eines Service stoppt jede Instanz und weist neue Turns für dessen Agent zurück, statt sie an den Runner zu senden."
   },
   "deployments": {
     "nav": "Deployments",
@@ -503,31 +503,31 @@ export default {
       "points": [
         "Läufe melden sich über einen Heartbeat statt über eine PID, sodass ein abstürzender Worker den bereits gestarteten Lauf nicht stoppt.",
         "Ein toter Lauf mit einem Checkpoint wird automatisch davon neu gestartet, bis zu einer festen Grenze, statt sofort fehlzuschlagen.",
-        "Hintergrundaufgaben, die nur einmal laufen dürfen, etwa der Scheduler und der Watchdog, laufen unter einer Datenbanksperre, damit mehrere Replikate sie nie doppelt ausführen."
+        "Hintergrundaufgaben, die nur einmal laufen dürfen, etwa der Scheduler und der Watchdog, laufen unter einer Datenbanksperre, damit mehrere Backend-Kopien sie nie doppelt ausführen."
       ]
     },
     "s1": {
       "h": "Postgres und die Broker-Bridge",
-      "p": "Standardmäßig läuft ein Backend mit SQLite auf der Festplatte. Für mehrere Backends braucht es `AGENTS_HUB_DATABASE_URL` auf Postgres, damit sich alle Replikate eine Datenbank teilen, und `AGENTS_HUB_BROKER_URL` auf Redis, damit ein auf einem Replikat beendeter Lauf auch einen Browser-Tab erreicht, der mit einem anderen Replikat verbunden ist.",
+      "p": "Standardmäßig läuft ein Backend mit SQLite auf der Festplatte. Für mehrere Backends braucht es `AGENTS_HUB_DATABASE_URL` auf Postgres, damit sich alle Backend-Kopien eine Datenbank teilen, und `AGENTS_HUB_BROKER_URL` auf Redis, damit ein auf einer Backend-Kopie beendeter Lauf auch einen Browser-Tab erreicht, der mit einer anderen Backend-Kopie verbunden ist.",
       "points": [
-        "`docker compose --profile ha` startet mit einem Befehl Postgres, Redis, einen mitgelieferten Objektspeicher, zwei API-Replikate und zwei Worker.",
+        "`docker compose --profile ha` startet mit einem Befehl Postgres, Redis, einen mitgelieferten Objektspeicher, zwei API-Kopien und zwei Worker.",
         "Das Helm-Chart in `deploy/helm/agents-hub` gibt einem echten Cluster dieselbe Struktur, ohne Postgres oder Redis selbst zu betreiben."
       ]
     },
     "s2": {
       "h": "Die Cluster-Seite",
-      "p": "Auf der Seite [Cluster](/cluster) zeigt sich eine Bereitstellung über mehrere Hosts: jedes Backend und jeder Worker, die Startwarteschlange, aktive Läufe nach Host, Dienste mit ihren Replikaten und das Protokoll jedes Mitglieds.",
+      "p": "Auf der Seite [Cluster](/cluster) zeigt sich eine Bereitstellung über mehrere Hosts: jedes Backend und jeder Worker, die Startwarteschlange, aktive Läufe nach Host, Dienste mit ihren Instanzen und das Protokoll jedes Mitglieds.",
       "points": [
         "Ein Mitglied gilt als aktiv, als veraltet, wenn sein Heartbeat seit etwa einer Minute nicht erneuert wurde, oder als gestoppt nach einem geordneten Herunterfahren.",
-        "Jeder Dienst zeigt die Zahl seiner aktiven Replikate im Verhältnis zu Minimum und Maximum."
+        "Jeder Dienst zeigt die Zahl seiner aktiven Instanzen im Verhältnis zu Minimum und Maximum."
       ]
     },
     "s3": {
       "h": "Objektspeicher für gemeinsame Dateien",
-      "p": "Lauf-Protokolle, Workspaces und View-Dateien liegen weiterhin als Dateien auf der Festplatte, nicht als Datenbankzeilen. Wird `AGENTS_HUB_BLOB_URL` auf einen S3-kompatiblen Bucket gesetzt, werden Lauf-Protokolle, Flow-Protokolle und View-Dateien dorthin gespiegelt, sodass ein Replikat eine Datei auch lesen kann, die es nicht selbst geschrieben hat.",
+      "p": "Lauf-Protokolle, Workspaces und View-Dateien liegen weiterhin als Dateien auf der Festplatte, nicht als Datenbankzeilen. Wird `AGENTS_HUB_BLOB_URL` auf einen S3-kompatiblen Bucket gesetzt, werden Lauf-Protokolle, Flow-Protokolle und View-Dateien dorthin gespiegelt, sodass eine Backend-Kopie eine Datei auch lesen kann, die es nicht selbst geschrieben hat.",
       "points": [
         "Workspaces selbst brauchen weiterhin einen gemeinsamen Mount, den der Objektspeicher noch nicht abdeckt.",
-        "Bleibt die Einstellung leer, bleibt alles lokal, genau wie bei einer Bereitstellung mit nur einem Replikat."
+        "Bleibt die Einstellung leer, bleibt alles lokal, genau wie bei einer Bereitstellung mit nur einem Backend."
       ]
     },
     "s4": {
@@ -538,7 +538,7 @@ export default {
         "Ein älterer Build weigert sich, eine bereits von einem neueren migrierte Datenbank zu öffnen, daher bedeutet ein Rollback eines Releases mit Migrationen eine Wiederherstellung aus dem Backup, nicht nur ein Auschecken des alten Codes."
       ]
     },
-    "callout": "Wird `docker compose --scale backend=N` ohne gesetztes `AGENTS_HUB_BROKER_URL` ausgeführt, erhalten Browser-Tabs auf anderen Replikaten keine Live-Updates mehr, bis sie neu laden."
+    "callout": "Wird `docker compose --scale backend=N` ohne gesetztes `AGENTS_HUB_BROKER_URL` ausgeführt, erhalten Browser-Tabs auf anderen Backend-Kopien keine Live-Updates mehr, bis sie neu laden."
   },
   "accounts": {
     "nav": "Nutzer und Zugriff",

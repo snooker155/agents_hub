@@ -5,6 +5,7 @@ import { steerRun } from '../../api/steering';
 import MarkdownRenderer from '../MarkdownRenderer';
 import { useChatComposerInput } from '../chat/useChatComposerInput';
 import ComposerBox from '../chat/ComposerBox';
+import AgentPicker from '../chat/AgentPicker';
 import { COMPOSER_SEND_CLS, COMPOSER_STOP_CLS, COMPOSER_TEXTAREA_CLS } from '../chat/composerStyles';
 import { AttachButton, AttachPickers, PendingAttachments, PendingReferences } from '../chat/ComposerAttachments';
 import { attachmentsPayload, referencesPayload } from '../chat/composerPayload';
@@ -343,27 +344,20 @@ export default function InstanceComposer({
         </div>
       )}
 
-      {/* A runner picks the agent per message: the picker stands to the left
-          of the box, as tall as the box is. */}
-      <div className="flex items-stretch gap-2">
-      {isRunner && (
-        <select
-          value={runnerAgent}
-          onChange={(e) => onRunnerAgent(e.target.value)}
-          className="flex-shrink-0 max-w-[14rem] px-3 text-sm border border-gray-300 rounded-2xl bg-white
-            focus:outline-none"
-          aria-label={t('instanceDetail.message.runnerAgent')}
-        >
-          <option value="">{t('instanceDetail.message.runnerAgent')}</option>
-          {(agents || []).map((a) => (
-            <option key={a.id} value={a.id}>{a.name || a.id}</option>
-          ))}
-        </select>
-      )}
-
-      <div className="flex-1 min-w-0">
       <ComposerBox
         leading={(
+          <>
+          {/* A runner picks the agent per message, in the box's own line: the
+              Chat page's picker, its panel opening upward from the bottom. */}
+          {isRunner && (
+            <AgentPicker
+              agents={agents || []}
+              value={runnerAgent}
+              onChange={onRunnerAgent}
+              placeholder={t('instanceDetail.message.runnerAgent')}
+              placement="up"
+            />
+          )}
           <AttachButton
             open={attachMenuOpen}
             onOpenChange={setAttachMenuOpen}
@@ -373,6 +367,7 @@ export default function InstanceComposer({
             onWorkspaceFiles={() => setFilePickerOpen(true)}
             onKind={setPickerKind}
           />
+          </>
         )}
         actions={streaming ? (
           <>
@@ -426,8 +421,6 @@ export default function InstanceComposer({
           className={COMPOSER_TEXTAREA_CLS}
         />
       </ComposerBox>
-      </div>
-      </div>
 
       {attachmentError && <p className="text-xs text-red-600 mt-2">{attachmentError}</p>}
       {steerError && <p className="text-xs text-red-600 mt-2">{steerError}</p>}

@@ -15,7 +15,12 @@ One tick (:func:`reconcile_once`) walks every service:
 - a replica started from other code than the backend runs (a release, or a
   reload while editing; common/code_version.py) is stopped once idle and
   replaced by the minimum;
-- replicas of a service that no longer exists are stopped.
+- replicas of a service that no longer exists are stopped;
+- a runner kept only for when it is used (:func:`on_demand`: a personal
+  workspace's, or one for an environment that is not the workspace's
+  default) has a minimum of 0: its instances stop once idle, and once it has
+  none and nobody has used it for ``idle_stop_seconds`` the runner itself is
+  removed. The next chat turn there creates it again (``store.ensure_runner``).
 
 With chat execution on ``instances`` the tick also makes sure the default
 workspace's runner exists, so its warm replica is up before the first chat
@@ -80,6 +85,60 @@ def _crash_looping(service: Dict[str, Any]) -> bool:
                                ("replica_crashed", "replica_failed"), since) >= CRASH_LIMIT
 
 
+def on_demand(service: Dict[str, Any]) -> bool:
+    """A runner the hub made on its own (``is_default``) for a personal
+    workspace, or for an environment other than its workspace's default:
+    nobody may be about to use it, so it holds no instance while idle.
+    The workspace's own runner keeps its minimum, so a team's chat answers
+    at once."""
+    if service.get("kind") != store.KIND_RUNNER or not service.get("is_default"):
+        return False
+    workspace = service.get("workspace")
+    from common.personal_workspace import is_personal
+    if is_personal(workspace):
+        return True
+    from services import routing
+    default_env, _ = routing.default_environment(workspace)
+    return (service.get("environment_id") or None) != (default_env or None)
+
+
+def _unused_seconds(service: Dict[str, Any]) -> float:
+    """Since the service or any instance of it last did anything."""
+    stamps = [service.get("created_at"), service.get("updated_at")]
+    for rep in replicas.list_replicas(service["service_id"]):
+        stamps += [rep.get("last_activity_at"), rep.get("finished_at"), rep.get("started_at")]
+    latest = max((t for t in (_utc(s) for s in stamps) if t is not None), default=None)
+    if latest is None:
+        return 0.0
+    return max(0.0, (datetime.now(timezone.utc) - latest).total_seconds())
+
+
+def _retire_if_unused(service: Dict[str, Any], live_count: int) -> bool:
+    """Remove an on-demand runner with no instance and no use for its idle time.
+
+    Its events go with it, so the reason is written where it stays: the log
+    of each of its instances (their pages keep it) and the audit log."""
+    idle_after = int(service.get("idle_stop_seconds") or 0)
+    if live_count or idle_after <= 0 or not on_demand(service):
+        return False
+    unused = _unused_seconds(service)
+    if unused < idle_after:
+        return False
+    reason = (f"runner '{service.get('name')}' removed: no instance and no use for {int(unused)} s "
+              f"(limit {idle_after} s); the next chat turn in {service.get('workspace')} makes it again")
+    from instances import carrier
+    for rep in replicas.list_replicas(service["service_id"])[:20]:
+        carrier.append_log(rep, f"[service] {reason}")
+    try:
+        from common import audit
+        audit.record("service.removed", object_type="service", object_id=service["service_id"],
+                     workspace=service.get("workspace"), details={"reason": reason, "kind": "runner"})
+    except Exception:  # noqa: BLE001 - the audit row is best effort, the removal goes on
+        log.debug("audit of the runner removal failed", exc_info=True)
+    log.warning("services: %s", reason)
+    return store.delete(service["service_id"])
+
+
 def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
     counts = {"started": 0, "stopped": 0}
     sid = str(service["service_id"])
@@ -87,7 +146,8 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
 
     if service.get("status") != store.STATUS_ACTIVE:
         for rep in live:
-            if replicas.stop_replica(service, rep, reason="paused"):
+            why = service.get("paused_reason") or "paused"
+            if replicas.stop_replica(service, rep, reason=f"the service is paused ({why})"):
                 counts["stopped"] += 1
         return counts
 
@@ -95,7 +155,8 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
     if _crash_looping(service):
         store.pause(sid, "crash loop: replicas kept dying, fix the cause and resume")
         for rep in live:
-            if replicas.stop_replica(service, rep, reason="crash loop"):
+            if replicas.stop_replica(service, rep, reason="crash loop: its instances kept dying, "
+                                                          "the service is paused until resumed"):
                 counts["stopped"] += 1
         return counts
 
@@ -114,7 +175,7 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
                 live.remove(rep)
                 recycled += 1
 
-    want_min = int(service.get("replicas_min") or 0)
+    want_min = 0 if on_demand(service) else int(service.get("replicas_min") or 0)
     want_max = max(want_min, int(service.get("replicas_max") or 0))
     while len(live) < want_min:
         try:
@@ -133,8 +194,12 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
                 if r.get("state") == "standby" and load.get(str(r["instance_id"]), 0) == 0
                 and replicas.idle_seconds(r) >= idle_after]
         idle.sort(key=lambda r: str(r.get("last_activity_at") or ""))
+        kept = ("this runner keeps no instance while unused" if want_min == 0 and on_demand(service)
+                else f"the service keeps {want_min} running")
         for rep in idle[:surplus]:
-            if replicas.stop_replica(service, rep, reason="idle"):
+            why = (f"idle for {int(replicas.idle_seconds(rep))} s, over the {idle_after} s limit; "
+                   f"{kept}")
+            if replicas.stop_replica(service, rep, reason=why):
                 counts["stopped"] += 1
     # More live replicas than the maximum allows (the maximum was lowered):
     # stop the idle ones beyond it.
@@ -143,9 +208,11 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
         load = replicas.loads(live)
         spare = [r for r in live if load.get(str(r["instance_id"]), 0) == 0]
         for rep in spare[:over]:
-            if replicas.stop_replica(service, rep, reason="above maximum"):
+            if replicas.stop_replica(service, rep, reason=f"above the service's maximum of {want_max}"):
                 counts["stopped"] += 1
     counts["stopped"] += recycled
+    if _retire_if_unused(service, len(live) - counts["stopped"]):
+        counts["removed"] = 1
     return counts
 
 
@@ -176,7 +243,7 @@ def ensure_default_runner() -> Optional[Dict[str, Any]]:
 
 
 def reconcile_once() -> Dict[str, int]:
-    totals = {"services": 0, "started": 0, "stopped": 0, "orphans": 0}
+    totals = {"services": 0, "started": 0, "stopped": 0, "orphans": 0, "removed": 0}
     try:
         ensure_default_runner()
     except Exception:  # noqa: BLE001 - the runner is created on first use anyway
@@ -190,6 +257,7 @@ def reconcile_once() -> Dict[str, int]:
             continue
         totals["started"] += counts["started"]
         totals["stopped"] += counts["stopped"]
+        totals["removed"] += counts.get("removed", 0)
     try:
         totals["orphans"] = _stop_orphans()
     except Exception:  # noqa: BLE001

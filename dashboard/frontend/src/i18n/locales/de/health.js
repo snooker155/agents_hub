@@ -188,7 +188,7 @@ export default {
         off: 'Es ist kein Redis-Broker konfiguriert (AGENTS_HUB_BROKER_URL).',
         ok: 'Redis antwortet.',
         unreachable: 'Redis ist nicht erreichbar: {{error}}.',
-        warn: 'Redis antwortet, aber die Brücke dieses Replikats zu ihm ist nicht verbunden, daher erreichen seine Live-Ereignisse die anderen Replikate nicht.',
+        warn: 'Redis antwortet, aber die Brücke dieser Backend-Kopie zu ihm ist nicht verbunden, daher erreichen ihre Live-Ereignisse die anderen Backend-Kopien nicht.',
       },
       blobStore: {
         off: 'Es ist kein Objektspeicher konfiguriert (AGENTS_HUB_BLOB_URL), Dateien bleiben auf der lokalen Platte.',

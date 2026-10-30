@@ -1,5 +1,4 @@
 export default {
-  previewButton: 'Vorschau',
   pathPlaceholder: '/Pfad (optional)',
   go: 'Los',
   reload: 'Neu laden',

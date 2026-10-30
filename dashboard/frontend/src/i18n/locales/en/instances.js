@@ -33,7 +33,7 @@ export default {
     flow_node: 'Flow node',
     team_member: 'Team seat',
   },
-  replicaOf: 'replica of {{service}}',
+  replicaOf: 'instance of {{service}}',
   columns: {
     instance: 'Instance',
     agent: 'Agent',

@@ -113,3 +113,17 @@ def test_flow_run_accepts_the_container_log_flag():
     out = subprocess.run([sys.executable, str(PROJECT_ROOT / "runtime" / "flow_run.py"), "--help"],
                          capture_output=True, text=True, timeout=60)
     assert "--write-stdout-to-log" in out.stdout
+
+
+def test_postgres_keeps_database_processes_on_the_hub(monkeypatch):
+    """An agent container gets no database URL and is not on the database's
+    network: an instance in one wrote its ready mark and heartbeat to an
+    SQLite file in the state mount, and the hub restarted it again and again."""
+    from common import db
+    monkeypatch.setattr(cm.sys, "platform", "linux")
+    monkeypatch.setattr(cm, "_fs_type", lambda path: "ext4")
+    monkeypatch.setattr(db, "is_postgres", lambda: True)
+    assert cm.db_shared_with_containers() is False
+    from common import config
+    monkeypatch.setattr(config, "agent_execution_mode", lambda workspace=None: "docker")
+    assert config.run_execution_mode("dev") == "local"

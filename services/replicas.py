@@ -136,7 +136,6 @@ def start_replica(service: Dict[str, Any], *, reason: str = "scale up") -> Dict[
             environment_id=service.get("environment_id"),
             take_tasks=bool(service.get("take_tasks")),
             concurrency=int(service.get("concurrency") or 4),
-            direct_port=False,
             started_by=service.get("created_by"),
             service_id=sid,
             check_capacity=False,
@@ -194,8 +193,8 @@ def pick(service: Dict[str, Any], *, conversation_id: Optional[str] = None,
     if ranked:
         return ranked[0]
     raise ServiceUnavailable(
-        f"Service '{service.get('name')}' has no replica and may not start one "
-        f"(replicas_max={service.get('replicas_max')})")
+        f"Service '{service.get('name')}' has no instance and may not start one "
+        f"(maximum {service.get('replicas_max')} instances)")
 
 
 def summary(service_id: str) -> Dict[str, int]:

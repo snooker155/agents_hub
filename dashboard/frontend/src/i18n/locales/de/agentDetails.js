@@ -1,8 +1,8 @@
 export default {
   servicePausedHint: 'Der Dienst, in dem dieser Agent läuft, ist pausiert; setzen Sie ihn fort, um eine Kopie zu starten.',
   services: 'Dienste',
-  replicasOfServices: 'Replikate seiner Dienste',
-  replicaLimitReached: 'Replikat-Grenze erreicht',
+  replicasOfServices: 'Instanzen seiner Dienste',
+  replicaLimitReached: 'Instanzgrenze erreicht',
   servicePaused: 'Dienst pausiert',
   runnerServing: 'Runner: {{name}}',
   noServiceYet: 'noch kein Dienst; Ausführen startet ihn im Runner',

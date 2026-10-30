@@ -91,7 +91,7 @@ body of a POST for an HTTP one:
 ## Run hooks
 
 `before_run` and `after_run` see a whole run of an agent, in chat, in a task,
-in a delegated run and on a service replica alike. They take the same
+in a delegated run and on a service instance alike. They take the same
 `command` and `http` hooks, the same `timeout` and `fail_closed`, and the same
 exit codes and answers as the tool events.
 
@@ -239,7 +239,7 @@ is an audit row (`tool.approval`), and the call's policy trail and its
 reopened while its turn waits shows the card again.
 
 The same happens for an agent the turn delegates to, and when the turn runs on
-a service replica: the replica records and reads the waiting call through the
+a service instance: the instance records and reads the waiting call through the
 run state transport, the way it takes steering messages.
 
 In the [assistant](assistant.md#voice)'s thread a card can also be answered
@@ -332,7 +332,7 @@ workspace (Settings, Tool policy, **Allow auto mode in chat**, or
 `PUT /api/workspaces/{name}/policy` with `{"allow_auto_approve": false}`); the
 toggle is then disabled and the server drops the flag. The flag is checked per
 turn on the server, and written on the run record (`auto_approve`) so a run on
-a service replica or a run container reads the same answer.
+a service instance or a run container reads the same answer.
 
 ## What stays advisory
 

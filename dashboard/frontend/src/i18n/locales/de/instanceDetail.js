@@ -91,7 +91,6 @@ export default {
     secondsAgo: 'vor {{count}} s',
     environment: 'Umgebung',
     environmentDefault: 'Standard des Arbeitsbereichs',
-    directUrl: 'Direkte URL',
     inputs: 'Eingaben',
     save: 'Speichern',
     saved: 'Gespeichert',

@@ -346,24 +346,24 @@ export default {
   "services": {
     "nav": "Services",
     "title": "Services",
-    "lead": "A service keeps an agent running as a set of copies instead of one instance you start by hand: how many replicas, where they run and how much they may spend. The **Services** page also lists runners, services with no agent that answer chat for any agent.",
+    "lead": "A service keeps an agent running as a set of copies instead of one instance you start by hand: how many instances, where they run and how much they may spend. The **Services** page also lists runners, services with no agent that answer chat for any agent.",
     "s0": {
       "h": "Deploy vs Run",
-      "p": "**Run** on an agent's page starts one instance you talk to. **Deploy** on the [Services](/services) page creates a service: the agent, the workspace and [environment](/environments), a minimum and maximum number of replicas, how many conversations each replica answers at once, whether replicas take tasks, when an idle replica is stopped, a money cap per turn and a version pin."
+      "p": "**Run** on an agent's page starts one instance you talk to. **Deploy** on the [Services](/services) page creates a service: the agent, the workspace and [environment](/environments), a minimum and maximum number of instances, how many conversations each instance answers at once, whether instances take tasks, when an idle instance is stopped, a money cap per turn and a version pin."
     },
     "s1": {
       "h": "Where chat runs",
       "points": [
-        "Every chat turn, whether from the Chat page, an embedded widget, Telegram or `/v1/chat/completions` with an agent model, is handed to a service replica rather than run inside the backend.",
+        "Every chat turn, whether from the Chat page, an embedded widget, Telegram or `/v1/chat/completions` with an agent model, is handed to a service instance rather than run inside the backend.",
         "An agent with its own service uses it; an agent with none uses the workspace's runner, created automatically on first use.",
-        "The same conversation always returns to the replica already answering it, so its history stays in order."
+        "The same conversation always returns to the instance already answering it, so its history stays in order."
       ]
     },
     "s2": {
-      "h": "Replicas and the supervisor",
+      "h": "Instances and the supervisor",
       "points": [
-        "A replica is a resident instance with its own page, conversations, process and logs; the **Instances** list can filter by service.",
-        "A supervisor brings each service up to its minimum, stops replicas idle past `idle_stop_seconds`, and pauses a service whose replicas keep crashing rather than restarting it forever.",
+        "Each instance of a service is a resident instance with its own page, conversations, process and logs; the **Instances** list can filter by service.",
+        "A supervisor brings each service up to its minimum, stops instances idle past `idle_stop_seconds`, and pauses a service whose instances keep crashing rather than restarting it forever.",
         "Everything the supervisor does is journaled on the service's Events tab."
       ]
     },
@@ -375,7 +375,7 @@ export default {
         "A message can also be sent to a service directly through the API without going through chat."
       ]
     },
-    "callout": "Pausing a service stops every replica and refuses new turns for its agent rather than sending them to the runner."
+    "callout": "Pausing a service stops every instance and refuses new turns for its agent rather than sending them to the runner."
   },
   "deployments": {
     "nav": "Deployments",
@@ -503,31 +503,31 @@ export default {
       "points": [
         "Runs report a heartbeat instead of a pid, so a worker dying does not stop the run it started.",
         "A dead run with a checkpoint is relaunched from it automatically, up to a limit, instead of failing outright.",
-        "Background jobs that must run once, such as the scheduler and the watchdog, run under a database lease so several replicas never run them twice."
+        "Background jobs that must run once, such as the scheduler and the watchdog, run under a database lease so several backend copies never run them twice."
       ]
     },
     "s1": {
       "h": "Postgres and the broker bridge",
-      "p": "The default is one backend and SQLite on disk. Running several backends needs `AGENTS_HUB_DATABASE_URL` pointed at Postgres so every replica shares one database, and `AGENTS_HUB_BROKER_URL` pointed at Redis so a run finishing on one replica still reaches a browser tab connected to another.",
+      "p": "The default is one backend and SQLite on disk. Running several backends needs `AGENTS_HUB_DATABASE_URL` pointed at Postgres so every backend copy shares one database, and `AGENTS_HUB_BROKER_URL` pointed at Redis so a run finishing on one backend copy still reaches a browser tab connected to another.",
       "points": [
-        "`docker compose --profile ha` starts Postgres, Redis, a bundled object store, two API replicas and two workers in one command.",
+        "`docker compose --profile ha` starts Postgres, Redis, a bundled object store, two API copies and two workers in one command.",
         "The Helm chart in `deploy/helm/agents-hub` gives a real cluster the same shape, without running Postgres or Redis itself."
       ]
     },
     "s2": {
       "h": "The Cluster page",
-      "p": "The [Cluster](/cluster) page is where a multi host deployment shows itself: every backend and worker, the launch queue, active runs by host, services and their replicas, and each member's log.",
+      "p": "The [Cluster](/cluster) page is where a multi host deployment shows itself: every backend and worker, the launch queue, active runs by host, services and their instances, and each member's log.",
       "points": [
         "A member is live, stale when its heartbeat has not renewed for about a minute, or stopped after a clean shutdown.",
-        "Each service lists its live replica count against its minimum and maximum."
+        "Each service lists its live instance count against its minimum and maximum."
       ]
     },
     "s3": {
       "h": "Object store for shared files",
-      "p": "Run logs, workspaces and view assets are still files on disk, not database rows. Setting `AGENTS_HUB_BLOB_URL` to an S3 compatible bucket mirrors run logs, flow logs and view assets so a replica that did not write a file can still read it.",
+      "p": "Run logs, workspaces and view assets are still files on disk, not database rows. Setting `AGENTS_HUB_BLOB_URL` to an S3 compatible bucket mirrors run logs, flow logs and view assets so a backend copy that did not write a file can still read it.",
       "points": [
         "Workspaces themselves still need a shared mount; the object store does not cover them yet.",
-        "Leaving the setting empty keeps everything local, exactly like a single replica deployment."
+        "Leaving the setting empty keeps everything local, exactly like a single backend deployment."
       ]
     },
     "s4": {
@@ -538,7 +538,7 @@ export default {
         "An older build refuses to open a database a newer one already migrated, so rolling back a release with migrations means restoring a backup, not just checking out the old code."
       ]
     },
-    "callout": "Running `docker compose --scale backend=N` without `AGENTS_HUB_BROKER_URL` set leaves browser tabs on other replicas without live updates until they refetch."
+    "callout": "Running `docker compose --scale backend=N` without `AGENTS_HUB_BROKER_URL` set leaves browser tabs on other backend copies without live updates until they refetch."
   },
   "accounts": {
     "nav": "Users and access",

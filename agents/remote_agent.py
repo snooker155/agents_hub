@@ -24,10 +24,6 @@ The wire contract is deliberately tiny — one required endpoint::
 
     GET  <url><health_path>          # optional, used by the readiness check
 
-It is the same shape :mod:`runtime.http_server` already serves for containerised
-built-in agents, so an agent packaged for this hub and a built-in agent exposed
-over HTTP are indistinguishable to the caller.
-
 A remote may additionally declare ``runtime.stream_path``, and then a run is
 streamed rather than awaited::
 

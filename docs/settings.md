@@ -19,7 +19,7 @@ lives on the [models](models.md) page, not here.
   and whether a per-agent exemption requires a container
   (`CAPABILITY_OVERRIDE_REQUIRES_CONTAINER`), see
   [tools-and-capabilities](tools-and-capabilities.md); and **Chat
-  execution**, whether chat turns run on service replicas or in the backend
+  execution**, whether chat turns run on service instances or in the backend
   (`AGENTS_HUB_CHAT_EXECUTION`, [services](services.md)).
 - **Web search** — the provider behind the `web_search` tool (Brave, Tavily
   or Exa), its key and the results per call, the `fetch_url` limits and the

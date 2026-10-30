@@ -32,9 +32,9 @@ from common import preview_tickets  # noqa: E402 - after the sys.path shim above
 # ── mint / verify: pure, no server ──────────────────────────────────────────
 
 def test_a_minted_ticket_verifies_and_carries_its_target():
-    ticket = preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id="local")
+    ticket = preview_tickets.mint({"kind": "project", "id": "demo"}, principal_id="local")
     target = preview_tickets.verify(ticket)
-    assert target == {"kind": "container", "id": "demo", "user": "local"}
+    assert target == {"kind": "project", "id": "demo", "user": "local"}
 
 
 def test_an_expired_ticket_does_not_verify(monkeypatch):
@@ -46,7 +46,7 @@ def test_an_expired_ticket_does_not_verify(monkeypatch):
 
 
 def test_a_tampered_ticket_does_not_verify():
-    ticket = preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id="local")
+    ticket = preview_tickets.mint({"kind": "project", "id": "demo"}, principal_id="local")
     body, _, mac = ticket.rpartition(".")
     tampered = f"{body}x.{mac}"
     assert preview_tickets.verify(tampered) is None
@@ -64,7 +64,7 @@ def test_a_ticket_for_a_deleted_user_does_not_verify_in_multi_mode(monkeypatch):
     monkeypatch.setattr(settings, "api_token", "", raising=False)
     from common import identity
     user = identity.create_user("previewer", "hunter2-but-longer")
-    ticket = preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id=user["id"])
+    ticket = preview_tickets.mint({"kind": "project", "id": "demo"}, principal_id=user["id"])
     assert preview_tickets.verify(ticket) is not None
     identity.delete_user(user["id"])
     assert preview_tickets.verify(ticket) is None
@@ -115,30 +115,16 @@ def _member(client, admin_headers, username="bob") -> dict:
     return _bearer(session.json()["token"])
 
 
-def _fake_running_container(monkeypatch, *, name="demo", workspace=None,
-                            http_url="http://localhost:5055"):
-    import managers.container_manager as container_manager
-    from instances import carrier
-    monkeypatch.setattr(carrier, "list_resident", lambda: [
-        {"container_name": name, "http_url": http_url, "workspace": workspace},
-    ])
-    monkeypatch.setattr(container_manager, "list_containers", lambda: [
-        {"name": name, "state": "running"},
-    ])
+def _fake_project(monkeypatch, *, project_id="demo", workspace=None,
+                  url="http://localhost:5055"):
+    from routes import preview
+    monkeypatch.setattr(preview, "_project_target", lambda pid: (
+        (url, workspace) if pid == project_id else None))
 
 
-def _fake_stopped_container(monkeypatch, *, name="demo"):
-    import managers.container_manager as container_manager
-    from instances import carrier
-    monkeypatch.setattr(carrier, "list_resident", lambda: [])
-    monkeypatch.setattr(container_manager, "list_containers", lambda: [
-        {"name": name, "state": "exited"},
-    ])
-
-
-def test_single_mode_mints_a_ticket_for_a_running_container(single, client, monkeypatch):
-    _fake_running_container(monkeypatch)
-    resp = client.post("/api/preview/tickets", json={"kind": "container", "name": "demo"})
+def test_single_mode_mints_a_ticket_for_a_project(single, client, monkeypatch):
+    _fake_project(monkeypatch)
+    resp = client.post("/api/preview/tickets", json={"kind": "project", "project_id": "demo"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["url"].startswith("/preview/")
@@ -146,29 +132,29 @@ def test_single_mode_mints_a_ticket_for_a_running_container(single, client, monk
     assert body["expires_in"] == preview_tickets.DEFAULT_TTL_SECONDS
 
 
-def test_a_stopped_container_is_404(single, client, monkeypatch):
-    _fake_stopped_container(monkeypatch)
+def test_a_container_is_no_preview_target_any_more(single, client):
+    """A container had a page to show only through an agent's direct port,
+    which is gone: an agent is reached through the hub only."""
     resp = client.post("/api/preview/tickets", json={"kind": "container", "name": "demo"})
-    assert resp.status_code == 404
+    assert resp.status_code == 422
+    assert preview_tickets.verify(
+        preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id="local")) is None
 
 
-def test_an_unknown_container_is_404(single, client, monkeypatch):
-    import managers.container_manager as container_manager
-    from instances import carrier
-    monkeypatch.setattr(carrier, "list_resident", lambda: [])
-    monkeypatch.setattr(container_manager, "list_containers", lambda: [])
-    resp = client.post("/api/preview/tickets", json={"kind": "container", "name": "nope"})
+def test_an_unknown_project_is_404(single, client, monkeypatch):
+    _fake_project(monkeypatch)
+    resp = client.post("/api/preview/tickets", json={"kind": "project", "project_id": "nope"})
     assert resp.status_code == 404
 
 
 def test_multi_mode_refuses_a_non_member_and_serves_a_member(multi, client, monkeypatch):
-    _fake_running_container(monkeypatch, workspace="alpha")
+    _fake_project(monkeypatch, workspace="alpha")
     admin = _admin(client)
     assert client.post("/api/workspaces", json={"name": "alpha"},
                        headers=admin).status_code == 200
     bob = _member(client, admin)
 
-    refused = client.post("/api/preview/tickets", json={"kind": "container", "name": "demo"},
+    refused = client.post("/api/preview/tickets", json={"kind": "project", "project_id": "demo"},
                           headers=bob)
     assert refused.status_code == 403
 
@@ -177,7 +163,7 @@ def test_multi_mode_refuses_a_non_member_and_serves_a_member(multi, client, monk
                              "role": "viewer"},
                        headers=admin)
     assert added.status_code == 200
-    allowed = client.post("/api/preview/tickets", json={"kind": "container", "name": "demo"},
+    allowed = client.post("/api/preview/tickets", json={"kind": "project", "project_id": "demo"},
                           headers=bob)
     assert allowed.status_code == 200, allowed.text
 
@@ -234,7 +220,7 @@ def mock_upstream(monkeypatch):
 
 
 def _ticket() -> str:
-    return preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id="local")
+    return preview_tickets.mint({"kind": "project", "id": "demo"}, principal_id="local")
 
 
 def test_html_gets_a_base_tag_and_absolute_path_rewrite(single, client, mock_upstream):
@@ -333,11 +319,11 @@ def test_a_ticket_past_half_life_gets_a_successor_header(single, client, mock_up
     mock_upstream(handler)
     fresh = client.get(f"/preview/{_ticket()}/a")
     assert "x-preview-ticket" not in fresh.headers
-    aging = preview_tickets.mint({"kind": "container", "id": "demo"}, principal_id="local",
+    aging = preview_tickets.mint({"kind": "project", "id": "demo"}, principal_id="local",
                                  ttl_seconds=preview_tickets.DEFAULT_TTL_SECONDS)
     later = time.time() + 400
     monkeypatch.setattr(preview_tickets.time, "time", lambda: later)
     resp = client.get(f"/preview/{aging}/a")
     successor = resp.headers["x-preview-ticket"]
-    assert preview_tickets.verify(successor) == {"kind": "container", "id": "demo",
+    assert preview_tickets.verify(successor) == {"kind": "project", "id": "demo",
                                                  "user": "local"}

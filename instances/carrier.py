@@ -11,16 +11,16 @@ lives on the instance row (``instances`` table, carrier fields in ``extra``):
 - ``carrier_mode`` (``local`` | ``docker``), ``carrier_host`` (the host that
   spawned it: signals and ``docker`` calls only work from there),
   ``pid`` / ``container_name`` (columns), ``carrier_log_file``,
-  ``carrier_status`` (``starting``, ``running``, ``stopping``, ``stopped``,
-  ``failed``), ``carrier_started_at``, ``carrier_finished_at``,
+  ``carrier_status`` (``queued``, ``starting``, ``running``, ``stopping``,
+  ``stopped``, ``failed``), ``carrier_started_at``, ``carrier_finished_at``,
   ``carrier_exit_code``, ``carrier_error``, ``heartbeat_at``;
 - inputs: ``take_tasks`` (also answer tasks assigned to the agent in the
   instance's workspace, the strict resource cap the worker node used to be),
   ``concurrency`` (runs at once, one per conversation);
 - publication: ``is_exposed``, ``expose_token``, ``exposed_at``,
   ``inbound_secret``; the public address is served by the hub
-  (``/api/external/{token}/messages``), and an optional direct port
-  (``http_port``, ``http_host_port``, ``http_url``) when the agent asks for one;
+  (``/api/external/{token}/messages``), the only way in from outside: a
+  carrier opens no port of its own, so it may run on any worker;
 - ``environment_id`` / ``environment_name``.
 
 One instance, one carrier, never several instances in one process: the
@@ -30,6 +30,14 @@ process; every process an instance ever had is a row of ``instance_carriers``.
 
 The instance ``state`` is the one the operator reads; ``carrier_status`` is
 the process underneath. ``update_from_process`` maps one onto the other.
+
+Where the carrier runs: with workers (the backend in the ``api`` role,
+docs/workers.md) never on the backend. The start is a launch of kind
+``instance`` on the run queue (carrier ``queued``); a worker claims it and
+spawns the process or container on its own host (:func:`spawn_queued`), and
+from then on the instance's heartbeat says it is alive, a stop reaches it
+through ``stop_requested_at``. Without workers (role ``all``) the backend
+spawns it itself, as it always has.
 """
 from __future__ import annotations
 
@@ -55,7 +63,14 @@ log = logging.getLogger(__name__)
 
 CARRIER_LOGS_DIR = AGENTS_HUB_ROOT / "instance_logs"
 
-LIVE_CARRIER_STATUSES = ("starting", "running", "stopping")
+LIVE_CARRIER_STATUSES = ("queued", "starting", "running", "stopping")
+#: The run queue kind of a carrier launch handed to a worker.
+QUEUE_KIND = "instance"
+#: How long a worker waits before trying again to start a carrier whose
+#: previous one is still stopping.
+DEFER_SECONDS = 5.0
+#: How long a carrier being started may have no pid yet before it counts as dead.
+SPAWN_GRACE_SECONDS = 30.0
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 32
 CONNECTIONS_KEEP = 500
@@ -250,7 +265,6 @@ def start(
     take_tasks: bool = False,
     publish: bool = False,
     concurrency: Optional[int] = None,
-    direct_port: Optional[bool] = None,
     started_by: Optional[str] = None,
     service_id: Optional[str] = None,
     check_capacity: bool = True,
@@ -259,9 +273,7 @@ def start(
 
     The row is written first (``starting``) so the page has something to open
     while the process boots; the process marks it ``standby`` once its loop is
-    up. ``direct_port`` opens the agent's own HTTP port next to the hub's
-    public address (defaults to the agent's ``http_expose`` or a ``service``
-    node type). Raises ValueError for an unknown agent or environment,
+    up. Raises ValueError for an unknown agent or environment,
     CapacityReached when the workspace already runs as many copies of the
     agent as it allows, and RuntimeError when the process or container cannot
     be started.
@@ -284,13 +296,6 @@ def start(
             _check_capacity(workspace, agent_id)
     env_fields = _environment_fields(workspace, environment_id)
 
-    if direct_port is None:
-        direct_port = bool(spec is not None and (
-            getattr(spec, "http_expose", False)
-            or getattr(spec, "node_type", "worker") == "service"))
-    http_port = int(getattr(spec, "http_port", 8080) or 8080) if direct_port else None
-    http_host_port = getattr(spec, "http_host_port", None) if direct_port else None
-
     kind = store.RESIDENT_KIND if agent_id else store.RUNNER_KIND
     if not label and not agent_id:
         label = registry.build_label("runner", registry._next_seq("", workspace))
@@ -304,8 +309,6 @@ def start(
         "concurrency": clamp_concurrency(concurrency) if concurrency else default_concurrency(),
         "environment_id": env_fields.get("environment_id"),
         "environment_name": env_fields.get("environment_name"),
-        "http_port": http_port,
-        "http_host_port": (http_host_port if http_host_port is not None else http_port) if http_port else None,
         "carrier_log_file": str(CARRIER_LOGS_DIR / f"instance_{instance_id}.log"),
         "started_by": started_by,
         # Kept so a restart can rebuild the same process without asking again.
@@ -313,7 +316,7 @@ def start(
     }
     instance = store.update(instance_id, **fields) or {**instance, **fields}
     try:
-        instance = _spawn(instance, env_fields, reason="start")
+        instance = _launch(instance, env_fields, reason="start")
     except Exception as exc:
         store.update(instance_id, carrier_status="failed", carrier_error=str(exc)[:2000])
         registry.mark_failed(instance_id, str(exc))
@@ -321,6 +324,89 @@ def start(
     if publish:
         instance = publish_instance(instance_id) or instance
     return instance
+
+
+def _on_workers() -> bool:
+    """Whether carriers go to the workers: the backend is in the ``api`` role."""
+    from common.config import hub_role
+    return hub_role() == "api"
+
+
+def _launch(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+    """Start the carrier here, or hand it to a worker when there are workers."""
+    if _on_workers():
+        return _enqueue(instance, env_fields, reason=reason)
+    return _spawn(instance, env_fields, reason=reason)
+
+
+def _enqueue(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+    """Put the carrier's launch on the run queue for a worker.
+
+    A carrier that is still live (a restart of one on another host, asked to
+    stop) keeps its status: the worker waits for it to go before starting
+    the new one. Otherwise the instance reads ``queued`` until a worker has
+    spawned it.
+    """
+    from common import run_queue
+    instance_id = instance["instance_id"]
+    workspace = instance.get("workspace")
+    previous_live = instance.get("carrier_status") in ("starting", "running", "stopping")
+    if not previous_live:
+        updates: Dict[str, Any] = {
+            "carrier_status": "queued", "state": "starting", "carrier_host": None,
+            "pid": None, "container_name": None, "carrier_error": None, "error": None,
+            "stop_requested_at": None, "queued_at": _now(), "last_activity": "waiting for a worker",
+        }
+        instance = store.update(instance_id, **updates) or {**instance, **updates}
+    run_queue.enqueue(
+        instance_id, QUEUE_KIND,
+        {"instance_id": instance_id, "reason": reason, "after_stop": previous_live},
+        workspace=workspace, execution_mode=_execution_mode(workspace, env_fields),
+    )
+    append_log(instance, f"[carrier_queued] reason={reason} for a worker"
+                         + (" once the previous carrier has stopped" if previous_live else ""))
+    return store.get(instance_id) or instance
+
+
+def spawn_queued(spec: Dict[str, Any]) -> str:
+    """A worker's half of :func:`_enqueue`: spawn the carrier on this host.
+
+    Returns ``spawned``; ``deferred`` while the previous carrier is still
+    alive (the queue row is tried again shortly); ``skipped`` when there is
+    nothing to start (the instance is gone, or was stopped while queued).
+    Raises when the spawn fails, so the worker hands the launch back.
+    """
+    instance_id = str(spec.get("instance_id") or spec.get("run_id") or "")
+    instance = store.get(instance_id)
+    if not is_resident(instance):
+        return "skipped"
+    assert instance is not None
+    status = instance.get("carrier_status")
+    if status in ("starting", "running", "stopping"):
+        if process_alive(instance):
+            return "deferred"
+        # The previous carrier is gone without saying so: close it first.
+        update_from_process(instance_id, "stopped", exit_code=-1)
+        instance = store.get(instance_id) or instance
+    elif status != "queued" and not spec.get("after_stop"):
+        return "skipped"
+    env_fields = _environment_fields(instance.get("workspace"), instance.get("environment_request"))
+    try:
+        _spawn(instance, env_fields, reason=str(spec.get("reason") or "start"))
+    except Exception as exc:
+        store.update(instance_id, carrier_error=str(exc)[:2000])
+        append_log(instance, f"[carrier_spawn_failed] {exc}")
+        raise
+    return "spawned"
+
+
+def _queued_launch_pending(instance_id: str) -> bool:
+    """Whether the carrier's launch is still on the queue (not yet spawned,
+    or retried after a failed spawn)."""
+    from common import run_queue
+    row = run_queue.get(instance_id)
+    return bool(row) and row.get("status") in (
+        run_queue.STATUS_QUEUED, run_queue.STATUS_LEASED, run_queue.STATUS_RUNNING)
 
 
 def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
@@ -331,7 +417,6 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     log_file = Path(instance.get("carrier_log_file")
                     or CARRIER_LOGS_DIR / f"instance_{instance_id}.log")
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    http_port = instance.get("http_port")
 
     inner_cmd = [
         sys.executable, "-m", "runtime.instance_run",
@@ -343,8 +428,6 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     abs_ws = _abs_workspace(workspace)
     if abs_ws:
         inner_cmd.extend(["--workspace", abs_ws])
-    if http_port:
-        inner_cmd.extend(["--http-port", str(http_port)])
 
     env = os.environ.copy()
     # A provider key saved since the backend started (common/provider_env.py).
@@ -367,39 +450,10 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
 
     pid: Optional[int] = None
     container_name: Optional[str] = None
-    http_url: Optional[str] = None
-    if mode == "docker":
-        from managers.container_manager import container_name_for_node, start_node_container
-        container_name = container_name_for_node(instance_id)
-        kwargs: Dict[str, Any] = {}
-        if env_fields.get("docker"):
-            kwargs["options"] = env_fields["docker"]
-        if env_vars:
-            kwargs["extra_env"] = env_vars
-        result = start_node_container(
-            instance_id, agent_id or "runner", inner_cmd + ["--write-stdout-to-log"], workspace, env,
-            http_expose=bool(http_port), http_port=int(http_port or 8080),
-            http_host_port=instance.get("http_host_port"), **kwargs,
-        )
-        if not result.get("success"):
-            raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")
-        if http_port:
-            http_url = result.get("http_url")
-    else:
-        popen_kwargs: Dict[str, Any] = {}
-        if os.name == "nt":
-            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        else:
-            popen_kwargs["start_new_session"] = True
-        # Binary append so the child inherits a plain fd; the parent's handle
-        # closes right after Popen and the child keeps its own copy.
-        with open(log_file, "ab") as log_fh:
-            proc = subprocess.Popen(
-                inner_cmd, cwd=str(PROJECT_ROOT), env=env,
-                stdout=log_fh, stderr=subprocess.STDOUT, **popen_kwargs,
-            )
-        pid = proc.pid
-
+    # The carrier's fields go in before the process exists: a child that
+    # boots fast reports itself running (update_from_process) before Popen
+    # has even returned here, and writing "starting" after that left the
+    # instance starting for good.
     now = _now()
     from common import code_version
     updates: Dict[str, Any] = {
@@ -417,21 +471,53 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
         "carrier_exit_code": None,
         "carrier_error": None,
         "carrier_log_file": str(log_file),
-        "pid": pid,
-        "container_name": container_name,
-        "http_url": http_url,
+        "pid": None,
+        "container_name": None,
         "started_at": now,
         "finished_at": None,
         "error": None,
         "stop_requested_at": None,
+        "stop_reason": None,
         "state": "starting",
     }
     instance = store.update(instance_id, **updates) or {**instance, **updates}
     registry.ensure_instance(agent_id or "", instance_id=instance_id, state="starting")
+
+    if mode == "docker":
+        from managers.container_manager import container_name_for_node, start_node_container
+        container_name = container_name_for_node(instance_id)
+        kwargs: Dict[str, Any] = {}
+        if env_fields.get("docker"):
+            kwargs["options"] = env_fields["docker"]
+        if env_vars:
+            kwargs["extra_env"] = env_vars
+        result = start_node_container(
+            instance_id, agent_id or "runner", inner_cmd + ["--write-stdout-to-log"], workspace, env,
+            **kwargs,
+        )
+        if not result.get("success"):
+            raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")
+    else:
+        popen_kwargs: Dict[str, Any] = {}
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            popen_kwargs["start_new_session"] = True
+        # Binary append so the child inherits a plain fd; the parent's handle
+        # closes right after Popen and the child keeps its own copy.
+        with open(log_file, "ab") as log_fh:
+            proc = subprocess.Popen(
+                inner_cmd, cwd=str(PROJECT_ROOT), env=env,
+                stdout=log_fh, stderr=subprocess.STDOUT, **popen_kwargs,
+            )
+        pid = proc.pid
+
+    instance = store.update(instance_id, pid=pid, container_name=container_name) or {
+        **instance, "pid": pid, "container_name": container_name}
     _open_carrier(instance, reason)
     append_log(instance, f"[carrier_start] reason={reason} mode={mode} "
                          f"pid={pid or container_name or '-'} agent={agent_id} "
-                         f"workspace={workspace or '-'}" + (f" http={http_url}" if http_url else ""))
+                         f"workspace={workspace or '-'}")
     return store.get(instance_id) or instance
 
 
@@ -463,8 +549,11 @@ def process_alive(instance: Dict[str, Any]) -> bool:
     """Whether the carrier process or container still exists.
 
     A carrier on another host cannot be probed from here; its heartbeat is the
-    evidence instead (``heartbeat_at`` younger than ``stale_after``).
+    evidence instead (``heartbeat_at`` younger than ``stale_after``). One
+    still waiting for a worker is alive while its launch is on the queue.
     """
+    if instance.get("carrier_status") == "queued":
+        return _queued_launch_pending(str(instance.get("instance_id") or ""))
     if instance.get("carrier_mode") == "docker" or instance.get("kind") == "container":
         cname = instance.get("container_name")
         if not cname:
@@ -475,7 +564,11 @@ def process_alive(instance: Dict[str, Any]) -> bool:
         return container_running(cname)
     pid = int(instance.get("pid") or 0)
     if pid <= 0:
-        return False
+        # Its fields are written before the process exists (_spawn): one just
+        # being started has no pid for a moment.
+        return (instance.get("carrier_status") == "starting"
+                and _heartbeat_fresh({"carrier_started_at": instance.get("carrier_started_at")},
+                                     stale_after=SPAWN_GRACE_SECONDS))
     if not _carried_here(instance):
         return _heartbeat_fresh(instance)
     return _pid_exists(pid)
@@ -507,8 +600,17 @@ def sync(instance: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         return instance
     if process_alive(instance):
         return instance
-    reason = "carrier process exited"
-    updated = update_from_process(instance["instance_id"], "stopped", exit_code=-1)
+    if status == "queued":
+        from common import run_queue
+        row = run_queue.get(instance["instance_id"]) or {}
+        error = row.get("last_error") or "no worker started the carrier"
+        return update_from_process(instance["instance_id"], "failed", error=error) or instance
+    if _carried_here(instance):
+        reason = "the carrier process exited without saying why"
+    else:
+        reason = (f"no heartbeat for over 120 s from {instance.get('carrier_host') or 'its host'}: "
+                  "the carrier or the worker it ran on is gone")
+    updated = update_from_process(instance["instance_id"], "stopped", exit_code=-1, error=reason)
     fail_in_progress_runs(instance["instance_id"], reason)
     return updated or instance
 
@@ -623,11 +725,22 @@ def stop(instance_id: str, *, reason: str = "stopped by operator") -> bool:
     assert instance is not None
     if instance.get("carrier_status") not in LIVE_CARRIER_STATUSES:
         return False
+    # Kept on the row so the process itself, here or on another host, says
+    # why it went (runtime/instance_run.py) instead of a bare "stopped".
+    store.update(instance_id, stop_reason=str(reason)[:300])
+    if instance.get("carrier_status") == "queued":
+        # Not started yet: withdrawing the launch is the whole stop.
+        from common import run_queue
+        run_queue.delete(instance_id)
+        append_log(instance, f"[carrier_stop] {reason} (before a worker started it)")
+        update_from_process(instance_id, "stopped", exit_code=0, error=reason)
+        return True
     if not _carried_here(instance):
         # No signal reaches another host; the process reads this on its next
         # heartbeat and stops itself (runtime/instance_run.py).
         store.update(instance_id, stop_requested_at=_now(), carrier_status="stopping")
-        append_log(instance, f"[carrier_stop] requested from {socket.gethostname()}")
+        append_log(instance, f"[carrier_stop] {reason} (requested from {socket.gethostname()}, "
+                             f"the carrier on {instance.get('carrier_host') or 'another host'} stops on its next beat)")
         return True
 
     append_log(instance, f"[carrier_stop] {reason}")
@@ -669,6 +782,17 @@ def restart(instance_id: str) -> Optional[Dict[str, Any]]:
     if not is_resident(instance):
         return None
     assert instance is not None
+    if _on_workers():
+        # With workers the new carrier is a worker's: the old one is asked to
+        # stop (a signal here, a request to another host) and the launch
+        # waits on the queue until it has.
+        append_log(instance, "[carrier_restart] requested")
+        if instance.get("carrier_status") in LIVE_CARRIER_STATUSES:
+            stop(instance_id, reason="restart")
+            fail_in_progress_runs(instance_id, "Instance was restarted")
+        current = store.get(instance_id) or instance
+        env_fields = _environment_fields(current.get("workspace"), current.get("environment_request"))
+        return _enqueue(current, env_fields, reason="restart")
     if not _carried_here(instance) and instance.get("carrier_status") in LIVE_CARRIER_STATUSES:
         return None
     append_log(instance, "[carrier_restart] requested")

@@ -1,8 +1,8 @@
 export default {
   servicePausedHint: 'Сервис, в котором работает агент, на паузе; возобновите его, чтобы запустить копию.',
   services: 'Сервисы',
-  replicasOfServices: 'реплики его сервисов',
-  replicaLimitReached: 'Лимит реплик достигнут',
+  replicasOfServices: 'инстансы его сервисов',
+  replicaLimitReached: 'Лимит инстансов достигнут',
   servicePaused: 'сервис на паузе',
   runnerServing: 'раннер: {{name}}',
   noServiceYet: 'сервиса ещё нет, запуск создаст его в раннере',

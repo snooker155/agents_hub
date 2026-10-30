@@ -234,7 +234,7 @@ assistant links as "show on screen".
 | `approval` | tool calls and tasks waiting for approval that the person may answer | tool, reason, run, expiry | the run or the task |
 | `task`, `view`, `project`, `scenario`, `loop`, `flow`, `team`, `job` | as the chat's reference picker lists them | as the picker renders them | their page |
 | `instance` (alias `node`) | resident and task copies of agents | status, agent, runs, environment, the error's first line | `/instances/<id>` |
-| `service` | agents kept running as replicas | status, replicas, environment, budget | `/services/<id>` |
+| `service` | agents kept running as instances | status, instances, environment, budget | `/services/<id>` |
 | `deployment` | project apps under `/apps` | status, mode, each service's state | the project's page |
 | `environment` | execution profiles | mode, image, packages, network policy, limits, variable names | `/environments` |
 | `browser` | browser sessions | owner, site (host only), read only or not | `/browser` |
@@ -403,7 +403,7 @@ card open. Applying needs an administrator.
 
 A key saved from a card, the welcome window or the Settings page applies to
 the next model call without a restart: it is copied into the backend's
-environment, handed to every process started after it, and a runner replica
+environment, handed to every process started after it, and a runner instance
 started with other keys is replaced once it is idle
 (`common/provider_env.py`).
 

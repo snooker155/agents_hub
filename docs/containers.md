@@ -274,26 +274,26 @@ below.
 
 ## Preview through the hub
 
-A container's `http_url` is a link straight to the container, which only
-works when the operator's browser can reach the container's host directly.
-The **Preview** button on the Containers page instead opens the page inside
-the hub, through an authenticated proxy: `POST /api/preview/tickets` mints a
-short-lived, signed ticket (`common/preview_tickets.py`) for `{kind:
-"container", name}` (a project's frontend and a [project
-deployment](project-deployments.md)'s service use the same proxy with kinds
-`project` and `deployment`), and the page loads in an iframe pointed at
-`/preview/<ticket>/`, a path outside `/api` where the ticket itself is the
-credential (`dashboard/backend/routes/preview.py`).
+A project's frontend and a [project deployment](project-deployments.md)'s
+service open inside the hub, through an authenticated proxy:
+`POST /api/preview/tickets` mints a short-lived, signed ticket
+(`common/preview_tickets.py`) for `{kind: "project", project_id}` or
+`{kind: "deployment", deployment_id, service?}`, and the page loads in an
+iframe pointed at `/preview/<ticket>/`, a path outside `/api` where the
+ticket itself is the credential (`dashboard/backend/routes/preview.py`).
+An agent container has no page of its own to preview: agents open no port
+(see [instances](instances.md), "Publishing"), so there is no container
+kind.
 
 Why a ticket rather than a direct iframe: an iframe navigation cannot carry
 the `Authorization: Bearer` header the rest of the API uses, and the iframe
 runs with `sandbox="allow-scripts allow-forms allow-popups allow-modals"`,
 deliberately without `allow-same-origin`, so the previewed page executes in
 an opaque origin and cannot read the dashboard's own tokens out of
-`localStorage`. The ticket is re-resolved to the container's live `http_url`
-on every proxied request, not baked in at mint time, so it survives the
-container being restarted (a new port) for as long as the ticket itself has
-not expired; it binds the user who minted it, so in `AUTH_MODE=multi` a
+`localStorage`. The ticket is re-resolved to the target's live address on
+every proxied request, not baked in at mint time, so it survives the target
+being restarted (a new port) for as long as the ticket itself has not
+expired; it binds the user who minted it, so in `AUTH_MODE=multi` a
 revoked account's outstanding tickets stop working with it.
 
 A ticket lives ten minutes. While the preview is open and the tab visible, the
@@ -348,6 +348,6 @@ agent editor's hint answers for background runs.
   not `execution_mode`; `managers/run_manager.py` and `managers/run_watchdog.py`
   key off it for that reason.
 
-A shell inside a running run's container, or a service replica's, opens from the dashboard: see [terminal](terminal.md).
+A shell inside a running run's container, or a service instance's, opens from the dashboard: see [terminal](terminal.md).
 
 Related: [instances](instances.md), [tools-and-capabilities](tools-and-capabilities.md), [settings](settings.md), [environments](environments.md), [terminal](terminal.md).

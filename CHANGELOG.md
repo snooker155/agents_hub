@@ -33,6 +33,29 @@ turns that section into the next release.
 
 ### Changed
 
+- A runner the hub made for a personal workspace, or for an environment that
+  is not its workspace's default, is kept only for when it is used: its
+  minimum counts as 0, its instances stop once idle (`idle_stop_seconds`,
+  600 by default) and, with none left and no use for that long, the runner
+  itself is removed; the next chat turn there makes it again. In `multi`
+  mode every user who had chatted in their personal workspace used to keep a
+  process of about 150 MB for good. The workspace's own runner keeps its
+  minimum (docs/services.md).
+- The dashboard and the docs call an instance a service started an
+  instance, not a replica: "instance of <service>", "Min instances", "Max
+  instances", "Parallel per instance". A copy of the backend process is a
+  "backend copy" (Cluster page, health checks). The API keeps its names
+  (`replicas_min`, `replicas_max`, `/api/services/{id}/replicas`).
+
+- With workers (the backend in the `api` role) no agent runs on the backend:
+  resident instances and service replicas, the runners chat turns go to, are
+  launches of kind `instance` on the run queue, spawned by a worker on its
+  own host (carrier `queued` until then). A worker starts them before its
+  one-shot runs and outside their concurrency slots; a stop or restart
+  reaches a carrier on another host through the instance row, and a restart
+  waits for the old carrier to go (docs/workers.md, "Instances on workers").
+  Carriers that ran on the backend move to the workers on its next restart.
+
 - In a chat the agent's avatar shows the thinking mark while it is just
   working, instead of the orbits.
 - The first run's voice screen lets an OpenAI voice pick its speech model:
@@ -52,7 +75,35 @@ turns that section into the next release.
 - The first run's assistant field swaps its buttons as the chat does: the
   microphone while the field is empty, Send once something is typed.
 
+### Removed
+
+- An agent's direct HTTP port. A published instance is reached through the
+  hub's public address only (`/api/external/{token}/messages`): the port
+  answered into the same mailbox with less (no stream, rate limit or
+  connection history), an unpublished instance's port had no authentication
+  at all, and it could not follow a carrier onto a worker. Gone: the
+  carrier's own server (`runtime/http_server.py`), `direct_port` on
+  `POST /api/instances`, the instance's `http_port`, `http_host_port` and
+  `http_url`, the `-p` and `EXPOSE` of agent containers, and the agent's
+  `http_expose`, `http_port`, `http_host_port` and `node_type` (a definition
+  that still has them loads and ignores them). With it the Containers page's
+  Preview of an agent container and the preview ticket kind `container`;
+  projects and deployments keep theirs.
+
 ### Fixed
+
+- An instance in docker mode on Postgres started and went out again and
+  again. Its container gets no database URL and is not on the database's
+  network, so its process opened an SQLite file in the state mount: the ready
+  mark and heartbeat never reached the hub, which took the carrier for dead
+  and restarted it. On Postgres the processes that open the database
+  (instances, task runs, teams, flows, loops) now run on the hub, as on
+  Docker Desktop; shell and code still go into containers
+  (`managers.container_manager.db_shared_with_containers`).
+- The instance page: a runner's agent is picked with the Chat page's picker,
+  in the message box's own line (its panel opens upward), instead of a plain
+  select beside the box; the view switch sits in the tab row, so the
+  conversation starts right under the tabs.
 
 - The agents base image on a server. The Containers page, and Settings,
   called `http://localhost:8000` directly, which on a server is the visitor's

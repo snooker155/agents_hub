@@ -14,12 +14,15 @@ Rows carry a JSON ``payload`` that is everything the launcher needs to spawn
 the process, and nothing secret: the worker builds the child's environment
 itself from its own configuration, the same way the backend did.
 
-Four kinds of launch pass through here: ``task`` (an agent run,
-agents/agent_launcher.py), and ``flow``, ``team``, ``scenario``, the entity
+Five kinds of launch pass through here: ``task`` (an agent run,
+agents/agent_launcher.py), ``flow``, ``team``, ``scenario``, the entity
 kinds that share one launch envelope (runtime/entity_launch.py) and one run
-table (common/entity_runs.py). ``kind`` on a row is only ever these four; the
-worker (runtime/worker.py) dispatches a claimed row to the launcher its kind
-names and nothing here needs to change for a fifth kind to join them.
+table (common/entity_runs.py), and ``instance``, the carrier of a resident
+instance or a service replica (instances/carrier.py), keyed by the
+instance id. The worker (runtime/worker.py) dispatches a claimed row to the
+launcher its kind names. An ``instance`` row only asks for the process: the
+worker closes it once the carrier is spawned, and the instance's own
+heartbeat says from then on whether it lives.
 
 Claiming is one read-modify-write under ``db.transaction()``, so two workers
 never take the same row: on SQLite the transaction is exclusive, on Postgres
@@ -99,7 +102,8 @@ def get(run_id: str) -> Optional[Dict[str, Any]]:
 
 def claim(owner: Optional[str] = None, *, ttl_seconds: float = 60.0,
           kinds: Optional[Iterable[str]] = None,
-          execution_modes: Optional[Iterable[str]] = None) -> Optional[Dict[str, Any]]:
+          execution_modes: Optional[Iterable[str]] = None,
+          exclude_kinds: Optional[Iterable[str]] = None) -> Optional[Dict[str, Any]]:
     """Take the next launch this worker can do, or None.
 
     Highest priority first, then oldest. A row is claimable when queued, or
@@ -110,6 +114,7 @@ def claim(owner: Optional[str] = None, *, ttl_seconds: float = 60.0,
     now = _now()
     modes = tuple(execution_modes) if execution_modes else None
     wanted_kinds = tuple(kinds) if kinds else None
+    unwanted_kinds = tuple(exclude_kinds) if exclude_kinds else ()
     with db.transaction() as conn:
         rows = conn.execute(
             "SELECT * FROM run_queue WHERE status IN (?, ?) "
@@ -119,6 +124,8 @@ def claim(owner: Optional[str] = None, *, ttl_seconds: float = 60.0,
             if modes and str(row["execution_mode"] or "local") not in modes:
                 continue
             if wanted_kinds and str(row["kind"]) not in wanted_kinds:
+                continue
+            if str(row["kind"]) in unwanted_kinds:
                 continue
             if str(row["status"]) == STATUS_LEASED:
                 until = _parse(row["lease_until"])
@@ -153,6 +160,18 @@ def renew(run_ids: Sequence[str], owner: Optional[str] = None, *,
                 (until, str(run_id), owner, STATUS_LEASED, STATUS_RUNNING))
             n += int(getattr(cur, "rowcount", 0) or 0)
         return n
+
+
+def defer(run_id: str, seconds: float, owner: Optional[str] = None) -> None:
+    """Leave a claimed row for now and let it be claimed again in
+    ``seconds``, without counting the claim as an attempt (the launch did not
+    fail, it is waiting for something, e.g. a carrier still stopping)."""
+    owner = owner or owner_id()
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE run_queue SET lease_until = ?, attempts = CASE WHEN attempts > 0 "
+            "THEN attempts - 1 ELSE 0 END WHERE run_id = ? AND lease_owner = ?",
+            (_iso(_now() + timedelta(seconds=seconds)), str(run_id), owner))
 
 
 def mark_running(run_id: str, owner: Optional[str] = None) -> None:

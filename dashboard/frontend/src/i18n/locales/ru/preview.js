@@ -1,5 +1,4 @@
 export default {
-  previewButton: 'Просмотр',
   pathPlaceholder: '/путь (необязательно)',
   go: 'Перейти',
   reload: 'Обновить',

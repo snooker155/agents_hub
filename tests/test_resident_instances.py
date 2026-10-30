@@ -26,8 +26,7 @@ class _Spec(SimpleNamespace):
 
 @pytest.fixture
 def fake_agent(monkeypatch):
-    spec = _Spec(id="swe_agent", name="SWE", http_expose=False, http_port=8080,
-                 http_host_port=None, node_type="worker")
+    spec = _Spec(id="swe_agent", name="SWE")
     monkeypatch.setattr("agents.registry.get_agent", lambda agent_id: spec if agent_id == "swe_agent" else None)
     return spec
 

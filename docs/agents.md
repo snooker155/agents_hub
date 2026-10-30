@@ -119,7 +119,7 @@ Every other way to start a run takes a pin too, and a pinned run never quietly b
 | Task launch | `params.agent_version` on `POST /api/tasks/{id}/assign` (this launch only), else the task's own pin |
 | Chat turn | `agent_version` in the chat request (`/api/chat/message`, `/api/chat/stream`) |
 | `/v1` agent model | `agent_version` in the completion body (`extra_body` in an OpenAI SDK) |
-| Service | the service's `agent_version`: chat turns, `/v1`, widget turns and plain messages to its replicas |
+| Service | the service's `agent_version`: chat turns, `/v1`, widget turns and plain messages to its instances |
 | Widget | the widget's `agent_version` (the widget form has a picker) |
 | Resident worker | a task taken by an instance in `node` mode builds the task's pin |
 | CLI | `ah agent run AGENT TEXT --agent-version N`, `ah task assign TASK AGENT --agent-version N`, `ah task create TITLE --agent-version N` |
@@ -236,7 +236,7 @@ One page per agent, in tabs:
   ([experiments](experiments.md)).
 
 **Run** on the page starts a resident [instance](instances.md); **Deploy**
-keeps the agent running as a [service](services.md) with replicas.
+keeps the agent running as a [service](services.md) with instances.
 
 ## Gotchas
 

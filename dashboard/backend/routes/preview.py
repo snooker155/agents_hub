@@ -1,4 +1,4 @@
-"""Project and container preview through the hub: short-lived tickets under
+"""Project and deployment preview through the hub: short-lived tickets under
 /api/preview and the proxied pages under /preview/<ticket>/. Filled in by
 feature 7a; see docs/containers.md and docs/projects.md.
 
@@ -57,42 +57,10 @@ _projects = ProjectStore(path=PROJECTS_FILE)
 # ── minting ──────────────────────────────────────────────────────────────────
 
 class PreviewTicketRequest(BaseModel):
-    kind: Literal["container", "project", "deployment"]
-    name: Optional[str] = None
+    kind: Literal["project", "deployment"]
     project_id: Optional[str] = None
     deployment_id: Optional[str] = None
     service: Optional[str] = None
-
-
-def _container_target(name: str) -> Optional[Tuple[str, Optional[str]]]:
-    """``(http_url, workspace)`` for a *running* container with an http_url,
-    or ``None`` when the name is unknown, stopped, or has nothing exposed.
-
-    Mirrors the enrichment ``GET /api/containers`` already does (merging the
-    resident instance's ``http_url``/``workspace`` onto the container's own
-    running/stopped state), rather than importing that route: the two only
-    share a shape, not code, so a container test can monkeypatch the manager
-    functions directly.
-    """
-    from instances import carrier
-    from managers import container_manager
-    instances_by_container = {
-        i.get("container_name"): i
-        for i in carrier.list_resident()
-        if i.get("container_name")
-    }
-    for c in container_manager.list_containers():
-        if c.get("name") != name:
-            continue
-        instance = instances_by_container.get(name) or {}
-        state = str(c.get("state") or c.get("status") or "").lower()
-        if state != "running":
-            return None
-        http_url = instance.get("http_url") or c.get("http_url")
-        if not http_url:
-            return None
-        return http_url, instance.get("workspace")
-    return None
 
 
 def _project_target(project_id: str) -> Optional[Tuple[str, Optional[str]]]:
@@ -127,8 +95,6 @@ def _deployment_target(target_id: str) -> Optional[Tuple[str, Optional[str]]]:
 
 
 def _resolve_target(kind: str, target_id: str) -> Optional[Tuple[str, Optional[str]]]:
-    if kind == "container":
-        return _container_target(target_id)
     if kind == "project":
         return _project_target(target_id)
     if kind == "deployment":
@@ -138,29 +104,19 @@ def _resolve_target(kind: str, target_id: str) -> Optional[Tuple[str, Optional[s
 
 @router.post("/tickets")
 async def create_preview_ticket(payload: PreviewTicketRequest, request: Request):
-    """Mint a ticket for a running container or a project's frontend.
+    """Mint a ticket for a project's frontend or a deployment's service.
 
     Authorization beyond the standard guard: in ``multi`` mode, the caller
     must be able to see the target's workspace (``common.access``, the same
     record-level visibility check a get/delete route uses once it has loaded
     a record and knows its workspace); an admin, the local operator, the
     shared token and the service credential always pass. 404 when the
-    container is not running or exposes nothing, or the project has no
-    preview URL or port configured.
+    project has no preview URL or port configured, or the deployment is not
+    running.
     """
     principal = identity.request_principal(request)
 
-    if payload.kind == "container":
-        name = (payload.name or "").strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="name is required for a container preview")
-        resolved = _container_target(name)
-        if resolved is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"container '{name}' is not running or exposes no http_url")
-        target_id = name
-    elif payload.kind == "deployment":
+    if payload.kind == "deployment":
         dep_id = (payload.deployment_id or "").strip()
         if not dep_id:
             raise HTTPException(status_code=400,
@@ -199,8 +155,7 @@ def _minted(kind: str, target_id: str, principal) -> dict:
 
 class PreviewRenewRequest(BaseModel):
     ticket: Optional[str] = None
-    kind: Optional[Literal["container", "project", "deployment"]] = None
-    name: Optional[str] = None
+    kind: Optional[Literal["project", "deployment"]] = None
     project_id: Optional[str] = None
     deployment_id: Optional[str] = None
     service: Optional[str] = None
@@ -227,16 +182,14 @@ async def renew_preview_ticket(payload: PreviewRenewRequest, request: Request):
         kind, target_id = current["kind"], current["id"]
     elif payload.kind:
         kind = payload.kind
-        if kind == "container":
-            target_id = (payload.name or "").strip()
-        elif kind == "deployment":
+        if kind == "deployment":
             target_id = (payload.deployment_id or "").strip()
             if target_id and payload.service:
                 target_id = f"{target_id}/{payload.service.strip()}"
         else:
             target_id = (payload.project_id or "").strip()
         if not target_id:
-            raise HTTPException(status_code=400, detail="name or project_id is required")
+            raise HTTPException(status_code=400, detail="project_id or deployment_id is required")
     else:
         raise HTTPException(status_code=403, detail="The preview ticket has expired")
     resolved = _resolve_target(kind, target_id)
@@ -456,7 +409,7 @@ async def preview_proxy(ticket: str, path: str, request: Request):
 
     resolved = _resolve_target(target["kind"], target["id"])
     if resolved is None:
-        # The target existed at mint time and is gone now (stopped container,
+        # The target existed at mint time and is gone now (a stopped deployment,
         # reconfigured project): reads to the browser exactly like an expired
         # ticket, which is the accurate story either way ("this link no
         # longer works, go back to the hub").

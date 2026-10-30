@@ -33,7 +33,7 @@ export default {
     flow_node: 'Узел флоу',
     team_member: 'Место в команде',
   },
-  replicaOf: 'реплика сервиса {{service}}',
+  replicaOf: 'инстанс сервиса {{service}}',
   columns: {
     instance: 'Инстанс',
     agent: 'Агент',

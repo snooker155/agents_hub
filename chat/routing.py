@@ -71,9 +71,9 @@ def _replica_gone(replica_id: str) -> Optional[str]:
     from instances import carrier, store
     current = carrier.sync(store.get(replica_id))
     if current is None:
-        return "the replica no longer exists"
+        return "the service instance no longer exists"
     if current.get("state") not in store.LIVE_STATES:
-        return (f"the replica stopped ({current.get('state')}): "
+        return (f"the service instance stopped ({current.get('state')}): "
                 f"{current.get('carrier_error') or current.get('error') or 'process exited'}")
     return None
 
@@ -125,7 +125,7 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
             return
         except Exception as exc:  # noqa: BLE001 - a replica that cannot start is the turn's failure
             log.warning("chat routing: no replica for %s/%s", request.workspace, agent_id, exc_info=True)
-            yield await _failed(_failure(request, f"could not start a replica: {exc}", status=503))
+            yield await _failed(_failure(request, f"could not start a service instance: {exc}", status=503))
             return
         replica_id = str(replica["instance_id"])
         service, replica, msg_id = await asyncio.to_thread(
@@ -186,7 +186,7 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
                     return
             if now >= deadline:
                 if not started:
-                    error = f"the replica did not pick the turn up within {int(timeouts['start'])}s"
+                    error = f"the service instance did not pick the turn up within {int(timeouts['start'])}s"
                     await asyncio.to_thread(inbox.mark_error, msg_id, error)
                     yield await _failed(_failure(request, error, status=504, run_id=run_id))
                     return

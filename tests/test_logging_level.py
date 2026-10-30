@@ -92,8 +92,8 @@ def test_configure_logging_moves_the_root_level(monkeypatch):
 
 # ── marker_logger ────────────────────────────────────────────────────────────
 #
-# runtime/agent_run.py, runtime/flow_run.py, runtime/node_run.py and
-# runtime/http_server.py print their marker lines (``[flow_start]``,
+# runtime/agent_run.py, runtime/flow_run.py and runtime/instance_run.py print
+# their marker lines (``[flow_start]``,
 # ``[heartbeat]``, ``Agent output:``, ...) through this logger instead of a
 # bare print(). agents/agent_launcher.py pipes a run's stdout straight into
 # the run's log file and dashboard/backend/routes/sessions.py greps that file

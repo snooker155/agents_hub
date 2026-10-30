@@ -59,6 +59,8 @@ _diag_log = marker_logger("runtime.worker.diagnostic")
 TICK_SECONDS = float(os.environ.get("AGENTS_HUB_WORKER_TICK_SECONDS", "2"))
 LEASE_SECONDS = float(os.environ.get("AGENTS_HUB_WORKER_LEASE_SECONDS", "60"))
 DRAIN_SECONDS = float(os.environ.get("AGENTS_HUB_WORKER_DRAIN_SECONDS", "300"))
+#: The queue kind of an instance carrier (instances/carrier.QUEUE_KIND).
+CARRIER_KIND = "instance"
 
 
 def _launch(spec: Dict[str, Any]) -> None:
@@ -152,10 +154,10 @@ class Worker:
             run_queue.renew(list(self.tracked), self.owner, ttl_seconds=LEASE_SECONDS)
         if self.stopping.is_set():
             return 0
-        spawned = 0
+        spawned = self._start_carriers()
         while len(self.tracked) < self.concurrency:
             job = run_queue.claim(self.owner, ttl_seconds=LEASE_SECONDS,
-                                  execution_modes=self.modes)
+                                  execution_modes=self.modes, exclude_kinds=(CARRIER_KIND,))
             if job is None:
                 break
             spec = dict(job.get("payload") or {})
@@ -178,6 +180,43 @@ class Worker:
             self.launched += 1
             spawned += 1
             log.info("worker %s launched %s run %s", self.owner, spec.get("kind"), run_id[:8])
+        return spawned
+
+    def _start_carriers(self) -> int:
+        """Spawn the instance carriers waiting on the queue.
+
+        Apart from the launches above: a carrier lives until it is stopped, so
+        it takes none of the concurrency slots one-shot runs share, and its row
+        closes once it is spawned (its heartbeat says from then on whether it
+        is alive, and a stop reaches it through the instance row).
+        """
+        from common import run_queue
+        from instances import carrier
+
+        spawned = 0
+        while not self.stopping.is_set():
+            job = run_queue.claim(self.owner, ttl_seconds=LEASE_SECONDS,
+                                  execution_modes=self.modes, kinds=(CARRIER_KIND,))
+            if job is None:
+                break
+            spec = dict(job.get("payload") or {})
+            run_id = str(job.get("run_id"))
+            spec.setdefault("instance_id", run_id)
+            try:
+                outcome = carrier.spawn_queued(spec)
+            except Exception as exc:  # noqa: BLE001 - a launch failure is a queue event
+                self.failed += 1
+                log.exception("carrier launch of instance %s failed", run_id)
+                run_queue.requeue(run_id, f"{type(exc).__name__}: {exc}")
+                break
+            if outcome == "deferred":
+                run_queue.defer(run_id, carrier.DEFER_SECONDS, self.owner)
+                continue
+            run_queue.finish(run_id)
+            if outcome == "spawned":
+                self.launched += 1
+                spawned += 1
+                log.info("worker %s started the carrier of instance %s", self.owner, run_id)
         return spawned
 
     def _reap(self) -> None:

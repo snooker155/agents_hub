@@ -191,7 +191,7 @@ export default {
         off: 'No Redis broker is configured (AGENTS_HUB_BROKER_URL).',
         ok: 'Redis answers.',
         unreachable: 'Redis is not reachable: {{error}}.',
-        warn: 'Redis answers, but this replica\'s bridge to it is not connected, so its live events do not reach other replicas.',
+        warn: 'Redis answers, but this backend copy\'s bridge to it is not connected, so its live events do not reach other backend copies.',
       },
       blobStore: {
         off: 'No object store is configured (AGENTS_HUB_BLOB_URL); files stay on local disk.',

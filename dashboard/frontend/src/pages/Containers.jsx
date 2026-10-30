@@ -3,11 +3,10 @@ import { useChannel } from '../components/stream';
 import {
   Box, RefreshCw, Play, Square, Trash2, Eye, Terminal,
   CheckCircle, AlertCircle, Clock, Package, Layers,
-  ChevronDown, ChevronRight, Loader, Network, Globe,
+  ChevronDown, ChevronRight, Loader, Network,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import api, { getAgents } from '../api';
-import PreviewFrame from '../components/preview/PreviewFrame';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -170,7 +169,6 @@ export default function Containers() {
   const [removing, setRemoving] = useState({});
   const [logViewer, setLogViewer] = useState(null);   // container name
   const [dockerfileViewer, setDockerfileViewer] = useState(null); // agent id
-  const [previewOpen, setPreviewOpen] = useState({});  // container name -> bool
   const [error, setError] = useState('');
   const [buildLog, setBuildLog] = useState('');
   const [noCache, setNoCache] = useState(false);
@@ -445,11 +443,6 @@ export default function Containers() {
                       <p className="text-xs text-gray-400">{agent.image_tag}</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {agent.http_expose && (
-                        <Badge color="blue">
-                          <Globe className="w-3 h-3" /> HTTP :{agent.http_host_port || agent.http_port}
-                        </Badge>
-                      )}
                       {agent.image_exists
                         ? <Badge color="green"><CheckCircle className="w-3 h-3" /> {t('containers.built')}</Badge>
                         : <Badge color="gray">{t('containers.notBuilt')}</Badge>}
@@ -524,28 +517,8 @@ export default function Containers() {
                         {c.image} · {c.status || c.state}
                         {c.agent_id && <> · {t('containers.agentLabel')}: <span className="">{c.agent_id}</span></>}
                       </p>
-                      {c.http_url && c.state === 'running' && (
-                        <a
-                          href={c.http_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 mt-0.5"
-                        >
-                          <Globe className="w-3 h-3" />
-                          {c.http_url}
-                        </a>
-                      )}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      {c.http_url && c.state === 'running' && (
-                        <button
-                          onClick={() => setPreviewOpen(o => ({ ...o, [c.name]: !o[c.name] }))}
-                          title={t('preview.previewButton')}
-                          className="text-gray-400 hover:text-indigo-600 p-1.5 rounded hover:bg-indigo-50"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                      )}
                       <button
                         onClick={() => setLogViewer(c.name)}
                         title={t('containers.viewLogs')}
@@ -575,11 +548,6 @@ export default function Containers() {
                       )}
                     </div>
                   </div>
-                  {previewOpen[c.name] && c.http_url && c.state === 'running' && (
-                    <div className="mt-3">
-                      <PreviewFrame target={{ kind: 'container', name: c.name }} height={420} />
-                    </div>
-                  )}
                   </div>
                 ))}
               </div>

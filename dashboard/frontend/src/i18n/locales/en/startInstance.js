@@ -1,5 +1,5 @@
 export default {
-  serviceHint: 'The agent starts in its own service, or in the workspace runner when it has none; the replica limits of that service apply.',
+  serviceHint: 'The agent starts in its own service, or in the workspace runner when it has none; the instance limits of that service apply.',
   title: 'Run',
   agent: 'Agent',
   selectAgent: 'Select an agent',

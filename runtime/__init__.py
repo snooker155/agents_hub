@@ -5,7 +5,6 @@ Everything around *running* agents that is not agent definition/build/execution
 itself:
 
 - ``instance_run``  — subprocess that carries a resident instance (instances/carrier.py)
-- ``http_server``  — HTTP server for agents running in containers
 - ``agent_run``    — subprocess entry point that runs a single agent task
 - ``flow_run``     — subprocess entry point that executes a flow (DAG)
 

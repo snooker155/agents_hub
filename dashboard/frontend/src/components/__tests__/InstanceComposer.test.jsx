@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -100,5 +100,18 @@ describe('InstanceComposer', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     await waitFor(() => expect(onSend).toHaveBeenCalled());
     expect(steerRun).not.toHaveBeenCalled();
+  });
+
+  it('lets a runner pick its agent in the box, the panel opening upward', async () => {
+    const onRunnerAgent = vi.fn();
+    show({ isRunner: true, runnerAgent: '', agentId: '', onRunnerAgent });
+    const picker = screen.getByTestId('agent-picker');
+    // In the box's own line, not a separate control beside it.
+    expect(screen.getByTestId('composer-box').contains(picker)).toBe(true);
+    fireEvent.click(picker);
+    const panel = screen.getByTestId('agent-picker-panel');
+    expect(panel.className).toContain('bottom-full');
+    fireEvent.click(within(panel).getAllByText('Writer')[0]);
+    await waitFor(() => expect(onRunnerAgent).toHaveBeenCalledWith('writer'));
   });
 });

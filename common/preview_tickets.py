@@ -1,7 +1,7 @@
 """Short-lived, signed tickets: the preview proxy's and the streams'.
 
 Two kinds of ticket share one signing key and one format here. A *preview*
-ticket (kind ``container`` or ``project``) is the credential of an iframe
+ticket (kind ``project`` or ``deployment``) is the credential of an iframe
 that loads a proxied page. An *auth* ticket (kind ``auth``, see
 :func:`mint_auth`) is the one-time credential an ``EventSource`` or a
 ``WebSocket`` carries in its query string, since neither can set a header,
@@ -23,8 +23,8 @@ credential.
 A ticket is an HMAC-signed, URL-safe token carrying ``{kind, id, user, exp}``:
 which target it is for, who minted it and when it stops working. It carries
 no secret of its own and no resolved URL: ``dashboard/backend/routes/preview.py``
-re-resolves the target (a container's ``http_url``, a project's frontend URL)
-fresh on every proxied request, so a container restart or a project's port
+re-resolves the target (a project's frontend URL, a deployment's service)
+fresh on every proxied request, so a deployment restart or a project's port
 change between mint and use is simply picked up rather than baked in.
 
 Binding the minting user matters in ``multi`` mode: :func:`verify` checks the
@@ -81,7 +81,7 @@ DEFAULT_TTL_SECONDS = 600
 #: opening the stream it is for.
 AUTH_TTL_SECONDS = 60
 
-_PREVIEW_KINDS = ("container", "project", "deployment")
+_PREVIEW_KINDS = ("project", "deployment")
 _AUTH_KIND = "auth"
 _TERMINAL_KIND = "terminal"
 
@@ -209,7 +209,7 @@ def mint(target: Dict[str, Any], *, principal_id: str,
          ttl_seconds: int = DEFAULT_TTL_SECONDS) -> str:
     """Mint a signed, short-lived ticket for one preview target.
 
-    ``target`` is ``{"kind": "container" | "project" | "deployment", "id":
+    ``target`` is ``{"kind": "project" | "deployment", "id":
     <name, project id, or deployment id[/service]>}``. The proxy resolves that id to an actual URL again on every
     request; nothing about the current URL is baked into the ticket.
     """

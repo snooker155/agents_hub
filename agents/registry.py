@@ -150,14 +150,6 @@ class AgentSpec:
     api_key: Optional[str] = None
     verbose: bool = False
     streaming: bool = False
-    # Container HTTP exposure — when running in Docker, optionally expose an HTTP server
-    http_expose: bool = False
-    http_port: int = 8080       # port inside the container
-    http_host_port: Optional[int] = None  # host-side port mapping (None = same as http_port)
-    # Node type — determines how the node process runs when started
-    # "worker"  : runs a polling loop consuming tasks from the queue (default)
-    # "service" : runs an HTTP server only, no task polling
-    node_type: str = "worker"
     # Chat default — if True, this agent is pre-selected when opening the Chat page
     is_default_chat_agent: bool = False
     # ── System vs. custom ────────────────────────────────────────────────────
@@ -452,13 +444,6 @@ class AgentSpec:
             d["verbose"] = self.verbose
         if self.streaming:
             d["streaming"] = self.streaming
-        if self.http_expose:
-            d["http_expose"] = self.http_expose
-            d["http_port"] = self.http_port
-            if self.http_host_port is not None:
-                d["http_host_port"] = self.http_host_port
-        if self.node_type != "worker":
-            d["node_type"] = self.node_type
         d["skills_enabled"] = self.skills_enabled
         # Only write the system fields on system records, so operator-created
         # agents keep a clean JSON shape.
@@ -827,14 +812,9 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     api_key = ad.get("api_key") or legacy_dp.get("api_key") or None
     verbose = bool(ad.get("verbose", legacy_dp.get("verbose", False)))
     streaming = bool(ad.get("streaming", legacy_dp.get("streaming", False)))
-    http_expose = bool(ad.get("http_expose", False))
-    _raw_http_port = ad.get("http_port", 8080)
-    http_port: int = int(_raw_http_port) if _raw_http_port is not None else 8080
-    _raw_http_host_port = ad.get("http_host_port")
-    http_host_port: Optional[int] = int(_raw_http_host_port) if _raw_http_host_port is not None else None
-    node_type = ad.get("node_type", "worker")
-    if node_type not in ("worker", "service"):
-        node_type = "worker"
+    # http_expose, http_port, http_host_port and node_type are read past: an
+    # agent is reached through the hub only, never on a port of its own, so a
+    # definition from before still loads and the keys mean nothing.
     is_default_chat_agent = bool(ad.get("is_default_chat_agent", False))
     # Legacy seeds marked system agents with domain == "System". Keep reading it
     # so an install that predates the `system` flag still recognises its own
@@ -1004,10 +984,6 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         api_key=api_key,
         verbose=verbose,
         streaming=streaming,
-        http_expose=http_expose,
-        http_port=http_port,
-        http_host_port=http_host_port,
-        node_type=node_type,
         is_default_chat_agent=is_default_chat_agent,
         system=system,
         user_modified=user_modified,
