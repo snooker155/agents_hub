@@ -93,7 +93,8 @@ def _app(script: Optional[List[Any]] = None) -> Any:
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
         body = await request.json()
-        seen.append({"path": "/v1/chat/completions", "body": body})
+        seen.append({"path": "/v1/chat/completions", "body": body,
+                     "authorization": request.headers.get("authorization")})
         return _fake_completion(body, steps.pop(0) if steps else FAKE_ANSWER)
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

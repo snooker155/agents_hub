@@ -32,7 +32,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from common import snapshot
+from common import remote_state, snapshot
 from common.docstore import DocStore
 from common.paths import CUSTOM_PROVIDERS_FILE
 
@@ -94,10 +94,12 @@ def list_backends() -> List[Dict[str, Any]]:
     database, so it never sees an edit made mid-run.
     """
     snap = snapshot.read_snapshot(snapshot.PROVIDERS_SNAPSHOT)
-    if snap is None:
-        raw_list = list(_store.values())
-    else:
+    if snap is not None:
         raw_list = snap if isinstance(snap, list) else []
+    elif remote_state.is_remote():
+        raw_list = _backends_for_container()
+    else:
+        raw_list = _stored_backends()
     out: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for raw in raw_list:
@@ -108,6 +110,20 @@ def list_backends() -> List[Dict[str, Any]]:
             seen.add(b["id"])
             out.append(b)
     return out
+
+
+def _stored_backends() -> List[Dict[str, Any]]:
+    """The stored records, keys included: the hub's own reads (and the model
+    gateway's, common/llm_gateway.py)."""
+    return list(_store.values())
+
+
+@remote_state.hub_call("global")
+def _backends_for_container() -> List[Dict[str, Any]]:
+    """The custom providers as an agent container gets them: references in
+    place of keys and no headers (common/llm_gateway.py)."""
+    from common.llm_gateway import strip_backend_key
+    return [strip_backend_key(b) for b in _stored_backends() if isinstance(b, dict)]
 
 
 def backend_ids() -> List[str]:

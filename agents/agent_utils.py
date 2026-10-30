@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 from pathlib import Path
 
 import os
@@ -341,8 +341,14 @@ def build_chat_model(
         from langchain_google_genai import ChatGoogleGenerativeAI
         key = api_key or os.environ.get("GOOGLE_API_KEY") or settings.google_api_key
         mdl = model or os.environ.get("GOOGLE_MODEL") or "gemini-2.0-flash"
+        extra_google: Dict[str, Any] = {}
+        from common import remote_state as _remote_state
+        if _remote_state.is_remote():
+            # Over REST, which the model gateway can carry (common/llm_gateway.py);
+            # the default gRPC transport would go around it.
+            extra_google["transport"] = "rest"
         return ChatGoogleGenerativeAI(model=mdl, google_api_key=key, temperature=_temp(mdl),
-                                      timeout=req_timeout)
+                                      timeout=req_timeout, **extra_google)
 
     # Default: OpenAI (or inherit global settings)
     mdl = model or os.environ.get("OPENAI_MODEL") or settings.model

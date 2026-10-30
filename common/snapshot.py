@@ -85,9 +85,16 @@ def write_snapshots(run_id: str) -> Path:
 
     target = SNAPSHOTS_ROOT / str(run_id)
     target.mkdir(parents=True, exist_ok=True)
+    # A snapshot is read by an agent container, which holds no provider key:
+    # an agent's or a custom provider's key goes in as the reference the model
+    # gateway resolves (common/llm_gateway.py).
+    from common.llm_gateway import strip_backend_key, strip_record_key
+    agents_doc = agent_registry.export_snapshot()
+    if isinstance(agents_doc, dict) and isinstance(agents_doc.get("agents"), list):
+        agents_doc = {**agents_doc, "agents": [strip_record_key(r) for r in agents_doc["agents"]]}
     documents: Dict[str, Any] = {
-        AGENTS_SNAPSHOT: agent_registry.export_snapshot(),
-        PROVIDERS_SNAPSHOT: provider_registry.export_snapshot(),
+        AGENTS_SNAPSHOT: agents_doc,
+        PROVIDERS_SNAPSHOT: [strip_backend_key(b) for b in provider_registry.export_snapshot()],
         MODELS_SNAPSHOT: model_catalog.export_snapshot(),
     }
     for name, doc in documents.items():

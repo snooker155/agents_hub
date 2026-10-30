@@ -183,10 +183,14 @@ def test_run_command_mounts_the_registry_snapshot_read_only(no_host_translation)
     assert "agents.json" not in joined
 
 
-def test_run_command_scrubs_env_but_keeps_provider_keys(no_host_translation):
+def test_run_command_scrubs_env_and_holds_no_provider_key(no_host_translation):
+    """A provider key reaches the container as the model gateway's reference;
+    the hub puts the key in (common/llm_gateway.py)."""
     argv = _run_cmd()
     joined = " ".join(argv)
-    assert "-e OPENAI_API_KEY=sk-test" in joined
+    assert "sk-test" not in joined
+    assert "-e OPENAI_API_KEY=hub-gateway" in joined
+    assert "AGENTS_HUB_LLM_HOSTS=" in joined and "api.openai.com" in joined
     assert "HOST_PROJECT_ROOT" not in joined
 
 

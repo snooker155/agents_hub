@@ -372,6 +372,9 @@ def remote_container_env(env: Dict[str, str]) -> Dict[str, str]:
     address as the container sees it."""
     out = {k: v for k, v in container_env(env).items()
            if k not in _REMOTE_DROP_EXACT and not k.startswith(_REMOTE_DROP_PREFIXES)}
+    # Provider keys become the model gateway's reference (common/llm_gateway.py).
+    from common import llm_gateway
+    out = llm_gateway.container_env(out, workspace=out.get("AGENT_WORKSPACE"))
     out[REMOTE_STATE_ENV] = "1"
     out["AGENTS_HUB_CALLBACK_URL"] = container_hub_url()
     # Its own run and task records go through /api/run-state as well

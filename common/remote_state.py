@@ -1070,3 +1070,8 @@ __all__ = [
 
 
 link_container_workspace()
+if _mode() == "1":
+    # No provider key in here either: model calls go through the hub
+    # (common/llm_gateway.py).
+    from common import llm_gateway as _llm_gateway
+    _llm_gateway.install()

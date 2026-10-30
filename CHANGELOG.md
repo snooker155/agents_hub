@@ -33,6 +33,14 @@ turns that section into the next release.
 
 ### Changed
 
+- An agent container holds no provider key: model calls go through the hub
+  (common/llm_gateway.py), which puts the agent's, the custom provider's,
+  the workspace's or the hub's key in and streams the answer back. The
+  drivers are unchanged; their requests to provider hosts are redirected in
+  the container. Every tool's store calls go to the hub as well, the
+  connectors', evals', views', projects', memory's and skills' included, and
+  an operator's own agents build in a container. The service's own agents
+  always run locally. The agents image no longer carries `.env` backups.
 - In docker mode an agent runs entirely in its own container with no
   database: task runs, every instance (one instance, one container), and team,
   flow, loop and scenario runs. Its store calls go to the hub with its run

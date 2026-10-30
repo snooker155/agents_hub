@@ -78,6 +78,20 @@ Mounted: a tmpfs as the state root, the log folders `run_logs/` and
 workspace folder at `/workspace`, and the registry snapshot read-only for a
 task run.
 
+No provider key reaches the container either (`common/llm_gateway.py`). Its
+`OPENAI_API_KEY` and the other provider keys read `hub-gateway`, an agent's own
+key reads `hub-agent-key:<agent>`, a custom provider's `hub-backend-key:<id>`,
+and a workspace's keys come back from the hub as `hub-gateway` too. The model
+drivers run unchanged and still call `api.openai.com`: in the container their
+HTTP requests (httpx and requests) to the hosts in `AGENTS_HUB_LLM_HOSTS` go to
+the hub instead, `/api/run-state/llm/<scheme>/<host>/<path>` with the run
+token. The hub proxies only hosts it knows (the providers at their configured
+base URLs, custom providers with a key, not the local network), puts in the
+real key (the agent's, the custom provider's, the workspace's own, else the
+hub's) and streams the answer back. Google models use the REST transport in a
+container so the gateway carries them. Left in the container: a web search
+provider's own key (`WEB_SEARCH_API_KEY`) and the tracing keys.
+
 This is why docker mode works on Postgres and on Docker Desktop alike: SQLite's
 locks never have to cross the Docker Desktop VM, and the database password
 never reaches a container. `local` mode is the opposite: the process runs next

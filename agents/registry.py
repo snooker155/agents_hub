@@ -631,7 +631,14 @@ def load_all_raw() -> List[Dict[str, Any]]:
     return _stored_records()
 
 
-@remote_state.hub_call("global")
+def _records_for_container(token: Dict[str, Any], records: Any) -> Any:
+    """An agent's own provider key reaches a container as the reference the
+    model gateway resolves (common/llm_gateway.py), never as the key."""
+    from common.llm_gateway import strip_record_key
+    return [strip_record_key(r) for r in records] if isinstance(records, list) else records
+
+
+@remote_state.hub_call("global", result_scope=_records_for_container)
 def _stored_records() -> List[Dict[str, Any]]:
     """Every stored agent record. An agent container reads them from the hub:
     definitions are the service's catalog, the same list a run snapshot

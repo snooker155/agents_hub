@@ -403,3 +403,48 @@ def remote_call_route(body: Dict[str, Any], request: Request):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+
+# ── the model gateway ────────────────────────────────────────────────────────
+
+@router.api_route("/llm/{scheme}/{host}/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+                  include_in_schema=False)
+async def model_gateway_route(scheme: str, host: str, path: str, request: Request):
+    """A model provider call of an agent container (common/llm_gateway.py):
+    the run token says which workspace's key applies, the host must be one
+    this hub proxies, the real key goes in and the answer streams back."""
+    import asyncio
+    import httpx
+    from fastapi.responses import StreamingResponse
+    from common import identity, llm_gateway, run_tokens
+
+    row = await asyncio.to_thread(run_tokens.resolve, identity.presented_credential(request))
+    if row is None:
+        raise HTTPException(status_code=401, detail="a model call needs a run token")
+    if scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="unknown scheme")
+    try:
+        auth, query = await asyncio.to_thread(
+            llm_gateway.resolve_auth, host.lower(), dict(request.headers), request.url.query,
+            row.get("workspace"))
+    except LookupError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    url = f"{scheme}://{host}/{path}" + (f"?{query}" if query else "")
+    headers = llm_gateway.forward_headers(request.headers.items(), auth)
+    body = await request.body()
+    client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=20.0))
+    upstream = await client.send(client.build_request(request.method, url, headers=headers, content=body),
+                                 stream=True)
+
+    async def relay():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    passed = {k: v for k, v in upstream.headers.items()
+              if k.lower() not in ("content-length", "transfer-encoding", "connection", "content-encoding")}
+    return StreamingResponse(relay(), status_code=upstream.status_code, headers=passed)

@@ -452,7 +452,14 @@ def _own_default_model_config(meta: Dict[str, Any] | None) -> Dict[str, str]:
     return {"provider": provider, "model": model}
 
 
-@remote_state.hub_call("admin_workspace:name", cache_seconds=2.0)
+def _metadata_for_container(token: Dict[str, Any], metadata: Any) -> Any:
+    """A workspace's provider keys reach a container as the model gateway's
+    reference (common/llm_gateway.py), never as the keys."""
+    from common.llm_gateway import strip_settings_keys
+    return strip_settings_keys(metadata)
+
+
+@remote_state.hub_call("admin_workspace:name", cache_seconds=2.0, result_scope=_metadata_for_container)
 def get_workspace_metadata(name: str) -> Dict[str, Any]:
     """Get metadata for a workspace from the central store."""
     _migrate_legacy_metadata()
