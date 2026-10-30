@@ -1,14 +1,14 @@
 /**
  * What the chat's agent picker lists, apart from how it is drawn: the agents
- * this workspace offers, cut down by a scope (own or system), a domain and a
- * search, and laid out in sections.
+ * this workspace offers, cut down by a scope (own or system) and a search,
+ * and laid out in sections.
  *
  * With no search the sections are: the default chat agent, the agents the
  * latest conversations talked to, then own agents and system ones. An agent
  * appears once, in the first section that has it. A search drops the sections
  * for one list, best match first: a name that starts with the text, then a
  * word of the name that does, then the name or id holding it anywhere, then
- * the description, the domain or a tool.
+ * the description or a tool.
  */
 
 const norm = (s) => String(s || '').toLowerCase();
@@ -42,18 +42,6 @@ export function agentJobStats(jobs) {
   return { counts, recent };
 }
 
-/** The domains the agents carry, each once whatever its case, sorted. */
-export function agentDomains(agents) {
-  const byKey = new Map();
-  for (const a of agents || []) {
-    if (!a?.domain) continue;
-    const key = norm(a.domain);
-    if (!byKey.has(key)) byKey.set(key, { key, label: a.domain, count: 0 });
-    byKey.get(key).count += 1;
-  }
-  return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
-}
-
 /** How well an agent answers a search, 0 for not at all. */
 export function matchScore(agent, query) {
   const q = norm(query).trim();
@@ -62,7 +50,7 @@ export function matchScore(agent, query) {
   if (name.startsWith(q)) return 5;
   if (name.split(/[\s_\-.]+/).some((w) => w.startsWith(q))) return 4;
   if (name.includes(q) || norm(agent.id).includes(q)) return 3;
-  if (norm(agent.description).includes(q) || norm(agent.domain).includes(q)) return 2;
+  if (norm(agent.description).includes(q)) return 2;
   if ((agent.tools || []).some((tool) => norm(tool).includes(q))) return 1;
   return 0;
 }
@@ -71,13 +59,12 @@ const byName = (a, b) => norm(a.name || a.id).localeCompare(norm(b.name || b.id)
 
 /**
  * @param {object[]} agents
- * @param {{query?: string, scope?: 'all'|'own'|'system', domain?: string, recent?: string[]}} opts
+ * @param {{query?: string, scope?: 'all'|'own'|'system', recent?: string[]}} opts
  * @returns {{key: string, items: object[]}[]} the non-empty sections in order.
  */
-export function pickerSections(agents, { query = '', scope = 'all', domain = '', recent = [] } = {}) {
+export function pickerSections(agents, { query = '', scope = 'all', recent = [] } = {}) {
   const pool = (agents || []).filter((a) => (
-    (scope === 'all' || (scope === 'system' ? !!a.system : !a.system))
-    && (!domain || norm(a.domain) === domain)
+    scope === 'all' || (scope === 'system' ? !!a.system : !a.system)
   ));
 
   if (query.trim()) {

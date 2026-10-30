@@ -56,7 +56,6 @@ export default {
   selectAgent: 'Выберите агента',
   agentPicker: {
     search: 'Поиск агента',
-    anyDomain: 'Все области',
     scope: { all: 'Все', own: 'Свои', system: 'Системные' },
     section: { default: 'По умолчанию', recent: 'Недавние', own: 'Свои агенты', system: 'Системные агенты', matches: 'Найдено' },
     noMatch: 'Подходящих агентов нет',

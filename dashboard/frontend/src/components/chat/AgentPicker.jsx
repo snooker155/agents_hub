@@ -1,8 +1,8 @@
 /**
  * The chat's agent picker: the top bar's button, and a panel in two halves.
  *
- * On the left, a search over the agents, a scope (all, own, system) and a
- * row of domains, then the agents in sections (see agentPickerModel). On the
+ * On the left, a search over the agents and a scope (all, own, system),
+ * then the agents in sections (see agentPickerModel). On the
  * right, the agent under the pointer or the arrow keys: what it does, its
  * badges, how many tools and delegates it has, what it remembers with (its
  * memory pools and personal memory), its tools and commands, a link to its page and a button that picks it. On a phone the
@@ -26,7 +26,7 @@ import { Link } from 'react-router-dom';
 import { Bot, Check, ChevronDown, Database, ExternalLink, GitBranch, Lock, Search, Sparkles, Star, UserRound } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import {
-  agentDomains, avatarTone, initials, pickerSections, recentAgentIds,
+  avatarTone, initials, pickerSections, recentAgentIds,
 } from './agentPickerModel';
 
 const SCOPES = ['all', 'own', 'system'];
@@ -106,7 +106,6 @@ function AgentDetails({ agent, count, countLabel, pickLabel, currentLabel, selec
         <Badge tone={agent.system ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'}>
           {agent.system ? t('chat.agentPicker.systemBadge') : t('chat.agentPicker.ownBadge')}
         </Badge>
-        {agent.domain && <Badge>{agent.domain}</Badge>}
         {agent.shared && <Badge>{t('chat.agentPicker.shared')}</Badge>}
         {agent.remote && <Badge tone="bg-violet-50 text-violet-700">{t('chat.agentPicker.remote')}</Badge>}
         {agent.has_running_node && (
@@ -248,7 +247,6 @@ export default function AgentPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState('all');
-  const [domain, setDomain] = useState('');
   const [activeId, setActiveId] = useState(null);
   const rootRef = useRef(null);
   const inputRef = useRef(null);
@@ -256,15 +254,14 @@ export default function AgentPicker({
 
   const selected = agents.find((a) => a.id === value) || null;
   const recent = useMemo(() => recentIds || recentAgentIds(conversations), [recentIds, conversations]);
-  const domains = useMemo(() => agentDomains(agents), [agents]);
   const scopeCounts = useMemo(() => ({
     all: agents.length,
     own: agents.filter((a) => !a.system).length,
     system: agents.filter((a) => a.system).length,
   }), [agents]);
   const sections = useMemo(
-    () => pickerSections(agents, { query, scope, domain, recent }),
-    [agents, query, scope, domain, recent],
+    () => pickerSections(agents, { query, scope, recent }),
+    [agents, query, scope, recent],
   );
   // The no agent row leads the list while nothing is searched for.
   const showNone = !!noneOption && !query.trim();
@@ -345,7 +342,7 @@ export default function AgentPicker({
             </span>
             {selected && (
               <span className="block text-[11px] text-gray-400 truncate">
-                {[selected.domain, t('chat.agentPicker.toolsCount', { count: (selected.tools || []).length })].filter(Boolean).join(' · ')}
+                {t('chat.agentPicker.toolsCount', { count: (selected.tools || []).length })}
               </span>
             )}
           </span>
@@ -406,19 +403,6 @@ export default function AgentPicker({
                 </button>
               ))}
             </div>
-            {domains.length > 1 && (
-              <div className="flex items-center gap-1 px-2 py-1.5 overflow-x-auto border-b border-gray-100" data-testid="agent-picker-domains">
-                <button type="button" onClick={() => { setDomain(''); setActiveId(null); }} className={chip(!domain)}>
-                  {t('chat.agentPicker.anyDomain')}
-                </button>
-                {domains.map((d) => (
-                  <button key={d.key} type="button" onClick={() => { setDomain(domain === d.key ? '' : d.key); setActiveId(null); }}
-                          className={chip(domain === d.key)}>
-                    {d.label}
-                  </button>
-                ))}
-              </div>
-            )}
 
             <div ref={listRef} role="listbox" className="flex-1 min-h-0 overflow-y-auto py-1">
               {showNone && (
@@ -472,7 +456,7 @@ export default function AgentPicker({
                             {agent.has_running_node && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />}
                           </span>
                           <span className="block text-[11px] text-gray-400 truncate">
-                            {[agent.domain, t('chat.agentPicker.toolsCount', { count: (agent.tools || []).length })].filter(Boolean).join(' · ')}
+                            {t('chat.agentPicker.toolsCount', { count: (agent.tools || []).length })}
                           </span>
                         </span>
                         {isSelected && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}

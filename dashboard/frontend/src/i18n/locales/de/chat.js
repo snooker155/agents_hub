@@ -54,7 +54,6 @@ export default {
   selectAgent: 'Agent auswählen',
   agentPicker: {
     search: 'Agenten suchen',
-    anyDomain: 'Alle Bereiche',
     scope: { all: 'Alle', own: 'Eigene', system: 'System' },
     section: { default: 'Standard', recent: 'Zuletzt', own: 'Eigene Agenten', system: 'Systemagenten', matches: 'Gefunden' },
     noMatch: 'Kein Agent passt',

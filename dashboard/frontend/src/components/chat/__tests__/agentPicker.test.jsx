@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { I18nProvider } from '../../../i18n';
 import AgentPicker from '../AgentPicker';
 import {
-  agentDomains, initials, matchScore, pickerSections, recentAgentIds,
+  initials, matchScore, pickerSections, recentAgentIds,
 } from '../agentPickerModel';
 
 const AGENTS = [
@@ -38,10 +38,9 @@ describe('agentPickerModel', () => {
     ]);
   });
 
-  it('filters by scope and by domain whatever its case', () => {
+  it('filters by scope, and a domain is neither shown nor searched', () => {
     expect(pickerSections(AGENTS, { scope: 'own' }).flatMap((s) => s.items).map((a) => a.id)).toEqual(['plot-manager']);
-    expect(pickerSections(AGENTS, { domain: 'writing' }).flatMap((s) => s.items).map((a) => a.id)).toEqual(['writer']);
-    expect(agentDomains(AGENTS).map((d) => d.key)).toEqual(['development', 'general', 'research', 'writing']);
+    expect(matchScore(AGENTS[3], 'writing')).toBe(0);
   });
 
   it('ranks a search: name start, then a word, then description, then a tool', () => {
@@ -93,6 +92,9 @@ describe('AgentPicker', () => {
     expect(screen.getByTitle('Read only').textContent).toContain('Product docs');
     expect(memory.textContent).toContain('Personal memory on');
     expect(screen.getByTestId('agent-picker-details').textContent).not.toContain('Chats');
+    expect(screen.getByTestId('agent-picker-details').textContent).not.toMatch(/\bresearch\b/);
+    expect(screen.queryByTestId('agent-picker-domains')).toBeNull();
+    expect(screen.getByRole('option', { name: /Researcher/ }).textContent).not.toMatch(/\bresearch\b/);
   });
 
   it('picks with the keyboard after a search', () => {
