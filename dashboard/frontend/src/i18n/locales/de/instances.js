@@ -23,6 +23,7 @@ export default {
     active: 'arbeiten',
     standby: 'Standby',
     finished: 'beendet',
+    stopped: 'gestoppt',
     failed: 'fehlgeschlagen',
   },
   kinds: {

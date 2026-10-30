@@ -39,6 +39,16 @@ describe('InstanceList live by default', () => {
     expect(getInstances.mock.calls.at(-1)[0].live).toBeUndefined();
   });
 
+  it('filters to the stopped copies from their chip', async () => {
+    show({ defaultLiveOnly: true });
+    await screen.findByText('No running instances');
+    fireEvent.click(screen.getByText('stopped'));
+    await screen.findByText('coder #1');
+    const params = getInstances.mock.calls.at(-1)[0];
+    expect(params.state).toBe('stopped');
+    expect(params.live).toBeUndefined();
+  });
+
   it('lists every copy without the default', async () => {
     show({});
     await screen.findByText('coder #1');

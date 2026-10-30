@@ -23,6 +23,7 @@ export default {
     active: 'working',
     standby: 'standby',
     finished: 'finished',
+    stopped: 'stopped',
     failed: 'failed',
   },
   kinds: {

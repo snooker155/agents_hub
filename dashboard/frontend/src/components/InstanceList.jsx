@@ -322,7 +322,7 @@ export default function InstanceList({
     <div className="space-y-3">
       {/* Counts strip — the whole point of the page: what is alive right now. */}
       <div className="flex flex-wrap items-center gap-2">
-        {['live', 'active', 'standby', 'finished', 'failed'].map((key) => (
+        {['live', 'active', 'standby', 'finished', 'stopped', 'failed'].map((key) => (
           <button
             key={key}
             type="button"

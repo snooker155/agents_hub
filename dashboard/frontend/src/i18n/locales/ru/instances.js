@@ -23,6 +23,7 @@ export default {
     active: 'работают',
     standby: 'ожидают',
     finished: 'завершены',
+    stopped: 'остановлены',
     failed: 'с ошибкой',
   },
   kinds: {
