@@ -107,7 +107,7 @@ def register(role: str, *, capabilities: Optional[Dict[str, Any]] = None,
     row = {
         "member_id": member_id, "role": role, "host": socket.gethostname(),
         "pid": os.getpid(), "version": app_version(), "started_at": now,
-        "heartbeat_at": now, "stopped_at": None,
+        "heartbeat_at": now, "stopped_at": None, "drain_requested_at": None,
         "capabilities": db.dumps(capabilities or {}), "load": db.dumps(load or {}),
         "log_file": str(_log_state.get("path") or log_path(member_id)),
     }
@@ -152,6 +152,24 @@ def mark_stopped(member_id: Optional[str] = None) -> None:
         log.debug("could not mark member %s stopped", member_id, exc_info=True)
 
 
+def request_drain(member_id: str, *, on: bool = True) -> bool:
+    """Ask a worker to finish what it runs and exit (or, with ``on=False``,
+    take the request back while it still lives). The worker reads it on its
+    beat (:func:`drain_requested`). False for an unknown member."""
+    with db.transaction() as conn:
+        cur = conn.execute("UPDATE members SET drain_requested_at = ? WHERE member_id = ?",
+                           (_now().isoformat() if on else None, member_id))
+        return int(getattr(cur, "rowcount", 0) or 0) > 0
+
+
+def drain_requested(member_id: Optional[str] = None) -> bool:
+    """Whether someone asked this process to drain and exit."""
+    row = db.get_conn().execute(
+        "SELECT drain_requested_at FROM members WHERE member_id = ?",
+        (member_id or owner_id(),)).fetchone()
+    return bool(row is not None and row["drain_requested_at"])
+
+
 def forget(member_id: str) -> bool:
     with db.transaction() as conn:
         cur = conn.execute("DELETE FROM members WHERE member_id = ?", (member_id,))
@@ -174,6 +192,7 @@ def _decorate(rec: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, 
     else:
         rec["status"] = "stale"
     rec["self"] = rec.get("member_id") == owner_id()
+    rec["draining"] = bool(rec.get("drain_requested_at")) and rec["status"] == "live"
     return rec
 
 
@@ -310,12 +329,16 @@ class MemberBeat(threading.Thread):
     """
 
     def __init__(self, role: str, *, capabilities: Optional[Dict[str, Any]] = None,
-                 load_fn=None, interval: float = BEAT_SECONDS) -> None:
+                 load_fn=None, interval: float = BEAT_SECONDS, on_drain=None) -> None:
         super().__init__(name="member-beat", daemon=True)
         self.role = role
         self.capabilities = dict(capabilities or {})
         self.load_fn = load_fn
         self.interval = interval
+        # Called on this thread with True when a drain request appears and
+        # with False when it is taken back.
+        self.on_drain = on_drain
+        self.drain_seen = False
         self._halt = threading.Event()
         self.beats = 0
         self.registered = False
@@ -344,6 +367,11 @@ class MemberBeat(threading.Thread):
                 if not beat(self._load()):
                     register(self.role, capabilities=self.capabilities, load=self._load())
                 self.beats += 1
+                if self.on_drain is not None:
+                    wanted = drain_requested()
+                    if wanted != self.drain_seen:
+                        self.drain_seen = wanted
+                        self.on_drain(wanted)
             except Exception:  # noqa: BLE001 - background loop, must keep running until stop()
                 log.debug("member beat failed", exc_info=True)
             # The log mirror rides on the beat: once a minute is plenty.
@@ -358,6 +386,7 @@ class MemberBeat(threading.Thread):
 
 __all__ = [
     "BEAT_SECONDS", "STALE_AFTER_SECONDS", "MemberBeat", "app_version", "attach_log_file",
+    "drain_requested", "request_drain",
     "beat", "detach_log_file", "forget", "get", "list_members", "log_path", "mark_stopped",
     "mirror_log", "prune", "read_log", "register",
 ]

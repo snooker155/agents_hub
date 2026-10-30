@@ -139,6 +139,9 @@ class Worker:
         self.modes = list(modes or worker_execution_modes())
         self.tracked: Dict[str, Dict[str, Any]] = {}   # run_id -> spec
         self.stopping = threading.Event()
+        # Asked to drain (the Cluster page's Stop, the autoscaler): no new
+        # claims, exit once nothing of this worker's runs any more.
+        self.draining = threading.Event()
         self.launched = 0
         self.failed = 0
         self.started_at = time.time()
@@ -152,7 +155,7 @@ class Worker:
         self._reap()
         if self.tracked:
             run_queue.renew(list(self.tracked), self.owner, ttl_seconds=LEASE_SECONDS)
-        if self.stopping.is_set():
+        if self.stopping.is_set() or self.draining.is_set():
             return 0
         spawned = self._start_carriers()
         while len(self.tracked) < self.concurrency:
@@ -246,8 +249,13 @@ class Worker:
 
         beat = MemberBeat("worker", capabilities={
             "http": False, "execution_modes": list(self.modes), "concurrency": self.concurrency,
+            # Who started this worker (common/worker_fleet.py): the hub, or
+            # not (compose, a person, an orchestrator).
+            "origin": os.environ.get("AGENTS_HUB_WORKER_ORIGIN", ""),
         }, load_fn=lambda: {"tracked": len(self.tracked), "launched": self.launched,
-                            "failed": self.failed, "stopping": self.stopping.is_set()})
+                            "failed": self.failed, "stopping": self.stopping.is_set(),
+                            "draining": self.draining.is_set()},
+            on_drain=self.request_drain)
         beat.start()
         # The egress proxy for environments with a limited or no network
         # (environments/egress.py): runs here too, since the URL a run gets
@@ -269,6 +277,10 @@ class Worker:
         while not self.stopping.is_set():
             try:
                 self.tick()
+                if self.draining.is_set() and self._drained():
+                    log.info("worker %s drained: nothing of its own runs any more, exiting", self.owner)
+                    self.stopping.set()
+                    break
             except Exception:
                 log.exception("worker tick failed")
             self.stopping.wait(TICK_SECONDS)
@@ -293,6 +305,26 @@ class Worker:
         except Exception:  # noqa: BLE001 - shutdown must finish even if the proxy stop fails
             log.debug("egress proxy stop failed", exc_info=True)
         log.info("worker %s stopped (%d launched, %d failed)", self.owner, self.launched, self.failed)
+
+    def request_drain(self, on: bool = True) -> None:
+        if not on:
+            if self.draining.is_set():
+                log.info("worker %s: drain taken back, claiming again", self.owner)
+            self.draining.clear()
+            return
+        if not self.draining.is_set():
+            log.info("worker %s draining on request: no more claims, %d run(s) to finish",
+                     self.owner, len(self.tracked))
+        self.draining.set()
+
+    def _drained(self) -> bool:
+        """No run of this worker's and no live instance carrier it started:
+        their containers reach their state through this worker, so it may
+        only go once none is left."""
+        if self.tracked:
+            return False
+        from common.worker_fleet import live_carriers
+        return not live_carriers(socket.gethostname())
 
     def request_stop(self) -> None:
         if not self.stopping.is_set():
