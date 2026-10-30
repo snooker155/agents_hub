@@ -249,3 +249,18 @@ def test_a_chat_turn_with_personal_memory_and_skills_needs_no_database(acme, tmp
     assert replies.reply_for(msg_id)["status"] == "completed"
     pool = MemoryStore().get(personal.pool_id("local", "acme"))
     assert pool is not None and pool.workspace == "acme"
+
+
+def test_only_the_carrier_waits_on_its_mailbox(acme):
+    from fastapi.testclient import TestClient
+    from instances import inbox
+    from dashboard.backend.main import app
+    mine, other = _resident()["instance_id"], _resident("writer")["instance_id"]
+    token = run_tokens.mint(kind="instance", instance_id=mine, workspace="acme")
+    client = TestClient(app)
+    auth = {"Authorization": f"Bearer {token}"}
+    assert client.get(f"/api/run-state/wake/{other}?timeout=0", headers=auth).status_code == 403
+    assert client.get(f"/api/run-state/wake/{mine}?timeout=0").status_code in (401, 403)
+    assert client.get(f"/api/run-state/wake/{mine}?timeout=0", headers=auth).json() == {"pending": False}
+    inbox.enqueue(mine, "hello")
+    assert client.get(f"/api/run-state/wake/{mine}?timeout=1", headers=auth).json() == {"pending": True}

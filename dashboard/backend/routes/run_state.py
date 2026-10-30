@@ -448,3 +448,21 @@ async def model_gateway_route(scheme: str, host: str, path: str, request: Reques
     passed = {k: v for k, v in upstream.headers.items()
               if k.lower() not in ("content-length", "transfer-encoding", "connection", "content-encoding")}
     return StreamingResponse(relay(), status_code=upstream.status_code, headers=passed)
+
+
+
+@router.get("/wake/{instance_id}", include_in_schema=False)
+async def carrier_wake_route(instance_id: str, request: Request, timeout: float = 5.0):
+    """An agent container's carrier waiting for mail (instances/wake.py): the
+    answer comes when a message is waiting or the time is up. Only the
+    carrier the token was minted for may wait on its mailbox."""
+    import asyncio
+    from common import identity, run_tokens
+    from instances import wake
+
+    row = await asyncio.to_thread(run_tokens.resolve, identity.presented_credential(request))
+    if row is None:
+        raise HTTPException(status_code=401, detail="a carrier's wait needs its run token")
+    if str(row.get("instance_id") or "") != str(instance_id):
+        raise HTTPException(status_code=403, detail="not this carrier's mailbox")
+    return {"pending": await wake.wait_async(instance_id, timeout)}
