@@ -85,3 +85,14 @@ def hub_base_url() -> str:
         return explicit.rstrip("/")
     port = os.environ.get("DASHBOARD_PORT", "8000")
     return host_service_url(f"http://localhost:{port}").rstrip("/")
+
+
+def state_base_url() -> str:
+    """Where an agent container's state calls go (``/api/run-state/...``: its
+    store calls, its run records, its model calls, its wait for mail):
+    ``AGENTS_HUB_STATE_URL``, the process that launched it (a worker, which
+    has the database and the keys, so the API serves people), else the hub
+    (:func:`hub_base_url`). Live events still go to the hub."""
+    import os
+    explicit = (os.environ.get("AGENTS_HUB_STATE_URL") or "").strip()
+    return explicit.rstrip("/") if explicit else hub_base_url()

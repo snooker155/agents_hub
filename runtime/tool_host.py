@@ -218,14 +218,41 @@ def worker_port() -> int:
         return DEFAULT_PORT
 
 
+def worker_app() -> Any:
+    """What a worker serves the containers it starts: their whole state
+    surface (``/api/run-state/...``: store calls, run records, model calls,
+    the wait for mail) and their connector tools, so the API backend serves
+    people. A run token is required on every path; nothing else is served."""
+    import asyncio
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    from dashboard.backend.routes import run_state
+
+    app = FastAPI(title="Agents Hub worker state host")
+
+    @app.middleware("http")
+    async def run_tokens_only(request: Request, call_next):
+        if not request.url.path.startswith("/api/run-state/"):
+            return JSONResponse({"detail": "not served here"}, status_code=404)
+        from common import identity
+        principal = await asyncio.to_thread(identity._run_principal,
+                                            identity.presented_credential(request))
+        if principal is None:
+            return JSONResponse({"detail": "a run token is required"}, status_code=401)
+        request.state.principal = principal
+        return await call_next(request)
+
+    app.include_router(run_state.router)
+    app.include_router(router())
+    return app
+
+
 def serve_in_thread(port: Optional[int] = None) -> Optional[threading.Thread]:
-    """Serve the tool host from this worker. Never raises: a worker without
-    it still launches; its containers' connector tools then answer an error."""
+    """Serve :func:`worker_app` from this worker. Never raises: a worker
+    without it still launches; its containers then cannot reach their state."""
     try:
         import uvicorn
-        from fastapi import FastAPI
-        app = FastAPI(title="Agents Hub worker tool host")
-        app.include_router(router())
+        app = worker_app()
         server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=port or worker_port(),
                                                log_level="warning", lifespan="off"))
         thread = threading.Thread(target=server.run, name="tool-host", daemon=True)

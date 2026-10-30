@@ -280,8 +280,8 @@ class HttpStateTransport(StateTransport):
 
     def __init__(self, timeout: float = 10.0):
         self._timeout = timeout
-        from common.hostnet import hub_base_url
-        self._base = hub_base_url() + "/api/run-state"
+        from common.hostnet import state_base_url
+        self._base = state_base_url() + "/api/run-state"
 
     def _call(self, method: str, path: str, body: Dict[str, Any],
               timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:

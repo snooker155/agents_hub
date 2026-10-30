@@ -681,13 +681,21 @@ def update_from_process(instance_id: str, carrier_status: str, *,
 
 
 @remote_state.hub_call("own_instance:instance_id")
-def heartbeat(instance_id: str, **fields: Any) -> None:
+def heartbeat(instance_id: str, **fields: Any) -> Dict[str, Any]:
     """Stamp the instance's heartbeat, with whatever else the carrier
-    reports on each beat (``fields``, e.g. its agent build counts)."""
+    reports on each beat (``fields``, e.g. its agent build counts). Returns
+    what the carrier follows from its row (its concurrency, whether it takes
+    tasks, a stop asked of it), so one call a beat is all it makes."""
     try:
-        store.update(instance_id, heartbeat_at=_now(), **fields)
+        row = store.update(instance_id, heartbeat_at=_now(), **fields) or {}
     except Exception:  # noqa: BLE001 - a missed beat is retried on the next one
         log.debug("heartbeat failed for %s", instance_id, exc_info=True)
+        return {}
+    return {k: row.get(k) for k in CARRIER_FOLLOWS}
+
+
+#: The fields of its row a carrier follows (runtime/instance_run.py).
+CARRIER_FOLLOWS = ("concurrency", "take_tasks", "stop_requested_at", "stop_reason")
 
 
 @remote_state.hub_call("instance:instance_id")

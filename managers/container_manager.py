@@ -386,8 +386,11 @@ def remote_container_env(env: Dict[str, str]) -> Dict[str, str]:
     out[REMOTE_STATE_ENV] = "1"
     out["AGENTS_HUB_CALLBACK_URL"] = container_hub_url()
     # Its connector tools run on the process starting it (runtime/tool_host.py).
+    # And its state calls, model calls and wait for mail: the worker starting
+    # it serves them (it has the database and the keys), the API serves people.
     from runtime.tool_host import URL_ENV, url_for_containers
     out[URL_ENV] = url_for_containers()
+    out["AGENTS_HUB_STATE_URL"] = out[URL_ENV]
     # Its own run and task records go through /api/run-state as well
     # (common/state_transport.py).
     out["AGENT_RUN_STATE_TRANSPORT"] = "http"

@@ -75,6 +75,9 @@ _logger = logging.getLogger(__name__ + ".debug")
 HEARTBEAT_SECONDS = float(os.environ.get("AGENTS_HUB_INSTANCE_HEARTBEAT_SECONDS", "") or 15.0)
 TASK_SWEEP_SECONDS = 10.0
 IDLE_WAIT_SECONDS = 5.0
+#: How long an idle carrier waits for mail in one go (the hub answers the
+#: moment a message arrives, so this is only how often an idle loop turns).
+LONG_WAIT_SECONDS = 25.0
 
 _log_fh = None  # set in main() for Docker carriers to mirror stdout into the log file
 _stopping = threading.Event()
@@ -760,6 +763,7 @@ class InstanceLoop:
         with self.lock:
             self.busy.pop(future, None)
             others = len(self.busy)
+        self.ended = True
         try:
             exc = future.exception()
             if exc:
@@ -825,49 +829,66 @@ class InstanceLoop:
         log(f"Instance {self.instance_id} ({self.agent_id or 'runner'}) ready, workspace scope {self.scope}")
         os.environ["AGENT_WORKSPACE"] = self.scope
         _set_status(self.instance_id, "running")
+        # What the carrier follows from its row (concurrency, task intake),
+        # read once here and then from every heartbeat's answer: a loop that
+        # read the row each turn made most of an idle carrier's calls.
+        row = store.get(self.instance_id) or {}
+        self.follows = {k: row.get(k) for k in carrier.CARRIER_FOLLOWS}
         heartbeat = threading.Thread(target=self._heartbeat, name="instance-heartbeat", daemon=True)
         heartbeat.start()
         threading.Thread(target=_warm_up, name="instance-warm-up", daemon=True).start()
+        mail = True
         while not _stopping.is_set():
             try:
-                instance = store.get(self.instance_id) or {}
+                instance = self.follows
                 concurrency = carrier.clamp_concurrency(instance.get("concurrency") or 1)
-                self.claim_messages(concurrency)
+                if mail:
+                    self.claim_messages(concurrency)
                 self.maybe_sweep_tasks(instance)
-                timeout = IDLE_WAIT_SECONDS
+                # Idle, one long wait (the hub answers when mail comes); while
+                # turns run, a short one, so the next message of a conversation
+                # being answered is taken soon after its answer.
+                timeout = IDLE_WAIT_SECONDS if self.running() else LONG_WAIT_SECONDS
                 if instance.get("take_tasks"):
                     timeout = max(0.2, min(timeout, self.next_sweep - time.monotonic()))
                 if self.running() >= concurrency:
                     # Every slot is taken: nothing to claim until one frees.
                     time.sleep(min(timeout, wake.poll_seconds()))
+                    mail = True
                 else:
-                    wake.wait(self.instance_id, timeout)
+                    mail = wake.wait(self.instance_id, timeout, self.busy_conversations())
+                    if not mail and self.finished_since_wait():
+                        mail = True
             except TokenRefused as exc:
                 _stop_refused(exc)
                 return
             except Exception as exc:  # noqa: BLE001 - the loop survives one bad iteration
                 log(f"Loop error: {exc}\n{traceback.format_exc()}")
                 time.sleep(1.0)
+                mail = True
+
+    def finished_since_wait(self) -> bool:
+        """Whether a turn ended during the last wait: mail of its
+        conversation, held back while it ran, may be waiting now."""
+        ended, self.ended = getattr(self, "ended", False), False
+        return ended
 
     def _heartbeat(self) -> None:
-        from instances import carrier, store
+        from instances import carrier
         while not _stopping.wait(HEARTBEAT_SECONDS):
             try:
-                carrier.heartbeat(self.instance_id, **_build_counts())
+                follows = carrier.heartbeat(self.instance_id, **_build_counts()) or {}
             except TokenRefused as exc:
                 _stop_refused(exc)
                 return
             except Exception:  # noqa: BLE001 - the hub is away for a moment; the next beat retries
                 _logger.debug("heartbeat of %s failed", self.instance_id, exc_info=True)
                 continue
-            try:
-                inst = store.get(self.instance_id) or {}
-            except Exception:  # noqa: BLE001 - a transient read; the next heartbeat retries
-                _logger.debug("could not read instance %s", self.instance_id, exc_info=True)
-                continue
-            if inst.get("stop_requested_at"):
+            if follows:
+                self.follows = follows
+            if follows.get("stop_requested_at"):
                 # Stop asked from a host that cannot signal this one.
-                log(f"Stop requested through the instance record: {inst.get('stop_reason') or 'no reason given'}")
+                log(f"Stop requested through the instance record: {follows.get('stop_reason') or 'no reason given'}")
                 os.kill(os.getpid(), signal.SIGTERM)
                 return
 

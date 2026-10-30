@@ -383,9 +383,9 @@ def _route(url: str) -> Optional[str]:
     parts = urlsplit(url)
     if parts.netloc.lower() not in _hosts():
         return None
-    from common.hostnet import hub_base_url
+    from common.hostnet import state_base_url
     path = parts.path or "/"
-    target = f"{hub_base_url()}{ROUTE}/{parts.scheme}/{parts.netloc}{path}"
+    target = f"{state_base_url()}{ROUTE}/{parts.scheme}/{parts.netloc}{path}"
     return target + (f"?{parts.query}" if parts.query else "")
 
 

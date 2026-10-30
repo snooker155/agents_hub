@@ -913,10 +913,10 @@ def _post(payload: Dict[str, Any]) -> Dict[str, Any]:
     if _transport is not None:
         return _transport(payload)
     from common.auth import auth_headers
-    from common.hostnet import hub_base_url
+    from common.hostnet import state_base_url
     import requests
     try:
-        resp = _http_session().post(hub_base_url() + CALL_PATH, json=payload,
+        resp = _http_session().post(state_base_url() + CALL_PATH, json=payload,
                                     headers=auth_headers(), timeout=_timeout())
     except requests.RequestException as exc:
         raise RemoteStateError(f"the hub could not be reached for {payload.get('fn')}: {exc}") from exc

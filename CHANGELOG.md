@@ -33,6 +33,13 @@ turns that section into the next release.
 
 ### Changed
 
+- An agent container's state calls, model calls and wait for mail go to the
+  worker that started it (the hub where no worker runs); the API backend only
+  gets its live events. An idle carrier makes a heartbeat every 15 seconds
+  (which also brings back its settings and a stop asked of it) and one 25
+  second wait for mail, instead of reading its row and its mailbox every few
+  seconds; mail of a conversation it is still answering no longer wakes it
+  in a loop.
 - Connector tools of an agent container (trackers, Google, Microsoft, Notion,
   Confluence, databases, channels) run on the worker that started it (the
   backend where no worker runs), which can read the connectors' secrets; the

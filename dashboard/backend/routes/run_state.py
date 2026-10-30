@@ -474,7 +474,8 @@ async def model_gateway_route(scheme: str, host: str, path: str, request: Reques
 
 
 @router.get("/wake/{instance_id}", include_in_schema=False)
-async def carrier_wake_route(instance_id: str, request: Request, timeout: float = 5.0):
+async def carrier_wake_route(instance_id: str, request: Request, timeout: float = 5.0,
+                             exclude: str = "[]"):
     """An agent container's carrier waiting for mail (instances/wake.py): the
     answer comes when a message is waiting or the time is up. Only the
     carrier the token was minted for may wait on its mailbox."""
@@ -487,4 +488,9 @@ async def carrier_wake_route(instance_id: str, request: Request, timeout: float 
         raise HTTPException(status_code=401, detail="a carrier's wait needs its run token")
     if str(row.get("instance_id") or "") != str(instance_id):
         raise HTTPException(status_code=403, detail="not this carrier's mailbox")
-    return {"pending": await wake.wait_async(instance_id, timeout)}
+    import json
+    try:
+        busy = [c if c is None else str(c) for c in json.loads(exclude or "[]")]
+    except (TypeError, ValueError):
+        busy = []
+    return {"pending": await wake.wait_async(instance_id, timeout, busy)}

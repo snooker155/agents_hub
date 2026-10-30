@@ -85,9 +85,18 @@ replica at start); a worker on another machine sets
 process opens the database directly. Deployments without workers (the `all`
 role) need none of this: the backend starts the containers.
 
-A worker also serves the connector tools of the containers it starts
-(`runtime/tool_host.py`, port `AGENTS_HUB_WORKER_TOOL_PORT`, 8090): they need
-the connectors' secrets, which a worker can read and a container never gets.
+A worker also serves the containers it starts (`runtime/tool_host.py`, port
+`AGENTS_HUB_WORKER_TOOL_PORT`, 8090, run tokens only): their store calls, run
+records, model calls and wait for mail (`/api/run-state/...`), and their
+connector tools, which need secrets a worker can read and a container never
+gets. The API backend then only gets their live events.
+
+An idle carrier makes two kinds of calls: its heartbeat every 15 seconds,
+which also brings back what it follows from its row (concurrency, task intake,
+a stop asked of it), and one wait for mail that the worker answers the moment
+a message arrives (Redis when there is a broker) or after 25 seconds. It takes
+mail only when the wait says some is there, and mail of a conversation it is
+still answering does not end the wait.
 
 ## Heartbeats instead of pids
 

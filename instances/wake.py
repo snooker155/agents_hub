@@ -86,21 +86,23 @@ def signal(instance_id: str) -> None:
         log.debug("wake: signal failed for %s", instance_id, exc_info=True)
 
 
-def _pending(instance_id: str) -> bool:
+def _pending(instance_id: str, exclude: Any = ()) -> bool:
     from instances import inbox
     try:
-        return inbox.has_pending(instance_id)
+        return inbox.has_pending(instance_id, exclude)
     except Exception:  # noqa: BLE001 - a failed read is retried on the next tick
         return False
 
 
-def wait(instance_id: str, timeout: float) -> bool:
+def wait(instance_id: str, timeout: float, exclude: Any = ()) -> bool:
     """Block up to ``timeout`` seconds for mail. True when a message may be
-    waiting (woken, or the mailbox has one), False on a quiet timeout."""
+    waiting (woken, or the mailbox has one), False on a quiet timeout.
+    ``exclude`` names conversations the carrier is still answering: their
+    mail does not end the wait."""
     from common import remote_state
     if remote_state.is_remote():
-        return _wait_on_hub(instance_id, timeout)
-    if _pending(instance_id):
+        return _wait_on_hub(instance_id, timeout, exclude)
+    if _pending(instance_id, exclude):
         return True
     deadline = time.monotonic() + max(0.0, float(timeout))
     client = _redis()
@@ -113,7 +115,7 @@ def wait(instance_id: str, timeout: float) -> bool:
                 # Several signals collapse into one wake-up.
                 client.delete(key)
                 return True
-            return _pending(instance_id)
+            return _pending(instance_id, exclude)
         except Exception:  # noqa: BLE001 - fall through to polling for this wait
             log.debug("wake: blpop failed for %s", instance_id, exc_info=True)
     interval = poll_seconds()
@@ -122,7 +124,7 @@ def wait(instance_id: str, timeout: float) -> bool:
         if now >= deadline:
             return False
         time.sleep(min(interval, deadline - now))
-        if _pending(instance_id):
+        if _pending(instance_id, exclude):
             return True
 
 
@@ -130,17 +132,19 @@ def wait(instance_id: str, timeout: float) -> bool:
 HUB_WAIT_MAX = 25.0
 
 
-def _wait_on_hub(instance_id: str, timeout: float) -> bool:
+def _wait_on_hub(instance_id: str, timeout: float, exclude: Any = ()) -> bool:
     """An agent container's wait: one long request the hub answers when mail
     arrives or the time is up (``GET /api/run-state/wake/<id>``), instead of
     asking for its mailbox every half second."""
     from common import remote_state
     from common.auth import auth_headers
-    from common.hostnet import hub_base_url
+    from common.hostnet import state_base_url
     seconds = max(0.0, min(float(timeout), HUB_WAIT_MAX))
     try:
+        import json
         resp = remote_state._http_session().get(
-            f"{hub_base_url()}/api/run-state/wake/{instance_id}", params={"timeout": seconds},
+            f"{state_base_url()}/api/run-state/wake/{instance_id}",
+            params={"timeout": seconds, "exclude": json.dumps(list(exclude or ()))},
             headers=auth_headers(), timeout=seconds + 15)
     except Exception:  # noqa: BLE001 - the hub is away: wait out the time, then look again
         log.debug("wake: the hub could not be asked for %s", instance_id, exc_info=True)
@@ -154,12 +158,12 @@ def _wait_on_hub(instance_id: str, timeout: float) -> bool:
         return False
 
 
-async def wait_async(instance_id: str, timeout: float) -> bool:
+async def wait_async(instance_id: str, timeout: float, exclude: Any = ()) -> bool:
     """The hub's side of :func:`_wait_on_hub`: wait without holding a thread
     (the Redis signal when there is a broker, else a light poll)."""
     import asyncio
     deadline = time.monotonic() + max(0.0, min(float(timeout), HUB_WAIT_MAX))
-    if await asyncio.to_thread(_pending, instance_id):
+    if await asyncio.to_thread(_pending, instance_id, exclude):
         return True
     url = _broker_url()
     if url:
@@ -174,12 +178,12 @@ async def wait_async(instance_id: str, timeout: float) -> bool:
                     return True
             finally:
                 await client.aclose()
-            return await asyncio.to_thread(_pending, instance_id)
+            return await asyncio.to_thread(_pending, instance_id, exclude)
         except Exception:  # noqa: BLE001 - fall back to polling for this wait
             log.debug("wake: async blpop failed for %s", instance_id, exc_info=True)
     interval = poll_seconds()
     while time.monotonic() < deadline:
         await asyncio.sleep(min(interval, max(0.0, deadline - time.monotonic())))
-        if await asyncio.to_thread(_pending, instance_id):
+        if await asyncio.to_thread(_pending, instance_id, exclude):
             return True
     return False

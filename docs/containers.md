@@ -44,9 +44,14 @@ through the hub instead:
 
 - Every store function such a process calls is marked with
   `common.remote_state.hub_call`. In the container (`AGENTS_HUB_REMOTE_STATE=1`)
-  a marked function does not run there: the call goes to the hub as one
-  `POST /api/run-state/call` with the container's run token, and the hub runs
-  it and sends the result back.
+  a marked function does not run there: the call goes out as one
+  `POST /api/run-state/call` with the container's run token, and the result
+  comes back.
+- That call, the run's own records, its model calls and its wait for mail go
+  to `AGENTS_HUB_STATE_URL`: the worker that started the container (its own
+  server, `runtime/tool_host.py worker_app`, run tokens only), or the hub where
+  no worker runs. A worker has the database and the keys, so with workers the
+  API backend serves people: a container reaches it only for live events.
 - Each marked function names its scope: the workspace argument, or the record
   an id names (a task, run, instance, flow, chat, session, loop, team...),
   whose workspace the hub looks up. The hub compares that with the workspace

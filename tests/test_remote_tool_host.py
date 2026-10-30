@@ -85,3 +85,14 @@ def test_a_container_sees_connector_secrets_masked(acme):
                                                                      "base_url": "https://y"}}]})
     assert DocStore("channel_jira").get("state@acme")["config"] == {"api_token": "real-token",
                                                                     "base_url": "https://y"}
+
+
+def test_the_worker_serves_containers_only_with_a_run_token(acme):
+    from fastapi.testclient import TestClient
+    client = TestClient(tool_host.worker_app())
+    assert client.post("/api/run-state/call", json={"fn": "x"}).status_code == 401
+    assert client.get("/api/settings").status_code == 404
+    token = run_tokens.mint(run_id="run-w", workspace="acme")
+    ok = client.post("/api/run-state/call", headers={"Authorization": f"Bearer {token}"},
+                     json={"fn": "workspace.storage:get_workspace_metadata", "args": ["acme"]})
+    assert ok.status_code == 200 and ok.json()["ok"] is True

@@ -148,11 +148,22 @@ def pending_holder(instance_ids: Iterable[str], conversation_id: Optional[str]) 
 
 
 @remote_state.hub_call("own_instance:instance_id")
-def has_pending(instance_id: str) -> bool:
-    row = db.get_conn().execute(
-        "SELECT 1 FROM instance_inbox WHERE instance_id = ? AND delivered_at IS NULL LIMIT 1",
-        (str(instance_id),),
-    ).fetchone()
+def has_pending(instance_id: str,
+                exclude_conversations: Iterable[Optional[str]] = ()) -> bool:
+    """Whether a message waits that :func:`claim_next` would take with the
+    same ``exclude_conversations`` (mail of a conversation the carrier is
+    still answering does not count: it waits for that answer)."""
+    excluded = list(exclude_conversations or ())
+    sql = "SELECT 1 FROM instance_inbox WHERE instance_id = ? AND delivered_at IS NULL"
+    params: List[Any] = [str(instance_id)]
+    if None in excluded:
+        sql += " AND conversation_id IS NOT NULL"
+    named = [c for c in excluded if c is not None]
+    if named:
+        sql += (f" AND (conversation_id IS NULL OR conversation_id NOT IN "
+                f"({', '.join('?' * len(named))}))")
+        params.extend(named)
+    row = db.get_conn().execute(sql + " LIMIT 1", params).fetchone()
     return row is not None
 
 
