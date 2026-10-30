@@ -4,8 +4,8 @@
  * On the left, a search over the agents, a scope (all, own, system) and a
  * row of domains, then the agents in sections (see agentPickerModel). On the
  * right, the agent under the pointer or the arrow keys: what it does, its
- * badges, how many tools, delegates and conversations it has, its tools and
- * commands, a link to its page and a button that picks it. On a phone the
+ * badges, how many tools and delegates it has, what it remembers with (its
+ * memory pools and personal memory), its tools and commands, a link to its page and a button that picks it. On a phone the
  * right half is left out and the panel is the list alone.
  *
  * Arrow keys move through the list, Enter picks, Escape or a click outside
@@ -23,10 +23,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bot, Check, ChevronDown, ExternalLink, GitBranch, Search, Sparkles, Star } from 'lucide-react';
+import { Bot, Check, ChevronDown, Database, ExternalLink, GitBranch, Lock, Search, Sparkles, Star, UserRound } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import {
-  agentDomains, avatarTone, chatCounts, initials, pickerSections, recentAgentIds,
+  agentDomains, avatarTone, initials, pickerSections, recentAgentIds,
 } from './agentPickerModel';
 
 const SCOPES = ['all', 'own', 'system'];
@@ -57,8 +57,36 @@ function Fact({ label, value }) {
   );
 }
 
+/** What the agent remembers with in this workspace (routes/agents/listing.py):
+ * its memory pools by name, read-only ones marked, and personal memory. */
+function AgentMemory({ memory, t }) {
+  if (!memory) return null;
+  const pools = memory.pools || [];
+  return (
+    <div data-testid="agent-picker-memory">
+      <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">{t('chat.agentPicker.memoryTitle')}</div>
+      <div className="flex flex-wrap gap-1">
+        {pools.map((pool) => (
+          <Badge key={pool.id} tone="bg-indigo-50 text-indigo-700"
+                 title={pool.read_only ? t('chat.agentPicker.memoryReadOnly') : undefined}>
+            <Database className="w-3 h-3" /> {pool.name || String(pool.id).slice(0, 8)}
+            {pool.read_only && <Lock className="w-3 h-3" />}
+          </Badge>
+        ))}
+        <Badge tone={memory.personal ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-500'}>
+          <UserRound className="w-3 h-3" />
+          {memory.personal ? t('chat.agentPicker.personalOn') : t('chat.agentPicker.personalOff')}
+        </Badge>
+      </div>
+      {!pools.length && (
+        <div className="text-[11px] text-gray-400 mt-1">{t('chat.agentPicker.noPools')}</div>
+      )}
+    </div>
+  );
+}
+
 /** The right half: everything worth knowing about one agent before talking to it. */
-function AgentDetails({ agent, chats, countLabel, pickLabel, currentLabel, selected, onPick, t }) {
+function AgentDetails({ agent, count, countLabel, pickLabel, currentLabel, selected, onPick, t }) {
   const tools = agent.tools || [];
   const commands = agent.commands || [];
   return (
@@ -98,17 +126,16 @@ function AgentDetails({ agent, chats, countLabel, pickLabel, currentLabel, selec
           {agent.description || <span className="text-gray-400">{t('chat.agentPicker.noDescription')}</span>}
         </p>
 
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className={`grid gap-1.5 ${countLabel ? 'grid-cols-3' : 'grid-cols-2'}`}>
           <Fact label={t('chat.agentPicker.tools')} value={tools.length} />
           <Fact label={t('chat.agentPicker.delegates')} value={(agent.delegates || []).length} />
-          <Fact label={countLabel} value={chats} />
+          {countLabel && <Fact label={countLabel} value={count} />}
         </div>
+
+        <AgentMemory memory={agent.memory} t={t} />
 
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-500">
           <span>{agent.skills_enabled ? t('chat.agentPicker.skillsOn') : t('chat.agentPicker.skillsOff')}</span>
-          {agent.memory_type && agent.memory_type !== 'none' && (
-            <span>{t('chat.agentPicker.memory', { type: agent.memory_type })}</span>
-          )}
           {agent.current_version ? <span>{t('chat.agentPicker.version', { n: agent.current_version })}</span> : null}
         </div>
 
@@ -197,12 +224,12 @@ const NONE = { id: '', none: true };
  * @param {object[]} props.agents          the agents this workspace offers.
  * @param {string} props.value             the picked id.
  * @param {function} props.onChange
- * @param {object[]} [props.conversations] for the recent section and the chat counts.
+ * @param {object[]} [props.conversations] for the recent section.
  * @param {'bar'|'field'} [props.variant]  the chat's top bar, or a form field.
  * @param {string} [props.placeholder]     the button's text with nothing picked.
  * @param {{label: string, hint?: string}} [props.noneOption] a first row that picks '' (no agent).
  * @param {string[]} [props.recent]        the recent section, in place of the conversations'.
- * @param {Map<string, number>} [props.counts] the per agent count, in place of the chats.
+ * @param {Map<string, number>} [props.counts] a per agent count the page keeps (its jobs, its deployments), shown with labels.count.
  * @param {object} [props.labels]          overrides: recent (section), count, pick, current.
  * @param {boolean} [props.details]        the right half with the agent's card (on by default).
  */
@@ -214,7 +241,7 @@ export default function AgentPicker({
   const isField = variant === 'field';
   const text = {
     recent: labels.recent || t('chat.agentPicker.section.recent'),
-    count: labels.count || t('chat.agentPicker.chats'),
+    count: countsIn ? labels.count || '' : '',
     pick: labels.pick || t('chat.agentPicker.pick'),
     current: labels.current || t('chat.agentPicker.current'),
   };
@@ -229,7 +256,6 @@ export default function AgentPicker({
 
   const selected = agents.find((a) => a.id === value) || null;
   const recent = useMemo(() => recentIds || recentAgentIds(conversations), [recentIds, conversations]);
-  const counts = useMemo(() => countsIn || chatCounts(conversations), [countsIn, conversations]);
   const domains = useMemo(() => agentDomains(agents), [agents]);
   const scopeCounts = useMemo(() => ({
     all: agents.length,
@@ -470,7 +496,7 @@ export default function AgentPicker({
             ) : active ? (
               <AgentDetails
                 agent={active}
-                chats={counts.get(active.id) || 0}
+                count={countsIn?.get(active.id) || 0}
                 countLabel={text.count}
                 pickLabel={text.pick}
                 currentLabel={text.current}

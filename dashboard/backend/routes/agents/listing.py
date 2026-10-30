@@ -1,5 +1,7 @@
 """Agent list, details, tool catalog and workspace capacities."""
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 from typing import Any, Dict, List, Optional, Union, cast
 
@@ -16,6 +18,8 @@ from common import record_access
 
 
 from ._common import (package, get_factory, _agent_visible_in_workspace, _apply_workspace_memory, _get_workspace_default_chat_agent, _light_registry_dict, _workspace_memory_overrides)
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -76,6 +80,42 @@ def visible_agents(workspace: Optional[str]) -> List[Any]:
     return visible
 
 
+def _memory_annotator(workspace: str):
+    """What an agent remembers with in ``workspace``, for the chat's agent
+    picker: its memory pools (by name, read-only marked) and whether personal
+    memory is on for it. Pool names are read once per page."""
+    from agents.registry import memory_pool_read_only_ids, normalize_memory_pools
+    try:
+        from memory import personal
+        settings = personal.agent_settings(workspace)
+    except Exception:  # noqa: BLE001 - unreadable settings: personal memory shows off
+        log.debug("personal memory settings unreadable for %s", workspace, exc_info=True)
+        settings = {"enabled": False, "agents": {}}
+    names: Dict[str, str] = {}
+
+    def _name(pool_id: str) -> str:
+        if pool_id not in names:
+            try:
+                from memory.store import MemoryStore
+                mem = MemoryStore().get(pool_id)
+                names[pool_id] = (getattr(mem, "name", "") or "") if mem else ""
+            except Exception:  # noqa: BLE001 - a missing pool shows by its id
+                log.debug("memory pool %s unreadable", pool_id, exc_info=True)
+                names[pool_id] = ""
+        return names[pool_id]
+
+    def annotate(agent: Dict[str, Any]) -> Dict[str, Any]:
+        kind = str(agent.get("memory_type") or "none")
+        data = agent.get("memory_data")
+        read_only = memory_pool_read_only_ids(kind, data)
+        pools = [{"id": pid, "name": _name(pid), "read_only": pid in read_only}
+                 for pid in normalize_memory_pools(kind, data)]
+        personal_on = bool(settings.get("enabled")) and bool(settings.get("agents", {}).get(agent.get("id"), False))
+        return {"type": kind, "pools": pools, "personal": personal_on}
+
+    return annotate
+
+
 @router.get("", response_model=Union[List[AgentListItem], AgentPage])
 async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = None,
                       offset: Optional[int] = None, request: Request = cast(Request, None)):
@@ -129,6 +169,8 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
             _parent = registry.resolve_agent_id(_raw.extends)
             _children_count[_parent] = _children_count.get(_parent, 0) + 1
 
+    _memory = _memory_annotator(_ws)
+
     page: List[Dict[str, Any]] = []
     for item in page_items:
         agent = item.to_dict() if hasattr(item, "to_dict") else dict(item)
@@ -142,6 +184,7 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
         agent.setdefault("extends", None)
         agent.setdefault("extends_version", None)
         agent["children_count"] = _children_count.get(agent["id"], 0)
+        agent["memory"] = _memory(agent)
         # The version it runs on (agents/versions.py): its pin, else the live state.
         agent.update(agent_versions.version_state(agent["id"]))
         page.append(agent)

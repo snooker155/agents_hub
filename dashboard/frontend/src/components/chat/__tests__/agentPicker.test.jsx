@@ -4,12 +4,14 @@ import { MemoryRouter } from 'react-router-dom';
 import { I18nProvider } from '../../../i18n';
 import AgentPicker from '../AgentPicker';
 import {
-  agentDomains, chatCounts, initials, matchScore, pickerSections, recentAgentIds,
+  agentDomains, initials, matchScore, pickerSections, recentAgentIds,
 } from '../agentPickerModel';
 
 const AGENTS = [
   { id: 'main-agent', name: 'Main Agent', system: true, domain: 'general', is_default_chat_agent: true, tools: ['recall'] },
-  { id: 'researcher', name: 'Researcher', system: true, domain: 'research', description: 'Finds sources', tools: ['web_search'] },
+  { id: 'researcher', name: 'Researcher', system: true, domain: 'research', description: 'Finds sources', tools: ['web_search'],
+    memory: { type: 'shared', personal: true, pools: [
+      { id: 'p1', name: 'Team notes', read_only: false }, { id: 'p2', name: 'Product docs', read_only: true }] } },
   { id: 'plot-manager', name: 'Plot Manager', system: false, domain: 'development', tools: ['run_shell'] },
   { id: 'writer', name: 'Writer', system: true, domain: 'Writing', tools: [] },
 ];
@@ -24,8 +26,6 @@ const CONVS = [
 describe('agentPickerModel', () => {
   it('lists recent agents newest first, once each, agent conversations only', () => {
     expect(recentAgentIds(CONVS)).toEqual(['researcher', 'writer']);
-    expect(chatCounts(CONVS).get('writer')).toBe(2);
-    expect(chatCounts(CONVS).has('plot-manager')).toBe(false);
   });
 
   it('puts each agent in the first section that has it', () => {
@@ -81,6 +81,18 @@ describe('AgentPicker', () => {
     expect(screen.getByText('Recent')).toBeTruthy();
     fireEvent.mouseEnter(screen.getByRole('option', { name: /Researcher/ }));
     expect(screen.getByTestId('agent-picker-details').textContent).toContain('Finds sources');
+  });
+
+  it('tells what the agent remembers with, and no chat count', () => {
+    renderPicker();
+    fireEvent.click(screen.getByTestId('agent-picker'));
+    fireEvent.mouseEnter(screen.getByRole('option', { name: /Researcher/ }));
+    const memory = screen.getByTestId('agent-picker-memory');
+    expect(memory.textContent).toContain('Team notes');
+    expect(memory.textContent).toContain('Product docs');
+    expect(screen.getByTitle('Read only').textContent).toContain('Product docs');
+    expect(memory.textContent).toContain('Personal memory on');
+    expect(screen.getByTestId('agent-picker-details').textContent).not.toContain('Chats');
   });
 
   it('picks with the keyboard after a search', () => {

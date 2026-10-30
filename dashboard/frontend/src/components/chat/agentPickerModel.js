@@ -42,17 +42,6 @@ export function agentJobStats(jobs) {
   return { counts, recent };
 }
 
-/** How many conversations each agent has, by id. */
-export function chatCounts(conversations) {
-  const counts = new Map();
-  for (const c of conversations || []) {
-    if (!c?.agent_id || (c.target_mode || 'agent') !== 'agent') continue;
-    const id = String(c.agent_id);
-    counts.set(id, (counts.get(id) || 0) + 1);
-  }
-  return counts;
-}
-
 /** The domains the agents carry, each once whatever its case, sorted. */
 export function agentDomains(agents) {
   const byKey = new Map();
