@@ -5,6 +5,8 @@ export default {
   loading: 'Loading instances…',
   groupCount: '{{live}} live · {{total}} total',
   empty: {
+    noLive: 'No running instances',
+    showAll: 'Show stopped too ({{count}})',
     title: 'No instances yet',
     hint: 'A copy appears here the moment an agent starts working, from a task, a chat, a resident instance or a flow.',
   },

@@ -28,7 +28,7 @@ export default function Instances() {
           ? t('instances.descriptionInWorkspace', { workspace: selectedWorkspace })
           : t('instances.description')}
       />
-      <InstanceList workspace={workspaceFilter} liveUpdates={liveUpdates} />
+      <InstanceList workspace={workspaceFilter} liveUpdates={liveUpdates} defaultLiveOnly />
     </PageContainer>
   );
 }

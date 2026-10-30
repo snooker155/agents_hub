@@ -331,7 +331,7 @@ export default function ServiceDetail() {
       </div>
 
       {activeTab === 'replicas' && (
-        <InstanceList serviceId={serviceId} liveUpdates={liveUpdates} showFilters={false}
+        <InstanceList serviceId={serviceId} liveUpdates={liveUpdates} showFilters={false} defaultLiveOnly
                       showAgentColumn={false} onTerminal={setTerminalFor} />
       )}
       {terminalFor && (

@@ -185,6 +185,8 @@ export default function InstanceList({
   const [grouped, setGrouped] = useState(false);
 
   const showAgent = showAgentColumn && !agentId;
+  // Stopped, finished or failed copies the live filter hides.
+  const stoppedCount = (counts.stopped ?? 0) + (counts.finished ?? 0) + (counts.failed ?? 0);
   // Sort keys the backend orders by (instances/store.py INSTANCE_SORTS);
   // `live` is its default, working copies first.
   const sortKeys = [
@@ -377,8 +379,20 @@ export default function InstanceList({
         ) : !items.length ? (
           <div className="p-8 text-center">
             <Activity className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-            <div className="text-sm text-gray-500">{t('instances.empty.title')}</div>
-            <div className="text-xs text-gray-400 mt-1">{t('instances.empty.hint')}</div>
+            {liveOnly && stoppedCount > 0 ? (
+              <>
+                <div className="text-sm text-gray-500">{t('instances.empty.noLive')}</div>
+                <button type="button" onClick={() => setLiveOnly(false)}
+                        className="text-xs text-indigo-600 hover:underline mt-1">
+                  {t('instances.empty.showAll', { count: stoppedCount })}
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="text-sm text-gray-500">{t('instances.empty.title')}</div>
+                <div className="text-xs text-gray-400 mt-1">{t('instances.empty.hint')}</div>
+              </>
+            )}
           </div>
         ) : grouped ? (
           <div>
