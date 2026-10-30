@@ -71,7 +71,7 @@ _marker_log = marker_logger(__name__)
 # Diagnostics that stay out of the carrier log.
 _logger = logging.getLogger(__name__ + ".debug")
 
-HEARTBEAT_SECONDS = 15.0
+HEARTBEAT_SECONDS = float(os.environ.get("AGENTS_HUB_INSTANCE_HEARTBEAT_SECONDS", "") or 15.0)
 TASK_SWEEP_SECONDS = 10.0
 IDLE_WAIT_SECONDS = 5.0
 
@@ -801,6 +801,9 @@ class InstanceLoop:
         self.next_sweep = time.monotonic() + TASK_SWEEP_SECONDS
 
         def _sweep():
+            # The warm-up imports the agent stack on its own thread; a sweep
+            # importing it at the same time deadlocked on a module lock.
+            _warm.wait(timeout=120)
             try:
                 if self.agent_id == "orchestrator":
                     sweep_orchestrator_tasks(self.instance_id, self.workspace, self.scope)
@@ -899,7 +902,18 @@ def _on_sigterm(instance_id: str):
 _WARM_MODULES = ("chat.pipelines", "agents.agent_factory", "providers.anthropic_driver")
 
 
+#: Set once the warm-up has imported the agent stack (or given up).
+_warm = threading.Event()
+
+
 def _warm_up() -> None:
+    try:
+        _import_warm_modules()
+    finally:
+        _warm.set()
+
+
+def _import_warm_modules() -> None:
     started = time.monotonic()
     for name in _WARM_MODULES:
         if _stopping.is_set():

@@ -27,7 +27,7 @@ import json
 import logging
 from typing import Optional
 
-from common import snapshot
+from common import remote_state, snapshot
 from common.docstore import DocStore
 from common.paths import MODELS_FILE
 
@@ -63,6 +63,12 @@ def load_catalog_raw() -> Optional[dict]:
     snap = snapshot.read_snapshot(snapshot.MODELS_SNAPSHOT)
     if snap is not None:
         return snap if isinstance(snap, dict) else {}
+    return _stored_catalog()
+
+
+@remote_state.hub_call("global", cache_seconds=5.0)
+def _stored_catalog() -> Optional[dict]:
+    """The stored catalog document; an agent container reads it from the hub."""
     _ensure_legacy_imported()
     doc = _store.get(_CATALOG_KEY)
     return doc if isinstance(doc, dict) else None

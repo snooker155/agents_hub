@@ -29,7 +29,7 @@ import logging
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
-from common import db
+from common import db, remote_state
 from instances.store import utc_iso
 
 log = logging.getLogger(__name__)
@@ -66,6 +66,7 @@ def public_conversation(conversation_id: Optional[str]) -> str:
     return conversation_id or MAIN_CONVERSATION
 
 
+@remote_state.hub_call("instance:instance_id")
 def enqueue(instance_id: str, body: str, *, origin: str = "web",
             conversation_id: Optional[str] = None, kind: str = KIND_MESSAGE,
             payload: Optional[Dict[str, Any]] = None) -> str:
@@ -91,6 +92,7 @@ def enqueue(instance_id: str, body: str, *, origin: str = "web",
     return msg_id
 
 
+@remote_state.hub_call("own_message:msg_id")
 def get(msg_id: str) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         "SELECT * FROM instance_inbox WHERE msg_id = ?", (str(msg_id),)
@@ -145,6 +147,7 @@ def pending_holder(instance_ids: Iterable[str], conversation_id: Optional[str]) 
     return str(row["instance_id"]) if row is not None else None
 
 
+@remote_state.hub_call("own_instance:instance_id")
 def has_pending(instance_id: str) -> bool:
     row = db.get_conn().execute(
         "SELECT 1 FROM instance_inbox WHERE instance_id = ? AND delivered_at IS NULL LIMIT 1",
@@ -153,6 +156,7 @@ def has_pending(instance_id: str) -> bool:
     return row is not None
 
 
+@remote_state.hub_call("own_instance:instance_id")
 def pending(instance_id: str, conversation_id: Optional[str] = None,
             *, any_conversation: bool = True) -> List[Dict[str, Any]]:
     """Undelivered messages, oldest first. ``any_conversation=False`` narrows
@@ -170,6 +174,7 @@ def pending(instance_id: str, conversation_id: Optional[str] = None,
     return [dict(r) for r in rows]
 
 
+@remote_state.hub_call("own_instance:instance_id")
 def claim_next(instance_id: str,
                exclude_conversations: Iterable[Optional[str]] = ()) -> Optional[Dict[str, Any]]:
     """Take the oldest undelivered message, marking it delivered atomically.
@@ -201,6 +206,7 @@ def claim_next(instance_id: str,
         return {**dict(row), "delivered_at": now}
 
 
+@remote_state.hub_call(("own_message:msg_id", "run:run_id"))
 def attach_run(msg_id: str, run_id: str) -> None:
     """Record which run answered a message."""
     with db.transaction() as conn:
@@ -208,12 +214,14 @@ def attach_run(msg_id: str, run_id: str) -> None:
                      (str(run_id), str(msg_id)))
 
 
+@remote_state.hub_call("own_message:msg_id")
 def mark_error(msg_id: str, error: str) -> None:
     with db.transaction() as conn:
         conn.execute("UPDATE instance_inbox SET error = ? WHERE msg_id = ?",
                      (str(error)[:2000], str(msg_id)))
 
 
+@remote_state.hub_call("own_message:msg_id")
 def finish(msg_id: str, *, result: Any = None, error: Optional[str] = None) -> None:
     """Close a job message with its result document, or its error."""
     with db.transaction() as conn:
@@ -237,6 +245,7 @@ def result_of(message: Optional[Dict[str, Any]]) -> Any:
         return None
 
 
+@remote_state.hub_call("instance:instance_id")
 def history(instance_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     rows = db.get_conn().execute(
         "SELECT * FROM instance_inbox WHERE instance_id = ? ORDER BY created_at DESC LIMIT ?",
@@ -245,6 +254,7 @@ def history(instance_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+@remote_state.hub_call("instance:instance_id")
 def conversations(instance_id: str, limit: int = 100) -> List[Dict[str, Any]]:
     """The instance's conversations, most recent first: the main one always,
     plus every one a message or a run was recorded under."""

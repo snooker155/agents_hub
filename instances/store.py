@@ -27,7 +27,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from common import db
+from common import db, remote_state
 
 # Columns stored individually; anything else a caller passes lands in ``extra``.
 INSTANCE_COLUMNS: Tuple[str, ...] = (
@@ -98,6 +98,7 @@ def _write(conn, merged: Dict[str, Any]) -> None:
 
 # ── Reads ────────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call("instance:instance_id")
 def get(instance_id: str) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         "SELECT * FROM instances WHERE instance_id = ?", (str(instance_id),)
@@ -296,6 +297,7 @@ def create(
     return rec
 
 
+@remote_state.hub_call("own_instance:instance_id")
 def update(instance_id: str, **updates) -> Optional[Dict[str, Any]]:
     """Merge ``updates`` into one instance row. Returns the new record, or None
     when the instance does not exist."""
@@ -318,6 +320,7 @@ def update(instance_id: str, **updates) -> Optional[Dict[str, Any]]:
         return merged
 
 
+@remote_state.hub_call("own_instance:instance_id")
 def touch(instance_id: str, activity: Optional[str] = None, **updates) -> Optional[Dict[str, Any]]:
     """Mark the instance as having just done something."""
     payload = {"last_activity_at": utc_iso(), **updates}
@@ -326,6 +329,7 @@ def touch(instance_id: str, activity: Optional[str] = None, **updates) -> Option
     return update(instance_id, **payload)
 
 
+@remote_state.hub_call("instance:instance_id")
 def add_run_stats(instance_id: str, *, tokens: int = 0, duration_ms: int = 0) -> None:
     """Fold one finished run's stats into the instance totals (atomic)."""
     with db.transaction() as conn:
@@ -383,6 +387,7 @@ def workspaces_with_instances() -> List[str]:
 
 # ── Journal (runs belonging to an instance) ──────────────────────────────────
 
+@remote_state.hub_call("instance:instance_id")
 def runs_for(instance_id: str, limit: int = 50, offset: int = 0,
              ascending: bool = False) -> Dict[str, Any]:
     """A page of the instance's runs — its work journal."""

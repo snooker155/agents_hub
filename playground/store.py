@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 from common.entity_runs import EntityRunStore
 from common.run_status import RunStatus
 from playground.models import (
@@ -51,6 +51,7 @@ _CONFIG_FIELDS = (
 
 # ── Scenarios ─────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call(("scenario:scenario.scenario_id", "workspace:scenario.workspace"))
 def save_scenario(scenario: Scenario) -> Scenario:
     scenario.updated_at = utc_iso()
     config = {f: getattr(scenario, f) for f in _CONFIG_FIELDS}
@@ -97,6 +98,7 @@ def _row_to_scenario(row) -> Scenario:
     })
 
 
+@remote_state.hub_call("scenario:scenario_id")
 def get_scenario(scenario_id: str) -> Optional[Scenario]:
     row = db.get_conn().execute(
         "SELECT * FROM scenarios WHERE scenario_id = ?", (scenario_id,)
@@ -104,6 +106,7 @@ def get_scenario(scenario_id: str) -> Optional[Scenario]:
     return _row_to_scenario(row) if row else None
 
 
+@remote_state.hub_call("workspace")
 def list_scenarios(workspace: Optional[str] = None) -> List[Scenario]:
     conn = db.get_conn()
     if workspace:
@@ -117,6 +120,7 @@ def list_scenarios(workspace: Optional[str] = None) -> List[Scenario]:
     return [_row_to_scenario(r) for r in rows]
 
 
+@remote_state.hub_call("scenario:scenario_id")
 def delete_scenario(scenario_id: str) -> bool:
     with db.transaction() as conn:
         run_ids = [
@@ -138,6 +142,7 @@ def delete_scenario(scenario_id: str) -> bool:
 
 # ── Worlds ────────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call(("world:spec.world_id", "workspace:spec.workspace"))
 def save_world(spec: WorldSpec) -> WorldSpec:
     """Store an authored world. Name, description and workspace are columns as
     well as spec fields: the catalogue lists and filters on them, and a list
@@ -174,6 +179,7 @@ def _row_to_world(row) -> WorldSpec:
     return spec
 
 
+@remote_state.hub_call("world:world_id")
 def get_world(world_id: str) -> Optional[WorldSpec]:
     row = db.get_conn().execute(
         "SELECT * FROM worlds WHERE world_id = ?", (world_id,)
@@ -181,6 +187,7 @@ def get_world(world_id: str) -> Optional[WorldSpec]:
     return _row_to_world(row) if row else None
 
 
+@remote_state.hub_call("workspace")
 def list_worlds(workspace: Optional[str] = None) -> List[WorldSpec]:
     """Every world this workspace can run scenarios in.
 
@@ -214,6 +221,7 @@ def scenarios_using_world(world_id: str) -> List[Dict[str, str]]:
     return [{"scenario_id": r["scenario_id"], "name": r["name"] or ""} for r in rows]
 
 
+@remote_state.hub_call("world:world_id")
 def delete_world(world_id: str) -> bool:
     with db.transaction() as conn:
         cur = conn.execute("DELETE FROM worlds WHERE world_id = ?", (world_id,))
@@ -270,6 +278,7 @@ RUNS: EntityRunStore[SimRun] = EntityRunStore(
 _RUNS = RUNS
 
 
+@remote_state.hub_call(("entity_run:run.sim_run_id", "workspace:run.workspace"))
 def save_sim_run(run: SimRun) -> SimRun:
     """Write the run whole. The process fields the launcher and the watchdog
     own (pid, host, heartbeat, attempts) and the story are merged in from the
@@ -285,10 +294,12 @@ def _row_to_sim_run(row) -> SimRun:
     return _to_sim_run(record_from_row(row))
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def get_sim_run(sim_run_id: str) -> Optional[SimRun]:
     return _RUNS.get(sim_run_id)
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def save_story(sim_run_id: str, story: Dict[str, Any]) -> bool:
     """Keep a model's retelling of a run.
 
@@ -300,11 +311,13 @@ def save_story(sim_run_id: str, story: Dict[str, Any]) -> bool:
     return _RUNS.update(sim_run_id, {"story": dict(story or {})}, notify=False) is not None
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def get_story(sim_run_id: str) -> Dict[str, Any]:
     rec = _RUNS.read(sim_run_id)
     return dict((rec or {}).get("story") or {})
 
 
+@remote_state.hub_call(("scenario:scenario_id", "workspace"))
 def list_sim_runs(scenario_id: Optional[str] = None, limit: int = 50,
                   workspace: Optional[str] = None) -> List[SimRun]:
     """Run history, newest first — one scenario's, or every scenario's.
@@ -369,6 +382,7 @@ def latest_runs_by_scenario(scenario_ids: Optional[List[str]] = None) -> Dict[st
     return latest
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def request_stop(sim_run_id: str) -> bool:
     """Mark a live sim as stopping — the durable half of a stop.
 
@@ -381,6 +395,7 @@ def request_stop(sim_run_id: str) -> bool:
     return _RUNS.request_stop(sim_run_id)
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def mark_running(sim_run_id: str) -> bool:
     """Promote a pending run to running — what the first tick means.
 
@@ -394,10 +409,12 @@ def mark_running(sim_run_id: str) -> bool:
                             started_at=now, heartbeat_at=now)
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def stop_requested(sim_run_id: str) -> bool:
     return _RUNS.stop_requested(sim_run_id)
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def touch_heartbeat(sim_run_id: str) -> Optional[str]:
     """Stamp the run's heartbeat and return its current status (the runner's
     process reads ``stopping`` back this way)."""
@@ -418,6 +435,7 @@ def touch_heartbeat(sim_run_id: str) -> Optional[str]:
 # interleave: ``db.transaction()`` serialises writers the same way every other
 # write to this table does (see common/entity_runs.py).
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def push_trigger(sim_run_id: str, agent: str, text: str,
                  sender: str = "(external)") -> bool:
     """Queue a message for one agent, durably, whichever process is running
@@ -440,6 +458,7 @@ def push_trigger(sim_run_id: str, agent: str, text: str,
     return True
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def drain_triggers(sim_run_id: str) -> List[Dict[str, Any]]:
     """Take every durably queued trigger for this run, atomically — read and
     clear happen inside the same transaction a concurrent :func:`push_trigger`
@@ -461,6 +480,7 @@ def drain_triggers(sim_run_id: str) -> List[Dict[str, Any]]:
     return pending
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def has_pending_triggers(sim_run_id: str) -> bool:
     """Peek the durable queue without draining it — what an idle loop polls to
     decide whether to wake, without consuming the trigger before its own tick's
@@ -477,6 +497,7 @@ def has_pending_triggers(sim_run_id: str) -> bool:
 
 # ── Ticks ─────────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call("entity_run:record.sim_run_id")
 def save_tick(record: TickRecord) -> TickRecord:
     with db.transaction() as conn:
         conn.execute(
@@ -511,6 +532,7 @@ def _row_to_tick(row) -> Dict[str, Any]:
     }
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def list_ticks(sim_run_id: str, since: int = -1) -> List[Dict[str, Any]]:
     rows = db.get_conn().execute(
         "SELECT * FROM sim_ticks WHERE sim_run_id = ? AND tick > ? ORDER BY tick",
@@ -519,6 +541,7 @@ def list_ticks(sim_run_id: str, since: int = -1) -> List[Dict[str, Any]]:
     return [_row_to_tick(r) for r in rows]
 
 
+@remote_state.hub_call("entity_run:sim_run_id")
 def get_tick(sim_run_id: str, tick: int) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         "SELECT * FROM sim_ticks WHERE sim_run_id = ? AND tick = ?", (sim_run_id, tick)

@@ -17,7 +17,7 @@ import logging
 from typing import Any, Dict
 from uuid import uuid4
 
-from common import db
+from common import db, remote_state
 
 from .lifecycle import get_run_by_id, run_log_path
 from .notifications import notification_message
@@ -31,6 +31,7 @@ def _effective_outcome(task):
     return effective_outcome(task)
 
 
+@remote_state.hub_call(("task:task_id", "run:run_id"))
 def finalize_task(
     task_id: str, status: str, exit_code: int, *,
     error: str | None = None, run_id: str | None = None, executor=None,
@@ -143,6 +144,7 @@ def finalize_task(
         log.exception("finalize_task failed for task %s", task_id)
 
 
+@remote_state.hub_call("task:task_id")
 def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str | None = None) -> None:
     """Update a task's status after its flow, loop or team run finishes.
 
@@ -155,6 +157,7 @@ def finalize_flow_task(task_id: str, status: str, exit_code: int, *, error: str 
     finalize_task(task_id, status, exit_code, error=error)
 
 
+@remote_state.hub_call("run:run_id")
 def park_task_awaiting_input(run_id: str, question: Dict[str, Any], agent_id: str = "") -> None:
     """Pause a task because its agent called ``ask_user``.
 
@@ -454,6 +457,7 @@ def _block_on_self_report(task_id, run: Dict[str, Any]) -> bool:
     return True
 
 
+@remote_state.hub_call("run:run_id")
 def finalize_task_from_run(run_id: str, status: str, exit_code: int) -> None:
     """Update the owning task's status after a run completes or fails."""
     try:
@@ -798,11 +802,13 @@ def _delete_runs_by_task_status(task_id: str, status: str) -> bool:
     return True
 
 
+@remote_state.hub_call("task:task_id")
 def delete_awaiting_approval_run(task_id: str) -> bool:
     """Delete the awaiting_approval run record for a task. Returns True if one was removed."""
     return _delete_runs_by_task_status(task_id, "awaiting_approval")
 
 
+@remote_state.hub_call("task:task_id")
 def delete_assigned_run(task_id: str) -> bool:
     """Delete the assigned (node-queued) run record for a task. Returns True if one was removed."""
     return _delete_runs_by_task_status(task_id, "assigned")

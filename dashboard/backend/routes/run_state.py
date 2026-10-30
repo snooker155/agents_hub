@@ -384,7 +384,7 @@ async def stop_run_route(run_id: str, body: StopRunBody):
 
 # ── remote store calls ───────────────────────────────────────────────────────
 
-@router.post("/call")
+@router.post("/call", include_in_schema=False)
 def remote_call_route(body: Dict[str, Any], request: Request):
     """Run one store function for an agent process that has no database
     (``common.remote_state``). Only a run token reaches this, in every auth

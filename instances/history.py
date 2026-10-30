@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from common import db
+from common import db, remote_state
 from managers.run_manager import get_run_process
 
 log = logging.getLogger(__name__)
@@ -96,6 +96,7 @@ def _tool_summary(run_id: str) -> str:
     return line[:MAX_TOOL_LINE]
 
 
+@remote_state.hub_call("instance:instance_id")
 def build_instance_history(
     instance_id: str,
     *,
@@ -125,6 +126,7 @@ def build_instance_history(
     return history
 
 
+@remote_state.hub_call("instance:instance_id")
 def describe_context(instance_id: Optional[str], *, max_turns: int = DEFAULT_MAX_TURNS,
                      conversation_id: Optional[str] = None,
                      service_id: Optional[str] = None) -> Dict[str, Any]:

@@ -20,7 +20,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 from common.session_broker import notify_change, notify_delta
 from instances import store
 
@@ -87,6 +87,7 @@ def build_label(agent_id: str, seq: int, hint: Optional[str] = None) -> str:
     return f"{base} · {hint}"
 
 
+@remote_state.hub_call("workspace")
 def ensure_instance(
     agent_id: str,
     *,
@@ -165,6 +166,7 @@ def ensure_instance(
 
 # ── Lifecycle transitions ────────────────────────────────────────────────────
 
+@remote_state.hub_call("instance:instance_id")
 def mark_active(instance_id: str, run_id: Optional[str] = None,
                 activity: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """The instance started working on ``run_id``."""
@@ -174,6 +176,7 @@ def mark_active(instance_id: str, run_id: Optional[str] = None,
     ))
 
 
+@remote_state.hub_call("instance:instance_id")
 def mark_standby(instance_id: str, activity: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """The carrier is alive but idle: a resident copy waiting on its mailbox."""
     inst = store.update(instance_id, state="standby", last_activity_at=store.utc_iso(),
@@ -182,6 +185,7 @@ def mark_standby(instance_id: str, activity: Optional[str] = None) -> Optional[D
     return _publish(inst)
 
 
+@remote_state.hub_call("instance:instance_id")
 def mark_finished(instance_id: str, activity: Optional[str] = None
                   ) -> Optional[Dict[str, Any]]:
     """Work is over and no process remains — but the context is kept, so the
@@ -199,6 +203,7 @@ def mark_finished(instance_id: str, activity: Optional[str] = None
     return inst
 
 
+@remote_state.hub_call("instance:instance_id")
 def mark_stopped(instance_id: str, reason: Optional[str] = None) -> Optional[Dict[str, Any]]:
     now = store.utc_iso()
     return _publish(store.update(instance_id, state="stopped", finished_at=now,
@@ -206,6 +211,7 @@ def mark_stopped(instance_id: str, reason: Optional[str] = None) -> Optional[Dic
                                  last_activity=(reason or "stopped")[:300]))
 
 
+@remote_state.hub_call("instance:instance_id")
 def mark_failed(instance_id: str, error: str) -> Optional[Dict[str, Any]]:
     now = store.utc_iso()
     return _publish(store.update(instance_id, state="failed", finished_at=now,
@@ -213,6 +219,7 @@ def mark_failed(instance_id: str, error: str) -> Optional[Dict[str, Any]]:
                                  error=str(error)[:2000]))
 
 
+@remote_state.hub_call("instance:instance_id")
 def record_activity(instance_id: str, activity: str) -> Optional[Dict[str, Any]]:
     """A one-line "what it is doing right now" — the tool it just called."""
     return _publish(store.touch(instance_id, activity))
@@ -220,6 +227,7 @@ def record_activity(instance_id: str, activity: str) -> Optional[Dict[str, Any]]
 
 # ── Run ↔ instance linkage ───────────────────────────────────────────────────
 
+@remote_state.hub_call(("run:run_id", "instance:instance_id"))
 def attach_run(run_id: str, instance_id: str) -> None:
     """Link an existing run record to its instance (the run is the journal entry)."""
     if not run_id or not instance_id:

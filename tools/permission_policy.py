@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from common import remote_state
 from tools.approval import NEVER_GATED, needs_approval, workspace_name
 
 log = logging.getLogger(__name__)
@@ -588,12 +589,20 @@ def record(
         **decision.extra,
     }
     try:
-        st = store()
-        st.put(f"{at.strftime('%Y%m%dT%H%M%S.%f')}-{doc['id'][:8]}", doc)
-        if st.count() > HARD_CAP:
-            prune()
-    except Exception:  # noqa: BLE001 - a run without direct database access keeps the decision on its run record only
+        store_decision(f"{at.strftime('%Y%m%dT%H%M%S.%f')}-{doc['id'][:8]}", doc, workspace=ws or None)
+    except Exception:  # noqa: BLE001 - a run that cannot reach the store keeps the decision on its run record only
         log.debug("tool policy: could not store a decision for %s", decision.tool, exc_info=True)
+
+
+@remote_state.hub_call("workspace")
+def store_decision(key: str, doc: Dict[str, Any], *, workspace: Optional[str] = None) -> None:
+    """Put one decision into the store, in ``workspace`` (an agent container's
+    decisions are stored by the hub)."""
+    doc = {**doc, "workspace": workspace or None}
+    st = store()
+    st.put(key, doc)
+    if st.count() > HARD_CAP:
+        prune()
 
 
 def audit_decision(decision: Decision, *, agent_id: str, run_id: str, task_id: str,

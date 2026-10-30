@@ -47,6 +47,7 @@ from tasks.storage import (
 )
 from datetime import datetime, timezone
 from common.paths import TASKS_FILE as DEFAULT_TASKS_FILE
+from common import remote_state
 from common.session_broker import notify_change
 
 log = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ _DEP_BLOCKABLE = {TaskStatus.todo, TaskStatus.ready, TaskStatus.pending}
 
 # -------------------- CRUD --------------------
 
+@remote_state.hub_call(("workspace", "task:parent_id", "task:depends"))
 def create_task(
     title: str,
     description: str = "",
@@ -174,11 +176,13 @@ def _effective_rubric(task) -> str:
     return str((effective_outcome(task) or {}).get("rubric") or "")
 
 
+@remote_state.hub_call("task:task_id")
 def get_task(task_id: UUID, *, store: TaskStore = default_store) -> Optional[Task]:
     """Return a task by id or None if not found."""
     return store.get(task_id)
 
 
+@remote_state.hub_call("global")
 def validate_agent_version(agent_id: Optional[str], agent_version: Optional[int]) -> None:
     """Raise ``ValueError`` unless ``agent_version`` names a real stored
     version of ``agent_id`` (agents/versions.py, ``agent_versions`` table).
@@ -197,6 +201,7 @@ def validate_agent_version(agent_id: Optional[str], agent_version: Optional[int]
         raise ValueError(f"Agent '{agent_id}' has no version {agent_version}")
 
 
+@remote_state.hub_call("task:task_ids")
 def get_tasks(task_ids, *, store: TaskStore = default_store) -> dict:
     """Several tasks by id in one query, keyed by string id (missing ids absent).
 
@@ -206,11 +211,13 @@ def get_tasks(task_ids, *, store: TaskStore = default_store) -> dict:
     return store.get_many(list(task_ids))
 
 
+@remote_state.hub_call("global", result_scope="workspace")
 def list_tasks(*, store: TaskStore = default_store) -> List[Task]:
     """Return all tasks from the store."""
     return store.list()
 
 
+@remote_state.hub_call("workspace")
 def list_tasks_page(
     *, workspace: Optional[str] = None, limit: Optional[int] = None,
     offset: Optional[int] = None, store: TaskStore = default_store,
@@ -232,6 +239,7 @@ def list_tasks_page(
     return store.list(limit=limit, offset=offset), store.count()
 
 
+@remote_state.hub_call(("task:task_id", "workspace?:workspace", "task:parent_id", "task:depends"))
 def update_task(
     task_id: UUID,
     *,
@@ -460,6 +468,7 @@ def _cascade_unblock_descendants(parent_id: UUID, *, store: TaskStore) -> int:
 
 # -------------------- Dependencies --------------------
 
+@remote_state.hub_call("global", result_scope="workspace")
 def find_task_by_key(key: str, *, store: TaskStore = default_store) -> Optional[Task]:
     """Return the task with the given Jira-style key (e.g. 'DEMO-12'), or None."""
     wanted = (key or "").strip().upper()
@@ -593,6 +602,7 @@ def _release_dependents(completed_id: UUID, *, store: TaskStore) -> int:
     return released
 
 
+@remote_state.hub_call(("task:task_id", "task:depends"))
 def set_dependencies(task_id: UUID, depends: Sequence[UUID], *, store: TaskStore = default_store) -> Optional[Task]:
     """Replace a task's dependency list (validated) and sync its blocked state."""
     return update_task(task_id, store=store, depends=list(depends))
@@ -607,6 +617,7 @@ def set_dependencies(task_id: UUID, depends: Sequence[UUID], *, store: TaskStore
 # dependencies are released as those siblings reach done, and when the last
 # subtask is done the parent is completed automatically.
 
+@remote_state.hub_call("task:parent_id")
 def get_subtasks(parent_id: UUID, *, store: TaskStore = default_store) -> List[Task]:
     """Return the direct subtasks of a task."""
     return [t for t in store.list() if t.parent_id == parent_id]
@@ -723,6 +734,7 @@ def _start_agent_on_subtask(task: Task, agent_id: str, *, store: TaskStore) -> b
         return False
 
 
+@remote_state.hub_call("task:task_id")
 def finish_container_subtask(task_id: UUID, *, store: TaskStore = default_store) -> bool:
     """Close a subtask whose container agent just finished its work run.
 
@@ -749,6 +761,7 @@ def finish_container_subtask(task_id: UUID, *, store: TaskStore = default_store)
     return True
 
 
+@remote_state.hub_call("task:task_id")
 def finish_container_parent(task_id: UUID, *, store: TaskStore = default_store) -> bool:
     """Complete a container whose agent just finished a run on the parent itself.
 
@@ -794,6 +807,7 @@ _SUBTASK_ACTIVE = {
 }
 
 
+@remote_state.hub_call("task:parent_id")
 def promote_runnable_subtasks(parent_id: UUID, *, store: TaskStore = default_store) -> int:
     """Dispatch runnable subtasks of an active container, up to the concurrency cap.
 
@@ -869,6 +883,7 @@ def promote_runnable_subtasks(parent_id: UUID, *, store: TaskStore = default_sto
     return dispatched
 
 
+@remote_state.hub_call("task:parent_id")
 def activate_parent_container(parent_id: UUID, *, agent_id: Optional[str] = None,
                               store: TaskStore = default_store) -> int:
     """Start container processing for a parent task that has subtasks.
@@ -906,6 +921,7 @@ def activate_parent_container(parent_id: UUID, *, agent_id: Optional[str] = None
 PAUSE_MARKER = "[paused] Container execution paused by user"
 
 
+@remote_state.hub_call("task:parent_id")
 def pause_container(parent_id: UUID, *, store: TaskStore = default_store) -> Dict[str, Any]:
     """Pause a container: stop the active subtask's run and freeze dispatch.
 
@@ -959,6 +975,7 @@ def pause_container(parent_id: UUID, *, store: TaskStore = default_store) -> Dic
     return {"paused_subtasks": paused}
 
 
+@remote_state.hub_call("task:parent_id")
 def resume_container(parent_id: UUID, *, store: TaskStore = default_store) -> Dict[str, Any]:
     """Resume a paused container: re-queue paused subtasks and restart dispatch.
 
@@ -1067,6 +1084,7 @@ def _prune_dependencies(deleted_ids: set, *, store: TaskStore) -> None:
         _reevaluate_dependency_block(tid, store=store)
 
 
+@remote_state.hub_call("task:task_id")
 def delete_task(task_id: UUID, *, cascade: bool = False, store: TaskStore = default_store) -> int:
     """Delete a task by id. Returns the number of deleted tasks.
 
@@ -1153,6 +1171,7 @@ def _uuid_from_str(v) -> UUID:
 
 # -------------------- Utilities --------------------
 
+@remote_state.hub_call(("task:parent_id", "task:depends"))
 def add_subtask(
     parent_id: UUID,
     title: str,
@@ -1232,6 +1251,7 @@ def add_subtask(
     )
 
 
+@remote_state.hub_call("task:task_id")
 def stop_task(task_id: UUID, *, actor: Actor | str = Actor.system, store: TaskStore = default_store) -> Optional[Task]:
     """Mark the task as stopped. Returns updated task or None if not found.
 
@@ -1241,6 +1261,7 @@ def stop_task(task_id: UUID, *, actor: Actor | str = Actor.system, store: TaskSt
     return update_task(task_id, store=store, actor=actor, status=TaskStatus.stopped)
 
 
+@remote_state.hub_call("task:task_id")
 def block_task(
     task_id: UUID, reason: str, *, actor: Actor | str = Actor.system, store: TaskStore = default_store
 ) -> Optional[Task]:
@@ -1260,6 +1281,7 @@ def block_task(
 # are called with the task in hand, from the runner and from the approve route.
 
 
+@remote_state.hub_call("task:task_id")
 def park_task_awaiting_approval(
     task_id: UUID,
     pending: Dict[str, Any],
@@ -1362,6 +1384,7 @@ def _notify_budget_park(tid: UUID, record: Dict[str, Any], *, store: TaskStore) 
         log.debug("budget park notification failed", exc_info=True)
 
 
+@remote_state.hub_call("task:task_id")
 def resolve_budget_pause(
     task_id: UUID,
     *,
@@ -1397,6 +1420,7 @@ def resolve_budget_pause(
     return get_task(tid, store=store)
 
 
+@remote_state.hub_call("task:task_id")
 def approve_tool_call(
     task_id: UUID,
     tool: str,
@@ -1424,6 +1448,7 @@ def approve_tool_call(
     return store.update(tid, approved_calls=approved)
 
 
+@remote_state.hub_call("task:task_id")
 def consume_approved_call(
     task_id: UUID | str,
     fingerprint: str,
@@ -1452,6 +1477,7 @@ def consume_approved_call(
     return False
 
 
+@remote_state.hub_call("task:task_ids")
 def create_sequence(
     task_ids: Sequence[UUID],
     *,
@@ -1517,11 +1543,13 @@ def _tasks_path():
     return Path(TASKS_FILE)
 
 
+@remote_state.hub_call("task:task_id")
 def get_task_activity_log(task_id: UUID) -> list:
     """Return activity log entries for a task."""
     return _get_activity_log(_tasks_path(), str(task_id))
 
 
+@remote_state.hub_call("task:task_id")
 def append_task_activity_log(task_id: UUID, entry_type: str, message: str, **extra) -> None:
     """Append an activity log entry for a task."""
     entry = {
@@ -1533,6 +1561,7 @@ def append_task_activity_log(task_id: UUID, entry_type: str, message: str, **ext
     _append_activity_log(_tasks_path(), str(task_id), entry)
 
 
+@remote_state.hub_call("task:task_id")
 def delete_task_activity_log(task_id: UUID) -> None:
     """Delete the activity log for a task."""
     _delete_activity_log(_tasks_path(), str(task_id))
@@ -1540,11 +1569,13 @@ def delete_task_activity_log(task_id: UUID) -> None:
 
 # -------------------- Routing log --------------------
 
+@remote_state.hub_call("workspace")
 def get_routing_log(workspace: Optional[str] = None) -> list:
     """Return all orchestrator routing decisions, newest-first."""
     return _get_routing_log(workspace=workspace)
 
 
+@remote_state.hub_call(("task:task_id", "workspace"))
 def append_routing_log_entry(
     task_id: UUID,
     task_title: str,
@@ -1568,6 +1599,7 @@ def append_routing_log_entry(
 
 # -------------------- Task runs --------------------
 
+@remote_state.hub_call("task:task_id")
 def get_task_runs(task_id: UUID, *, include_subtasks: bool = False) -> list:
     """Return the agent runs for a task, oldest first.
 
@@ -1629,21 +1661,25 @@ def get_task_runs(task_id: UUID, *, include_subtasks: bool = False) -> list:
 
 # -------------------- Result --------------------
 
+@remote_state.hub_call("task:task_id")
 def get_task_results(task_id: UUID) -> list:
     """Return all result entries for a task (one per agent run)."""
     return _get_task_results(_tasks_path(), str(task_id))
 
 
+@remote_state.hub_call("task:task_id")
 def get_task_result(task_id: UUID) -> Optional[str]:
     """Return the latest result text for a task (backward-compat)."""
     return _get_task_result(_tasks_path(), str(task_id))
 
 
+@remote_state.hub_call("task:task_id")
 def get_task_result_files(task_id: UUID) -> list:
     """Return the files from the latest result entry."""
     return _get_task_result_files(_tasks_path(), str(task_id))
 
 
+@remote_state.hub_call("task:task_id")
 def set_task_result(
     task_id: UUID,
     result: str,
@@ -1656,6 +1692,7 @@ def set_task_result(
     notify_change("tasks", task_id=str(task_id))
 
 
+@remote_state.hub_call("task:task_id")
 def delete_task_result_file(task_id: UUID) -> None:
     """Delete the result file for a task."""
     _delete_task_result(_tasks_path(), str(task_id))
@@ -1671,6 +1708,7 @@ def delete_task_result_file(task_id: UUID) -> None:
 # call it directly with exactly this signature, and none of them need to
 # change for a task to gain the other three kinds.
 
+@remote_state.hub_call("task:task_id")
 def assign_executor(
     task_id: UUID,
     executor: Executor | Dict[str, Any],
@@ -1717,6 +1755,7 @@ def assign_executor(
     return updated
 
 
+@remote_state.hub_call("task:task_id")
 def assign_agent(
     task_id: UUID,
     agent_type: str,
@@ -1735,6 +1774,7 @@ def assign_agent(
                             store=store, run_id=run_id)
 
 
+@remote_state.hub_call("task:task_id")
 def clear_agent(
     task_id: UUID,
     *,

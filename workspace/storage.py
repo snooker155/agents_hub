@@ -15,6 +15,7 @@ import uuid
 import json
 import shutil
 
+from common import remote_state
 from common.docstore import DocStore
 from common.paths import (
     WORKSPACES_ROOT as DEFAULT_WORKSPACES_ROOT,
@@ -148,6 +149,7 @@ def is_valid_workspace_name(name: str) -> bool:
     return candidate.name == name and not candidate.is_absolute()
 
 
+@remote_state.hub_call("workspace:name")
 def create_workspace_folder(name: Optional[str] = None) -> Path:
     """
     Create a new workspace folder in the workspaces directory and initialize metadata.
@@ -448,6 +450,7 @@ def _own_default_model_config(meta: Dict[str, Any] | None) -> Dict[str, str]:
     return {"provider": provider, "model": model}
 
 
+@remote_state.hub_call("workspace:name", cache_seconds=2.0)
 def get_workspace_metadata(name: str) -> Dict[str, Any]:
     """Get metadata for a workspace from the central store."""
     _migrate_legacy_metadata()

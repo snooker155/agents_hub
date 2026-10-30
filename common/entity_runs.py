@@ -50,7 +50,7 @@ from typing import (
 )
 
 from common import attribution as _attribution
-from common import db
+from common import db, remote_state
 from common import run_status
 from common.run_status import RunStatus
 
@@ -208,6 +208,7 @@ def _notify_record(rec: Mapping[str, Any], notify_fn: Optional[Notify] = None) -
 
 # ── Generic writes ───────────────────────────────────────────────────────────
 
+@remote_state.hub_call(("entity_run:record.run_id", "workspace:record.workspace"))
 def upsert(record: Mapping[str, Any], *, kind: Optional[str] = None, merge: bool = True,
            notify_fn: Optional[Notify] = None, notify: bool = True) -> Optional[Dict[str, Any]]:
     """Insert or update a record by its run id and return what was stored.
@@ -240,6 +241,7 @@ def upsert(record: Mapping[str, Any], *, kind: Optional[str] = None, merge: bool
     return merged
 
 
+@remote_state.hub_call(("entity_run:run_id", "workspace?:updates.workspace"))
 def update(run_id: str, updates: Mapping[str, Any], *, notify: bool = True,
            notify_fn: Optional[Notify] = None,
            only_if_status: Optional[Iterable[str]] = None) -> Optional[Dict[str, Any]]:
@@ -307,6 +309,7 @@ def _evaluate_rules_on_finish(old: Mapping[str, Any], new: Mapping[str, Any]) ->
         log.debug("entity_runs: alert rules failed for %s", new.get("run_id"), exc_info=True)
 
 
+@remote_state.hub_call(("entity_run:run_id", "workspace?:workspace"))
 def set_status(run_id: str, status: str, *, from_statuses: Optional[Iterable[str]] = None,
                **fields: Any) -> bool:
     """Move a run to ``status`` (with any other ``fields``), optionally only
@@ -315,6 +318,7 @@ def set_status(run_id: str, status: str, *, from_statuses: Optional[Iterable[str
                   only_if_status=from_statuses) is not None
 
 
+@remote_state.hub_call("entity_run:run_id")
 def mark_running(run_id: str, *, pid: Optional[int] = None, host: Optional[str] = None,
                  container_name: Optional[str] = None,
                  execution_mode: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -336,6 +340,7 @@ def mark_running(run_id: str, *, pid: Optional[int] = None, host: Optional[str] 
     return update(run_id, fields)
 
 
+@remote_state.hub_call(("entity_run:run_id", "workspace?:workspace"))
 def close(run_id: str, *, status: str, exit_code: Optional[int] = None,
           error: Optional[str] = None, **fields: Any) -> Optional[Dict[str, Any]]:
     """Finish a run: a terminal status, the exit code, the error and the time."""
@@ -345,6 +350,7 @@ def close(run_id: str, *, status: str, exit_code: Optional[int] = None,
     })
 
 
+@remote_state.hub_call("entity_run:run_id")
 def request_stop(run_id: str) -> bool:
     """Mark a live run as stopping. True only when a run in a stoppable
     status was moved; a finished or unknown run is left alone. The process
@@ -354,6 +360,7 @@ def request_stop(run_id: str) -> bool:
                       from_statuses=run_status.STOPPABLE_STATUSES)
 
 
+@remote_state.hub_call("entity_run:run_id")
 def stop_requested(run_id: str) -> bool:
     """True when the run was asked to stop (or already has)."""
     row = db.get_conn().execute(
@@ -361,6 +368,7 @@ def stop_requested(run_id: str) -> bool:
     return bool(row and row["status"] in (RunStatus.stopping.value, RunStatus.stopped.value))
 
 
+@remote_state.hub_call("entity_run:run_id")
 def touch_heartbeat(run_id: str, when: Optional[str] = None) -> Optional[str]:
     """Stamp ``heartbeat_at`` and return the run's current status, or None
     when there is no such run. One UPDATE, no merge, no notification: this
@@ -373,6 +381,7 @@ def touch_heartbeat(run_id: str, when: Optional[str] = None) -> Optional[str]:
     return str(row["status"]) if row is not None and row["status"] is not None else None
 
 
+@remote_state.hub_call("entity_run:run_id")
 def save_checkpoint(run_id: str, checkpoint: Mapping[str, Any], *,
                     heartbeat: bool = True) -> None:
     """Write what a resume starts from. One UPDATE of the checkpoint column
@@ -387,6 +396,7 @@ def save_checkpoint(run_id: str, checkpoint: Mapping[str, Any], *,
                          (db.dumps(dict(checkpoint)), str(run_id)))
 
 
+@remote_state.hub_call("entity_run:run_id")
 def load_checkpoint(run_id: str) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         f"SELECT checkpoint FROM {TABLE} WHERE run_id = ?", (str(run_id),)).fetchone()
@@ -396,11 +406,13 @@ def load_checkpoint(run_id: str) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
+@remote_state.hub_call("entity_run:run_id")
 def clear_checkpoint(run_id: str) -> None:
     with db.transaction() as conn:
         conn.execute(f"UPDATE {TABLE} SET checkpoint = NULL WHERE run_id = ?", (str(run_id),))
 
 
+@remote_state.hub_call("entity_run:run_id")
 def delete(run_id: str) -> bool:
     with db.transaction() as conn:
         cur = conn.execute(f"DELETE FROM {TABLE} WHERE run_id = ?", (str(run_id),))
@@ -421,6 +433,7 @@ def delete_where(*, kind: str, entity_id: str) -> List[str]:
 
 # ── Generic reads ────────────────────────────────────────────────────────────
 
+@remote_state.hub_call("entity_run:run_id")
 def get(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """One run's record, whatever its kind, or None."""
     if not run_id:
@@ -438,6 +451,7 @@ def _alias_column(column: str) -> str:
     return column
 
 
+@remote_state.hub_call("workspace")
 def list_runs(*, kind: Optional[str] = None, kinds: Optional[Iterable[str]] = None,
               statuses: Optional[Iterable[str]] = None, active: bool = False,
               workspace: Optional[str] = None, entity_id: Optional[str] = None,
@@ -484,17 +498,20 @@ def list_runs(*, kind: Optional[str] = None, kinds: Optional[Iterable[str]] = No
     return [record_from_row(r) for r in rows]
 
 
+@remote_state.hub_call("global", result_scope="workspace")
 def active_runs(kind: Optional[str] = None, **filters: Any) -> List[Dict[str, Any]]:
     """The runs still going (pending, running or stopping)."""
     return list_runs(kind=kind, active=True, **filters)
 
 
+@remote_state.hub_call("entity_run:run_id")
 def children(run_id: str) -> List[Dict[str, Any]]:
     """The entity runs nested inside this one (a flow node that is a team,
     a loop's iterations once they are flows in this table...)."""
     return list_runs(parent_run_id=str(run_id), order_by="COALESCE(created_at, ''), run_id")
 
 
+@remote_state.hub_call("entity_run:run_id")
 def leaf_children(run_id: str) -> List[str]:
     """Run ids of the agent runs (``runs`` table) this run owns directly:
     node runs, member turns, role decisions."""

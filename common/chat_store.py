@@ -36,7 +36,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 
 log = logging.getLogger(__name__)
 
@@ -124,6 +124,7 @@ def _row_to_chat(row) -> Optional[Dict[str, Any]]:
 
 # ── reads ────────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call("workspace")
 def list_chats(workspace: Optional[str] = None, limit: int = 200,
                offset: int = 0) -> Dict[str, Any]:
     """A page of conversations, newest activity first, without transcripts."""
@@ -153,6 +154,7 @@ def _snippet(text: str, at: int, length: int) -> str:
     return ("…" if start else "") + piece + ("…" if end < len(text) else "")
 
 
+@remote_state.hub_call("workspace")
 def search_chats(q: str, workspace: Optional[str] = None, limit: int = 50) -> Dict[str, Any]:
     """The conversations whose title or messages hold ``q`` (any case), newest
     activity first, without transcripts; a hit in a message carries the text
@@ -196,6 +198,7 @@ def search_chats(q: str, workspace: Optional[str] = None, limit: int = 50) -> Di
     return {"items": items, "total": len(items), "q": q}
 
 
+@remote_state.hub_call("chat:chat_id")
 def get_chat(chat_id: str) -> Optional[Dict[str, Any]]:
     """One conversation with its full transcript."""
     row = db.get_conn().execute(
@@ -210,6 +213,7 @@ def chat_ids() -> List[str]:
 
 # ── writes ───────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call(("chat:chat.id", "workspace:chat.workspace"))
 def save_chat(chat: Dict[str, Any]) -> Dict[str, Any]:
     """Create or replace one conversation. Returns what was stored.
 
@@ -269,6 +273,7 @@ def _notice_text(notice: Dict[str, Any]) -> str:
     return str(notice.get("text") or "")
 
 
+@remote_state.hub_call(("chat:chat_id", "run:run_id"))
 def append_turn(chat_id: str, *, run_id: str, user_message: str,
                 agent_message: str, agent_id: Optional[str] = None,
                 usage: Optional[Dict[str, Any]] = None,
@@ -366,6 +371,7 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
     return True
 
 
+@remote_state.hub_call("chat:chat_id")
 def mark_stopped(chat_id: str, *, run_id: str, user_message: str,
                  agent_id: Optional[str] = None) -> bool:
     """Record in a stored chat that the person stopped a turn. Returns whether
@@ -426,6 +432,7 @@ def mark_stopped(chat_id: str, *, run_id: str, user_message: str,
     return True
 
 
+@remote_state.hub_call("chat:chat_id")
 def set_agent(chat_id: str, agent_id: str) -> bool:
     """Point a stored chat at another agent. Returns whether it changed.
 

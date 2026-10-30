@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from common import db, review as review_mod
+from common import db, remote_state, review as review_mod
 from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT
 
@@ -597,6 +597,7 @@ def sweep_ephemeral(now: Optional[Any] = None) -> List[str]:
     return removed
 
 
+@remote_state.hub_call("global", result_scope="workspace")
 def list_flows(limit: Optional[int] = None, offset: Optional[int] = None, *,
                include_ephemeral: bool = False) -> List[Dict[str, Any]]:
     """Return every flow as a combined dict, ordered by id (deterministic,
@@ -633,6 +634,7 @@ def list_flows(limit: Optional[int] = None, offset: Optional[int] = None, *,
     return out
 
 
+@remote_state.hub_call("global")
 def count_flows(*, include_ephemeral: bool = False) -> int:
     """Total number of flows in the store, for a caller paging with
     :func:`list_flows` that needs ``total``. Temporary flows count only with
@@ -643,6 +645,7 @@ def count_flows(*, include_ephemeral: bool = False) -> int:
     return sum(1 for f in _FLOWS.values() if not is_ephemeral(f))
 
 
+@remote_state.hub_call("flow:flow_id")
 def get_flow(flow_id: str) -> Optional[Dict[str, Any]]:
     """Return a single combined flow dict, or None."""
     _ensure_legacy_imported()
@@ -661,6 +664,25 @@ def _notify_flows_changed(flow_id: str | None = None) -> None:
         log.debug("flows change notification failed", exc_info=True)
 
 
+def _flow_in_workspace(token: Dict[str, Any], arguments: Dict[str, Any]) -> None:
+    """Scope rule of :func:`save_flow` for an agent container: the flow it
+    saves sits in its own workspace (filled in when the flow names none), and
+    an existing flow it overwrites does too."""
+    from common.remote_state import ScopeError, _same_workspace
+    flow = arguments.get("flow")
+    if not isinstance(flow, dict):
+        return
+    ws = token.get("workspace")
+    if not flow.get("workspace"):
+        flow["workspace"] = ws or None
+    elif not _same_workspace(flow.get("workspace"), ws):
+        raise ScopeError(f"flow '{flow.get('id')}' is not in this run's workspace")
+    prev = _FLOWS.get(str(flow.get("id") or "")) if flow.get("id") else None
+    if isinstance(prev, dict) and not _same_workspace(prev.get("workspace"), ws):
+        raise ScopeError(f"flow '{flow.get('id')}' is not in this run's workspace")
+
+
+@remote_state.hub_call(_flow_in_workspace)
 def save_flow(flow: Dict[str, Any]) -> None:
     """Persist a combined flow dict as the store's document for its id.
 
@@ -727,6 +749,7 @@ def save_flow(flow: Dict[str, Any]) -> None:
     _notify_flows_changed(flow.get("id"))
 
 
+@remote_state.hub_call("flow:flow_id")
 def delete_flow(flow_id: str) -> bool:
     """Delete a flow from the store. Returns True if anything was removed."""
     _ensure_legacy_imported()
@@ -736,6 +759,7 @@ def delete_flow(flow_id: str) -> bool:
     return removed
 
 
+@remote_state.hub_call("flow:flow_id")
 def export_flow_yaml(flow_id: str) -> Optional[str]:
     """Return a flow's logic skeleton serialized as YAML text, or None if absent.
 
@@ -809,6 +833,7 @@ def flow_agent_ids(flow: Dict[str, Any]) -> List[str]:
     return ids
 
 
+@remote_state.hub_call("flow:flow_id")
 def set_running(flow_id: str, running: bool) -> None:
     """Toggle a flow's ``running`` flag — a coarse "any instance active?" marker
     for the flow list UI.

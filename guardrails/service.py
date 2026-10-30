@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from common import remote_state
+
 from . import store
 from .models import Guardrail, now_iso
 
@@ -79,6 +81,7 @@ def list_guardrails(workspace: Optional[str] = None, *, include_archived: bool =
     return out
 
 
+@remote_state.hub_call("workspace")
 def list_applicable(workspace: Optional[str], agent_guardrail_ids: Optional[List[str]] = None,
                     *, stage: Optional[str] = None) -> List[Guardrail]:
     """The enabled guardrails one agent's run is checked against: global plus

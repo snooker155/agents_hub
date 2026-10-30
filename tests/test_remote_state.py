@@ -8,14 +8,17 @@ from __future__ import annotations
 import dataclasses
 import json
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Optional
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel
 
 from common import db, remote_state, run_tokens
 from common.remote_state import ScopeError, hub_call
+from tasks.models import TaskStatus
 
 
 # ── functions the tests mark ─────────────────────────────────────────────────
@@ -48,7 +51,9 @@ def task_title(task_id: str):
 def shapes():
     return {"when": datetime(2026, 10, 30, 12, tzinfo=timezone.utc), "day": date(2026, 10, 30),
             "pair": (1, "a"), "tags": {"x"}, "raw": b"\x00\x01", "path": Path("/tmp/x"),
-            "box": Box(name="b", size=3), "dc": Pair(2, "z"), 7: "int key"}
+            "box": Box(name="b", size=3), "dc": Pair(2, "z"), 7: "int key",
+            "id": UUID("12345678-1234-5678-1234-567812345678"), "money": Decimal("1.50"),
+            "status": TaskStatus.resolved}
 
 
 @hub_call("global")
@@ -171,6 +176,8 @@ def test_values_come_back_as_what_they_were(remote):
     assert got["path"] == Path("/tmp/x")
     assert got["box"] == Box(name="b", size=3) and got["dc"] == Pair(2, "z")
     assert got[7] == "int key"
+    assert got["id"] == UUID("12345678-1234-5678-1234-567812345678")
+    assert got["money"] == Decimal("1.50") and got["status"] is TaskStatus.resolved
 
 
 def test_exceptions_come_back_as_themselves(remote):

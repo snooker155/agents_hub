@@ -160,7 +160,9 @@ class TaskStore:
 
     def __init__(self, path: Path | str | None = None):
         self.path = Path(path) if path is not None else Path(DEFAULT_TASKS_FILE)
-        self._backfill_keys()
+        from common import remote_state
+        if not remote_state.is_remote():  # the hub's own store backfills; a container has none
+            self._backfill_keys()
 
     def _backfill_keys(self, timeout: float = 10.0) -> None:
         """Assign Jira-style keys to legacy tasks that predate the key field."""

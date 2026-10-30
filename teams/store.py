@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 from common.entity_runs import EntityRunStore
 from common.run_status import RunStatus
 from teams.models import BROADCAST, Team, TeamMessage, TeamRun, utc_iso
@@ -35,6 +35,7 @@ def _notify(resource: str, **meta) -> None:
 
 # ── Teams ────────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call(("team:team.team_id", "workspace:team.workspace"))
 def save_team(team: Team) -> Team:
     # Every team belongs to a workspace; one saved without is the default one's.
     team.workspace = team.workspace or "default"
@@ -76,6 +77,7 @@ def _row_to_team(row) -> Team:
     })
 
 
+@remote_state.hub_call("team:team_id")
 def get_team(team_id: str) -> Optional[Team]:
     row = db.get_conn().execute(
         "SELECT * FROM teams WHERE team_id = ?", (team_id,)
@@ -83,6 +85,7 @@ def get_team(team_id: str) -> Optional[Team]:
     return _row_to_team(row) if row else None
 
 
+@remote_state.hub_call("workspace")
 def list_teams(workspace: Optional[str] = None) -> List[Team]:
     conn = db.get_conn()
     if workspace and workspace != "default":
@@ -102,6 +105,7 @@ def list_teams(workspace: Optional[str] = None) -> List[Team]:
     return [_row_to_team(r) for r in rows]
 
 
+@remote_state.hub_call("team:team_id")
 def delete_team(team_id: str) -> bool:
     """Delete a team and every run/message it produced."""
     with db.transaction() as conn:
@@ -174,6 +178,7 @@ _RUNS = RUNS
 _PROCESS_FIELDS = ("pid", "host", "heartbeat_at")
 
 
+@remote_state.hub_call(("entity_run:run.team_run_id", "workspace:run.workspace"))
 def save_run(run: TeamRun) -> TeamRun:
     """Write the run whole. ``resume_attempts``, ``pid``, ``host`` and the
     heartbeat are the launcher's and the watchdog's to write, so a save from
@@ -191,6 +196,7 @@ def save_run(run: TeamRun) -> TeamRun:
 _PROGRESS_FIELDS = frozenset({"rounds_done", "total_cost", "result", "error"})
 
 
+@remote_state.hub_call(("entity_run:team_run_id", "workspace?:workspace"))
 def update_progress(team_run_id: str, **fields: Any) -> None:
     """Write mid-run progress without touching ``status``.
 
@@ -203,6 +209,7 @@ def update_progress(team_run_id: str, **fields: Any) -> None:
         _RUNS.update(team_run_id, updates)
 
 
+@remote_state.hub_call("entity_run:team_run_id")
 def delete_run(team_run_id: str) -> bool:
     """Drop one run from the team's history: its record and its board. The
     member turns stay in the run ledger, as when a flow chat is deleted."""
@@ -216,14 +223,17 @@ def delete_run(team_run_id: str) -> bool:
     return removed
 
 
+@remote_state.hub_call("entity_run:team_run_id")
 def get_run(team_run_id: str) -> Optional[TeamRun]:
     return _RUNS.get(team_run_id)
 
 
+@remote_state.hub_call("team:team_id", result_scope="workspace")
 def list_runs(team_id: Optional[str] = None, limit: int = 50) -> List[TeamRun]:
     return _RUNS.list({"team_id": team_id} if team_id else None, limit=limit)
 
 
+@remote_state.hub_call("entity_run:team_run_id")
 def request_stop(team_run_id: str) -> bool:
     """Record that a running team was asked to stop.
 
@@ -234,10 +244,12 @@ def request_stop(team_run_id: str) -> bool:
     return _RUNS.request_stop(team_run_id)
 
 
+@remote_state.hub_call("entity_run:team_run_id")
 def stop_requested(team_run_id: str) -> bool:
     return _RUNS.stop_requested(team_run_id)
 
 
+@remote_state.hub_call("entity_run:team_run_id")
 def touch_heartbeat(team_run_id: str) -> Optional[str]:
     """Stamp the run's heartbeat and return its current status (the runner's
     process reads ``stopping`` back this way)."""
@@ -247,6 +259,7 @@ def touch_heartbeat(team_run_id: str) -> Optional[str]:
 
 # ── Messages ─────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call("entity_run:msg.team_run_id")
 def append_message(msg: TeamMessage) -> TeamMessage:
     """Append one entry to the board and return it with its assigned ``seq``."""
     with db.transaction() as conn:
@@ -283,6 +296,7 @@ def _row_to_message(row) -> TeamMessage:
     )
 
 
+@remote_state.hub_call("entity_run:team_run_id")
 def list_messages(team_run_id: str, since: int = 0) -> List[TeamMessage]:
     """The board in order. ``since`` is a ``seq`` cursor so a live page polls
     only what it has not seen."""

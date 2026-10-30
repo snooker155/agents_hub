@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 
 from . import catalog
 
@@ -197,6 +197,7 @@ def list_grants(workspace: str, agent_id: Optional[str] = None) -> List[Dict[str
 
 # ── settings ─────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call("global")
 def get_settings(agent_id: str) -> Dict[str, Any]:
     """``{providers: [...], scopes: {provider: [keys]}}``; empty for an agent
     with no row. Unknown providers and keys left in a row are dropped."""
@@ -238,6 +239,7 @@ def save_settings(agent_id: str, providers: List[str], scopes: Dict[str, List[st
     return get_settings(agent_id)
 
 
+@remote_state.hub_call("global", cache_seconds=2.0)
 def settings_signature(agent_id: str) -> str:
     """A cheap change marker for one agent's settings (agents/agent_cache.py
     rebuilds an agent whose consent tools come or go)."""

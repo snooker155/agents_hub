@@ -32,6 +32,7 @@ from agents.agent_launcher import (
     start_run as rm_start_run,
     preregister_run as rm_preregister_run,
 )
+from common import remote_state
 from common.entity_sink import record_entity
 from common.untrusted import agent_output_fence
 from common.workspace_context import filter_agents_for_workspace
@@ -771,6 +772,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
 
 # -------------------- Flow tools --------------------
 
+@remote_state.hub_call("workspace:ws")
 def _workspace_flows(ws: Optional[str]) -> List[Dict[str, Any]]:
     """The flows of workspace ``ws`` and of no other: the ids in its
     ``allowed_flows`` when it keeps that list (what its Flows page lists),

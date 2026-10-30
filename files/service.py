@@ -58,7 +58,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from common import blobs, db
+from common import blobs, db, remote_state
 from common.config import DEFAULT_IGNORE
 from common.paths import AGENTS_HUB_ROOT
 
@@ -476,6 +476,7 @@ def _fetch_by_key(ws: str, key: str) -> Optional[Any]:
     ).fetchone()
 
 
+@remote_state.hub_call("workspace")
 def file_at_path(workspace: str, rel_path: str) -> Optional[Dict[str, Any]]:
     """The live record of the workspace file at ``rel_path``, if registered."""
     ws = _workspace_name(workspace)
@@ -516,6 +517,7 @@ def folder_ids(workspace: str) -> Dict[str, str]:
     return ids
 
 
+@remote_state.hub_call("workspace")
 def ensure_folder_record(workspace: str, rel_path: str, *,
                          created_by: Optional[str] = None) -> Dict[str, Any]:
     """The record of the folder file at ``rel_path``, registered first when

@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
-from common import db
+from common import db, remote_state
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +116,8 @@ class DocStore:
         """A cheap change marker for the whole collection (row count and the
         latest ``updated_at``): what callers that used to hash a file's mtime
         and size use instead (agents/agent_cache.py)."""
+        if remote_state.is_remote():
+            return store_signature(self.name)
         row = self._conn().execute(
             f"SELECT COUNT(*), MAX(updated_at) FROM {TABLE} WHERE store = ?", (self.name,)
         ).fetchone()
@@ -202,8 +204,8 @@ class DocStore:
     # ── legacy import ───────────────────────────────────────────────────────
 
     def _ensure_imported(self) -> None:
-        if self.legacy_file is None:
-            return
+        if self.legacy_file is None or remote_state.is_remote():
+            return  # a legacy file is the hub's to import, never an agent container's
         db.get_conn()  # the startup sequence must have run for the marker to mean anything
         marker = f"{db._generation}:{db.dialect()}:{db.DB_FILE}:{db.database_url()}"
         if self._imported_for == marker:
@@ -263,3 +265,10 @@ class DocStore:
                 log.info("docstore: imported %d record(s) from %s into '%s'",
                           len(docs), source.name, self.name)
         return len(docs)
+
+
+@remote_state.hub_call("global", cache_seconds=2.0)
+def store_signature(name: str) -> str:
+    """:meth:`DocStore.signature` of the store ``name``: a count and a time,
+    nothing of what the documents hold, so any process may ask it."""
+    return DocStore(name).signature()

@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from common import attribution as _attribution
-from common import db
+from common import db, remote_state
 from common import run_payloads as rp
 from common.db_migrate import RUN_COLUMNS
 from common.paths import AGENTS_HUB_ROOT, host_state_path
@@ -215,6 +215,7 @@ RUN_SORTS = {
 }
 
 
+@remote_state.hub_call("workspace")
 def query_runs(
     *,
     workspace: Optional[str] = None,
@@ -327,6 +328,7 @@ def query_runs(
     }
 
 
+@remote_state.hub_call("run:run_ids")
 def get_runs_by_ids(run_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
     """Fetch several run records in one query, keyed by run_id.
 
@@ -430,6 +432,7 @@ def session_run_stats(session_ids: Optional[Sequence[str]] = None) -> Dict[str, 
     return stats
 
 
+@remote_state.hub_call("global", result_scope="workspace")
 def _load_runs(timeout: float = 10.0) -> List[Dict[str, Any]]:
     conn = db.get_conn()
     rows = conn.execute(
@@ -459,6 +462,7 @@ def _save_runs(runs: List[Dict[str, Any]], timeout: float = 10.0) -> None:
                 _write_payload_row(conn, str(rec["run_id"]), proc)
 
 
+@remote_state.hub_call(("run:run.run_id", "workspace:run.workspace"))
 def _upsert_run(run: Dict[str, Any]) -> None:
     run_id = str(run.get("run_id") or "")
     if not run_id:
@@ -490,6 +494,7 @@ def _mirror_run_finished(old: Dict[str, Any], new: Dict[str, Any]) -> None:
         log.debug("_mirror_run_finished failed for run %s", new.get("run_id"), exc_info=True)
 
 
+@remote_state.hub_call(("run:run_id", "workspace?:updates.workspace"))
 def _update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     old, new = _apply(str(run_id), updates, insert_if_missing=False)
     if new is None:
@@ -501,6 +506,7 @@ def _update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]
     return new
 
 
+@remote_state.hub_call("run:run_id")
 def touch_heartbeat(run_id: str, when: Optional[str] = None) -> Optional[str]:
     """Stamp ``heartbeat_at`` and return the run's current status, or None
     when there is no such run. One UPDATE, no merge, no notifications: this
@@ -513,6 +519,7 @@ def touch_heartbeat(run_id: str, when: Optional[str] = None) -> Optional[str]:
     return str(row["status"]) if row is not None and row["status"] is not None else None
 
 
+@remote_state.hub_call("run:run_id")
 def save_run_checkpoint(run_id: str, checkpoint: Dict[str, Any]) -> None:
     """Write the agent loop's checkpoint (agents/checkpoint.py) beside the
     run's payload, and note on the record that one exists."""
@@ -530,6 +537,7 @@ def save_run_checkpoint(run_id: str, checkpoint: Dict[str, Any]) -> None:
                          (db.dumps(extra), str(run_id)))
 
 
+@remote_state.hub_call("run:run_id")
 def load_run_checkpoint(run_id: str) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         "SELECT checkpoint FROM run_payloads WHERE run_id = ?", (str(run_id),)).fetchone()
@@ -539,6 +547,7 @@ def load_run_checkpoint(run_id: str) -> Optional[Dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
+@remote_state.hub_call("run:run_id")
 def clear_run_checkpoint(run_id: str) -> None:
     with db.transaction() as conn:
         conn.execute("UPDATE run_payloads SET checkpoint = NULL WHERE run_id = ?", (str(run_id),))
@@ -546,6 +555,7 @@ def clear_run_checkpoint(run_id: str) -> None:
 
 # -------------------- Structured payload access --------------------
 
+@remote_state.hub_call("run:run_id")
 def get_run_process(run_id: str) -> Dict[str, Any]:
     """Return the full structured payload for a run.
 
@@ -616,6 +626,7 @@ def run_exchange(run: Dict[str, Any]) -> Tuple[str, str]:
     return str(user).strip(), str(reply).strip()
 
 
+@remote_state.hub_call("run:run_id")
 def delete_run_process(run_id: str) -> None:
     """Remove a run's structured payload. Best-effort."""
     try:
@@ -628,6 +639,7 @@ def delete_run_process(run_id: str) -> None:
         log.debug("delete_run_process failed for %s", run_id, exc_info=True)
 
 
+@remote_state.hub_call("run:run_id")
 def seed_run_input_context(run_id: str, system_prompt: str, user_message: str) -> None:
     """Persist a minimal input context when a run starts.
 
@@ -658,6 +670,7 @@ def compact_runs() -> int:
 
 # -------------------- Public shared state API --------------------
 
+@remote_state.hub_call("global", result_scope="workspace")
 def load_runs(timeout: float = 10.0) -> List[Dict[str, Any]]:
     """Return all run records from shared state."""
     return _load_runs(timeout)
@@ -669,12 +682,14 @@ def save_runs(runs: List[Dict[str, Any]], timeout: float = 10.0) -> None:
     notify_change("runs")
 
 
+@remote_state.hub_call(("run:run.run_id", "workspace:run.workspace"))
 def upsert_run(run: Dict[str, Any]) -> None:
     """Insert or update a run record by run_id."""
     _upsert_run(run)
     _publish_run_delta(run, str(run.get("run_id")))
 
 
+@remote_state.hub_call(("run:run_id", "workspace?:updates.workspace"))
 def update_run(run_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Apply partial updates to a run record and return the merged record."""
     merged = _update_run(run_id, updates)
@@ -698,6 +713,7 @@ def detach_runs_from_task(task_id: str) -> int:
     return count
 
 
+@remote_state.hub_call("run:run_id")
 def delete_run(run_id: str) -> bool:
     """Delete one run record and its structured payload. Returns True if removed."""
     with db.transaction() as conn:

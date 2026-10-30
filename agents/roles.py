@@ -31,6 +31,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
+from common import remote_state
+
 log = logging.getLogger(__name__)
 
 #: Prefix that marks a role reference in place of an agent id.
@@ -194,6 +196,21 @@ def expand(ids: Iterable[Any], workspace: Optional[str]) -> List[str]:
     return out
 
 
+@remote_state.hub_call("global")
+def _bound_anywhere(role_id: str) -> List[str]:
+    """The agents any workspace binds ``role_id`` to: agent ids only, which
+    an agent container's capability guard needs and may see."""
+    from workspace.storage import _workspaces_store
+    out: List[str] = []
+    for meta in (_workspaces_store.all() or {}).values():
+        raw = (meta or {}).get(META_KEY) if isinstance(meta, dict) else None
+        if isinstance(raw, dict):
+            bound = raw.get(role_id)
+            if isinstance(bound, str) and bound.strip() and bound.strip() not in out:
+                out.append(bound.strip())
+    return out
+
+
 def _holders_anywhere(role_id: str) -> List[str]:
     """The role's default and every agent any workspace binds to it."""
     role = get_role(role_id)
@@ -201,17 +218,13 @@ def _holders_anywhere(role_id: str) -> List[str]:
         return []
     out = [role.default]
     try:
-        from workspace.storage import _workspaces_store
-        records = _workspaces_store.all()
+        bound_ids = _bound_anywhere(role_id)
     except Exception:  # noqa: BLE001 - unreadable store: the default alone
         log.debug("roles: could not list workspace bindings", exc_info=True)
-        records = {}
-    for meta in (records or {}).values():
-        raw = (meta or {}).get(META_KEY) if isinstance(meta, dict) else None
-        if isinstance(raw, dict):
-            bound = raw.get(role_id)
-            if isinstance(bound, str) and bound.strip() and bound not in out:
-                out.append(bound.strip())
+        bound_ids = []
+    for bound in bound_ids:
+        if bound not in out:
+            out.append(bound)
     pending = _PENDING.get()
     if pending and pending[0] == role_id and pending[1] not in out:
         out.append(pending[1])

@@ -46,7 +46,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 from common.docstore import DocStore
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
 from instances import registry, store
@@ -526,6 +526,7 @@ def list_resident(*, workspace: Optional[str] = None, agent_id: Optional[str] = 
 
 # ── Status reported by the process ───────────────────────────────────────────
 
+@remote_state.hub_call("own_instance:instance_id")
 def update_from_process(instance_id: str, carrier_status: str, *,
                         exit_code: Optional[int] = None,
                         error: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -564,6 +565,7 @@ def update_from_process(instance_id: str, carrier_status: str, *,
     return inst
 
 
+@remote_state.hub_call("own_instance:instance_id")
 def heartbeat(instance_id: str, **fields: Any) -> None:
     """Stamp the instance's heartbeat, with whatever else the carrier
     reports on each beat (``fields``, e.g. its agent build counts)."""
@@ -573,6 +575,7 @@ def heartbeat(instance_id: str, **fields: Any) -> None:
         log.debug("heartbeat failed for %s", instance_id, exc_info=True)
 
 
+@remote_state.hub_call("instance:instance_id")
 def fail_in_progress_runs(instance_id: str, reason: str) -> int:
     """Close the runs a dead or stopped carrier left open."""
     try:

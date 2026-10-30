@@ -40,7 +40,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 
 log = logging.getLogger(__name__)
 
@@ -120,6 +120,7 @@ def inbox_message_id(author_id: Any) -> str:
     return value[len(INBOX_AUTHOR_PREFIX):] if value.startswith(INBOX_AUTHOR_PREFIX) else ""
 
 
+@remote_state.hub_call("run:run_id")
 def post(run_id: str, body: str, *, mode: str = MODE_INJECT,
          author: Any = None) -> Dict[str, Any]:
     """Store one message for ``run_id``. Returns the stored row.
@@ -153,6 +154,7 @@ def post(run_id: str, body: str, *, mode: str = MODE_INJECT,
     }
 
 
+@remote_state.hub_call(("run:from_run_ids", "run:to_run_id"))
 def retarget_pending(from_run_ids: List[str], to_run_id: str) -> int:
     """Hand the inject messages still waiting on ``from_run_ids`` to
     ``to_run_id``, keeping their ids. A flow chat turn runs one agent run per
@@ -171,6 +173,7 @@ def retarget_pending(from_run_ids: List[str], to_run_id: str) -> int:
         return int(getattr(cur, "rowcount", 0) or 0)
 
 
+@remote_state.hub_call("run:run_ids")
 def settle_turn(run_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
     """What happened to the messages sent into a chat turn made of several
     runs (a flow's nodes, a team): ``delivered`` as ``[{msg_id, after_step}]``
@@ -191,12 +194,14 @@ def settle_turn(run_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
     return {"delivered": delivered_out, "undelivered": undelivered_out}
 
 
+@remote_state.hub_call("steering:msg_id")
 def get(msg_id: str) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         "SELECT * FROM run_steering WHERE msg_id = ?", (str(msg_id),)).fetchone()
     return _row(row) if row is not None else None
 
 
+@remote_state.hub_call("run:run_id")
 def pending_count(run_id: str) -> int:
     """How many inject and system messages are waiting for the run's next model call."""
     if not run_id:
@@ -207,6 +212,7 @@ def pending_count(run_id: str) -> int:
     return int((row["n"] if row else 0) or 0)
 
 
+@remote_state.hub_call("run:run_id")
 def claim_pending(run_id: str, step: int) -> List[Dict[str, Any]]:
     """Take every pending inject and system message of ``run_id``, oldest first, marking
     each delivered at ``step`` (the number of tool results the run has).
@@ -257,6 +263,7 @@ def claim_pending(run_id: str, step: int) -> List[Dict[str, Any]]:
     return claimed
 
 
+@remote_state.hub_call("run:run_id")
 def delivered(run_id: str) -> List[Dict[str, Any]]:
     """The inject and system messages the loop has already taken for
     ``run_id``, in order. A run that picks up again under the same id (a
@@ -271,6 +278,7 @@ def delivered(run_id: str) -> List[Dict[str, Any]]:
     return [_row(r) for r in rows]
 
 
+@remote_state.hub_call("run:run_id")
 def list_for_run(run_id: str) -> List[Dict[str, Any]]:
     """Every message written to ``run_id``, oldest first, with its state."""
     rows = db.get_conn().execute(
@@ -278,6 +286,7 @@ def list_for_run(run_id: str) -> List[Dict[str, Any]]:
     return [_row(r) for r in rows]
 
 
+@remote_state.hub_call("run:run_id")
 def undelivered(run_id: str) -> List[Dict[str, Any]]:
     """The inject and system messages still waiting for ``run_id``, oldest first."""
     if not run_id:
@@ -288,6 +297,7 @@ def undelivered(run_id: str) -> List[Dict[str, Any]]:
     return [_row(r) for r in rows]
 
 
+@remote_state.hub_call("run:run_id")
 def mark_expired(run_id: str) -> List[Dict[str, Any]]:
     """Close the messages a finished run never took. Returns them, oldest
     first, so the caller can hand them on (the chat sends them as its next
@@ -313,6 +323,7 @@ def mark_expired(run_id: str) -> List[Dict[str, Any]]:
     return out
 
 
+@remote_state.hub_call(("steering:msg_id", "run:next_run_id"))
 def mark(msg_id: str, status: str, *, next_run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Set a message's status (an interrupt's outcome). Returns the row."""
     with db.transaction() as conn:

@@ -37,7 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 import json
 import logging
 from common import review as review_mod
-from common import snapshot
+from common import remote_state, snapshot
 from common.docstore import DocStore
 from common.paths import AGENTS_FILE
 
@@ -613,6 +613,8 @@ def _ensure_legacy_imported() -> None:
     """Import ``agents.json`` (``{"agents": [...]}``) once, keyed by id."""
     global _legacy_checked_for
     from common import db
+    if remote_state.is_remote():
+        return  # the hub imports it; an agent container has no database to import into
     db.get_conn()
     if _legacy_checked_for == db._generation:
         return
@@ -641,6 +643,14 @@ def load_all_raw() -> List[Dict[str, Any]]:
     if snap is not None:
         items = snap.get("agents") if isinstance(snap, dict) else snap
         return [rec for rec in (items or []) if isinstance(rec, dict)]
+    return _stored_records()
+
+
+@remote_state.hub_call("global")
+def _stored_records() -> List[Dict[str, Any]]:
+    """Every stored agent record. An agent container reads them from the hub:
+    definitions are the service's catalog, the same list a run snapshot
+    carries (common/snapshot.py)."""
     _ensure_legacy_imported()
     return [rec for rec in _agents_store.values() if isinstance(rec, dict)]
 

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from common import db
+from common import db, remote_state
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ def _write_ctx(conn, ctx: Dict[str, Any]) -> None:
     )
 
 
+@remote_state.hub_call("task:task_id")
 def detach_task_sessions(task_id: str) -> int:
     """Unlink the sessions bound to a task (a reset to todo), so its next run
     opens a fresh one. The sessions and their runs are kept. Returns how many
@@ -75,6 +76,7 @@ def _notify() -> None:
         log.debug("session change notify failed", exc_info=True)
 
 
+@remote_state.hub_call("global", result_scope="workspace")
 def load_contexts(timeout: float = 10.0) -> List[Dict[str, Any]]:
     rows = db.get_conn().execute(
         "SELECT doc FROM sessions ORDER BY COALESCE(created_at, ''), session_id").fetchall()
@@ -92,6 +94,7 @@ def _session_sorts() -> Dict[str, str]:
     }
 
 
+@remote_state.hub_call("workspace")
 def query_contexts(
     *,
     workspace: Optional[str] = None,
@@ -189,6 +192,7 @@ def save_contexts(contexts: List[Dict[str, Any]], timeout: float = 10.0) -> None
     _notify()
 
 
+@remote_state.hub_call(("session:ctx.session_id", "workspace:ctx.workspace"))
 def upsert_context(ctx: Dict[str, Any]) -> None:
     """Insert or merge-update one session context (atomic read-modify-write)."""
     session_id = str(ctx.get("session_id") or "")
@@ -203,6 +207,7 @@ def upsert_context(ctx: Dict[str, Any]) -> None:
     _notify()
 
 
+@remote_state.hub_call("session:session_id")
 def delete_context(session_id: str) -> bool:
     """Remove a session context. Returns True if one was deleted."""
     with db.transaction() as conn:
@@ -213,12 +218,14 @@ def delete_context(session_id: str) -> bool:
     return removed
 
 
+@remote_state.hub_call("session:session_id")
 def get_context_by_id(session_id: str) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         "SELECT doc FROM sessions WHERE session_id = ?", (str(session_id),)).fetchone()
     return _row_to_ctx(row) if row is not None else None
 
 
+@remote_state.hub_call(("workspace", "task:task_id"))
 def get_or_create_task_session(
     title: str,
     workspace: Optional[str] = None,
@@ -261,6 +268,7 @@ def get_or_create_task_session(
     return session_id
 
 
+@remote_state.hub_call("workspace")
 def get_or_create_chat_session(
     conversation_id: str,
     title: str,
@@ -308,6 +316,7 @@ def get_or_create_chat_session(
 # the next turn reads it back and extends it instead of paying to summarise the
 # same material again.
 
+@remote_state.hub_call("session:session_id")
 def get_session_summary(session_id: Optional[str]) -> Dict[str, Any]:
     """The stored summary: ``{text, covers_until, anchor, updated_at}``.
 
@@ -324,6 +333,7 @@ def get_session_summary(session_id: Optional[str]) -> Dict[str, Any]:
     return dict(summary) if isinstance(summary, dict) else {}
 
 
+@remote_state.hub_call("session:session_id")
 def set_session_summary(session_id: str, text: str, covers_until: int,
                         anchor: str = "") -> None:
     """Store (or replace) a session's conversation summary."""
@@ -344,6 +354,7 @@ def set_session_summary(session_id: str, text: str, covers_until: int,
     _notify()
 
 
+@remote_state.hub_call(("session:session_id", "run:run_id"))
 def add_run_to_session(session_id: str, run_id: str) -> None:
     """Append a run_id to a session context's message_ids (idempotent)."""
     with db.transaction() as conn:
@@ -359,6 +370,7 @@ def add_run_to_session(session_id: str, run_id: str) -> None:
     _notify()
 
 
+@remote_state.hub_call("session:session_id")
 def add_event_to_session(session_id: str, event: Dict[str, Any]) -> None:
     """Append a non-message event (e.g. approval step) to a session context."""
     with db.transaction() as conn:
@@ -375,6 +387,7 @@ def add_event_to_session(session_id: str, event: Dict[str, Any]) -> None:
 
 # ── Session continuations ─────────────────────────────────────────────────────
 
+@remote_state.hub_call(("session:session_id", "task:task_id", "workspace", "run:run_id"))
 def register_continuation(
     session_id: str,
     task_id: str,
@@ -405,6 +418,7 @@ def register_continuation(
             (str(session_id), str(task_id), doc["run_id"], db.dumps(doc)))
 
 
+@remote_state.hub_call(("task:task_id", "run:run_id"))
 def pop_continuations_for_task(task_id: str, run_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Remove and return pending continuations matching the finished run.
 
@@ -426,6 +440,7 @@ def pop_continuations_for_task(task_id: str, run_id: Optional[str] = None) -> Li
     return matched
 
 
+@remote_state.hub_call(("task:task_id", "run:run_id"))
 def rebind_continuations_to_run(task_id: str, run_id: str) -> None:
     """Re-point run-bound continuations for task_id at a new run_id.
 
@@ -444,6 +459,7 @@ def rebind_continuations_to_run(task_id: str, run_id: str) -> None:
                          (str(run_id), db.dumps(doc), r["seq"]))
 
 
+@remote_state.hub_call("task:task_id")
 def drop_continuations_for_task(task_id: str) -> int:
     """Remove every pending continuation for a task, regardless of run binding.
 
@@ -457,6 +473,7 @@ def drop_continuations_for_task(task_id: str) -> int:
         return cur.rowcount
 
 
+@remote_state.hub_call("task:task_id")
 def has_continuations_for_task(task_id: str) -> bool:
     """Return True if there are pending continuations for the given task_id (non-destructive)."""
     row = db.get_conn().execute(

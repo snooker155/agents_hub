@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 from typing import Set
 
+from common import remote_state
+
 log = logging.getLogger(__name__)
 
 _STORE_NAME = "hubsync_task_copies"
@@ -36,6 +38,7 @@ def unmark(task_id: str) -> None:
     _store().delete(str(task_id))
 
 
+@remote_state.hub_call("task:task_id")
 def is_copy(task_id: object) -> bool:
     try:
         return _store().exists(str(task_id))
@@ -44,6 +47,7 @@ def is_copy(task_id: object) -> bool:
         return False
 
 
+@remote_state.hub_call("global", cache_seconds=5.0)
 def task_copies() -> Set[str]:
     try:
         return set(_store().keys())

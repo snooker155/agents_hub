@@ -49,7 +49,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 from common.docstore import DocStore
 from common.paths import FLOW_ENTITIES_FILE
 
@@ -272,6 +272,8 @@ def _ensure_legacy_entities_imported() -> None:
     ``legacy_file`` import, which only understands a plain list or dict file.
     """
     global _legacy_entities_imported_for
+    if remote_state.is_remote():
+        return  # the hub imports it; an agent container has no database to import into
     db.get_conn()
     marker = f"{db._generation}:{db.dialect()}:{db.DB_FILE}:{db.database_url()}"
     if _legacy_entities_imported_for == marker:
@@ -295,11 +297,18 @@ def _ensure_legacy_entities_imported() -> None:
     _ENTITIES_STORE.import_legacy(docs, source=path)
 
 
+@remote_state.hub_call("global")
+def _user_entity_docs() -> List[Any]:
+    """The stored data-defined entities (the service's catalog, like the
+    agent registry); an agent container reads them from the hub."""
+    _ensure_legacy_entities_imported()
+    return list(_ENTITIES_STORE.values())
+
+
 def _load_user_entities() -> List[FlowEntitySpec]:
     """Load data-defined entities from the 'flow_entities' store (optional)."""
-    _ensure_legacy_entities_imported()
     specs: List[FlowEntitySpec] = []
-    for item in _ENTITIES_STORE.values():
+    for item in _user_entity_docs():
         if not isinstance(item, dict):
             continue
         try:

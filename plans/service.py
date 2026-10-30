@@ -20,6 +20,8 @@ from zoneinfo import ZoneInfo
 
 from croniter import croniter
 
+from common import remote_state
+
 from .models import FireRecord, JobKind, JobStatus, Notification, Recurrence, ScheduledJob
 from .storage import FireStore, NotificationStore, PlanStore
 
@@ -280,6 +282,7 @@ def _validate_agent_run(kind: JobKind, agent_id: Optional[str]) -> None:
         raise ValueError(f"Agent not found: {agent_id}")
 
 
+@remote_state.hub_call("workspace")
 def create_job(
     *,
     kind: JobKind,
@@ -353,10 +356,12 @@ def create_job(
     return saved
 
 
+@remote_state.hub_call("job:job_id")
 def get_job(job_id: UUID | str) -> Optional[ScheduledJob]:
     return plan_store.get(job_id)
 
 
+@remote_state.hub_call("workspace")
 def list_jobs(workspace: Optional[str] = None) -> List[ScheduledJob]:
     jobs = plan_store.list()
     if workspace:
@@ -372,6 +377,7 @@ def _notify_plan_changed() -> None:
         log.debug("plan change notification failed", exc_info=True)
 
 
+@remote_state.hub_call(("job:job_id", "workspace?:workspace"))
 def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
     if "run_at" in fields and isinstance(fields["run_at"], datetime):
         fields["run_at"] = _ensure_aware(fields["run_at"])
@@ -418,6 +424,7 @@ def update_job(job_id: UUID | str, **fields) -> Optional[ScheduledJob]:
     return updated
 
 
+@remote_state.hub_call("job:job_id")
 def delete_job(job_id: UUID | str) -> int:
     deleted = plan_store.delete(job_id)
     if deleted:
@@ -425,6 +432,7 @@ def delete_job(job_id: UUID | str) -> int:
     return deleted
 
 
+@remote_state.hub_call("job:job_id")
 def cancel_job(job_id: UUID | str) -> Optional[ScheduledJob]:
     updated = plan_store.update(job_id, status=JobStatus.cancelled)
     if updated:
@@ -432,6 +440,7 @@ def cancel_job(job_id: UUID | str) -> Optional[ScheduledJob]:
     return updated
 
 
+@remote_state.hub_call("job:job_id")
 def pause_job(job_id: UUID | str) -> Optional[ScheduledJob]:
     job = plan_store.get(job_id)
     if job and job.status != JobStatus.scheduled:
@@ -442,6 +451,7 @@ def pause_job(job_id: UUID | str) -> Optional[ScheduledJob]:
     return updated
 
 
+@remote_state.hub_call("job:job_id")
 def resume_job(job_id: UUID | str) -> Optional[ScheduledJob]:
     job = plan_store.get(job_id)
     if job and job.status != JobStatus.paused:
@@ -456,6 +466,7 @@ def resume_job(job_id: UUID | str) -> Optional[ScheduledJob]:
 
 # -------------------- Notifications --------------------
 
+@remote_state.hub_call("workspace")
 def create_notification(
     *,
     title: str,
@@ -583,6 +594,7 @@ def _publish_notification(n: Notification) -> None:
         log.debug("notification publish over HTTP failed", exc_info=True)
 
 
+@remote_state.hub_call("workspace")
 def list_notifications(
     workspace: Optional[str] = None,
     unread_only: bool = False,
@@ -597,18 +609,22 @@ def list_notifications(
     return items[: max(0, limit)]
 
 
+@remote_state.hub_call("workspace")
 def unread_count(workspace: Optional[str] = None) -> int:
     return len(list_notifications(workspace=workspace, unread_only=True, limit=notification_store.MAX_ENTRIES))
 
 
+@remote_state.hub_call("notification:notification_id")
 def mark_notification_read(notification_id: UUID | str, read: bool = True) -> Optional[Notification]:
     return notification_store.update(notification_id, read=read)
 
 
+@remote_state.hub_call("workspace")
 def mark_all_notifications_read(workspace: Optional[str] = None) -> int:
     return notification_store.mark_all_read(workspace=workspace)
 
 
+@remote_state.hub_call("notification:notification_id")
 def delete_notification(notification_id: UUID | str) -> int:
     return notification_store.delete(notification_id)
 
@@ -757,12 +773,17 @@ def job_to_dict(job: ScheduledJob) -> Dict[str, Any]:
                 log.debug("timestamp is not a datetime", exc_info=True)
     data["upcoming_runs_at"] = _upcoming_runs_at(job)
     try:
-        last = fire_store.last_for_job(job.id)
+        last = _last_fire(job.id)
     except Exception:  # noqa: BLE001 - a missing last fire must not break the job view
         log.debug("last_fire lookup failed for job %s", job.id, exc_info=True)
         last = None
     data["last_fire"] = fire_to_dict(last) if last else None
     return data
+
+
+@remote_state.hub_call("job:job_id")
+def _last_fire(job_id: UUID | str) -> Optional[FireRecord]:
+    return fire_store.last_for_job(job_id)
 
 
 def fire_to_dict(f: FireRecord) -> Dict[str, Any]:
@@ -905,12 +926,14 @@ def fire_result(fire: FireRecord) -> Optional[Dict[str, Any]]:
     return None
 
 
+@remote_state.hub_call("job:job_id")
 def list_job_fires(
     job_id: UUID | str, *, only_errors: bool = False, limit: int = 50,
 ) -> List[FireRecord]:
     return fire_store.list_for_job(job_id, only_errors=only_errors, limit=limit)
 
 
+@remote_state.hub_call("workspace")
 def list_fires(
     *, workspace: Optional[str] = None, only_errors: bool = False, limit: int = 100,
 ) -> List[FireRecord]:

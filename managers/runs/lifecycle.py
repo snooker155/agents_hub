@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from common import db
+from common import db, remote_state
 # PROJECT_ROOT is re-exported by the managers.run_manager facade.
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT  # noqa: F401
 
@@ -155,6 +155,7 @@ def utc_now_iso() -> str:
     return _utc_now_iso()
 
 
+@remote_state.hub_call("global")
 def new_unique_run_id() -> str:
     """Return a UUID that does not collide with any existing run_id in state."""
     conn = db.get_conn()
@@ -164,6 +165,7 @@ def new_unique_run_id() -> str:
     return rid
 
 
+@remote_state.hub_call(("run:run_id", "task:task_id"))
 def preopen_run(
     run_id: str,
     agent_id: str,
@@ -235,6 +237,7 @@ def preopen_run(
     return run_id
 
 
+@remote_state.hub_call(("run:run_id", "workspace", "task:task_id", "instance:instance_id"))
 def open_run(
     run_id: str,
     agent_id: str,
@@ -331,6 +334,7 @@ def _route_experiment(run_id: str, agent_id: Optional[str], record: Dict[str, An
         log.debug("experiment routing failed for run %s", run_id, exc_info=True)
 
 
+@remote_state.hub_call(("run:run_id", "workspace?:workspace"))
 def close_run(
     run_id: str,
     *,
@@ -436,6 +440,7 @@ def _pid_exists(pid: int) -> bool:
 
 # -------------------- Public lifecycle API --------------------
 
+@remote_state.hub_call("run:run_id")
 def get_run_by_id(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """Return a run record by run_id, or None."""
     if not run_id:
@@ -445,6 +450,7 @@ def get_run_by_id(run_id: Optional[str]) -> Optional[Dict[str, Any]]:
     return _row_to_record(row) if row is not None else None
 
 
+@remote_state.hub_call("task:task_id")
 def latest_run_for_task(task_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """The newest run recorded against ``task_id``, or None. A chat turn
     records its conversation id there (chat.runs.create_chat_run), so this
@@ -459,6 +465,7 @@ def latest_run_for_task(task_id: Optional[str]) -> Optional[Dict[str, Any]]:
     return max(runs, key=lambda r: r.get("started_at") or r.get("created_at") or "")
 
 
+@remote_state.hub_call("instance:instance_id")
 def get_in_progress_runs_for_instance(instance_id: str) -> List[Dict[str, Any]]:
     """Runs a resident instance's carrier has open right now."""
     conn = db.get_conn()
@@ -468,6 +475,7 @@ def get_in_progress_runs_for_instance(instance_id: str) -> List[Dict[str, Any]]:
     return [_row_to_record(r) for r in rows]
 
 
+@remote_state.hub_call("instance:instance_id")
 def fail_in_progress_runs_for_instance(instance_id: str, reason: str) -> int:
     """Mark every run a stopped or dead carrier left open as failed; returns
     how many."""
@@ -517,6 +525,7 @@ def _find_active_run_for_task(task_id: str) -> Optional[Dict[str, Any]]:
     return max(runs, key=lambda r: r.get("started_at") or r.get("created_at") or "")
 
 
+@remote_state.hub_call(("task:task_id", "run:run_id"))
 def stop_run(task_id: str, run_id: Optional[str] = None) -> bool:
     """Attempt to terminate the running run for a task.
 
@@ -531,6 +540,7 @@ def stop_run(task_id: str, run_id: Optional[str] = None) -> bool:
     return _stop_run_record(rec)
 
 
+@remote_state.hub_call("run:run_id")
 def stop_run_by_id(run_id: str) -> bool:
     """Attempt to terminate a specific running run by run_id."""
     rec = get_run_by_id(run_id)
@@ -695,6 +705,7 @@ def _stop_run_record(rec: Dict[str, Any]) -> bool:
     return sent
 
 
+@remote_state.hub_call(("task:task_id", "run:run_id"))
 def get_status(task_id: str, run_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Return run status for a task, or None.
 

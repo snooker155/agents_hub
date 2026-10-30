@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from common import db
+from common import db, remote_state
 from common.entity_runs import EntityRunStore
 from common.run_status import RunStatus
 from loops.models import Iteration, Loop, LoopRun, utc_iso
@@ -94,6 +94,7 @@ RUNS: EntityRunStore[LoopRun] = EntityRunStore(
 _RUNS = RUNS
 
 
+@remote_state.hub_call("entity_run:loop_run_id")
 def save_position(loop_run_id: str, position: Dict[str, Any]) -> None:
     """Persist where a run has got to, so it can be resumed from here. The
     position is the run's checkpoint; its heartbeat and attempt counter are
@@ -112,6 +113,7 @@ def save_position(loop_run_id: str, position: Dict[str, Any]) -> None:
         _RUNS.update(loop_run_id, mirrored, notify=False)
 
 
+@remote_state.hub_call("entity_run:loop_run_id")
 def get_position(loop_run_id: str) -> Dict[str, Any]:
     """The stored resume position of a run, or ``{}`` when it has none."""
     rec = _RUNS.read(loop_run_id)
@@ -121,6 +123,7 @@ def get_position(loop_run_id: str) -> Dict[str, Any]:
     return position if (rec.get("checkpoint") or position.get("heartbeat_at")) else {}
 
 
+@remote_state.hub_call("entity_run:loop_run_id")
 def touch_heartbeat(loop_run_id: str) -> None:
     """Refresh the run's heartbeat, without touching the rest.
 
@@ -146,6 +149,7 @@ def _notify(resource: str, **meta) -> None:
 
 # ── Loop definitions ─────────────────────────────────────────────────────────
 
+@remote_state.hub_call(("loop:loop.loop_id", "workspace:loop.workspace"))
 def save_loop(loop: Loop) -> Loop:
     # Every loop belongs to a workspace; one saved without is the default one's.
     loop.workspace = loop.workspace or "default"
@@ -181,6 +185,7 @@ def _row_to_loop(row) -> Loop:
     })
 
 
+@remote_state.hub_call("loop:loop_id")
 def get_loop(loop_id: str) -> Optional[Loop]:
     row = db.get_conn().execute(
         "SELECT * FROM loops WHERE loop_id = ?", (loop_id,)
@@ -188,6 +193,7 @@ def get_loop(loop_id: str) -> Optional[Loop]:
     return _row_to_loop(row) if row else None
 
 
+@remote_state.hub_call("workspace")
 def list_loops(workspace: Optional[str] = None) -> List[Loop]:
     conn = db.get_conn()
     if workspace and workspace != "default":
@@ -207,6 +213,7 @@ def list_loops(workspace: Optional[str] = None) -> List[Loop]:
     return [_row_to_loop(r) for r in rows]
 
 
+@remote_state.hub_call("loop:loop_id")
 def delete_loop(loop_id: str) -> bool:
     """Delete a loop and every run/iteration it produced."""
     with db.transaction() as conn:
@@ -229,6 +236,7 @@ def delete_loop(loop_id: str) -> bool:
 
 # ── Runs ─────────────────────────────────────────────────────────────────────
 
+@remote_state.hub_call(("entity_run:run.loop_run_id", "workspace:run.workspace"))
 def save_run(run: LoopRun) -> LoopRun:
     # The whole record is written, resume position included: leaving it out
     # would quietly blank a running loop's position the next time its record
@@ -254,6 +262,7 @@ _PROGRESS_FIELDS = frozenset({
 })
 
 
+@remote_state.hub_call(("entity_run:loop_run_id", "workspace?:workspace"))
 def update_progress(loop_run_id: str, **fields: Any) -> None:
     """Write mid-run progress without touching ``status``.
 
@@ -276,14 +285,17 @@ def update_progress(loop_run_id: str, **fields: Any) -> None:
         _RUNS.update(loop_run_id, updates)
 
 
+@remote_state.hub_call("entity_run:loop_run_id")
 def get_run(loop_run_id: str) -> Optional[LoopRun]:
     return _RUNS.get(loop_run_id)
 
 
+@remote_state.hub_call("loop:loop_id", result_scope="workspace")
 def list_runs(loop_id: Optional[str] = None, limit: int = 50) -> List[LoopRun]:
     return _RUNS.list({"loop_id": loop_id} if loop_id else None, limit=limit)
 
 
+@remote_state.hub_call("entity_run:loop_run_id")
 def delete_run(loop_run_id: str) -> bool:
     """Drop one run from the loop's history: its record and its iterations.
     The flow runs of its passes stay in the flow's own history and the agent
@@ -298,18 +310,21 @@ def delete_run(loop_run_id: str) -> bool:
     return removed
 
 
+@remote_state.hub_call("entity_run:loop_run_id")
 def request_stop(loop_run_id: str) -> bool:
     """Ask a running loop to stop. The runner checks between nodes and between
     iterations, so the flow is never left half-applied."""
     return _RUNS.request_stop(loop_run_id)
 
 
+@remote_state.hub_call("entity_run:loop_run_id")
 def stop_requested(loop_run_id: str) -> bool:
     return _RUNS.stop_requested(loop_run_id)
 
 
 # ── Iterations ───────────────────────────────────────────────────────────────
 
+@remote_state.hub_call("entity_run:it.loop_run_id")
 def save_iteration(it: Iteration) -> Iteration:
     with db.transaction() as conn:
         conn.execute(
@@ -351,6 +366,7 @@ def _row_to_iteration(row) -> Dict[str, Any]:
     }
 
 
+@remote_state.hub_call("entity_run:loop_run_id")
 def list_iterations(loop_run_id: str, since: int = 0) -> List[Dict[str, Any]]:
     """Iterations of a run in order. ``since`` returns only later ones so a live
     page can poll cheaply."""
@@ -362,6 +378,7 @@ def list_iterations(loop_run_id: str, since: int = 0) -> List[Dict[str, Any]]:
     return [_row_to_iteration(r) for r in rows]
 
 
+@remote_state.hub_call("entity_run:loop_run_id")
 def get_iteration(loop_run_id: str, iteration: int) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         "SELECT * FROM loop_iterations WHERE loop_run_id = ? AND iteration = ?",
