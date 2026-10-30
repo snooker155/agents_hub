@@ -34,6 +34,27 @@ def test_scrubbed_env_drops_explicit_names_and_suffix_variants():
     assert out["AGENTS_HUB_FEATURE_FLAG"] == "on"
 
 
+def test_scrubbed_env_drops_hub_database_and_credential_urls():
+    base = {
+        "AGENTS_HUB_DATABASE_URL": "sqlite:///state/agents_hub.db",
+        "AGENTS_HUB_BROKER_URL": "redis://redis:6379/0",
+        "SOME_DSN": "postgresql://agents_hub:hunter2@postgres:5432/agents_hub",
+        "CACHE": "redis://:pw@cache:6379",
+        "OPENAI_BASE_URL": "http://localhost:1234/v1",
+        "PROXY": "http://proxy:3128",
+    }
+    out = scrubbed_env(base)
+    # By name, with or without a password in the value.
+    assert "AGENTS_HUB_DATABASE_URL" not in out
+    assert "AGENTS_HUB_BROKER_URL" not in out
+    # By value: a URL that carries a password, whatever it is called.
+    assert "SOME_DSN" not in out
+    assert "CACHE" not in out
+    # Plain URLs (a port is not a password) pass through.
+    assert out["OPENAI_BASE_URL"] == "http://localhost:1234/v1"
+    assert out["PROXY"] == "http://proxy:3128"
+
+
 def test_scrubbed_env_defaults_to_os_environ(monkeypatch):
     monkeypatch.setenv("FAKE_API_KEY", "leak-me")
     monkeypatch.setenv("KEEP_ME", "still-here")
@@ -44,6 +65,8 @@ def test_scrubbed_env_defaults_to_os_environ(monkeypatch):
 
 def test_run_shell_does_not_leak_planted_secret(monkeypatch):
     monkeypatch.setenv("FAKE_API_KEY", "top-secret-value")
+    monkeypatch.setenv("AGENTS_HUB_DATABASE_URL", "postgresql://hub:db-password@postgres/hub")
     out = run_shell.invoke({"command": "env", "timeout": 5})
     assert "top-secret-value" not in out
     assert "FAKE_API_KEY" not in out
+    assert "db-password" not in out

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Mapping, Optional
@@ -36,7 +37,18 @@ _SECRET_NAMES = frozenset({
     "AWS_ACCESS_KEY_ID",
     "GITHUB_TOKEN",
     "GITLAB_TOKEN",
+    # The hub's own database and broker. A process an agent spawns has no use
+    # for either, and on Postgres the URL carries the password: a local run's
+    # shell could otherwise read it with `env` and connect from the worker.
+    "AGENTS_HUB_DATABASE_URL",
+    "AGENTS_HUB_BROKER_URL",
+    "DATABASE_URL",
+    "REDIS_URL",
 })
+
+# A value that is a URL with credentials in it (scheme://user:password@host),
+# whatever the variable is called: a connection string is a secret too.
+_CREDENTIAL_URL = re.compile(r"^[a-z][a-z0-9+.\-]*://[^/@\s]*:[^/@\s]*@", re.IGNORECASE)
 
 
 def scrubbed_env(base: Optional[Mapping[str, str]] = None) -> dict:
@@ -44,9 +56,10 @@ def scrubbed_env(base: Optional[Mapping[str, str]] = None) -> dict:
 
     Starts from ``base`` (the current process environment when omitted) and
     drops any variable whose name ends with ``_API_KEY``, ``_SECRET``,
-    ``_TOKEN`` or ``_PASSWORD``, or matches a short explicit list of known
-    credential names. Everything else passes through unchanged, so ordinary
-    variables a command needs (PATH, HOME, locale, PYTHON*, VIRTUAL_ENV,
+    ``_TOKEN`` or ``_PASSWORD``, matches a short explicit list of known
+    credential names (the hub's database and broker URLs among them), or whose
+    value is a URL with a password in it. Everything else passes through
+    unchanged, so ordinary variables a command needs (PATH, HOME, locale, PYTHON*, VIRTUAL_ENV,
     CONDA_*, AGENT_WORKSPACE, non-secret AGENTS_HUB_* settings, and so on)
     still reach the command. This is what an agent-run shell command should
     see: it can run `env` without reading out the backend's provider keys.
@@ -58,6 +71,8 @@ def scrubbed_env(base: Optional[Mapping[str, str]] = None) -> dict:
         if name in _SECRET_NAMES:
             continue
         if any(upper.endswith(suffix) for suffix in _SECRET_NAME_SUFFIXES):
+            continue
+        if _CREDENTIAL_URL.match(value or ""):
             continue
         result[name] = value
     return result
