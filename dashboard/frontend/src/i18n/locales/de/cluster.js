@@ -101,7 +101,10 @@ export default {
     status: { ok: 'Läuft', warn: 'Eingeschränkt', fail: 'Ausgefallen', off: 'Nicht in Benutzung', unknown: 'Unbekannt' },
   },
   capacity: 'Kapazität',
+  showInactiveHosts: 'Gestoppte und stille Hosts zeigen ({{count}})',
+  dockerHost: 'Docker-Host',
   map: {
+    owner: { instance: 'Instanz', run: 'Lauf', flow: 'Flow-Lauf', loop: 'Schleifenlauf', team: 'Teamlauf', scenario: 'Szenariolauf' },
     title: 'Dienstkarte',
     hint: 'Jeder Prozess und jeder gemeinsame Dienst, den er nutzt. Ein Klick auf ein Kästchen zeigt die Details. Bewegte Linien bedeuten Verkehr im Moment; ein abgeschalteter Dienst wartet unter der Karte.',
     people: 'Personen',

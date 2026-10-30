@@ -13,7 +13,7 @@ vi.mock('reactflow', () => {
         const Node = nodeTypes[node.type];
         return (
           <div key={node.id} data-testid={`node-${node.id}`} onClick={(e) => onNodeClick?.(e, node)}>
-            <Node id={node.id} data={node.data} />
+            <Node id={node.id} data={node.data} selected={Boolean(node.selected)} />
           </div>
         );
       })}
@@ -51,6 +51,12 @@ const MAP = {
   ],
   hub_nodes: [{ id: 'n1', name: 'Mac mini', online: true, capacity: 4, in_flight: 1 }],
   hub_link: { linked: true, url: 'https://hub.example', name: 'Main' },
+  containers: [
+    { name: 'agents-hub-node-inst_1', agent_id: 'writer', state: 'running', worker: 'wk-1',
+      owner_kind: 'instance', owner_id: 'inst_1', workspace: 'acme', host: 'daemon' },
+    { name: 'agents-hub-node-inst_old', agent_id: 'writer', state: 'running', worker: 'wk-old' },
+    { name: 'lucid_poitras', agent_id: 'basic_agent', state: 'running', worker: '' },
+  ],
 };
 
 describe('buildGraph', () => {
@@ -139,5 +145,31 @@ describe('ServiceMap', () => {
     expect(screen.getByTestId('map-detail')).toHaveTextContent('dialect');
     fireEvent.click(screen.getByTestId('pane'));
     expect(screen.queryByTestId('map-detail')).toBeNull();
+  });
+
+  it('draws each agent container beside the worker that started it', () => {
+    const g = buildGraph(MAP, t);
+    const box = g.nodes.find((n) => n.id === 'c:agents-hub-node-inst_1');
+    expect(box.data.kind).toBe('container');
+    expect(box.data.title).toBe('writer');
+    expect(g.edges.some((e) => e.source === 'm:wk-1' && e.target === 'c:agents-hub-node-inst_1')).toBe(true);
+    // Not drawn: a container of a stopped worker, and one nobody launched.
+    expect(g.nodes.find((n) => n.id === 'c:agents-hub-node-inst_old')).toBeUndefined();
+    expect(g.nodes.find((n) => n.id === 'c:lucid_poitras')).toBeUndefined();
+    const worker = g.nodes.find((n) => n.id === 'm:wk-1');
+    expect(box.position.x).toBeGreaterThan(worker.position.x);
+  });
+
+  it('marks the picked node and its lines until another is picked', () => {
+    show();
+    const node = () => screen.getByTestId('node-m:wk-1').firstChild;
+    expect(node()).not.toHaveAttribute('data-selected');
+    fireEvent.click(screen.getByTestId('node-m:wk-1'));
+    expect(node()).toHaveAttribute('data-selected', 'true');
+    fireEvent.click(screen.getByTestId('node-s:database'));
+    expect(node()).not.toHaveAttribute('data-selected');
+    expect(screen.getByTestId('node-s:database').firstChild).toHaveAttribute('data-selected', 'true');
+    fireEvent.click(screen.getByTestId('pane'));
+    expect(screen.getByTestId('node-s:database').firstChild).not.toHaveAttribute('data-selected');
   });
 });

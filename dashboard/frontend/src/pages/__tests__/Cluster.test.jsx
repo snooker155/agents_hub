@@ -1,4 +1,5 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { I18nProvider } from '../../i18n';
@@ -54,7 +55,7 @@ vi.mock('../../components/cluster/ServiceMap', () => ({ default: () => <div data
 
 import Cluster from '../Cluster';
 
-const show = () => render(<I18nProvider><Cluster /></I18nProvider>);
+const show = () => render(<MemoryRouter><I18nProvider><Cluster /></I18nProvider></MemoryRouter>);
 
 beforeEach(() => {
   getCluster.mockClear();
@@ -63,8 +64,18 @@ beforeEach(() => {
 });
 
 describe('Cluster map', () => {
+  it('shows live members by default and the rest on request', async () => {
+    show();
+    await waitFor(() => expect(screen.getByText('host-a:100')).toBeInTheDocument());
+    expect(screen.queryByText('worker-b')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } });
+    expect(screen.getByText('worker-b')).toBeInTheDocument();
+  });
+
   it('lists members with status, leases and load', async () => {
     show();
+    await waitFor(() => expect(screen.getByLabelText('Status')).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } });
     await waitFor(() => expect(screen.getByText('worker-b')).toBeInTheDocument());
     // Each status shows once as a pill and once in the status filter.
     expect(screen.getAllByText('Live')).toHaveLength(2);
@@ -85,6 +96,8 @@ describe('Cluster map', () => {
 
   it('opens a member log and forgets only a member that is not live', async () => {
     show();
+    await waitFor(() => expect(screen.getByLabelText('Status')).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } });
     await waitFor(() => expect(screen.getByText('worker-b')).toBeInTheDocument());
     const buttons = screen.getAllByTitle('View log');
     fireEvent.click(buttons[1]);
@@ -107,6 +120,7 @@ describe('Cluster map', () => {
     window.localStorage.removeItem('listPaging:cluster-members');
     show();
     await waitFor(() => expect(screen.getByText('worker-00')).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } });
     // Live first, then the first batch of 20 out of 26.
     expect(screen.getAllByTitle('View log')).toHaveLength(20);
     expect(screen.getByText('20 of 26 shown')).toBeInTheDocument();
@@ -120,6 +134,26 @@ describe('Cluster map', () => {
     expect(screen.getAllByTitle('View log')).toHaveLength(10);
     fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'api' } });
     expect(screen.getByText('No member matches the filters.')).toBeInTheDocument();
+    getCluster.mockImplementation(() => ok(MAP));
+  });
+
+  it('shows active hosts only, the rest on request, and whose container is whose', async () => {
+    getCluster.mockImplementation(() => ok({
+      ...MAP,
+      hosts: [
+        { host: 'host-a', status: 'live', active: true, members: ['host-a:100'], runs: 0, flow_runs: 0, instances: 1, containers: 1 },
+        { host: 'old-host', status: 'stopped', active: false, members: [], runs: 0, flow_runs: 0, instances: 0, containers: 0 },
+      ],
+      containers: [{ name: 'agents-hub-node-inst_1', agent_id: 'writer', state: 'running', host: 'daemon-1',
+                     owner_kind: 'instance', owner_id: 'inst_1', worker: 'host-b:7', launched_on: 'host-b' }],
+    }));
+    show();
+    await waitFor(() => expect(screen.getByText('agents-hub-node-inst_1')).toBeInTheDocument());
+    expect(screen.queryByText('old-host')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/Show stopped and silent hosts \(1\)/));
+    expect(screen.getByText(/old-host/)).toBeInTheDocument();
+    expect(screen.getByText('host-b:7')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'writer' })).toHaveAttribute('href', '/instances/inst_1');
     getCluster.mockImplementation(() => ok(MAP));
   });
 });

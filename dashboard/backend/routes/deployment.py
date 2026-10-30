@@ -210,6 +210,54 @@ def _containers() -> List[Dict[str, Any]]:
         return []
 
 
+def _owned_containers(containers: List[Dict[str, Any]], instances: List[Dict[str, Any]],
+                      runs: List[Dict[str, Any]], entity_runs: List[Dict[str, Any]],
+                      members: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The containers with who they belong to: the instance or run in it,
+    and the worker that started it (the carrier's or the run's host, which is
+    the launching process's). A container of an instance or run that the
+    daemon this backend sees does not list (a worker on another machine)
+    is added from its record, so every agent container shows."""
+    workers_by_host: Dict[str, str] = {}
+    for m in members:
+        if m.get("role") == "worker" and m.get("status") == "live" and m.get("host"):
+            workers_by_host[str(m["host"])] = str(m.get("member_id") or "")
+    owners: Dict[str, Dict[str, Any]] = {}
+    for i in instances:
+        if i.get("container_name"):
+            owners[str(i["container_name"])] = {
+                "owner_kind": "instance", "owner_id": i.get("instance_id"),
+                "workspace": i.get("workspace"), "agent_id": i.get("agent_id") or "runner",
+                "launched_on": i.get("carrier_host") or "", "state": i.get("carrier_status")}
+    for r in runs:
+        if r.get("container_name"):
+            owners[str(r["container_name"])] = {
+                "owner_kind": "run", "owner_id": r.get("run_id"), "workspace": r.get("workspace"),
+                "agent_id": r.get("agent_id"), "launched_on": r.get("host") or "", "state": r.get("status")}
+    for r in entity_runs:
+        if r.get("container_name"):
+            owners[str(r["container_name"])] = {
+                "owner_kind": str(r.get("kind") or "run"), "owner_id": r.get("run_id"),
+                "workspace": r.get("workspace"), "agent_id": r.get("entity_id"),
+                "launched_on": r.get("host") or "", "state": r.get("status")}
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for c in containers:
+        name = str(c.get("name") or "")
+        seen.add(name)
+        own = owners.get(name, {})
+        launched_on = own.get("launched_on") or ""
+        out.append({**c, **{k: v for k, v in own.items() if k not in ("state", "agent_id") or not c.get(k)},
+                    "launched_on": launched_on, "worker": workers_by_host.get(launched_on, "")})
+    for name, own in owners.items():
+        if name in seen:
+            continue
+        launched_on = own.get("launched_on") or ""
+        out.append({"name": name, "host": launched_on, "remote": True, **own,
+                    "worker": workers_by_host.get(launched_on, "")})
+    return out
+
+
 def _by_host(items: List[Dict[str, Any]], key: str = "host") -> Dict[str, int]:
     counts: Dict[str, int] = defaultdict(int)
     for it in items:
@@ -290,7 +338,7 @@ def build_map() -> Dict[str, Any]:
     loops = _active_loops(entity_active)
     entity_section = _entity_runs_section(entity_active)
     instances = _instances()
-    containers = _containers()
+    containers = _owned_containers(_containers(), instances, runs, entity_active, member_rows)
     services = _services()
     stack_rows = _stack()
 
@@ -336,16 +384,34 @@ def build_map() -> Dict[str, Any]:
         "stack": stack_rows,
         "hub_nodes": _hub_nodes(),
         "hub_link": _hub_link(),
-        "hosts": [{
-            "host": h,
-            "members": [m["member_id"] for m in member_rows if str(m.get("host") or "") == h
-                        and m.get("status") != "stopped"],
-            "runs": _by_host(runs).get(h, 0),
-            "flow_runs": _by_host(flows).get(h, 0),
-            "instances": _by_host(instances, "carrier_host").get(h, 0),
-            "containers": _by_host(containers).get(h, 0),
-        } for h in hosts],
+        "hosts": [_host_row(h, member_rows, runs, flows, instances, containers) for h in hosts],
     }
+
+
+def _host_row(h: str, member_rows: List[Dict[str, Any]], runs: List[Dict[str, Any]],
+              flows: List[Dict[str, Any]], instances: List[Dict[str, Any]],
+              containers: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """One host of the map. ``active`` when a live member runs there or work
+    does (a run, an instance, a container): a host whose processes stopped or
+    went quiet (an old container of a restarted service) is not, and the page
+    hides it unless asked."""
+    statuses = [str(m.get("status") or "") for m in member_rows if str(m.get("host") or "") == h]
+    row = {
+        "host": h,
+        "members": [m["member_id"] for m in member_rows if str(m.get("host") or "") == h
+                    and m.get("status") == "live"],
+        "runs": _by_host(runs).get(h, 0),
+        "flow_runs": _by_host(flows).get(h, 0),
+        "instances": _by_host(instances, "carrier_host").get(h, 0),
+        # Where it was launched from (its worker), else the daemon that runs it.
+        "containers": sum(1 for c in containers if str(c.get("launched_on") or c.get("host") or "") == h),
+    }
+    working = row["runs"] or row["flow_runs"] or row["instances"] or row["containers"]
+    status = "live" if "live" in statuses else ("stale" if "stale" in statuses else
+                                                ("stopped" if statuses else "unknown"))
+    row["status"] = status
+    row["active"] = status == "live" or bool(working)
+    return row
 
 
 @router.get("")

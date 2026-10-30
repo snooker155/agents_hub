@@ -8,7 +8,8 @@ import { useI18n } from '../../i18n';
  * ServiceMap: the whole running service as one diagram.
  *
  * Left to right: people, the dashboard, the API processes, the launch queue,
- * the workers. Under them, one row of the shared services those processes use
+ * the workers, and the agent containers each worker started (one instance,
+ * one container; a run's container too), joined to their worker. Under them, one row of the shared services those processes use
  * (database, Redis, object store, identity provider, browser service, model
  * runtime, egress proxy) and the hub link. Everything comes from the one
  * GET /api/cluster document (members, queue, stack, hub_nodes, hub_link), so
@@ -33,7 +34,13 @@ const SERVICES_PER_ROW = 6;
 const PAINT = {
   people: 'frontend', dashboard: 'frontend', api: 'backend', queue: 'backend', worker: 'backend',
   database: 'datastore', broker: 'datastore', blob_store: 'datastore',
-  hub: 'project', hub_node: 'project', stale: 'external',
+  hub: 'project', hub_node: 'project', stale: 'external', container: 'project',
+};
+
+// A container's own state as a status dot.
+const CONTAINER_STATUS = {
+  running: 'ok', active: 'ok', standby: 'ok', starting: 'warn', queued: 'warn', stopping: 'warn',
+  failed: 'fail', error: 'fail', exited: 'off', stopped: 'off',
 };
 
 const DOT = {
@@ -148,7 +155,9 @@ export function buildGraph(map, t) {
 
   const tall = (n) => Math.min(Math.max(n, 1), MAX_ROWS);
   const wide = (n) => Math.max(1, Math.ceil(n / MAX_ROWS));
-  const rows = Math.max(tall(apiItems.length), ...workerGroups.map((g) => tall(g.items.length)), 1);
+  const containerCount = (map?.containers || []).filter((c) => workers.some((m) => m.member_id === c.worker)).length;
+  const rows = Math.max(tall(apiItems.length), ...workerGroups.map((g) => tall(g.items.length)),
+    tall(containerCount), 1);
   const midY = ((rows - 1) * ROW_H) / 2;
   const colY = (count, i) => midY - ((count - 1) * ROW_H) / 2 + i * ROW_H;
   // Where the i-th of n items of a wrapped column sits.
@@ -248,7 +257,28 @@ export function buildGraph(map, t) {
     }
     groupX += wide(n) * SUB_GAP + (group.host ? 20 : 0);
   });
-  const rightEdge = (workerGroups.length ? groupX - SUB_GAP : COL.worker) + NODE_W;
+  // The agent containers, in a column right of the workers, each joined to
+  // the worker that started it (map.containers[].worker).
+  const workerIds = new Set(workers.map((m) => m.member_id));
+  const boxes = (map?.containers || []).filter((c) => workerIds.has(c.worker));
+  const boxX = (workerGroups.length ? groupX - SUB_GAP : COL.worker) + COL_GAP;
+  boxes.forEach((c, i) => {
+    const { x, y } = cell(boxX, boxes.length, i);
+    const state = String(c.state || c.status || '').toLowerCase();
+    const id = `c:${c.name}`;
+    nodes.push({ id, type: 'svc', position: { x, y },
+      data: { kind: 'container', title: c.agent_id || c.name,
+              sub: [c.owner_kind ? t(`cluster.map.owner.${c.owner_kind}`, { defaultValue: c.owner_kind }) : '',
+                    c.workspace].filter(Boolean).join(' · '),
+              status: CONTAINER_STATUS[state] || 'unknown', line: c.name,
+              detail: { container: c.name, worker: c.worker, launched_on: c.launched_on, docker_host: c.host,
+                        owner: [c.owner_kind, c.owner_id].filter(Boolean).join(' '), workspace: c.workspace,
+                        state: c.state || c.status, image: c.image } } });
+    edge(`m:${c.worker}`, id, { animated: state === 'running' || state === 'active' });
+  });
+  const lastX = boxes.length ? boxX + (wide(boxes.length) - 1) * SUB_GAP
+    : (workerGroups.length ? groupX - SUB_GAP : COL.worker);
+  const rightEdge = lastX + NODE_W;
 
   // The shared services, in rows under the columns, centred on them.
   const bottomY = (rows - 1) * ROW_H + 190;
@@ -282,7 +312,7 @@ export function buildGraph(map, t) {
   return { nodes, edges, idle };
 }
 
-function SvcNode({ data }) {
+function SvcNode({ data, selected }) {
   const { t } = useI18n();
   const paint = PAINT[data.kind] || 'external';
   const bar = num(data.load) !== null && num(data.capacity) ? Math.min(100, Math.round((data.load / data.capacity) * 100)) : null;
@@ -290,7 +320,9 @@ function SvcNode({ data }) {
   return (
     <div
       style={{ width: NODE_W, background: `var(--graph-${paint}-bg)`, border: `1.5px solid var(--graph-${paint}-border)` }}
-      className="rounded-lg px-3 py-2 text-left shadow-sm cursor-pointer"
+      className={`rounded-lg px-3 py-2 text-left cursor-pointer transition-shadow ${selected
+        ? 'ring-2 ring-indigo-500 ring-offset-2 shadow-lg' : 'shadow-sm'}`}
+      data-selected={selected ? 'true' : undefined}
     >
       <Handle id="l" type="target" position={Position.Left} style={hidden} isConnectable={false} />
       <Handle id="t" type="target" position={Position.Top} style={hidden} isConnectable={false} />
@@ -333,7 +365,16 @@ function flat(detail) {
 export default function ServiceMap({ map }) {
   const { t } = useI18n();
   const [picked, setPicked] = useState(null);
-  const { nodes, edges, idle } = useMemo(() => buildGraph(map, t), [map, t]);
+  const graph = useMemo(() => buildGraph(map, t), [map, t]);
+  const { idle } = graph;
+  // The picked box stays marked across the page's refresh (a new graph each
+  // time), and the lines to and from it stand out.
+  const nodes = useMemo(() => graph.nodes.map((n) => (n.id === picked ? { ...n, selected: true } : n)),
+    [graph, picked]);
+  const edges = useMemo(() => graph.edges.map((e) => (
+    picked && (e.source === picked || e.target === picked)
+      ? { ...e, style: { ...e.style, stroke: 'var(--color-indigo-500, #6366f1)', strokeWidth: 2.5, opacity: 1 }, zIndex: 1 }
+      : e)), [graph, picked]);
   const selected = nodes.find((n) => n.id === picked);
 
   return (

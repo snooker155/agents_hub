@@ -210,7 +210,10 @@ export default function Cluster() {
   const members = useMemo(() => map?.members || [], [map]);
   const [memberQuery, setMemberQuery] = useState('');
   const [memberRole, setMemberRole] = useState('');
-  const [memberStatus, setMemberStatus] = useState('');
+  // Live members only at first: a restarted service leaves its old
+  // processes behind as stale or stopped rows.
+  const [memberStatus, setMemberStatus] = useState('live');
+  const [allHosts, setAllHosts] = useState(false);
   const memberPaging = useListPaging('cluster-members', {
     sorts: MEMBER_SORTS, defaultSort: 'status', defaultOrder: 'asc',
     resetOn: [memberQuery, memberRole, memberStatus],
@@ -231,7 +234,11 @@ export default function Cluster() {
   const shownMembers = filteredMembers.slice(0, memberPaging.limit);
   const queue = map?.queue || {};
   const outbox = map?.outbox || {};
-  const hosts = map?.hosts || [];
+  const everyHost = map?.hosts || [];
+  // A host is active while a live member or some work (a run, an instance, a
+  // container) is on it; the rest show on request.
+  const hosts = allHosts ? everyHost : everyHost.filter((h) => h.active !== false);
+  const hiddenHosts = everyHost.length - everyHost.filter((h) => h.active !== false).length;
 
   const loadText = (m) => Object.entries(m.load || {})
     .filter(([, v]) => v !== null && v !== undefined)
@@ -374,11 +381,21 @@ export default function Cluster() {
             </Card>
 
             <Card icon={Box} title={t('cluster.hosts')} hint={t('cluster.hostsHint')}>
+              {hiddenHosts > 0 && (
+                <label className="mb-2 inline-flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+                  <input type="checkbox" checked={allHosts} onChange={(e) => setAllHosts(e.target.checked)} />
+                  {t('cluster.showInactiveHosts', { count: hiddenHosts })}
+                </label>
+              )}
               <Table
                 empty={t('cluster.noHosts')}
                 rows={hosts.map((h) => ({ ...h, key: h.host }))}
                 columns={[
-                  { key: 'host', label: t('cluster.host'), render: (h) => <span className="font-mono text-xs">{h.host}</span> },
+                  { key: 'host', label: t('cluster.host'), render: (h) => (
+                    <span className={`font-mono text-xs ${h.active === false ? 'text-gray-400' : ''}`}>
+                      {h.host}{h.active === false && h.status ? ` (${t(`cluster.${h.status}`, { defaultValue: h.status })})` : ''}
+                    </span>
+                  ) },
                   { key: 'members', label: t('cluster.members'), render: (h) => h.members.length },
                   { key: 'runs', label: t('cluster.runs') },
                   { key: 'flow_runs', label: t('cluster.flowRuns') },
@@ -499,9 +516,20 @@ export default function Cluster() {
                 rows={(map?.containers || []).map((c) => ({ ...c, key: c.name }))}
                 columns={[
                   { key: 'name', label: 'name', render: (c) => <span className="font-mono text-xs">{c.name}</span> },
-                  { key: 'agent_id', label: t('cluster.agent') },
+                  { key: 'agent_id', label: t('cluster.agent'), render: (c) => {
+                    if (c.owner_kind === 'instance' && c.owner_id) {
+                      return <Link to={`/instances/${c.owner_id}`} className="text-indigo-600 hover:underline">{c.agent_id || c.owner_id}</Link>;
+                    }
+                    if (c.owner_kind === 'run' && c.owner_id) {
+                      return <Link to={`/messages/${c.owner_id}`} className="text-indigo-600 hover:underline">{c.agent_id || c.owner_id}</Link>;
+                    }
+                    return c.agent_id || '—';
+                  } },
                   { key: 'state', label: t('cluster.status'), render: (c) => c.state || c.status },
-                  { key: 'host', label: t('cluster.host'), render: (c) => (
+                  { key: 'worker', label: t('cluster.queueWorker'), render: (c) => (
+                    <span className="font-mono text-xs">{c.worker || c.launched_on || '—'}</span>
+                  ) },
+                  { key: 'host', label: t('cluster.dockerHost'), render: (c) => (
                     <span className="font-mono text-xs">{c.host || t('cluster.unknownHost')}
                       {c.remote && <span className="ml-1 text-amber-700">({t('cluster.remote')})</span>}</span>
                   ) },

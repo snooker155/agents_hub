@@ -101,7 +101,10 @@ export default {
     status: { ok: 'Healthy', warn: 'Degraded', fail: 'Down', off: 'Not in use', unknown: 'Unknown' },
   },
   capacity: 'Capacity',
+  showInactiveHosts: 'Show stopped and silent hosts ({{count}})',
+  dockerHost: 'Docker host',
   map: {
+    owner: { instance: 'instance', run: 'run', flow: 'flow run', loop: 'loop run', team: 'team run', scenario: 'scenario run' },
     title: 'Service map',
     hint: 'Every process and every shared service it uses. Click a box for its details. Moving lines mean traffic right now; a service that is switched off waits under the map.',
     people: 'People',
