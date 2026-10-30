@@ -5,6 +5,7 @@ export default {
   backToMessages: 'Back to runs',
   flow2: 'Flow',
   loadFailed: 'Failed to load run details',
+  stop: 'Stop',
   stopFailed: 'Failed to stop the run',
   toEvalCase: 'To eval case',
   toEvalCaseHint: 'Add this run to an eval set as a case',

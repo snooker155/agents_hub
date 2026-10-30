@@ -5,6 +5,7 @@ export default {
   backToMessages: 'К запускам',
   flow2: 'Поток',
   loadFailed: 'Не удалось загрузить детали запуска',
+  stop: 'Остановить',
   stopFailed: 'Не удалось остановить запуск',
   toEvalCase: 'В кейс оценки',
   toEvalCaseHint: 'Добавить этот запуск в набор оценок как кейс',

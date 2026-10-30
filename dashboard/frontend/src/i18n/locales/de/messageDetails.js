@@ -5,6 +5,7 @@ export default {
   backToMessages: 'Zurück zu den Läufen',
   flow2: 'Flow',
   loadFailed: 'Laufdetails konnten nicht geladen werden',
+  stop: 'Stoppen',
   stopFailed: 'Lauf konnte nicht gestoppt werden',
   toEvalCase: 'In Eval-Fall',
   toEvalCaseHint: 'Diesen Lauf als Fall zu einem Eval-Set hinzufügen',

@@ -454,7 +454,7 @@ export default function MessageDetails() {
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-40"
             >
               {stopping ? <Loader className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
-              Stop
+              {t('messageDetails.stop')}
             </button>
           )}
           {message?.channel !== 'replay' && (message?.status === 'completed' || message?.status === 'failed') && (
