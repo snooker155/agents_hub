@@ -53,7 +53,12 @@ def test_a_run_container_gets_the_volume_not_host_folders(on_volume):
         snapshot_dir=str(AGENTS_HUB_ROOT / "run_snapshots" / "r1"),
     )
     mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--mount"]
-    assert "type=volume,src=agents_hub_state,dst=/app/.agents_hub" in mounts
+    # No state mount: the container has no database (common/remote_state.py);
+    # its log folders come from the volume, nothing else of the state.
+    assert not any(m.startswith("type=volume,src=agents_hub_state,dst=/app/.agents_hub,") or
+                   m == "type=volume,src=agents_hub_state,dst=/app/.agents_hub" for m in mounts)
+    assert ("type=volume,src=agents_hub_state,dst=/app/.agents_hub/run_logs,volume-subpath=run_logs"
+            in mounts)
     assert ("type=volume,src=agents_hub_state,dst=/workspace,volume-subpath=workspaces/alpha"
             in mounts)
     assert any("volume-subpath=run_snapshots/r1,readonly" in m for m in mounts)

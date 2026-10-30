@@ -264,7 +264,7 @@
     {
       "id": "containers",
       "title": "Containers",
-      "summary": "Agents can run in-process or in Docker. Container mode isolates a run: its own filesystem view, its own network posture, its own lifetime.",
+      "summary": "Agents can run in-process or in Docker. Container mode isolates a run: its own filesystem view, its own network posture, its own lifetime. An agent container has no database and no state mount: its store calls go to the hub with its run token (common/remote_state.py), on SQLite and Postgres alike.",
       "surface": "Containers",
       "related": [
         "instances",
@@ -274,7 +274,7 @@
         "environments"
       ],
       "headings": [
-        "Execution modes",
+        "Execution modes", "No database in a container",
         "Images",
         "Environments: image, limits, network",
         "Delegation from a container",

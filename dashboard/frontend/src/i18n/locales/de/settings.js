@@ -348,7 +348,7 @@ export default {
   streamingAgentOverrideBefore: 'Workspaces. Für einen einzelnen Agenten lässt sich Streaming auf dem Tab Verhalten seiner Seite immer einschalten, das Feld',
   streamingAgentOverrideAfter: 'in seinem Datensatz.',
   agentsRunInDocker: ': jeder Agent wird in einem Docker-Container gestartet.',
-  dockerSqliteNote: 'Aufgaben, Flows, Teams, Schleifen und Instanzen laufen nur dann in Containern, wenn die Hub-Datenbank mit ihnen geteilt werden kann: unter Linux mit dem Zustand auf einer lokalen Platte oder mit dem Hub in Docker und dem Zustand auf einem Volume (docker-compose.volume.yml). Sonst, etwa unter Docker Desktop mit dem Zustand in einem Mac-Ordner, laufen sie lokal: Ein geteilter Ordner hält die Sperren von SQLite nicht, und ein Container könnte das Journal der Datenbank zerstören. Dann gehen nur die Shell-Befehle der Agenten in einen Container, auch aus dem Chat.',
+  dockerStateNote: 'In Docker bekommt jede Aufgabe, jeder Flow, jedes Team, jede Schleife und jede Instanz einen eigenen Container ohne Zugriff auf die Datenbank des Hubs: Ihren Zustand erreichen sie über den Hub mit einem eigenen Token, unter SQLite wie unter Postgres. Lokal laufen sie als Prozesse neben dem Hub (oder auf einem Worker) und öffnen die Datenbank selbst.',
   logging: {
     title: 'Logging',
     intro: 'Der Level, mit dem der Backend-Prozess und jeder Agenten-Subprozess loggen. Eine Workspace-Überschreibung hat Vorrang vor dem globalen Wert aus .env.',

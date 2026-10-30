@@ -16,11 +16,11 @@ Set per workspace means `settings.agent_mode` on the workspace, read by
 `common.config.agent_execution_mode(workspace)` for task runs, instances,
 teams and `run_shell` alike.
 
-A chat turn is not one of them: it always runs in the hub process (flows and
-teams started from chat too), whatever the mode says.
+A chat turn runs on an instance of the workspace's runner service
+([services](services.md)), so in `docker` mode it runs in that instance's
+container. One instance is one container.
 
-A team, flow or loop run (where a container may share the database, see
-below) is one container for the whole run: its agent nodes
+A team, flow or loop run is one container for the whole run: its agent nodes
 run inside the run's process, so they share that container and the base image
 (a per-agent image applies to task runs and instances only). The workspace
 folder is mounted at `/workspace`; a run with no workspace gets no mount,
@@ -35,28 +35,63 @@ directory mounted read-write at `/workspace`. No hub environment and no state
 directory reach it. Docker down means the command is refused, never run on the
 host. The rest of the turn (file tools, web, MCP) runs with the hub's rights.
 
-## SQLite and Docker Desktop
+## No database in a container
 
-A container may open the hub's SQLite database through the state mount only on
-a Linux host whose state directory sits on a local filesystem
-(`managers/container_manager.db_shared_with_containers`, which reads the
-filesystem type from `/proc/mounts`). Docker Desktop on macOS or Windows
-reaches a host folder through a shared-folder filesystem (virtiofs, seen as
-`fakeowner` inside a container) that carries neither SQLite's locks nor its
-shared memory. A container that closes the database there believes it was the
-last user, folds the WAL into the file and deletes it under every other user;
-they keep writing to the deleted file, and everything they wrote is lost.
+An agent container never opens the hub's database, on SQLite or Postgres, and
+the state directory is not mounted into it. Its process (a task run, an
+instance's carrier, a team, flow, loop or scenario run) reaches its state
+through the hub instead:
 
-Measured on Docker Desktop for Mac: a host process and a container lose the
-WAL, and so do two containers on the same macOS folder; two containers on a
-Docker volume do not. A hub in Docker on a Mac keeps its state in such a
-folder by default (`docker-compose.yml` bind mounts the checkout), so running
-the hub in Docker helps only with the state on a volume, below.
+- Every store function such a process calls is marked with
+  `common.remote_state.hub_call`. In the container (`AGENTS_HUB_REMOTE_STATE=1`)
+  a marked function does not run there: the call goes to the hub as one
+  `POST /api/run-state/call` with the container's run token, and the hub runs
+  it and sends the result back.
+- Each marked function names its scope: the workspace argument, or the record
+  an id names (a task, run, instance, flow, chat, session, loop, team...),
+  whose workspace the hub looks up. The hub compares that with the workspace
+  the token was minted for and refuses anything else. A carrier changes only
+  its own instance row and its own mailbox. Lists without a workspace argument
+  come back filtered to the token's workspace.
+- `common.db` refuses to open a database in such a process, so a store call
+  nobody marked fails loudly (and is logged) instead of opening a file.
+- The token is minted for every container, in `single` mode too: it is how the
+  process reaches its state at all.
+
+What the container gets (`managers/container_manager.remote_container_env`):
+the run's own environment minus the database and broker URLs, the database
+password, the key that decrypts the secrets table, the file store's
+credentials and the hub-wide tokens; plus `AGENTS_HUB_REMOTE_STATE=1`, the run
+token and `AGENTS_HUB_CALLBACK_URL`, the hub's address as the container sees it
+(`container_hub_url`):
+
+- `AGENTS_HUB_CONTAINER_HUB_URL` when set, for workers on another machine
+  whose containers reach the API elsewhere;
+- a hub in Docker (the compose stack): `http://agents-hub-api:8000`. Every
+  backend replica joins the `agents-hub` network under that alias at start
+  (`join_agent_network_as_hub`), so containers a worker starts reach the API
+  too;
+- a hub on the host: `http://host.docker.internal:8000`.
+
+Mounted: a tmpfs as the state root, the log folders `run_logs/` and
+`instance_logs/` read-write on top (the process writes its own log file), the
+workspace folder at `/workspace`, and the registry snapshot read-only for a
+task run.
+
+This is why docker mode works on Postgres and on Docker Desktop alike: SQLite's
+locks never have to cross the Docker Desktop VM, and the database password
+never reaches a container. `local` mode is the opposite: the process runs next
+to the hub or on a worker and opens the database itself.
+
+`tests/remote_harness.py` runs every entry point that way, as a real
+subprocess without a database against a test hub, and
+`AGENTS_HUB_REMOTE_STATE=audit` lists every direct access a process still
+makes in one run (`REMOTE_AUDIT=<file>` in `tests/test_remote_*.py`).
 
 ### State on a Docker volume
 
-The way around it on Docker Desktop: run the hub in Docker with its state on a
-Docker volume, which lives on the VM's own disk.
+A hub in Docker on a Mac can keep its own state on a Docker volume, which
+lives on the VM's own disk.
 
     docker compose -f docker-compose.yml -f docker-compose.volume.yml up --build
 
@@ -64,11 +99,10 @@ Docker volume, which lives on the VM's own disk.
 `/data/agents_hub`, points `AGENTS_HUB_ROOT` there and names the volume in
 `AGENTS_HUB_STATE_VOLUME`. Every path under the state dir then reaches an agent
 container as `--mount type=volume,src=agents_hub_state,volume-subpath=...`
-(`managers/container_manager.mount_flags`): run and instance containers, shell
-command containers, `run_code` snippets and imported agents alike. A volume
-keeps real ownership, so those containers run as the hub's user
-(`user_flags`). Inside the hub container the state reads as `ext4`, so
-`db_shared_with_containers` allows containers.
+(`managers/container_manager.mount_flags`): the log folders of run and
+instance containers, shell command containers, `run_code` snippets and
+imported agents alike. A volume keeps real ownership, so those containers run
+as the hub's user (`user_flags`).
 
 The volume and the checkout's `.agents_hub` follow each other
 (`common/state_sync.py`, on when `AGENTS_HUB_STATE_SYNC_DIR` names the folder,
@@ -95,19 +129,6 @@ to it: a hub on the host has it open, or stopped without closing it (a
 read-only `sqlite3` session leaves them too). The sync then skips and says
 why. The database is copied with SQLite's backup API, never as a file.
 
-Without the volume, so on Docker Desktop, every hub process that opens
-the database (task runs, resident instances, teams, flows, loops) runs locally
-whatever the mode says (`common.config.run_execution_mode`). Only shell
-commands (`run_shell`, and `run_code` as always) go into a container: theirs
-never sees the database. The Settings page says so under the docker mode
-switch.
-
-The `http` state transport does not lift this: it relays a run's own records,
-but building an agent reads the registry and the task store from the database
-everywhere, so a run with the state dir mounted read-only fails at start. A
-container started anyway (a spec from elsewhere) gets `http` forced
-(`container_state_transport`), so the worst it does is fail, never write.
-
 A run in a container records its log under `/app/.agents_hub/...`; run records
 are read back with that path rebased onto the hub's state dir
 (`common.paths.host_state_path`), so the dashboard opens it.
@@ -121,71 +142,43 @@ bridge. Every agent container is stamped with the network it got in
 know how it is fenced. A run with network `none` cannot reach a model provider
 either, so it suits only models it can reach without one.
 
-## Two container profiles
+## The container profile
 
-Resident instances and runs share the same images and the same base mounts,
-but a run container is additionally sandboxed — it is unattended and one-shot,
-where a resident instance is something an operator is actively watching:
+Instances and runs get the same profile (`build_run_command`), unattended
+either way:
 
-| | Instance container | Run container |
-|---|---|---|
-| Mounts | state dir, tasks dir, workspace (all read-write) | same, plus the registry snapshot (`run_snapshots/<run_id>/`: `agents.json`, `custom_providers.json`, `models.json`) mounted `:ro` inside the state dir and named in `AGENTS_HUB_SNAPSHOT_DIR` (and, with `AGENT_RUN_STATE_TRANSPORT=http`, the whole state dir `:ro` with `run_logs/` re-mounted `:rw`, see below) |
-| Env | provider-key allowlist (`OPENAI_*`, `ANTHROPIC_*`, …) | full env minus a host-only denylist (`container_env`) — a run needs its session id, workspace name and run token too (the hub-wide tokens are never in it) |
-| Root filesystem | writable | `--read-only`, with `--tmpfs /tmp` for scratch space and `$HOME` |
-| Resources | none | `--memory` (`AGENT_DOCKER_MEMORY`, default `2g`), `--cpus` (`AGENT_DOCKER_CPUS`, default `2`), `--pids-limit 512` |
-| Capabilities | default | `--cap-drop ALL`, `--security-opt no-new-privileges` |
+| | Instance and run containers |
+|---|---|
+| Mounts | a tmpfs as the state root, `run_logs/` and `instance_logs/` read-write, the workspace at `/workspace`; a task run also its registry snapshot (`run_snapshots/<run_id>/`) read-only, named in `AGENTS_HUB_SNAPSHOT_DIR` |
+| Env | the run's environment minus host-only variables (`container_env`) and everything that reaches the hub's state directly (`remote_container_env`) |
+| Root filesystem | `--read-only`, with `--tmpfs /tmp` for scratch space and `$HOME` |
+| Resources | `--memory` (`AGENT_DOCKER_MEMORY`, default `2g`), `--cpus` (`AGENT_DOCKER_CPUS`, default `2`), `--pids-limit 512`; an environment's limits replace them |
+| Capabilities | `--cap-drop ALL`, `--security-opt no-new-privileges` |
 
-`managers/container_manager.build_run_command` builds the run profile's
-command line as a pure function (no daemon needed), which is what
-`tests/test_run_sandbox.py` asserts against.
+`managers/container_manager.build_run_command` builds the command line as a
+pure function (no daemon needed), which is what `tests/test_run_sandbox.py`
+asserts against. A restart of an instance stops its container and starts a new
+one, never `docker restart`: the old container would keep the profile,
+environment and token it was started with.
 
-## HTTP-only state transport
+## Run records over HTTP
 
-By default a run reaches the shared database (`agents_hub.db`, holding run
-records, tasks, sessions…) directly through `common/db.py`, the same as a
-local subprocess does: the state dir mount is read-write, and only the
-registry snapshot is pinned `:ro` on top.
+A task run's own records (its run record, the heavy process payload, the task
+result, parking on `ask_user` or a tool approval, finalizing the task) go
+through `common/state_transport.py`'s `HttpStateTransport` to
+`dashboard/backend/routes/run_state.py` (`/api/run-state/...`); in a container
+`AGENT_RUN_STATE_TRANSPORT` is always `http`. Each route handler calls the
+same `managers.run_manager` / `tasks.*` function a local run calls, including
+`finalize_task_from_run`, so an auto-retry, an auto-started review or a
+session continuation it triggers spawns from the hub, never from inside the
+container. Everything else the process reads or writes goes through the
+remote store calls above.
 
-The agent registry, the custom provider list and the model catalog live in
-the database, and a container is not handed the database just to read
-them: before the container starts, the launcher writes the three as JSON
-into `<state>/run_snapshots/<run_id>/` (`common/snapshot.py`,
-`write_snapshots`), mounts that directory read-only and points
-`AGENTS_HUB_SNAPSHOT_DIR` at it. Inside the container every registry
-serves the snapshot and refuses writes, so a run reads a frozen copy of its
-own definition and cannot change what the capability guard will allow it.
-A resident instance's container gets the same under its own snapshot
-directory; a registry edit reaches a running instance on its next restart. Snapshots of finished runs
-are removed by the maintenance sweep.
-
-Setting `AGENT_RUN_STATE_TRANSPORT=http` (env var, or `run_state_transport` in
-Settings; default `db` on SQLite, `http` when `AGENTS_HUB_DATABASE_URL` names
-a Postgres database, so a container is never handed the database password
-just to update its own record; see docs/scaling.md) closes that: `build_run_command` mounts the whole
-state dir `:ro` instead, with `run_logs/` re-mounted read-write on top so the
-run can still write its own log file directly. Everything else the run's own
-entrypoint (`runtime/agent_run.py`) needs to write, opening and closing its
-run record, the heavy process payload, persisting the task result, parking on
-`ask_user`/tool approval, finalizing the task, goes instead through
-`common/state_transport.py`'s `HttpStateTransport`, which posts to the
-backend's `dashboard/backend/routes/run_state.py` (`/api/run-state/...`,
-authenticated the same way `agents/callbacks/streaming.py`'s relay is:
-`AGENTS_HUB_API_TOKEN` via `common.auth.auth_headers()`). Each route handler
-calls the exact same `managers.run_manager` / `tasks.*` function the direct
-path calls, including `finalize_task_from_run`, so an auto-retry, an
-auto-started review or a session continuation it triggers spawns from the
-backend process, never from inside the run container. Host/port resolution
-mirrors that same relay: `DASHBOARD_PORT` (default `8000`) on `localhost`,
-rewritten to `host.docker.internal` by `common.hostnet.host_service_url` when
-the caller is itself containerized.
-
-Left outside this transport, so a run still needs *some* writable path to the
-state dir for them: the log tee below (writes the file directly, no HTTP
-equivalent), and anything a tool does through memory pools or session storage.
-Those are unaffected by this setting and keep reading/writing `.agents_hub`
-directly, mounted read-only or not; a tool that touches them inside an
-`http`-transport run still needs the state dir writable for that path, which
-this mode does not provide. `db` (the default) remains the fully-capable mode.
+The agent registry, the custom provider list and the model catalog are also
+written as JSON into `<state>/run_snapshots/<run_id>/` for a task run
+(`common/snapshot.py`), mounted read-only, so the run reads a frozen copy of
+its own definition. Snapshots of finished runs are removed by the maintenance
+sweep.
 
 ## Delegation from a container
 
@@ -201,10 +194,7 @@ launches a run from the dashboard: in its own container with its own limits
 and environment, or onto the run queue for a worker in the `api` role
 (docs/workers.md). Nothing is spawned inside the delegating container, whose
 environment is forced to `AGENT_EXECUTION_MODE=local` and has neither the
-Docker CLI nor the socket; before this the delegate ran there as a bare
-subprocess sharing the parent's cgroup, network and read-only root, and
-under the `http` transport could not be launched at all, since the subtask
-row could not be written. While it waits, the tool polls
+Docker CLI nor the socket. While it waits, the tool polls
 `GET /api/run-state/tasks/<id>/delegation` and reads its own parent's status
 from `GET /api/run-state/runs/<id>`; a parent stopped meanwhile stops the
 child through `POST /api/run-state/runs/<id>/stop`. The child is attributed
@@ -327,9 +317,10 @@ refused combination survivable.
 
 The build check honours it only in a process stamped
 `AGENTS_HUB_RUN_NETWORK=none`, that is a background run whose container was
-started with no network. A chat turn is built on the hub, so the same agent is
-refused there even with `docker` mode and `AGENT_DOCKER_NETWORK=none`; the
-agent editor's hint answers for background runs.
+started with no network. A chat turn is built in an instance of the
+workspace's runner, whose container needs the network to reach the hub, so
+the same agent is refused there; the agent editor's hint answers for
+background runs.
 
 ## Gotchas
 

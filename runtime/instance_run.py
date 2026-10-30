@@ -58,6 +58,7 @@ from typing import Any, Dict, Optional, Set
 from uuid import uuid4
 
 from common.paths import PROJECT_ROOT, PROJECTS_FILE
+from common.remote_state import TokenRefused
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -731,7 +732,10 @@ class InstanceLoop:
         # turns (each naming its own agent) and never tasks.
         self.agent_id = (agent_id or "").strip()
         self.workspace = workspace
-        self.scope = normalize_workspace_name(workspace) or "default"
+        # The workspace's name as the carrier was given it: in a container the
+        # folder is mounted at /workspace, whose own name says nothing.
+        self.scope = (normalize_workspace_name(os.environ.get("AGENT_WORKSPACE"))
+                      or normalize_workspace_name(workspace) or "default")
         self.pool = ThreadPoolExecutor(max_workers=carrier.MAX_CONCURRENCY,
                                        thread_name_prefix="instance-run")
         self.busy: Dict[Future, Optional[str]] = {}
@@ -838,6 +842,9 @@ class InstanceLoop:
                     time.sleep(min(timeout, wake.poll_seconds()))
                 else:
                     wake.wait(self.instance_id, timeout)
+            except TokenRefused as exc:
+                _stop_refused(exc)
+                return
             except Exception as exc:  # noqa: BLE001 - the loop survives one bad iteration
                 log(f"Loop error: {exc}\n{traceback.format_exc()}")
                 time.sleep(1.0)
@@ -845,7 +852,14 @@ class InstanceLoop:
     def _heartbeat(self) -> None:
         from instances import carrier, store
         while not _stopping.wait(HEARTBEAT_SECONDS):
-            carrier.heartbeat(self.instance_id, **_build_counts())
+            try:
+                carrier.heartbeat(self.instance_id, **_build_counts())
+            except TokenRefused as exc:
+                _stop_refused(exc)
+                return
+            except Exception:  # noqa: BLE001 - the hub is away for a moment; the next beat retries
+                _logger.debug("heartbeat of %s failed", self.instance_id, exc_info=True)
+                continue
             try:
                 inst = store.get(self.instance_id) or {}
             except Exception:  # noqa: BLE001 - a transient read; the next heartbeat retries
@@ -856,6 +870,18 @@ class InstanceLoop:
                 log(f"Stop requested through the instance record: {inst.get('stop_reason') or 'no reason given'}")
                 os.kill(os.getpid(), signal.SIGTERM)
                 return
+
+
+def _stop_refused(exc: Exception) -> None:
+    """The hub refused this carrier's token (common/remote_state.py
+    TokenRefused): it wrote the carrier off or replaced it, so this process
+    stops instead of running on beside its successor. It cannot record its
+    own stop any more; the hub already did."""
+    if _stopping.is_set():
+        return
+    _stopping.set()
+    log(f"Stopping: {exc}; the hub has written this carrier off")
+    os._exit(0)
 
 
 def _build_counts() -> Dict[str, Any]:

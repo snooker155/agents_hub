@@ -295,6 +295,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:  # noqa: BLE001 - the hub starts without sync; logged
             log.warning(f"⚠ Could not start sync: {e}")
 
+    # Agent containers call this API back (common/remote_state.py): a
+    # containerized backend joins the agents-hub network under the alias they
+    # use (managers/container_manager.py container_hub_url), off the event loop.
+    if hub_role() != "worker":
+        try:
+            from managers.container_manager import join_agent_network_as_hub
+            await asyncio.to_thread(join_agent_network_as_hub)
+        except Exception as e:  # noqa: BLE001 - containers then reach the hub only through a set address
+            log.warning(f"⚠ Could not join the agents network: {e}")
+
     # The service supervisor (services/supervisor.py): keeps every service's
     # replicas at its desired state, and the default runner warm, so a chat
     # turn never waits for a process to boot. A worker serves no chat and

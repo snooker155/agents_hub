@@ -186,3 +186,66 @@ def test_a_stop_written_on_the_record_reaches_the_carrier(acme, tmp_path):
     _carry(tmp_path, acme, iid, "swe_agent", stopped)
     after = store.get(iid)
     assert after.get("stop_requested_at") in (None, ""), after
+
+
+def test_a_written_off_carrier_stops_itself(acme, tmp_path):
+    """The hub writes a carrier off after 120 s without a heartbeat (it may
+    only have lost the hub during a backend restart) and retires its token;
+    the carrier, refused, stops instead of running on beside its successor."""
+    from instances import carrier, store
+    inst = _resident()
+    iid = inst["instance_id"]
+    log_path = tmp_path / "carrier.log"
+    from remote_harness import start_child
+    with hub_server() as hub:
+        token = run_tokens.mint(kind="instance", instance_id=iid, workspace="acme")
+        env = child_env(hub["url"], token, workspace="acme", root=tmp_path / "child",
+                        extra={"AGENT_INSTANCE_ID": iid, "AGENTS_HUB_INSTANCE_POLL_SECONDS": "0.2",
+                               "AGENTS_HUB_INSTANCE_HEARTBEAT_SECONDS": "1"})
+        proc = start_child(["runtime.instance_run", "--instance-id", iid, "--agent-id", "swe_agent",
+                            "--workspace", str(acme)], env, log_path)
+        try:
+            wait_for(lambda: (store.get(iid) or {}).get("heartbeat_at"), proc=proc)
+            # Written off the way carrier.sync does it for a carrier on another host.
+            store.update(iid, carrier_host="elsewhere",
+                         heartbeat_at="2026-01-01T00:00:00+00:00", carrier_status="running")
+            carrier.sync(store.get(iid))
+            run_tokens._cache.clear()
+            proc.wait(timeout=60)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+    text = log_path.read_text(encoding="utf-8")
+    assert proc.returncode == 0, text[-3000:]
+    assert "written this carrier off" in text, text[-3000:]
+    assert store.get(iid)["carrier_status"] == "stopped"
+
+
+def test_a_chat_turn_with_personal_memory_and_skills_needs_no_database(acme, tmp_path):
+    """What every real chat turn of the main agent builds and the scenarios
+    above did not: the user's personal memory pool (made on first use) and
+    the catalog of the agent's skills."""
+    from chat.models import ChatRequest
+    from instances import replies, store
+    from memory import personal
+    from memory.procedural import Procedure, ProcedureStore
+    from memory.store import MemoryStore
+    from services.routing import TURN_AGENT, dispatch_turn
+    personal.set_workspace_enabled("acme", True)
+    personal.set_agent("swe_agent", "acme", True)
+    ProcedureStore("acme").add(Procedure(name="brew tea", description="how to brew tea",
+                                         steps=["boil", "steep"], agent_id="swe_agent",
+                                         workspace="acme"))
+    runner = _resident("runner", kind=store.RUNNER_KIND)
+    request = ChatRequest(agent_id="swe_agent", message="hello", workspace="acme",
+                          conversation_id="conv-memory")
+    _svc, _rep, msg_id = dispatch_turn(request, TURN_AGENT, replica=runner)
+
+    def answered():
+        reply = replies.reply_for(msg_id)
+        return reply if reply and reply["status"] in ("completed", "failed") else None
+
+    _carry(tmp_path, acme, runner["instance_id"], "", answered)
+    assert replies.reply_for(msg_id)["status"] == "completed"
+    pool = MemoryStore().get(personal.pool_id("local", "acme"))
+    assert pool is not None and pool.workspace == "acme"

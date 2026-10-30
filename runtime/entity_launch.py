@@ -166,10 +166,9 @@ def launcher_for(kind: str) -> Callable[[Dict[str, Any]], None]:
 def execution_mode_for(workspace: Optional[str]) -> str:
     """``docker`` when the workspace (or the installation) runs agents in
     containers, else ``local``: the same rule agent_launcher.prepare_run
-    applies to a task run (common.config.agent_execution_mode), except where a
-    container must not open the database (Docker Desktop with SQLite, see
-    managers.container_manager.db_shared_with_containers): a team, flow or
-    loop process opens it itself, so there it runs on the hub."""
+    applies to a task run (common.config.run_execution_mode). In a container
+    the process has no database and reaches its state through the hub
+    (common/remote_state.py)."""
     from common.config import run_execution_mode
     return run_execution_mode(workspace)
 
@@ -293,14 +292,6 @@ def _mount_dir(ws_path: Any) -> Optional[str]:
     return str(path)
 
 
-def _container_may_run(spec: Dict[str, Any]) -> bool:
-    """Whether this entity run may go into a container. Its process reads and
-    writes its records in the database directly, so only where a container
-    can share the database (managers.container_manager.db_shared_with_containers)."""
-    from managers.container_manager import db_shared_with_containers
-    return db_shared_with_containers()
-
-
 def launch_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
     """The process half of an entity launch: spawn the entrypoint on this
     host, locally or in a container, and record on the run where it lives.
@@ -320,14 +311,6 @@ def launch_prepared(spec: Dict[str, Any]) -> Dict[str, Any]:
     if isolation.is_isolated(spec.get("workspace")):
         mode = "local"
     host = socket.gethostname()
-    if mode == "docker" and not _container_may_run(spec):
-        # A team, flow or loop process opens the database itself (it has no
-        # http relay), which a container must not do here: it runs on the hub.
-        mode = "local"
-        spec["header"] = (f"{spec.get('header') or 'Run started'} on the hub: docker mode runs "
-                          "teams, flows and loops in a container only where the container can "
-                          "share the database (a Linux host with local state)")
-
     if mode == "docker":
         result = spawn_docker(spec, env)
         if not result.get("ok", True) or result.get("error"):

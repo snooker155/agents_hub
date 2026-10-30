@@ -464,7 +464,7 @@ export function ExecutionModeSection({ s }) {
         <p className="text-xs text-gray-500 mb-2">
           <strong>{t('settings.local')}</strong> {t('settings.agentsRunAsSubprocesses')} <strong>{t('settings.docker')}</strong> {t('settings.agentsRunInDocker')}
         </p>
-        <p className="text-xs text-gray-500 mb-2">{t('settings.dockerSqliteNote')}</p>
+        <p className="text-xs text-gray-500 mb-2">{t('settings.dockerStateNote')}</p>
         <div className="flex gap-4">
           {['local', 'docker'].map(mode => (
             <label key={mode} className="flex items-center gap-2 cursor-pointer">

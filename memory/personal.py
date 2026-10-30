@@ -44,6 +44,8 @@ import threading
 import uuid
 from typing import Any, Dict, Optional
 
+from common import remote_state
+
 log = logging.getLogger(__name__)
 
 PERSONAL_KIND = "personal"
@@ -190,6 +192,7 @@ def pool_id(user_id: str, workspace: str) -> str:
     return str(uuid.uuid5(_NAMESPACE, f"{user_id}\x1f{workspace}"))
 
 
+@remote_state.hub_call("global")
 def _display_name(user_id: str) -> str:
     try:
         from common import identity

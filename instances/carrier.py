@@ -188,9 +188,8 @@ def _environment_fields(workspace: Optional[str], environment_id: Optional[str])
 
 def _execution_mode(workspace: Optional[str], env_fields: Optional[Dict[str, Any]] = None) -> str:
     """Workspace override, else the live setting; an environment pins it.
-    Local where a container must not open the database (Docker Desktop with
-    SQLite, common.config.run_execution_mode): an instance process reads and
-    writes its records there directly."""
+    In docker the carrier gets a container of its own with no database
+    (common/remote_state.py); an isolated workspace keeps it local."""
     from common.config import run_execution_mode
     mode = run_execution_mode(workspace)
     if (env_fields or {}).get("execution_mode") in ("local", "docker"):
@@ -439,14 +438,16 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     # reaches only the relay routes (common/run_tokens.py), never the shared
     # API token or the service credential the copied environment may hold. A
     # restart retires the previous carrier's token.
+    mode = _execution_mode(workspace, env_fields)
     from common import run_tokens
     run_tokens.retire_for_instance(instance_id)
+    # A carrier in a container has no database: the token is how it reaches
+    # its state at all (common/remote_state.py), so it gets one in every mode.
     run_tokens.mint_for_env(env, kind="instance", instance_id=instance_id,
-                            workspace=env["AGENT_WORKSPACE"])
+                            workspace=env["AGENT_WORKSPACE"], always=(mode == "docker"))
     env[registry.ENV_INSTANCE_ID] = instance_id
     env_vars: Dict[str, str] = {str(k): str(v) for k, v in (env_fields.get("env") or {}).items()}
     env.update(env_vars)
-    mode = _execution_mode(workspace, env_fields)
 
     pid: Optional[int] = None
     container_name: Optional[str] = None
@@ -484,16 +485,16 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     registry.ensure_instance(agent_id or "", instance_id=instance_id, state="starting")
 
     if mode == "docker":
-        from managers.container_manager import container_name_for_node, start_node_container
+        from managers.container_manager import container_name_for_node, start_instance_container
         container_name = container_name_for_node(instance_id)
         kwargs: Dict[str, Any] = {}
         if env_fields.get("docker"):
             kwargs["options"] = env_fields["docker"]
         if env_vars:
             kwargs["extra_env"] = env_vars
-        result = start_node_container(
-            instance_id, agent_id or "runner", inner_cmd + ["--write-stdout-to-log"], workspace, env,
-            **kwargs,
+        result = start_instance_container(
+            instance_id, agent_id or "runner", inner_cmd + ["--write-stdout-to-log"],
+            _abs_workspace(workspace), env, **kwargs,
         )
         if not result.get("success"):
             raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")
@@ -610,6 +611,12 @@ def sync(instance: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     else:
         reason = (f"no heartbeat for over 120 s from {instance.get('carrier_host') or 'its host'}: "
                   "the carrier or the worker it ran on is gone")
+        # It may only have lost the hub for a while (a backend restart). Its
+        # token goes now, so a carrier that comes back is refused and stops
+        # itself (runtime/instance_run.py) instead of running on beside the
+        # instance the supervisor starts in its place.
+        from common import run_tokens
+        run_tokens.retire_for_instance(instance["instance_id"], grace=0)
     updated = update_from_process(instance["instance_id"], "stopped", exit_code=-1, error=reason)
     fail_in_progress_runs(instance["instance_id"], reason)
     return updated or instance
@@ -796,22 +803,9 @@ def restart(instance_id: str) -> Optional[Dict[str, Any]]:
     if not _carried_here(instance) and instance.get("carrier_status") in LIVE_CARRIER_STATUSES:
         return None
     append_log(instance, "[carrier_restart] requested")
-    # In place only while docker mode still applies: an instance started in a
-    # container before the database could no longer be shared with one
-    # (Docker Desktop, see _execution_mode) is stopped and respawned locally.
-    if (instance.get("carrier_mode") == "docker" and instance.get("container_name")
-            and instance.get("carrier_status") in LIVE_CARRIER_STATUSES
-            and _execution_mode(instance.get("workspace")) == "docker"):
-        from managers.container_manager import restart_container
-        store.update(instance_id, carrier_status="starting", state="starting")
-        _close_carrier(instance_id, error="restarted")
-        if not restart_container(instance["container_name"]):
-            update_from_process(instance_id, "failed", error="docker restart failed")
-            return store.get(instance_id)
-        fail_in_progress_runs(instance_id, "Instance was restarted")
-        current = store.get(instance_id) or instance
-        _open_carrier(current, "restart")
-        return current
+    # Never in place (docker restart): the container would keep the profile,
+    # environment and token it was started with, a container left from an
+    # older hub its state mount among them. Stopped and started afresh.
     if instance.get("carrier_status") in LIVE_CARRIER_STATUSES:
         stop(instance_id, reason="restart")
     current = store.get(instance_id) or instance

@@ -16,7 +16,7 @@ from typing import Any, List, Optional
 import pytest
 
 from common import run_tokens
-from remote_harness import FAKE_ANSWER, audit_report, child_env, hub_server, misses, run_child
+from remote_harness import audit_report, child_env, hub_server, misses, run_child
 
 AUDIT = os.environ.get("REMOTE_AUDIT")
 

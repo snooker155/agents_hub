@@ -609,7 +609,7 @@ def launched(monkeypatch):
         calls["subprocess"].append(kwargs)
         return _FakeProc()
 
-    monkeypatch.setattr(cm, "start_node_container", _fake_start_node_container)
+    monkeypatch.setattr(cm, "start_instance_container", _fake_start_node_container)
     monkeypatch.setattr(carrier.subprocess, "Popen", _fake_popen)
     monkeypatch.setattr(cm, "container_running", lambda name: False)
     return calls

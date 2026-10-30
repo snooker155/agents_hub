@@ -112,6 +112,10 @@ REMOTE_MODULES: Tuple[str, ...] = (
     "managers.runs.lifecycle",
     "managers.runs.store",
     "managers.runs.task_finalize",
+    "memory.injection",
+    "memory.personal",
+    "memory.procedural",
+    "memory.store",
     "plans.service",
     "playground.store",
     "providers.catalog",
@@ -133,6 +137,12 @@ class RemoteStateError(RuntimeError):
 class RemoteCallError(RuntimeError):
     """The hub ran the function and it raised something that cannot be
     rebuilt on this side; the message names the original type."""
+
+
+class TokenRefused(RemoteStateError):
+    """The hub no longer accepts this process's run token: its run was closed
+    or its carrier written off (a restart, a stale heartbeat). The process
+    has nothing left to do and should stop."""
 
 
 class ScopeError(PermissionError):
@@ -248,7 +258,8 @@ def hub_call(scope: Union[ScopeRule, Tuple[str, ...]], *, cache_seconds: float =
     ``result_scope="workspace"`` filters a list the function returns down to
     the items of the token's workspace (an item's ``workspace`` attribute or
     key): for a listing with no workspace argument that callers on the hub
-    filter themselves.
+    filter themselves. ``"workspace_or_shared"`` also keeps items with no
+    workspace at all (a memory pool shared between workspaces).
 
     ``cache_seconds`` keeps a remote process's answer for that long, per
     arguments: for the reads a build repeats many times a second (a change
@@ -259,7 +270,7 @@ def hub_call(scope: Union[ScopeRule, Tuple[str, ...]], *, cache_seconds: float =
     for rule in rules:
         if isinstance(rule, str):
             _parse_scope(rule)  # a typo fails at import, not at the first remote call
-    if result_scope not in (None, "workspace"):
+    if result_scope not in (None, "workspace", "workspace_or_shared"):
         raise ValueError(f"unknown result_scope {result_scope!r}")
 
     def wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -384,11 +395,24 @@ def _parse_scope(scope: str) -> Tuple[str, bool, Optional[str]]:
 
 # ── scope checks (hub side) ──────────────────────────────────────────────────
 
-def _same_workspace(a: Optional[str], b: Optional[str]) -> bool:
+def _workspace_name_of(value: Optional[str]) -> Optional[str]:
+    """A workspace name, or the workspace a path under the workspaces root
+    belongs to (a project folder inside it included)."""
     from common.workspace_context import normalize_workspace_name
-    left = normalize_workspace_name(a) or "default"
-    right = normalize_workspace_name(b) or "default"
-    return left == right
+    raw = str(value).strip() if value is not None else ""
+    if raw.startswith("/"):
+        from common.paths import WORKSPACES_ROOT
+        try:
+            rel = Path(raw).resolve().relative_to(Path(WORKSPACES_ROOT).resolve())
+        except (ValueError, OSError):
+            rel = None
+        if rel is not None and rel.parts:
+            return rel.parts[0]
+    return normalize_workspace_name(raw or None)
+
+
+def _same_workspace(a: Optional[str], b: Optional[str]) -> bool:
+    return (_workspace_name_of(a) or "default") == (_workspace_name_of(b) or "default")
 
 
 #: What a resolver returns for a record that does not exist (None means the
@@ -486,6 +510,16 @@ def _default_resolvers() -> None:
         found = get_world(world_id)
         return MISSING if found is None else getattr(found, "workspace", None)
 
+    def pool(memory_id: str, token_ws: Optional[str] = None) -> Any:
+        from memory.store import MemoryStore
+        found = MemoryStore()._get(memory_id)
+        if found is None:
+            return MISSING
+        # A pool with no workspace is shared: any workspace's agents may be
+        # bound to it.
+        return getattr(found, "workspace", None) or token_ws
+
+    _RESOLVERS.setdefault("pool", pool)
     _RESOLVERS.setdefault("entity_run", entity_run)
     _RESOLVERS.setdefault("loop", loop)
     _RESOLVERS.setdefault("team", team)
@@ -569,12 +603,18 @@ def _item_workspace(item: Any) -> Any:
 def _filter_result(entry: Entry, token_row: Mapping[str, Any], result: Any) -> Any:
     """A list keeps the items of the token's workspace; a single record of
     another workspace becomes None (not found, as the tools say for it)."""
-    if entry.result_scope != "workspace" or result is None:
+    if entry.result_scope is None or result is None:
         return result
     token_ws = token_row.get("workspace")
+    shared_ok = entry.result_scope == "workspace_or_shared"
+
+    def keep(item: Any) -> bool:
+        ws = _item_workspace(item)
+        return (shared_ok and ws in (None, "")) or _same_workspace(ws, token_ws)
+
     if isinstance(result, list):
-        return [item for item in result if _same_workspace(_item_workspace(item), token_ws)]
-    return result if _same_workspace(_item_workspace(result), token_ws) else None
+        return [item for item in result if keep(item)]
+    return result if keep(result) else None
 
 
 def dispatch(token_row: Mapping[str, Any], payload: Mapping[str, Any]) -> Dict[str, Any]:
@@ -749,7 +789,7 @@ def _rebuild_error(error: Mapping[str, Any]) -> BaseException:
         try:
             return cls(message)
         except Exception:  # noqa: BLE001 - a constructor that wants more than a message
-            pass
+            log.debug("could not rebuild %s from its message", name, exc_info=True)
     return RemoteCallError(f"{name}: {message}")
 
 
@@ -799,6 +839,8 @@ def _post(payload: Dict[str, Any]) -> Dict[str, Any]:
                                     headers=auth_headers(), timeout=_timeout())
     except requests.RequestException as exc:
         raise RemoteStateError(f"the hub could not be reached for {payload.get('fn')}: {exc}") from exc
+    if resp.status_code == 401:
+        raise TokenRefused(f"{payload.get('fn')}: the hub no longer accepts this process's token")
     if resp.status_code == 403:
         raise ScopeError(_detail(resp) or f"{payload.get('fn')}: refused by the hub")
     if resp.status_code >= 400:
@@ -849,7 +891,28 @@ def forget_cached() -> None:
         _cache.clear()
 
 
+#: The workspace folder's mount point in an agent container, and the
+#: variable naming the folder as the hub sees it.
+CONTAINER_WORKSPACE = "/workspace"
+HOST_WORKSPACE_ENV = "AGENTS_HUB_HOST_WORKSPACE"
+
+
+def _hub_path(value: Any) -> Any:
+    """A path argument under the container's /workspace as the hub sees it
+    (the folder is mounted there; the hub knows it by its own path)."""
+    host = os.environ.get(HOST_WORKSPACE_ENV, "").strip()
+    if not host or not isinstance(value, (str, PurePath)):
+        return value
+    text = str(value)
+    if text != CONTAINER_WORKSPACE and not text.startswith(CONTAINER_WORKSPACE + "/"):
+        return value
+    out = host.rstrip("/") + text[len(CONTAINER_WORKSPACE):]
+    return Path(out) if isinstance(value, PurePath) else out
+
+
 def _client_call(key: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
+    args = tuple(_hub_path(a) for a in args)
+    kwargs = {k: _hub_path(v) for k, v in kwargs.items()}
     body = _post({"fn": key, "args": encode(list(args)), "kwargs": encode(kwargs)})
     if body.get("ok"):
         return decode(body.get("result"))
@@ -861,7 +924,7 @@ def _client_call(key: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any
 
 __all__ = [
     "CALL_PATH", "ENV", "Entry", "MISSING", "REMOTE_MODULES", "RemoteCallError",
-    "RemoteStateError", "ScopeError", "check_scope", "decode", "dispatch", "encode", "hub_call",
+    "RemoteStateError", "ScopeError", "TokenRefused", "check_scope", "decode", "dispatch", "encode", "hub_call",
     "forget_cached", "hub_side", "is_remote", "refuse_database", "register_resolver",
     "registered",
 ]

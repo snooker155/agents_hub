@@ -33,6 +33,21 @@ turns that section into the next release.
 
 ### Changed
 
+- In docker mode an agent runs entirely in its own container with no
+  database: task runs, every instance (one instance, one container), and team,
+  flow, loop and scenario runs. Its store calls go to the hub with its run
+  token (`POST /api/run-state/call`, common/remote_state.py), each checked
+  against the token's workspace; the container gets no database or broker
+  URL, no database password, no secrets key and no state mount (its log
+  folders only). Docker mode therefore works on Postgres and on Docker Desktop
+  too, where every run used to stay local. Containers reach the API at
+  `http://agents-hub-api:8000` in the compose stack (each backend replica joins
+  the `agents-hub` network under that alias), at the host gateway from a hub
+  on the host, or at `AGENTS_HUB_CONTAINER_HUB_URL`. Instances get the
+  hardened profile runs had (limits, read-only root, no capabilities), and a
+  restart starts a new container instead of `docker restart`. Local mode is
+  unchanged: a process next to the hub or on a worker that opens the database
+  itself (docs/containers.md, "No database in a container").
 - A runner the hub made for a personal workspace, or for an environment that
   is not its workspace's default, is kept only for when it is used: its
   minimum counts as 0, its instances stop once idle (`idle_stop_seconds`,

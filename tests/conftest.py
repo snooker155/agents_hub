@@ -149,6 +149,9 @@ def _fresh_database(db, path: Path) -> None:
 _PINNED_ENV = {
     "CAPABILITY_GUARD": ("capability_guard", "block"),
     "CAPABILITY_OVERRIDE_REQUIRES_CONTAINER": ("capability_override_requires_container", False),
+    # A developer's AGENT_EXECUTION_MODE=docker built ``settings.agent_mode``
+    # at import: every launch in the suite went to docker.
+    "AGENT_EXECUTION_MODE": ("agent_mode", "local"),
     # A developer's own browser service would answer the "not configured" tests.
     "AGENTS_HUB_BROWSER_URL": ("browser_url", ""),
     "AGENTS_HUB_BROWSER_TOKEN": ("browser_token", ""),

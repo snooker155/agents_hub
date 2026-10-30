@@ -160,18 +160,20 @@ def test_restart_keeps_the_instance_and_adds_a_carrier(fake_agent, fake_popen):
     assert [c["reason"] for c in carrier.carriers(iid)] == ["restart", "start"]
 
 
-def test_a_docker_instance_left_from_before_restarts_locally_on_docker_desktop(
-        fake_agent, fake_popen, monkeypatch):
-    """A live container carrier started before the database could no longer
-    be shared with containers is stopped and respawned on the hub, not
-    restarted in place (managers.container_manager.db_shared_with_containers)."""
-    monkeypatch.setattr("managers.container_manager.db_shared_with_containers", lambda: False)
+def test_a_docker_instance_restarts_in_a_new_container(fake_agent, fake_popen, monkeypatch):
+    """A restart stops the carrier's container and starts a new one, never
+    restarting it in place: one left from an older hub kept that hub's
+    profile (its state mount among it), environment and token."""
     monkeypatch.setattr("common.config.agent_execution_mode", lambda workspace=None: "docker")
     stopped: list = []
+    started: list = []
     monkeypatch.setattr("managers.container_manager.stop_container",
                         lambda name, timeout=15: stopped.append(name) or True)
     monkeypatch.setattr("managers.container_manager.restart_container",
                         lambda name, timeout=15: pytest.fail("restarted the container in place"))
+    monkeypatch.setattr("managers.container_manager.start_instance_container",
+                        lambda instance_id, agent_id, cmd, workspace=None, env=None, **kw:
+                        started.append(env) or {"success": True, "container_name": "agents-hub-node-y"})
     inst = _resident(container_name="agents-hub-node-x")
     inst = store.update(inst["instance_id"], carrier_mode="docker", pid=None)
     monkeypatch.setattr(carrier, "_carried_here", lambda instance: True)
@@ -180,7 +182,8 @@ def test_a_docker_instance_left_from_before_restarts_locally_on_docker_desktop(
     again = carrier.restart(inst["instance_id"])
 
     assert stopped == ["agents-hub-node-x"]
-    assert again["carrier_mode"] == "local" and again["pid"] == 424242
+    assert again["carrier_mode"] == "docker" and started
+    assert started[0].get("AGENTS_HUB_RUN_TOKEN", "").startswith("ahrun_")
 
 
 def test_remove_refuses_a_live_instance(monkeypatch):

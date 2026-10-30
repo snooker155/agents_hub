@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from common import remote_state
+
 log = logging.getLogger(__name__)
 
 # Marker appended to a block rendered past its character limit, so the agent can
@@ -45,6 +47,7 @@ def render_blocks(mem, *, header: str = "### Core memory blocks") -> List[str]:
     return lines
 
 
+@remote_state.hub_call(("workspace", "pool:personal_pool"))
 def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], workspace: str | None = None, episodic_write: bool = True, pool_override: Any = None, personal_pool: Optional[str] = None) -> Dict[str, Any]:
     """Wire memory tools into an agent definition and append a capability hint to its system prompt.
 

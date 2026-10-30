@@ -551,14 +551,9 @@ def _start_run_in_docker(
     docker_env = dict(env)
     docker_env["AGENT_LOG_FILE"] = f"{CONTAINER_STATE_DIR}/run_logs/{log_file.name}"
 
-    # How the container reaches its own run/task records: direct SQLite access
-    # by default (the state dir mount is read-write, same as always), or the
-    # HTTP relay when the operator opted into AGENT_RUN_STATE_TRANSPORT=http
-    # or when the container must not open the database at all (Docker Desktop:
-    # managers.container_manager.db_shared_with_containers). http is also what
-    # pins the state dir mount read-only for this run (see
-    # managers.container_manager.build_run_command). Resolved live, like
-    # AGENT_EXECUTION_MODE, so a Settings change applies to the next run.
+    # The container has no database: its run/task records go through the
+    # /api/run-state relay, every other store call through the hub as well
+    # (common/remote_state.py, managers.container_manager.remote_container_env).
     from managers.container_manager import container_state_transport
     docker_env["AGENT_RUN_STATE_TRANSPORT"] = container_state_transport()
 

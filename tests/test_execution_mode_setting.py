@@ -97,7 +97,7 @@ def launched(monkeypatch):
     class _FakeProc:
         pid = 4242
 
-    monkeypatch.setattr(cm, "start_node_container", _fake_start_node_container)
+    monkeypatch.setattr(cm, "start_instance_container", _fake_start_node_container)
     monkeypatch.setattr(
         carrier.subprocess, "Popen",
         lambda *a, **k: calls["subprocess"].append(a) or _FakeProc(),

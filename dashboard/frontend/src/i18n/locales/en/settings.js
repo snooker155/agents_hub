@@ -348,7 +348,7 @@ export default {
   streamingAgentOverrideBefore: 'workspace. A single agent can be set to always stream on the Behavior tab of its page, the',
   streamingAgentOverrideAfter: 'field of its record.',
   agentsRunInDocker: ': each agent is launched in a Docker container.',
-  dockerSqliteNote: 'Tasks, flows, teams, loops and instances run in containers only where the hub database can be shared with them: on Linux with the state on a local disk, or with the hub in Docker and its state on a volume (docker-compose.volume.yml). Elsewhere, such as Docker Desktop with the state in a Mac folder, they run locally: a shared folder does not keep SQLite\'s locks, and a container could destroy the database journal. Only the agents\' shell commands go into a container then, chat included.',
+  dockerStateNote: 'In Docker every task, flow, team, loop and instance gets a container of its own with no access to the hub\'s database: it reaches its state through the hub with a token of its own, on SQLite and Postgres alike. Local runs them as processes next to the hub (or on a worker) that open the database themselves.',
   logging: {
     title: 'Logging',
     intro: 'The level the backend process and every agent subprocess log at. A workspace override wins over the global .env value.',

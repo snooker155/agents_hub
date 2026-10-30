@@ -87,6 +87,7 @@ def start_run_container(
     from common import snapshot
     name = container_name_for_run(run_id)
     kwargs = options_to_kwargs(agent_id, options) if options else {}
+    env = _with_run_token(run_id, env)
     return start_container(
         container_name=name,
         agent_id=agent_id,
@@ -97,3 +98,16 @@ def start_run_container(
         snapshot_dir=str(snapshot.write_snapshots(run_id)),
         **kwargs,
     )
+
+
+def _with_run_token(run_id: str, env: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """``env`` with a run token in it. The container has no database, so the
+    token is how it reaches its state at all (common/remote_state.py); in
+    ``single`` mode, where a local run gets none, one is minted here."""
+    from common import run_tokens
+    out = dict(env or {})
+    if not out.get(run_tokens.ENV):
+        out[run_tokens.ENV] = run_tokens.mint(
+            run_id=run_id, session_id=out.get("AGENT_SESSION_ID") or None,
+            workspace=out.get("AGENT_WORKSPACE") or None)
+    return out

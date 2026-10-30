@@ -73,6 +73,18 @@ workers' last error.
 With no worker running, a carrier stays `queued`; in the `all` role the
 backend spawns it itself, as before.
 
+A worker is a thin launcher. In `docker` mode what it starts (a carrier or a
+one-shot run) is a container with no database: its process reaches its state
+through the API with its run token ([containers](containers.md), "No
+database in a container"), so the worker hands it neither the database URL
+nor the password. The containers call the API at the backend's alias on the
+`agents-hub` network (`http://agents-hub-api:8000`, joined by every backend
+replica at start); a worker on another machine sets
+`AGENTS_HUB_CONTAINER_HUB_URL` to an address its containers can reach. In
+`local` mode the worker spawns the process itself, next to it, and that
+process opens the database directly. Deployments without workers (the `all`
+role) need none of this: the backend starts the containers.
+
 ## Heartbeats instead of pids
 
 Every agent run and every entity run stamps `heartbeat_at` every `RUN_HEARTBEAT_SECONDS`

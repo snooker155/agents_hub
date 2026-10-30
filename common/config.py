@@ -900,19 +900,13 @@ def chat_execution() -> str:
 
 
 def run_execution_mode(workspace: Optional[str] = None) -> str:
-    """How a hub process that opens the database itself (a task run, an
-    instance, a team, flow or loop run) is launched: ``agent_execution_mode``,
-    except ``local`` where a container cannot share the SQLite database with
-    the hub (Docker Desktop on macOS or Windows, the hub on the host or not, see
-    managers.container_manager.db_shared_with_containers). Shell commands
-    (run_shell) follow ``agent_execution_mode`` alone: their container never
-    sees the database."""
-    mode = agent_execution_mode(workspace)
-    if mode == "docker":
-        from managers.container_manager import db_shared_with_containers
-        if not db_shared_with_containers():
-            return "local"
-    return mode
+    """How a hub process that runs an agent (a task run, an instance, a team,
+    flow, loop or scenario run) is launched: ``agent_execution_mode``. In
+    ``docker`` it gets a container of its own with no database: its store
+    calls go to the hub over HTTP (common/remote_state.py), so this holds on
+    Postgres and on Docker Desktop alike. ``local`` is a subprocess of the
+    backend or the worker that opens the database itself."""
+    return agent_execution_mode(workspace)
 
 
 def run_state_transport() -> str:

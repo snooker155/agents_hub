@@ -196,30 +196,22 @@ def test_run_command_omits_the_snapshot_mount_when_none_was_written(no_host_tran
     assert "run_snapshots" not in joined and "AGENTS_HUB_SNAPSHOT_DIR" not in joined
 
 
-def test_run_command_default_transport_mounts_state_dir_read_write(no_host_translation):
-    """AGENT_RUN_STATE_TRANSPORT unset (or "db"): unchanged from before the
-    http transport existed, the state dir mounts read-write."""
-    argv = _run_cmd()
-    assert "/host/.agents_hub:/app/.agents_hub" in argv
-    assert "/host/.agents_hub:/app/.agents_hub:ro" not in argv
-    assert "run_logs" not in " ".join(argv)
-
-
-def test_run_command_http_transport_mounts_state_dir_read_only(no_host_translation):
-    """AGENT_RUN_STATE_TRANSPORT=http: the state dir goes :ro wholesale, with
-    run_logs/ re-mounted :rw on top for the run's own log file. See
-    docs/containers.md and common/state_transport.py."""
-    argv = _run_cmd(env={
-        "OPENAI_API_KEY": "sk-test",
-        "HOST_PROJECT_ROOT": "/host",
-        "AGENT_RUN_STATE_TRANSPORT": "http",
-    })
-    joined = " ".join(argv)
-    assert "/host/.agents_hub:/app/.agents_hub:ro" in joined
-    assert "/host/.agents_hub/run_logs:/app/.agents_hub/run_logs" in joined
-    assert "/host/.agents_hub/run_logs:/app/.agents_hub/run_logs:ro" not in joined
-    # The read-only snapshot mount still applies.
-    assert "/host/.agents_hub/run_snapshots/r1:/app/.agents_hub/run_snapshots/r1:ro" in joined
+def test_run_command_mounts_no_state_dir_only_its_log_folders(no_host_translation):
+    """The container has no database (common/remote_state.py): the state dir
+    is not mounted at all, whatever AGENT_RUN_STATE_TRANSPORT says. A tmpfs
+    stands in for it, with the log folders read-write on top and the
+    registry snapshot read-only. See docs/containers.md."""
+    for transport in ("", "db", "http"):
+        argv = _run_cmd(env={"OPENAI_API_KEY": "sk-test", "HOST_PROJECT_ROOT": "/host",
+                             "AGENT_RUN_STATE_TRANSPORT": transport})
+        joined = " ".join(argv)
+        assert "/host/.agents_hub:/app/.agents_hub" not in joined
+        assert "/app/.agents_hub:rw,mode=1777" in argv
+        assert "/host/.agents_hub/run_logs:/app/.agents_hub/run_logs" in joined
+        assert "/host/.agents_hub/run_logs:/app/.agents_hub/run_logs:ro" not in joined
+        assert "/host/.agents_hub/instance_logs:/app/.agents_hub/instance_logs" in joined
+        assert "/host/.agents_hub/run_snapshots/r1:/app/.agents_hub/run_snapshots/r1:ro" in joined
+        assert "AGENT_RUN_STATE_TRANSPORT=http" in argv
     # The relay env var itself still reaches the container.
     assert "-e AGENT_RUN_STATE_TRANSPORT=http" in joined
 

@@ -102,6 +102,37 @@ CONTAINER_WORKSPACE_DIR = "/workspace"
 # the host's .env says what was asked for, not what this container got.
 RUN_NETWORK_ENV = "AGENTS_HUB_RUN_NETWORK"
 
+#: Folders of the state directory an agent container mounts read-write: its
+#: own log files, nothing else.
+LOG_DIRS = ("run_logs", "instance_logs")
+
+# An agent container (a run or an instance carrier) has no database: its store
+# calls go to the hub over HTTP with its run token (common/remote_state.py).
+REMOTE_STATE_ENV = "AGENTS_HUB_REMOTE_STATE"
+
+#: The address an agent container calls the hub at, when the defaults below do
+#: not fit (a worker on another host whose containers reach the API elsewhere).
+CONTAINER_HUB_URL_SETTING = "AGENTS_HUB_CONTAINER_HUB_URL"
+
+#: The name a containerized backend answers to on the agents-hub network
+#: (:func:`join_agent_network_as_hub`), so its agent containers reach it.
+HUB_NETWORK_ALIAS = "agents-hub-api"
+
+#: What an agent container never gets, whatever the host's environment holds:
+#: the hub's own database, broker and file store, the key that decrypts the
+#: secrets table, and the hub-wide credentials. Its process has none of them to
+#: open; everything it needs comes through the hub.
+_REMOTE_DROP_EXACT = frozenset({
+    "AGENTS_HUB_DATABASE_URL", "DATABASE_URL", "AGENTS_HUB_TEST_DATABASE_URL",
+    "AGENTS_HUB_BROKER_URL", "REDIS_URL",
+    "AGENTS_HUB_SECRET_KEY", "secret_key",
+    "AGENTS_HUB_API_TOKEN", "AGENTS_HUB_SERVICE_TOKEN", "AGENTS_HUB_API_KEY",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "AUTH_BOOTSTRAP_TOKEN",
+})
+_REMOTE_DROP_PREFIXES = ("POSTGRES_", "PG", "REDIS_", "AGENTS_HUB_BLOB_", "MINIO_", "AUTH_OIDC_",
+                         "AGENTS_HUB_SCIM_", "KC_", "KEYCLOAK_")
+
 # Resource limits for one-shot *run* containers only (nodes are unaffected —
 # they keep calling start_container with hardened=False, the default).
 DEFAULT_RUN_MEMORY = "2g"
@@ -334,6 +365,56 @@ def container_env(env: Dict[str, str]) -> Dict[str, str]:
     return out
 
 
+def remote_container_env(env: Dict[str, str]) -> Dict[str, str]:
+    """``env`` as an agent container gets it: :func:`container_env`, minus
+    every variable that would reach the hub's state directly
+    (:data:`_REMOTE_DROP_EXACT`), plus the remote state switch and the hub's
+    address as the container sees it."""
+    out = {k: v for k, v in container_env(env).items()
+           if k not in _REMOTE_DROP_EXACT and not k.startswith(_REMOTE_DROP_PREFIXES)}
+    out[REMOTE_STATE_ENV] = "1"
+    out["AGENTS_HUB_CALLBACK_URL"] = container_hub_url()
+    # Its own run and task records go through /api/run-state as well
+    # (common/state_transport.py).
+    out["AGENT_RUN_STATE_TRANSPORT"] = "http"
+    return out
+
+
+def container_hub_url() -> str:
+    """The hub's base URL from inside an agent container.
+
+    ``AGENTS_HUB_CONTAINER_HUB_URL`` when set (a worker on another machine,
+    whose containers reach the API at an address of the operator's choosing).
+    Else, from a containerized hub or worker (the compose stack), the backend's
+    alias on the agents-hub network (:func:`join_agent_network_as_hub`); from
+    a hub on the host, the host gateway alias every agent container gets.
+    """
+    from common.config import live_setting
+    explicit = (live_setting(CONTAINER_HUB_URL_SETTING, "") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    port = os.environ.get("DASHBOARD_PORT", "8000")
+    if _host_project_root():
+        return f"http://{HUB_NETWORK_ALIAS}:{port}"
+    return f"http://host.docker.internal:{port}"
+
+
+def join_agent_network_as_hub() -> bool:
+    """Put this containerized backend on the agents-hub network under
+    :data:`HUB_NETWORK_ALIAS`, so agent containers (started by it or by a
+    worker) reach its API there; called at the backend's start. A no-op for a
+    backend on the host, which its containers reach through the host gateway.
+    Never raises; True when it is there."""
+    if not _host_project_root():
+        return False
+    try:
+        get_or_create_network()
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.info("could not join %s as the hub: %s", NETWORK_NAME, exc)
+        return False
+    return True
+
+
 #: Trust-store variables a run routed through the egress proxy gets
 #: (environments/secret_egress.py). They name files under the state dir,
 #: which a run container has mounted at CONTAINER_STATE_DIR.
@@ -418,12 +499,9 @@ def db_shared_with_containers() -> bool:
 
 
 def container_state_transport() -> str:
-    """How a run container reaches its run and task records: the configured
-    ``AGENT_RUN_STATE_TRANSPORT``, or ``http`` (state dir mounted read-only,
-    records relayed through the backend) wherever the container must not open
-    the database itself (``db_shared_with_containers``)."""
-    from common.config import run_state_transport
-    return run_state_transport() if db_shared_with_containers() else "http"
+    """How a run container reaches its run and task records: always ``http``.
+    An agent container has no database (common/remote_state.py)."""
+    return "http"
 
 
 def agent_network() -> str:
@@ -575,11 +653,14 @@ def enforce_network_policy(
 def _attach_self_to_network() -> None:
     """Put our own container on the agents-hub network, if we are one.
 
-    A containerized backend starts agents on a network it is not itself on, and
-    then cannot reach the node HTTP servers it just started. Joining lazily,
-    here, rather than declaring the network in docker-compose.yml: this network
-    outlives any one compose project (a natively-run backend creates it too),
-    and compose refuses to adopt a network it did not create.
+    A containerized backend starts agents on a network it is not itself on,
+    and they call it back (common/remote_state.py): a backend joins under
+    :data:`HUB_NETWORK_ALIAS`, which every replica shares, so its containers
+    and a worker's reach the API by that name. A worker joins without it (it
+    serves no API). Joining lazily, here, rather than declaring the network
+    in docker-compose.yml: this network outlives any one compose project (a
+    natively-run backend creates it too), and compose refuses to adopt a
+    network it did not create.
     """
     if not _host_project_root():
         return  # not containerized; the host is already on every bridge
@@ -588,10 +669,26 @@ def _attach_self_to_network() -> None:
     me = socket.gethostname().strip()
     if not me:
         return
-    result = _run(["docker", "network", "connect", NETWORK_NAME, me], timeout=15)
+    from common.config import hub_role
+    alias = [] if hub_role() == "worker" else ["--alias", HUB_NETWORK_ALIAS]
+    result = _run(["docker", "network", "connect", *alias, NETWORK_NAME, me], timeout=15)
     err = (result.stderr or "")
-    if result.returncode != 0 and "already exists in network" not in err:
+    if result.returncode == 0:
+        return
+    if "already exists in network" not in err:
         logger.debug("could not join %s as %s: %s", NETWORK_NAME, me, err.strip())
+        return
+    if alias and not _has_alias(me):
+        # Joined by an older backend without the alias: join again with it.
+        _run(["docker", "network", "disconnect", NETWORK_NAME, me], timeout=15)
+        _run(["docker", "network", "connect", *alias, NETWORK_NAME, me], timeout=15)
+
+
+def _has_alias(container: str) -> bool:
+    result = _run(["docker", "inspect", "-f",
+                   "{{json (index .NetworkSettings.Networks \"" + NETWORK_NAME + "\").Aliases}}",
+                   container], timeout=15)
+    return HUB_NETWORK_ALIAS in (result.stdout or "")
 
 
 # ── Dockerfile generation ─────────────────────────────────────────────────────
@@ -1076,25 +1173,18 @@ def build_run_command(
         stays a pure command builder and does not know the difference.
       snapshot_dir, when given, is the registry snapshot the launcher wrote
         for this run (common/snapshot.py: agents.json, custom_providers.json,
-        models.json), re-mounted read-only *inside* the state dir mount and
-        named in AGENTS_HUB_SNAPSHOT_DIR, so the run reads its agent
-        definitions and provider credentials from a frozen copy and cannot
-        edit them, whatever the state dir mount allows. The state dir itself
-        mounts read-write, so a run can still write its own logs and run
-        records there, unless AGENT_RUN_STATE_TRANSPORT is "http" in
-        `env`, in which case the state dir is read-only wholesale (the run
-        reaches the database through the backend's /api/run-state routes
-        instead of opening it directly, see common/state_transport.py) and
-        only run_logs/ is re-mounted read-write on top, for the run's own log
-        file. The default ("db", direct SQLite access) mounts the state dir
-        read-write, unchanged from before this mode existed. See
+        models.json), mounted read-only and named in AGENTS_HUB_SNAPSHOT_DIR.
+      The state dir is not mounted at all: the process has no database and
+        reaches the hub's state over HTTP with its run token
+        (common/remote_state.py, :func:`remote_container_env`). A tmpfs
+        stands in for its state root; only the log folders (:data:`LOG_DIRS`)
+        are mounted read-write on top, for the process's own log file. See
         docs/containers.md.
     """
     from common.config import live_setting
     mem = memory or live_setting("AGENT_DOCKER_MEMORY", DEFAULT_RUN_MEMORY)
     cpu = cpus or live_setting("AGENT_DOCKER_CPUS", DEFAULT_RUN_CPUS)
     pids = pids_limit or DEFAULT_RUN_PIDS_LIMIT
-    http_transport = (env or {}).get("AGENT_RUN_STATE_TRANSPORT") == "http"
 
     docker_cmd = [
         "docker", "run",
@@ -1112,18 +1202,19 @@ def build_run_command(
         "--security-opt", "no-new-privileges",
         "--read-only",
         "--tmpfs", "/tmp",
+        # The state directory is not mounted: the process has no database and
+        # reaches the hub's state over HTTP (common/remote_state.py). What it
+        # writes under its own state root lives as long as the container.
+        "--tmpfs", f"{CONTAINER_STATE_DIR}:rw,mode=1777",
         *user_flags(),
-        *mount_flags(state_dir, CONTAINER_STATE_DIR, readonly=http_transport),
         *mount_flags(tasks_dir, CONTAINER_TASKS_DIR),
     ]
 
-    if http_transport:
-        # Re-mounted read-write on top of the now read-only state dir: the run
-        # still writes its own log file directly (the log tee in
-        # runtime/agent_run.py has no HTTP equivalent), everything else about
-        # its state goes through /api/run-state.
-        run_logs_dir = str(Path(state_dir) / "run_logs")
-        docker_cmd += mount_flags(run_logs_dir, f"{CONTAINER_STATE_DIR}/run_logs")
+    # Its log files are the only state it writes on the host: the log tee of
+    # runtime/agent_run.py and runtime/instance_run.py has no HTTP equivalent.
+    # (start_container makes the folders; this stays a pure command builder.)
+    for logs in LOG_DIRS:
+        docker_cmd += mount_flags(str(Path(state_dir) / logs), f"{CONTAINER_STATE_DIR}/{logs}")
 
     snapshot_in_container: Optional[str] = None
     if snapshot_dir:
@@ -1141,7 +1232,12 @@ def build_run_command(
     if network != "none":
         docker_cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
 
-    merged_env = container_env(dict(env or {}))
+    merged_env = remote_container_env(dict(env or {}))
+    if workspace:
+        # The folder at /workspace as the hub knows it: a store call naming a
+        # path under /workspace is sent with this path instead
+        # (common/remote_state.py _hub_path).
+        merged_env["AGENTS_HUB_HOST_WORKSPACE"] = str(workspace)
     if snapshot_in_container:
         merged_env[SNAPSHOT_DIR_ENV] = snapshot_in_container
     merged_env["AGENT_EXECUTION_MODE"] = "local"
@@ -1287,6 +1383,8 @@ def start_container(
     extra = extra_args or live_setting("AGENT_DOCKER_EXTRA_ARGS")
 
     if hardened:
+        for logs in LOG_DIRS:
+            (Path(state_dir) / logs).mkdir(parents=True, exist_ok=True)
         run_env = {**(env or {}), **(extra_env or {})} if extra_env else env
         network, run_env, _ = enforce_network_policy(network, run_env, None)
         docker_cmd = build_run_command(
@@ -1415,6 +1513,37 @@ def start_node_container(
         cmd=inner_cmd,
         workspace=workspace,
         env=env,
+        **kwargs,
+    )
+
+
+def start_instance_container(
+    instance_id: str,
+    agent_id: str,
+    inner_cmd: List[str],
+    workspace: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None,
+    options: Optional[Dict[str, Any]] = None,
+    extra_env: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """Start the container of one resident instance or service instance (its
+    carrier, runtime/instance_run.py): one instance, one container.
+
+    The hardened profile a run container gets (:func:`build_run_command`):
+    no database and no state mount, limits (the environment's, else the run
+    defaults), a read-only root, no capabilities. ``options`` is the docker
+    profile of the instance's environment (environments/launch.py) and
+    ``extra_env`` the variables it adds."""
+    kwargs: Dict[str, Any] = options_to_kwargs(agent_id, options) if options else {}
+    if extra_env:
+        kwargs["extra_env"] = dict(extra_env)
+    return start_container(
+        container_name=container_name_for_node(instance_id),
+        agent_id=agent_id,
+        cmd=inner_cmd,
+        workspace=workspace,
+        env=env,
+        hardened=True,
         **kwargs,
     )
 

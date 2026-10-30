@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Sequence
 from uuid import UUID
 
+from common import remote_state
 from common.docstore import DocStore
 from common.paths import SHARED_MEMORY_FILE
 
@@ -65,7 +66,12 @@ class MemoryStore:
         self.path = Path(path) if path else SHARED_MEMORY_FILE
         self.docs = DocStore("shared_memory", legacy_file=self.path, legacy_key=_record_key)
 
+    # In an agent container every read and write goes to the hub (module
+    # functions below, common/remote_state.py); on the hub they run here.
+
     def load(self, timeout: float = 10.0) -> List[SharedMemory]:
+        if remote_state.is_remote():
+            return _pools()
         return self._build(self.docs.values())
 
     @staticmethod
@@ -87,6 +93,9 @@ class MemoryStore:
         their own explicit row is the only one the write produces, rather
         than an extra generic ``update`` on top of it.
         """
+        if remote_state.is_remote():
+            # The whole collection, every workspace's pools: never from a container.
+            raise remote_state.RemoteStateError("replacing every memory pool is the hub's to do")
         if record_history:
             for mem in memories:
                 _record_history(self.get(mem.id), mem)
@@ -95,6 +104,11 @@ class MemoryStore:
             _mirror(mem)
 
     def get(self, memory_id: UUID | str, timeout: float = 10.0) -> Optional[SharedMemory]:
+        if remote_state.is_remote():
+            return _pool(str(memory_id))
+        return self._get(memory_id)
+
+    def _get(self, memory_id: UUID | str) -> Optional[SharedMemory]:
         doc = self.docs.get(str(memory_id))
         if doc is None:
             return None
@@ -105,6 +119,8 @@ class MemoryStore:
 
     def add(self, memory: SharedMemory, timeout: float = 10.0, *,
             record_history: bool = True) -> SharedMemory:
+        if remote_state.is_remote():
+            return _add_pool(memory, record_history=record_history)
         if record_history:
             _record_history(self.get(memory.id), memory)
         self.docs.put(str(memory.id), _model_to_dict(memory))
@@ -113,8 +129,33 @@ class MemoryStore:
 
     def delete(self, memory_id: UUID | str, timeout: float = 10.0, *,
               record_history: bool = True) -> bool:
+        if remote_state.is_remote():
+            return _delete_pool(str(memory_id), record_history=record_history)
         before = self.get(memory_id) if record_history else None
         deleted = self.docs.delete(str(memory_id))
         if record_history and deleted and before is not None:
             _record_history(before, None)
         return deleted
+
+
+# ── the hub's half of a container's calls ─────────────────────────────────────
+
+@remote_state.hub_call("global", result_scope="workspace_or_shared")
+def _pools() -> List[SharedMemory]:
+    """Every pool the token's workspace may see: its own and the shared ones."""
+    return MemoryStore().load()
+
+
+@remote_state.hub_call("pool:memory_id")
+def _pool(memory_id: str) -> Optional[SharedMemory]:
+    return MemoryStore()._get(memory_id)
+
+
+@remote_state.hub_call(("pool:memory.id", "workspace?:memory.workspace"))
+def _add_pool(memory: SharedMemory, *, record_history: bool = True) -> SharedMemory:
+    return MemoryStore().add(memory, record_history=record_history)
+
+
+@remote_state.hub_call("pool:memory_id")
+def _delete_pool(memory_id: str, *, record_history: bool = True) -> bool:
+    return MemoryStore().delete(memory_id, record_history=record_history)

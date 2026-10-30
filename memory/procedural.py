@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 
-from common import db
+from common import db, remote_state
 from common import review as review_mod
 from common.docstore import DocStore
 from common.paths import PROCEDURES_FILE as _PROCEDURES_FILE
@@ -186,9 +186,14 @@ class ProcedureStore:
     def __init__(self, workspace: str):
         self.workspace = workspace
         self.path = _PROCEDURES_FILE
-        ensure_agents_hub_root()
-        _migrate_legacy_files()
+        if not remote_state.is_remote():  # the hub's own files; a container has none
+            ensure_agents_hub_root()
+            _migrate_legacy_files()
         self.docs = DocStore("procedures", legacy_file=self.path, legacy_key=_record_key)
+
+    # In an agent container every read and write below goes to the hub
+    # (:func:`_procedures_op`, common/remote_state.py) with this store's
+    # workspace, which the hub checks against the run's.
 
     # ── unfiltered I/O (operates on the whole collection) ───────────────────
 
@@ -205,10 +210,14 @@ class ProcedureStore:
 
     def load(self, timeout: float = 10.0) -> List[Procedure]:
         """Return procedures belonging to this workspace."""
+        if remote_state.is_remote():
+            return _procedures_op(self.workspace, "load")
         return [p for p in self._load_all() if p.workspace == self.workspace]
 
     def save(self, procedures: Sequence[Procedure], timeout: float = 10.0) -> None:
         """Replace this workspace's procedures with the given list (other workspaces untouched)."""
+        if remote_state.is_remote():
+            return _procedures_op(self.workspace, "save", procedures)
         with self.docs.transaction():
             others = {
                 k: v for k, v in self.docs.all().items()
@@ -222,6 +231,8 @@ class ProcedureStore:
             self.docs.replace_all({**others, **stamped})
 
     def get(self, procedure_id: UUID | str, timeout: float = 10.0) -> Optional[Procedure]:
+        if remote_state.is_remote():
+            return _procedures_op(self.workspace, "get", procedure_id)
         doc = self.docs.get(str(procedure_id))
         if doc is None:
             return None
@@ -242,6 +253,9 @@ class ProcedureStore:
         already ``shared`` is held at ``in_review`` when the hub requires it,
         the same as a brand new shared agent or flow.
         """
+        if remote_state.is_remote():
+            return _procedures_op(self.workspace, "add", procedure,
+                                  version_op=version_op, version_note=version_note)
         from memory import skill_versions
 
         if procedure.workspace != self.workspace:
@@ -274,6 +288,9 @@ class ProcedureStore:
         skill moves it back to ``in_review``, using the same content fields
         (``skill_versions.CONTENT_FIELDS``) versioning already tracks.
         """
+        if remote_state.is_remote():
+            return _procedures_op(self.workspace, "update", procedure,
+                                  version_op=version_op, version_note=version_note)
         from memory import skill_versions
 
         pid = str(procedure.id)
@@ -317,6 +334,8 @@ class ProcedureStore:
             return True
 
     def delete(self, procedure_id: UUID | str, timeout: float = 10.0) -> bool:
+        if remote_state.is_remote():
+            return _procedures_op(self.workspace, "delete", procedure_id)
         from memory import skill_versions
 
         pid = str(procedure_id)
@@ -676,3 +695,16 @@ def create_skills_tools(agent_id: str, workspace: str) -> List[Any]:
     )
 
     return [list_skills_tool, get_skill_tool, create_skill_tool, read_skill_file_tool]
+
+
+#: What a container may ask of a workspace's procedure store.
+_REMOTE_PROCEDURE_OPS = frozenset({"load", "save", "get", "add", "update", "delete"})
+
+
+@remote_state.hub_call("workspace")
+def _procedures_op(workspace: str, op: str, *args: Any, **kwargs: Any) -> Any:
+    """The hub's half of a container's :class:`ProcedureStore` call: the
+    same method on the same workspace's store."""
+    if op not in _REMOTE_PROCEDURE_OPS:
+        raise ValueError(f"unknown procedure store operation {op!r}")
+    return getattr(ProcedureStore(workspace), op)(*args, **kwargs)
