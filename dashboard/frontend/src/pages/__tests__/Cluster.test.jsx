@@ -94,6 +94,22 @@ describe('Cluster map', () => {
     expect(screen.getAllByText('host-b').length).toBeGreaterThan(1);
   });
 
+  it('links each active run to its own page', async () => {
+    getCluster.mockImplementationOnce(() => ok({
+      ...MAP,
+      entity_runs: { counts_by_kind: { flow: 1 }, active: [
+        { run_id: 'flowrun-abcdef', kind: 'flow', entity_id: 'f-1', workspace: 'default', status: 'running' }] },
+      loops: [{ loop_run_id: 'lr-1', loop_id: 'nightly', workspace: 'default', iterations_done: 2 }],
+    }));
+    show();
+    await waitFor(() => expect(screen.getByText('run-1234')).toBeInTheDocument());
+    expect(screen.getByText('run-1234').closest('a')).toHaveAttribute('href', '/messages/run-1234-5678');
+    expect(screen.getByText('flowrun-').closest('a')).toHaveAttribute('href', '/flows/f-1/runs/flowrun-abcdef');
+    expect(screen.getByText('nightly').closest('a')).toHaveAttribute('href', '/loops/nightly/runs/lr-1');
+    // A queued item is not a run page yet.
+    expect(screen.getByText('run-queu').closest('a')).toBeNull();
+  });
+
   it('opens a member log and forgets only a member that is not live', async () => {
     show();
     await waitFor(() => expect(screen.getByLabelText('Status')).toBeInTheDocument());

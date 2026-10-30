@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { runLink } from '../components/runs/runLinks';
 import {
   AlertTriangle, Box, Cpu, Layers, RefreshCw, Repeat, ScrollText, Search, Server, Trash2, Waypoints, X,
 } from 'lucide-react';
@@ -168,6 +169,14 @@ function MemberLogModal({ member, onClose }) {
       </div>
     </div>
   );
+}
+
+/** A run's short id, linked to the run's own page when it has one. */
+function RunId({ run }) {
+  const short = String(run.run_id).slice(0, 8);
+  const to = runLink(run);
+  if (!to) return <span className="font-mono text-xs">{short}</span>;
+  return <Link to={to} title={String(run.run_id)} className="font-mono text-xs text-indigo-600 hover:underline">{short}</Link>;
 }
 
 export default function Cluster() {
@@ -411,7 +420,7 @@ export default function Cluster() {
               empty={t('cluster.noRuns')}
               rows={(map?.runs || []).map((r) => ({ ...r, key: r.run_id }))}
               columns={[
-                { key: 'run_id', label: 'run', render: (r) => <span className="font-mono text-xs">{String(r.run_id).slice(0, 8)}</span> },
+                { key: 'run_id', label: 'run', render: (r) => <RunId run={r} /> },
                 { key: 'agent_id', label: t('cluster.agent') },
                 { key: 'workspace', label: t('cluster.workspace') },
                 { key: 'status', label: t('cluster.status') },
@@ -444,7 +453,7 @@ export default function Cluster() {
                 empty={t('cluster.noEntityRuns', { defaultValue: 'No active flow, loop, team or scenario runs.' })}
                 rows={(map.entity_runs.active || []).map((r) => ({ ...r, key: r.run_id }))}
                 columns={[
-                  { key: 'run_id', label: 'run', render: (r) => <span className="font-mono text-xs">{String(r.run_id).slice(0, 8)}</span> },
+                  { key: 'run_id', label: 'run', render: (r) => <RunId run={r} /> },
                   { key: 'kind', label: t('cluster.queueKind') },
                   { key: 'workspace', label: t('cluster.workspace') },
                   { key: 'status', label: t('cluster.status') },
@@ -462,7 +471,10 @@ export default function Cluster() {
                 empty=""
                 rows={map.loops.map((l) => ({ ...l, key: l.loop_run_id }))}
                 columns={[
-                  { key: 'loop_id', label: t('cluster.loop') },
+                  { key: 'loop_id', label: t('cluster.loop'), render: (l) => {
+                    const to = runLink({ run_id: l.loop_run_id, kind: 'loop', entity_id: l.loop_id });
+                    return to ? <Link to={to} className="text-indigo-600 hover:underline">{l.loop_id}</Link> : l.loop_id;
+                  } },
                   { key: 'workspace', label: t('cluster.workspace') },
                   { key: 'iterations_done', label: t('cluster.iteration') },
                   { key: 'owner', label: t('cluster.owner'), render: (l) => <span className="font-mono text-xs">{l.owner || '—'}</span> },
@@ -520,8 +532,10 @@ export default function Cluster() {
                     if (c.owner_kind === 'instance' && c.owner_id) {
                       return <Link to={`/instances/${c.owner_id}`} className="text-indigo-600 hover:underline">{c.agent_id || c.owner_id}</Link>;
                     }
-                    if (c.owner_kind === 'run' && c.owner_id) {
-                      return <Link to={`/messages/${c.owner_id}`} className="text-indigo-600 hover:underline">{c.agent_id || c.owner_id}</Link>;
+                    const to = c.owner_id && runLink({
+                      run_id: c.owner_id, kind: c.owner_kind === 'run' ? '' : c.owner_kind, entity_id: c.agent_id });
+                    if (to) {
+                      return <Link to={to} className="text-indigo-600 hover:underline">{c.agent_id || c.owner_id}</Link>;
                     }
                     return c.agent_id || '—';
                   } },
