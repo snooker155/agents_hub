@@ -224,19 +224,21 @@ def prune(older_than_days: int = 7) -> int:
         return int(getattr(cur, "rowcount", 0) or 0)
 
 
-def mint_for_env(env: Dict[str, str], **fields: Any) -> Dict[str, str]:
+def mint_for_env(env: Dict[str, str], *, always: bool = False, **fields: Any) -> Dict[str, str]:
     """Put a fresh token into a child's ``env`` in place of every hub-wide
     credential, when the mode asks for credentials at all.
 
     The shared API token, the service credential and a personal API key are
     removed whatever the mode: none of them belongs in a process an agent's
-    tools run in. Returns ``env``.
+    tools run in. ``always`` mints in ``single`` mode too: a process with no
+    database (common/remote_state.py) needs the token to say which workspace
+    its store calls belong to. Returns ``env``.
     """
     for name in ("AGENTS_HUB_API_TOKEN", "AGENTS_HUB_SERVICE_TOKEN", "AGENTS_HUB_API_KEY", ENV):
         env.pop(name, None)
     try:
         from common.identity import SINGLE, current_mode
-        if current_mode() == SINGLE:
+        if current_mode() == SINGLE and not always:
             return env
         env[ENV] = mint(**fields)
     except Exception:  # noqa: BLE001 - a run without relays still runs; the failure is logged

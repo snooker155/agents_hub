@@ -67,6 +67,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from common.paths import AGENTS_HUB_ROOT, DB_FILE
+from common.remote_state import refuse_database
 
 log = logging.getLogger(__name__)
 
@@ -640,6 +641,10 @@ def get_conn() -> Any:
     A ``sqlite3.Connection`` or a :class:`PgConnection`; both take
     ``execute(sql, params)`` with ``?`` placeholders and return rows that
     answer to column names."""
+    # An agent process in a container has no database: its store calls go to
+    # the hub (common/remote_state.py), and one that was not routed there
+    # fails here instead of opening a file or a server it must not reach.
+    refuse_database()
     # One read of the thread-local holder: a test swapping ``_local`` between
     # two reads would pair the old database's connection with the new key.
     local = _local

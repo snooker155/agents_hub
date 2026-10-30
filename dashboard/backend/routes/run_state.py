@@ -380,3 +380,26 @@ async def stop_run_route(run_id: str, body: StopRunBody):
     from managers.run_manager import stop_run
 
     return {"ok": bool(stop_run(body.task_id, run_id))}
+
+
+# ── remote store calls ───────────────────────────────────────────────────────
+
+@router.post("/call")
+def remote_call_route(body: Dict[str, Any], request: Request):
+    """Run one store function for an agent process that has no database
+    (``common.remote_state``). Only a run token reaches this, in every auth
+    mode: the token says which workspace the call may touch, and the
+    function's scope rule is checked against it before it runs."""
+    from common import identity, remote_state, run_tokens
+
+    row = run_tokens.resolve(identity.presented_credential(request))
+    if row is None:
+        raise HTTPException(status_code=401, detail="a remote store call needs a run token")
+    try:
+        return remote_state.dispatch(row, body)
+    except remote_state.ScopeError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
