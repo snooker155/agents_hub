@@ -128,10 +128,18 @@ _REMOTE_DROP_EXACT = frozenset({
     "AGENTS_HUB_SECRET_KEY", "secret_key",
     "AGENTS_HUB_API_TOKEN", "AGENTS_HUB_SERVICE_TOKEN", "AGENTS_HUB_API_KEY",
     "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-    "AUTH_BOOTSTRAP_TOKEN",
+    "AUTH_BOOTSTRAP_TOKEN", "AGENTS_HUB_ROLE", "BACKEND_SERVERS",
 })
 _REMOTE_DROP_PREFIXES = ("POSTGRES_", "PG", "REDIS_", "AGENTS_HUB_BLOB_", "MINIO_", "AUTH_OIDC_",
-                         "AGENTS_HUB_SCIM_", "KC_", "KEYCLOAK_")
+                         "AGENTS_HUB_SCIM_", "KC_", "KEYCLOAK_",
+                         # Tracing and export run on the hub, where a run is closed
+                         # (managers/runs/store.py -> common/otel_export.py).
+                         "LANGFUSE_", "AGENTS_HUB_OTEL_", "OTEL_EXPORTER_",
+                         # The host's deployment, not the agent's business: a
+                         # container that read AGENTS_HUB_ROLE=worker took itself
+                         # for a worker.
+                         "COMPOSE_", "AGENTS_HUB_SETUP_", "AGENTS_HUB_WORKER_",
+                         "AGENTS_HUB_MODELS_TOKEN")
 
 # Resource limits for one-shot *run* containers only (nodes are unaffected —
 # they keep calling start_container with hardened=False, the default).

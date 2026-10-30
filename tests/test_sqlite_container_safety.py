@@ -134,9 +134,13 @@ def test_postgres_runs_go_into_containers_without_the_database(monkeypatch):
         "AGENTS_HUB_DATABASE_URL": "postgresql://hub:pw@postgres/hub", "POSTGRES_PASSWORD": "pw",
         "AGENTS_HUB_BROKER_URL": "redis://:pw@redis:6379/0", "AGENTS_HUB_SECRET_KEY": "k",
         "AGENTS_HUB_BLOB_SECRET": "s", "AWS_SECRET_ACCESS_KEY": "s", "OPENAI_API_KEY": "sk",
-        "AGENTS_HUB_RUN_TOKEN": "ahrun_x", "AGENT_WORKSPACE": "dev"})
+        "AGENTS_HUB_RUN_TOKEN": "ahrun_x", "AGENT_WORKSPACE": "dev",
+        "LANGFUSE_SECRET_KEY": "sk-lf", "OTEL_EXPORTER_OTLP_HEADERS": "authorization=x",
+        "AGENTS_HUB_ROLE": "worker", "COMPOSE_PROFILES": "ha"})
     for gone in ("AGENTS_HUB_DATABASE_URL", "POSTGRES_PASSWORD", "AGENTS_HUB_BROKER_URL",
-                 "AGENTS_HUB_SECRET_KEY", "AGENTS_HUB_BLOB_SECRET", "AWS_SECRET_ACCESS_KEY"):
+                 "AGENTS_HUB_SECRET_KEY", "AGENTS_HUB_BLOB_SECRET", "AWS_SECRET_ACCESS_KEY",
+                 "LANGFUSE_SECRET_KEY", "OTEL_EXPORTER_OTLP_HEADERS", "AGENTS_HUB_ROLE",
+                 "COMPOSE_PROFILES"):
         assert gone not in env, gone
     assert env["AGENTS_HUB_REMOTE_STATE"] == "1" and env["AGENT_RUN_STATE_TRANSPORT"] == "http"
     assert env["AGENTS_HUB_RUN_TOKEN"] == "ahrun_x" and env["AGENT_WORKSPACE"] == "dev"

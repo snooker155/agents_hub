@@ -430,11 +430,30 @@ async def model_gateway_route(scheme: str, host: str, path: str, request: Reques
             row.get("workspace"))
     except LookupError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    url = f"{scheme}://{host}/{path}" + (f"?{query}" if query else "")
-    headers = llm_gateway.forward_headers(request.headers.items(), auth)
     body = await asyncio.to_thread(llm_gateway.patch_body, host.lower(), await request.body(),
                                    row.get("workspace"))
+    kind = await asyncio.to_thread(llm_gateway.kind_of, host.lower(), row.get("workspace"))
     client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=20.0))
+    if kind == "browser":
+        # The service's own address as the hub reaches it (a container may know
+        # it by the host gateway), and only this workspace's sessions.
+        host = await asyncio.to_thread(llm_gateway.browser_target)
+        target = f"{scheme}://{host}"
+
+        def session_workspace(session_id: str):
+            import httpx as _httpx
+            resp = _httpx.get(f"{target}/sessions/{session_id}", headers=auth, timeout=15)
+            return (resp.json() or {}).get("workspace") if resp.status_code == 200 else None
+
+        try:
+            query, body = await asyncio.to_thread(
+                llm_gateway.guard_browser, request.method, path, query, body, row.get("workspace"),
+                session_workspace)
+        except PermissionError as exc:
+            await client.aclose()
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+    url = f"{scheme}://{host}/{path}" + (f"?{query}" if query else "")
+    headers = llm_gateway.forward_headers(request.headers.items(), auth)
     upstream = await client.send(client.build_request(request.method, url, headers=headers, content=body),
                                  stream=True)
 

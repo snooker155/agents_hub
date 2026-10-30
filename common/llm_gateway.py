@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
 
 log = logging.getLogger(__name__)
@@ -112,6 +112,8 @@ def provider_hosts(workspace: Optional[str] = None) -> Dict[str, Tuple[str, str]
                 out.setdefault(host, ("openai", ""))
         except Exception:  # noqa: BLE001 - the hub's own hosts still answer
             log.debug("workspace base URL unreadable", exc_info=True)
+    for host in _browser_netlocs():
+        out[host] = ("browser", "")
     try:
         from providers.registry import _stored_backends
         for backend in _stored_backends():
@@ -123,11 +125,32 @@ def provider_hosts(workspace: Optional[str] = None) -> Dict[str, Tuple[str, str]
     return out
 
 
+def _browser_netlocs() -> List[str]:
+    """The browser service as the hub reaches it, and as a container does
+    (its loopback address rewritten to the host gateway). Proxied wherever it
+    is: the token it takes opens every workspace's sessions."""
+    try:
+        from common.browser_service import configured_url
+        from common.hostnet import to_host_gateway
+        url = configured_url()
+    except Exception:  # noqa: BLE001 - no browser service configured
+        return []
+    if not url:
+        return []
+    return list(dict.fromkeys(h for h in (_netloc(url), _netloc(to_host_gateway(url))) if h))
+
+
+def browser_target() -> str:
+    """The browser service's address as the hub reaches it."""
+    from common.browser_service import configured_url
+    return _netloc(configured_url())
+
+
 def container_env(env: Mapping[str, str], workspace: Optional[str] = None) -> Dict[str, str]:
     """``env`` for an agent container: every provider key replaced by the
     reference the gateway resolves, the hosts to proxy named."""
     out = dict(env)
-    for name in PROVIDER_KEY_VARS:
+    for name in (*PROVIDER_KEY_VARS, "AGENTS_HUB_BROWSER_TOKEN"):
         if out.get(name):
             out[name] = SENTINEL
     out[HOSTS_ENV] = ",".join(sorted(provider_hosts(workspace)))
@@ -225,6 +248,9 @@ def resolve_auth(netloc: str, headers: Mapping[str, str], query: str,
         kind = "openai"
     elif kind in SEARCH_KINDS:
         key = _setting("web_search_api_key")
+    elif kind == "browser":
+        from common.browser_service import configured_token
+        key = configured_token()
     else:
         key = _workspace_key(kind, workspace)
     if not key:
@@ -259,6 +285,74 @@ def patch_body(netloc: str, body: bytes, workspace: Optional[str]) -> bytes:
         doc["api_key"] = _setting("web_search_api_key")
         return json.dumps(doc).encode("utf-8")
     return body
+
+
+def kind_of(netloc: str, workspace: Optional[str]) -> str:
+    return provider_hosts(workspace).get(netloc, ("", ""))[0]
+
+
+def browser_policy_floor(policy: Any, workspace: Optional[str]) -> Dict[str, Any]:
+    """A session policy a container sent, made no looser than its workspace's:
+    the workspace's own (isolated: read only, its site list), its denied hosts
+    added, its allow list intersected. The agent's own lists and the run's
+    environment, which only narrow it, are the container's to add."""
+    from common.workspace_context import _workspace_ctx
+    token = _workspace_ctx.set(workspace or "default")
+    try:
+        from tools.browser import isolated_session_policy, session_policy
+        from tools.web import intersect_domains, isolated_workspace
+        iso = isolated_workspace(workspace or "default")
+        if iso:
+            return isolated_session_policy(iso)
+        hub = session_policy()
+    finally:
+        _workspace_ctx.reset(token)
+    mine = dict(policy) if isinstance(policy, dict) else {}
+    deny = list(dict.fromkeys([*(hub.get("deny_domains") or []), *(mine.get("deny_domains") or [])]))
+    if hub.get("allowlist_enabled"):
+        hub_allow = list(hub.get("allow_domains") or [])
+        allow = (list(intersect_domains(mine.get("allow_domains") or [], hub_allow))
+                 if mine.get("allowlist_enabled") else hub_allow)
+        enabled = True
+    else:
+        allow, enabled = list(mine.get("allow_domains") or []), bool(mine.get("allowlist_enabled"))
+    out = {**mine, **{k: v for k, v in hub.items()
+                      if k not in ("deny_domains", "allow_domains", "allowlist_enabled")}}
+    out.update({"deny_domains": deny, "allow_domains": allow, "allowlist_enabled": enabled})
+    return out
+
+
+def guard_browser(method: str, path: str, query: str, body: bytes, workspace: Optional[str],
+                  session_workspace) -> Tuple[str, bytes]:
+    """``(query, body)`` of a container's browser service call, kept to its
+    workspace: a new session is its workspace's with the policy floor
+    applied, a listing names its workspace, a session it names must be one
+    of its workspace (``session_workspace(id)`` asks the service). Raises
+    PermissionError otherwise."""
+    import json
+    from urllib.parse import parse_qsl, urlencode
+    from common.remote_state import _same_workspace
+    parts = [p for p in path.strip("/").split("/") if p]
+    ws = workspace or "default"
+    if parts[:1] != ["sessions"]:
+        if parts in ([], ["healthz"]):
+            return query, body
+        raise PermissionError(f"/{path} is not a browser call an agent makes")
+    if len(parts) == 1:
+        if method == "POST":
+            try:
+                doc = json.loads(body or b"{}")
+            except ValueError as exc:
+                raise PermissionError("a session needs a JSON body") from exc
+            doc["workspace"] = ws
+            doc["policy"] = browser_policy_floor(doc.get("policy"), ws)
+            return query, json.dumps(doc).encode("utf-8")
+        pairs = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True) if k != "workspace"]
+        return urlencode([*pairs, ("workspace", ws)]), body
+    owner = session_workspace(parts[1])
+    if owner is None or not _same_workspace(owner, ws):
+        raise PermissionError(f"browser session {parts[1]} is not this run's workspace's")
+    return query, body
 
 
 #: Request headers never forwarded to the provider.

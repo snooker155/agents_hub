@@ -155,3 +155,46 @@ def test_a_compressed_answer_reaches_the_container_readable(acme, tmp_path, monk
         assert resp.status_code == 200 and resp.json() == {"ok": True}
     finally:
         server.should_exit = True
+
+
+def test_the_browser_service_is_kept_to_the_runs_workspace(acme, monkeypatch):
+    """The browser token opens every workspace's sessions: a container gets a
+    reference, and the hub keeps it to its own workspace's sessions with a
+    policy no looser than its workspace's."""
+    import json
+    monkeypatch.setenv("AGENTS_HUB_BROWSER_TOKEN", "browser-secret")
+    monkeypatch.setattr("common.browser_service.configured_url", lambda: "http://browser:3000")
+    monkeypatch.setattr("common.browser_service.configured_token", lambda: "browser-secret")
+    env = llm_gateway.container_env({"AGENTS_HUB_BROWSER_TOKEN": "browser-secret"})
+    assert env["AGENTS_HUB_BROWSER_TOKEN"] == llm_gateway.SENTINEL
+    assert "browser:3000" in env[llm_gateway.HOSTS_ENV]
+    auth, _ = llm_gateway.resolve_auth("browser:3000", {"x-api-key": "Bearer hub-gateway"}, "", "acme")
+    assert auth == {"authorization": "Bearer browser-secret"}
+
+    owners = {"mine": "acme", "theirs": "other"}
+    guard = llm_gateway.guard_browser
+    # A new session is the run's workspace's, whatever the body says.
+    _, body = guard("POST", "sessions", "", json.dumps({"workspace": "other", "policy": {}}).encode(),
+                    "acme", owners.get)
+    assert json.loads(body)["workspace"] == "acme"
+    # A listing names the run's workspace.
+    query, _ = guard("GET", "sessions", "workspace=other&run_id=r", b"", "acme", owners.get)
+    assert "workspace=acme" in query and "workspace=other" not in query
+    assert guard("GET", "sessions/mine/read", "", b"", "acme", owners.get)
+    with pytest.raises(PermissionError):
+        guard("POST", "sessions/theirs/navigate", "", b"{}", "acme", owners.get)
+    with pytest.raises(PermissionError):
+        guard("DELETE", "sessions/unknown", "", b"", "acme", owners.get)
+
+
+def test_a_session_policy_is_no_looser_than_the_workspace(acme, monkeypatch):
+    from workspace.storage import update_workspace_metadata
+    update_workspace_metadata("acme", {"settings": {"web_domain_policy_enabled": True,
+                                                    "web_allow_domains": ["example.com"],
+                                                    "web_deny_domains": ["evil.com"]}})
+    floor = llm_gateway.browser_policy_floor({"allowlist_enabled": False, "deny_domains": []}, "acme")
+    assert floor["allowlist_enabled"] is True and floor["allow_domains"] == ["example.com"]
+    assert "evil.com" in floor["deny_domains"]
+    narrower = llm_gateway.browser_policy_floor(
+        {"allowlist_enabled": True, "allow_domains": ["docs.example.com", "other.org"]}, "acme")
+    assert narrower["allow_domains"] == ["docs.example.com"]

@@ -92,8 +92,19 @@ hub's) and streams the answer back. Google models use the REST transport in a
 container so the gateway carries them. Web search goes the same way: through
 the model provider it searches on, or with `WEB_SEARCH_API_KEY` to Brave
 (`X-Subscription-Token`), Exa (`x-api-key`) or Tavily (`api_key` in the JSON
-body, put in by the hub). Answers reach the container decoded. Left in the
-container: the tracing keys and its own workspace's connector secrets.
+body, put in by the hub). Answers reach the container decoded.
+
+The browser service too: its token opens every workspace's sessions, so a
+container holds the reference and the hub keeps it to its own workspace. A new
+session is the run's workspace's, with a policy no looser than the
+workspace's (an isolated workspace's own, its denied hosts added, its allow
+list intersected); a listing names the run's workspace; a session named by id
+must be one of it.
+
+Tracing keys (Langfuse) and the OTLP export settings never reach a container:
+a run's spans are exported on the hub, where the run is closed. Neither does
+the host's deployment (`AGENTS_HUB_ROLE`, compose and setup variables). Left in
+the container: its own workspace's connector secrets.
 
 This is why docker mode works on Postgres and on Docker Desktop alike: SQLite's
 locks never have to cross the Docker Desktop VM, and the database password
