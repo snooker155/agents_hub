@@ -121,8 +121,12 @@ def test_a_compressed_answer_reaches_the_container_readable(acme, tmp_path, monk
     import gzip
     import json as _json
     from fastapi import FastAPI, Response
+    import socket
+    import threading
+    import time
+
+    import uvicorn
     from fastapi.testclient import TestClient
-    import uvicorn, threading, time, socket
 
     app = FastAPI()
 
