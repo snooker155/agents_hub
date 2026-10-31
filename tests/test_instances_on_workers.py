@@ -159,10 +159,11 @@ def test_a_child_that_reports_running_first_is_not_set_back_to_starting(fake_age
 def _carried_elsewhere(**fields):
     base = registry.ensure_instance("swe_agent", kind=store.RESIDENT_KIND, workspace="default", state="standby")
     now = datetime.now(timezone.utc).isoformat()
-    return store.update(base["instance_id"], carrier_status="running", carrier_mode="local",
-                        carrier_host="worker-b", pid=111, heartbeat_at=now, carrier_started_at=now,
-                        carrier_log_file=str(carrier.CARRIER_LOGS_DIR / f"instance_{base['instance_id']}.log"),
-                        **fields)
+    row = {"carrier_status": "running", "carrier_mode": "local", "carrier_host": "worker-b",
+           "pid": 111, "heartbeat_at": now, "carrier_started_at": now,
+           "carrier_log_file": str(carrier.CARRIER_LOGS_DIR / f"instance_{base['instance_id']}.log"),
+           **fields}
+    return store.update(base["instance_id"], **row)
 
 
 def test_a_stop_on_another_host_carries_its_reason_to_the_process(api_role):
@@ -194,3 +195,39 @@ def test_a_carrier_whose_heartbeat_stopped_is_closed_with_the_reason(api_role):
     synced = carrier.sync(store.get(inst["instance_id"]))
     assert synced["state"] == "stopped"
     assert "no heartbeat" in synced["last_activity"] and "worker-b" in synced["last_activity"]
+
+
+def _ago(seconds: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+
+
+def test_a_container_being_started_on_another_host_is_not_written_off(api_role):
+    # docker run on the worker, maybe pulling the image: no container yet
+    # and no heartbeat, but the worker beats while it starts it.
+    inst = _carried_elsewhere(carrier_status="starting", carrier_mode="docker", pid=None,
+                              heartbeat_at=None, carrier_started_at=_ago(300),
+                              container_name="agents-hub-node-x", spawn_beat_at=_ago(5))
+    assert carrier.process_alive(inst)
+    assert carrier.sync(store.get(inst["instance_id"]))["carrier_status"] == "starting"
+    # Its host stopped beating (the worker died mid-start): written off.
+    store.update(inst["instance_id"], spawn_beat_at=_ago(200))
+    synced = carrier.sync(store.get(inst["instance_id"]))
+    assert synced["state"] == "stopped" and "never reported in" in synced["last_activity"]
+
+
+def test_a_long_docker_run_leaves_the_carrier_its_heartbeat_window(api_role):
+    # Started 5 min ago, docker run just returned: the last spawn beat stands
+    # in for the heartbeat it has not sent yet.
+    inst = _carried_elsewhere(carrier_status="running", carrier_mode="docker", pid=None,
+                              heartbeat_at=None, carrier_started_at=_ago(300),
+                              container_name="agents-hub-node-x", spawn_beat_at=_ago(40))
+    assert carrier.process_alive(inst)
+
+
+def test_a_respawn_clears_the_previous_carriers_heartbeat(fake_agent, popen, api_role, monkeypatch):
+    inst = carrier.start("swe_agent", workspace="default")
+    store.update(inst["instance_id"], heartbeat_at=_ago(600))
+    _as_worker(monkeypatch).tick()
+    after = store.get(inst["instance_id"])
+    assert after.get("heartbeat_at") is None and after.get("spawn_beat_at")
+    assert carrier.process_alive({**after, "carrier_host": "worker-b"})

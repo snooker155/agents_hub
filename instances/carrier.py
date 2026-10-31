@@ -72,6 +72,10 @@ QUEUE_KIND = "instance"
 DEFER_SECONDS = 5.0
 #: How long a carrier being started may have no pid yet before it counts as dead.
 SPAWN_GRACE_SECONDS = 30.0
+#: How often the host starting a carrier says it still is (``spawn_beat_at``):
+#: a ``docker run`` that pulls its image takes minutes, and the instance must
+#: not be written off meanwhile by a hub that cannot see the host.
+SPAWN_BEAT_SECONDS = 10.0
 DEFAULT_CONCURRENCY = 4
 MAX_CONCURRENCY = 32
 CONNECTIONS_KEEP = 500
@@ -497,7 +501,32 @@ def _follow_container_start(instance: Dict[str, Any], container_name: str) -> No
     threading.Thread(target=follow, name=f"follow-{container_name}", daemon=True).start()
 
 
+class _spawn_beat:
+    """Stamp ``spawn_beat_at`` every :data:`SPAWN_BEAT_SECONDS` while the
+    carrier is being started here (:func:`process_alive` reads it)."""
+
+    def __init__(self, instance_id: str) -> None:
+        self.instance_id = instance_id
+        self.done = threading.Event()
+
+    def _beat(self) -> None:
+        while not self.done.wait(SPAWN_BEAT_SECONDS):
+            try:
+                store.update(self.instance_id, spawn_beat_at=_now())
+            except Exception:  # noqa: BLE001 - a missed beat only shortens the grace
+                log.debug("spawn beat failed for %s", self.instance_id, exc_info=True)
+
+    def __enter__(self) -> "_spawn_beat":
+        threading.Thread(target=self._beat, name=f"spawn-beat-{self.instance_id}",
+                         daemon=True).start()
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.done.set()
+
+
 def _spawn_carrier(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
+    from managers.container_manager import container_name_for_node
     instance_id = instance["instance_id"]
     agent_id = str(instance.get("agent_id") or "")
     workspace = instance.get("workspace")
@@ -564,7 +593,12 @@ def _spawn_carrier(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reas
         "carrier_error": None,
         "carrier_log_file": str(log_file),
         "pid": None,
-        "container_name": None,
+        # Named before docker run (the name is the instance's), so a hub
+        # reading the row meanwhile knows what to look for.
+        "container_name": container_name_for_node(instance_id) if mode == "docker" else None,
+        # The previous carrier's beat is not this one's.
+        "heartbeat_at": None,
+        "spawn_beat_at": now,
         "started_at": now,
         "finished_at": None,
         "error": None,
@@ -577,18 +611,19 @@ def _spawn_carrier(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reas
     _describe_launch(instance, env_fields, mode=mode, reason=reason)
 
     if mode == "docker":
-        from managers.container_manager import container_name_for_node, start_instance_container
+        from managers.container_manager import start_instance_container
         container_name = container_name_for_node(instance_id)
         kwargs: Dict[str, Any] = {}
         if env_fields.get("docker"):
             kwargs["options"] = env_fields["docker"]
         if env_vars:
             kwargs["extra_env"] = env_vars
-        result = start_instance_container(
-            instance_id, agent_id or "runner", inner_cmd + ["--write-stdout-to-log"],
-            _abs_workspace(workspace), env,
-            on_step=lambda msg: append_log(instance, f"[container] {msg}"), **kwargs,
-        )
+        with _spawn_beat(instance_id):
+            result = start_instance_container(
+                instance_id, agent_id or "runner", inner_cmd + ["--write-stdout-to-log"],
+                _abs_workspace(workspace), env,
+                on_step=lambda msg: append_log(instance, f"[container] {msg}"), **kwargs,
+            )
         if not result.get("success"):
             raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")
         image, stamp = code_version.container_stamp(container_name)
@@ -612,8 +647,13 @@ def _spawn_carrier(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reas
         pid = proc.pid
         append_log(instance, f"[process] pid {pid}: {' '.join(inner_cmd[:3])} in {PROJECT_ROOT}")
 
-    instance = store.update(instance_id, pid=pid, container_name=container_name) or {
-        **instance, "pid": pid, "container_name": container_name}
+    # The last spawn beat stands for the carrier until its own first
+    # heartbeat (_heartbeat_fresh): a long docker run must not leave it
+    # already overdue.
+    beat = _now()
+    instance = store.update(instance_id, pid=pid, container_name=container_name,
+                            spawn_beat_at=beat) or {
+        **instance, "pid": pid, "container_name": container_name, "spawn_beat_at": beat}
     _open_carrier(instance, reason)
     append_log(instance, f"[carrier_start] reason={reason} mode={mode} "
                          f"pid={pid or container_name or '-'} agent={agent_id} "
@@ -654,6 +694,12 @@ def process_alive(instance: Dict[str, Any]) -> bool:
     """
     if instance.get("carrier_status") == "queued":
         return _queued_launch_pending(str(instance.get("instance_id") or ""))
+    if (instance.get("carrier_status") == "starting" and instance.get("spawn_beat_at")
+            and _heartbeat_fresh({"heartbeat_at": instance.get("spawn_beat_at")},
+                                 stale_after=SPAWN_GRACE_SECONDS)):
+        # Its host is starting it (docker run, maybe pulling the image) or
+        # has just done so.
+        return True
     if instance.get("carrier_mode") == "docker" or instance.get("kind") == "container":
         cname = instance.get("container_name")
         if not cname:
@@ -675,7 +721,8 @@ def process_alive(instance: Dict[str, Any]) -> bool:
 
 
 def _heartbeat_fresh(instance: Dict[str, Any], stale_after: float = 120.0) -> bool:
-    ts = instance.get("heartbeat_at") or instance.get("carrier_started_at")
+    ts = (instance.get("heartbeat_at") or instance.get("spawn_beat_at")
+          or instance.get("carrier_started_at"))
     if not ts:
         return True
     try:
@@ -708,8 +755,15 @@ def sync(instance: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if _carried_here(instance):
         reason = "the carrier process exited without saying why"
     else:
-        reason = (f"no heartbeat for over 120 s from {instance.get('carrier_host') or 'its host'}: "
-                  "the carrier or the worker it ran on is gone")
+        host = instance.get('carrier_host') or 'its host'
+        if instance.get("heartbeat_at"):
+            reason = (f"no heartbeat for over 120 s from {host}: "
+                      "the carrier or the worker it ran on is gone")
+        else:
+            failed = instance.get("carrier_error")
+            reason = (f"the carrier on {host} never reported in: "
+                      + (f"its start failed ({failed})" if failed else
+                         "no heartbeat within 120 s of its start, see the start steps in its log"))
         # It may only have lost the hub for a while (a backend restart). Its
         # token goes now, so a carrier that comes back is refused and stops
         # itself (runtime/instance_run.py) instead of running on beside the

@@ -62,6 +62,9 @@ CLEARABLE = (
     "expose_token", "exposed_at", "inbound_secret",
     "carrier_error", "carrier_exit_code", "carrier_finished_at",
     "stop_requested_at", "stop_reason", "finished_at",
+    # A new carrier starts without the previous one's beat or image
+    # (instances/carrier.py _spawn_carrier).
+    "heartbeat_at", "spawn_beat_at", "carrier_image",
 )
 
 # How many terminal instances a workspace keeps in its listing before older ones
