@@ -37,7 +37,7 @@ export default {
   "projectDeployments": {
     "nav": "Projekt-Deployment",
     "title": "Ein Projekt deployen",
-    "lead": "Frontend und Backend eines Projekts können direkt im Hub laufen, mit einem Klick deployt oder durch den eigenen `deploy_project`-Werkzeugaufruf eines Agenten. Der Hub beobachtet die Dienste, startet einen abgestürzten neu und macht die App aus dem Dashboard, über einen externen Link und aus dem Browser des Agenten heraus erreichbar. Das alles lebt auf dem **Deploy**-Tab des Projekts; die Seite [Deployments](/deployments) listet alle deployten Apps des Arbeitsbereichs.",
+    "lead": "Frontend und Backend eines Projekts können direkt im Hub laufen, mit einem Klick deployt oder durch den eigenen `deploy_project`-Werkzeugaufruf eines Agenten. Der Hub beobachtet die Dienste, startet einen abgestürzten neu und macht die App aus dem Dashboard, über einen externen Link und aus dem Browser des Agenten heraus erreichbar. Das alles lebt auf dem **Deploy**-Tab des Projekts; die Seite [Projekte](/projects) listet alle deployten Apps des Arbeitsbereichs über den Projekten.",
     "s0": {
       "h": "Modi und Dienste",
       "p": "**Erkennen** schlägt Dienste anhand der Projektdateien vor: eine `package.json`, ein Python-Einstiegspunkt, eine `docker-compose.yml`, ein `Dockerfile` oder eine einfache `index.html`, jeder mit einer Art, einem Ordner, einem Port und seinen Installations- und Startbefehlen. **Konfigurieren** bearbeitet alles von Hand.",

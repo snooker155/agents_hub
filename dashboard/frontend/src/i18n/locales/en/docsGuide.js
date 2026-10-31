@@ -37,7 +37,7 @@ export default {
   "projectDeployments": {
     "nav": "Project deploy",
     "title": "Deploying a project",
-    "lead": "A project's frontend and backend can run inside the hub itself, deployed with one click or by an agent's own `deploy_project` tool call. The hub watches them, restarts a service that dies, and makes the app reachable from inside the dashboard, from an outside link, and from the agent's own browser. Everything lives on the project's **Deploy** tab; the [Deployments](/deployments) page lists every deployed app of the workspace.",
+    "lead": "A project's frontend and backend can run inside the hub itself, deployed with one click or by an agent's own `deploy_project` tool call. The hub watches them, restarts a service that dies, and makes the app reachable from inside the dashboard, from an outside link, and from the agent's own browser. Everything lives on the project's **Deploy** tab; the [Projects](/projects) page lists every deployed app of the workspace above the projects.",
     "s0": {
       "h": "Modes and services",
       "p": "**Detect** proposes services from the project's own files, a `package.json`, a Python entrypoint, a `docker-compose.yml`, a `Dockerfile` or a plain `index.html`, each with a kind, a folder, a port and its install and start commands. **Configure** edits everything by hand.",
