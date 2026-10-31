@@ -3,6 +3,7 @@ import ReactFlow, { Background, Controls, Handle, MarkerType, Position } from 'r
 import 'reactflow/dist/style.css';
 import { ScrollText, X } from 'lucide-react';
 import { useI18n } from '../../i18n';
+import { InfoHint } from '../PageLayout';
 
 /**
  * ServiceMap: the whole running service as one diagram.
@@ -385,8 +386,10 @@ export default function ServiceMap({ map, onViewLogs }) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm" data-testid="service-map">
-      <h3 className="text-sm font-bold text-gray-800 mb-1">{t('cluster.map.title')}</h3>
-      <p className="text-xs text-gray-400 mb-3">{t('cluster.map.hint')}</p>
+      <h3 className="text-sm font-bold text-gray-800 flex items-center gap-1 mb-3">
+        {t('cluster.map.title')}
+        <InfoHint text={t('cluster.map.hint')} label={t('common.info')} className="font-normal" />
+      </h3>
       <div className="h-[420px] sm:h-[480px] w-full overflow-hidden rounded-lg border border-gray-100">
         <ReactFlow
           nodes={nodes}

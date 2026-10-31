@@ -253,11 +253,11 @@ export default function Cluster() {
         <PageLoader label={t('cluster.loading')} />
       ) : (
         <div className="grid grid-cols-1 gap-4">
+          <MachinesCard machines={map?.machines} />
           <ServiceMap map={map} onViewLogs={({ member, container }) => {
             if (member) setLogMember(member);
             else if (container) setLogContainer(container);
           }} />
-          <MachinesCard machines={map?.machines} />
           <WorkersCard onChanged={load} />
           <Card icon={Server} title={t('cluster.members')} hint={t('cluster.membersHint')}>
             {members.length > 0 && (
