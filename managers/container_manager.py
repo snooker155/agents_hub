@@ -243,6 +243,21 @@ def user_flags() -> List[str]:
     return ["--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp"]
 
 
+def agent_user_flags() -> List[str]:
+    """The user a hub agent container (run, carrier, shell) runs as.
+
+    The hub's own user wherever ownership is real: on a volume
+    (:func:`user_flags`), and on a Linux Docker host for bind mounts too.
+    The image's ``agent`` user (uid 1001) cannot write what the hub (uid
+    1000 in compose) created there: the carrier's log file, opened before
+    its container starts, or the workspace folder. A macOS folder under
+    Docker Desktop fakes ownership, so the image's user stays there."""
+    flags = user_flags()
+    if flags or not hasattr(os, "getuid") or not sys.platform.startswith("linux"):
+        return flags
+    return ["--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp"]
+
+
 # What a local model server is called on the host, before the container sees it.
 _LOCAL_MODEL_URLS = {
     "OLLAMA_BASE_URL": "http://localhost:11434",
@@ -1148,7 +1163,7 @@ def build_shell_command(
         "--tmpfs", "/tmp",
         "-e", "HOME=/tmp",
         "-e", f"{RUN_NETWORK_ENV}={network}",
-        *user_flags(),
+        *agent_user_flags(),
         *mount_flags(workspace, CONTAINER_WORKSPACE_DIR),
         "-w", CONTAINER_WORKSPACE_DIR,
     ]
@@ -1235,7 +1250,7 @@ def build_run_command(
         # reaches the hub's state over HTTP (common/remote_state.py). What it
         # writes under its own state root lives as long as the container.
         "--tmpfs", f"{CONTAINER_STATE_DIR}:rw,mode=1777",
-        *user_flags(),
+        *agent_user_flags(),
         *mount_flags(tasks_dir, CONTAINER_TASKS_DIR),
     ]
 
@@ -1465,7 +1480,7 @@ def start_container(
             "--label", LABEL_MANAGED,
             "--label", f"agents-hub.agent-id={agent_id}",
             # Mount only what the agent needs
-            *user_flags(),
+            *agent_user_flags(),
             *mount_flags(state_dir, CONTAINER_STATE_DIR),
             *mount_flags(tasks_dir, CONTAINER_TASKS_DIR),
             "-w", "/app",

@@ -90,3 +90,22 @@ def test_a_hub_with_state_on_a_volume_may_share_the_database(monkeypatch):
     monkeypatch.setattr(cm.sys, "platform", "linux")
     monkeypatch.setattr(cm, "_fs_type", lambda path: "ext4")
     assert cm.db_shared_with_containers() is True
+
+
+def test_agent_containers_run_as_the_hub_user_on_linux_bind_mounts(monkeypatch):
+    # Real ownership: the image's agent user could not write the carrier log
+    # or the workspace the hub created.
+    monkeypatch.delenv(cm.STATE_VOLUME_ENV, raising=False)
+    monkeypatch.setattr(cm.sys, "platform", "linux")
+    assert cm.agent_user_flags() == ["--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/tmp"]
+    argv = cm.build_run_command(
+        container_name="c", agent_id="a", image="img", network="none", translated_cmd=["x"],
+        state_dir=str(AGENTS_HUB_ROOT), tasks_dir=str(AGENTS_HUB_ROOT / "tasks"), workspace=None,
+        env={}, extra_args="", memory=None, cpus=None, pids_limit=None, snapshot_dir=None)
+    assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+
+
+def test_docker_desktop_folders_keep_the_image_user(monkeypatch):
+    monkeypatch.delenv(cm.STATE_VOLUME_ENV, raising=False)
+    monkeypatch.setattr(cm.sys, "platform", "darwin")
+    assert cm.agent_user_flags() == []
