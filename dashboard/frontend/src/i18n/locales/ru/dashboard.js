@@ -95,7 +95,7 @@ export default {
     buildsBuilt: 'Собрано заново',
     buildsReplicas: 'Инстансов в счёте: {{count}}',
     buildsHint: 'Запуск берёт уже собранного агента (промпт, инструменты, модель), пока его настройки не менялись. Это не кэш промптов у провайдера моделей',
-    storage: 'Хранилище',
+    storage: 'На диске',
     storageDatabase: 'База данных',
     storageRunLogs: 'Логи запусков',
     storageTotalState: 'Всего состояния',
