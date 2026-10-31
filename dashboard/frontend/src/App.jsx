@@ -170,7 +170,8 @@ function AppRoutes() {
         <Route path="/tasks" element={guard(<TaskManager />)} />
         <Route path="/tasks/:id" element={guard(<TaskDetails />)} />
         <Route path="/plan" element={guard(<Plan />)} />
-        <Route path="/deployments" element={guard(<Deployments />)} />
+        <Route path="/automations" element={guard(<Deployments />)} />
+        <Route path="/deployments" element={<Navigate to="/automations" replace />} />
         {/* Files and Views live under Artifacts; the old addresses redirect with their query. */}
         <Route path="/files" element={<ArtifactsRedirect />} />
         <Route path="/widgets" element={guard(<Widgets />)} />

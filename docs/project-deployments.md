@@ -195,5 +195,5 @@ workspace; reads need the workspace to be visible.
 
 Related: [projects](projects.md), [containers](containers.md),
 [browser](browser.md), [environments](environments.md),
-[deployments](deployments.md) (scheduled jobs, a different thing with a
+[automations](deployments.md) (scheduled jobs, a different thing with a
 similar name).

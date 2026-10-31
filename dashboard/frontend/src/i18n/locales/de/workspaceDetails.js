@@ -173,7 +173,7 @@ export default {
     summaries: {
       coder: 'Schreibt und ändert Code und Dateien in den Projekten des Arbeitsbereichs.',
       reviewer: 'Prüft Codeänderungen auf Korrektheit, Stil und Tests.',
-      planner: 'Plant Arbeit für später: Erinnerungen, wiederkehrende Agentenarbeit, Flows, Loops, Deployments.',
+      planner: 'Plant Arbeit für später: Erinnerungen, wiederkehrende Agentenarbeit, Flows, Loops, Automationen.',
       task_manager: 'Führt die Aufgabenliste: macht aus Plänen einen Aufgabenbaum, teilt und ordnet Aufgaben.',
       researcher: 'Beantwortet Fragen, die Arbeitsbereich, Speicher und das offene Web zusammen brauchen.',
       web_search: 'Sucht im offenen Web und liest die gefundenen Seiten.',

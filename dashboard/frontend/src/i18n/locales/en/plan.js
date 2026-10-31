@@ -4,7 +4,7 @@ export default {
   schedule: 'Schedule',
   editScheduledJob: 'Edit Scheduled Job',
   refresh: 'Refresh',
-  deployments: 'Deployments',
+  deployments: 'Automations',
   pausedReason: {
     manual: 'manual',
     errors: 'errors',

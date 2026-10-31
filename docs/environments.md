@@ -168,7 +168,7 @@ else first, then delete.
   (`instances/carrier.start`).
 - **A scheduled job**: an `environment_id` on the job is copied onto every
   task the job creates, whatever kind of job it is (see
-  [deployments](deployments.md) and [scheduling](scheduling.md)).
+  [automations](deployments.md) and [scheduling](scheduling.md)).
 
 ## The Environments page
 
@@ -194,4 +194,4 @@ and recent runs tied to it, each linking back to its own page.
   worker mode) that launched the run, since the URL a run is handed names
   `127.0.0.1` or `host.docker.internal`, not a shared address.
 
-Related: [sandboxes](sandboxes.md), [containers](containers.md), [instances](instances.md), [deployments](deployments.md), [scheduling](scheduling.md), [service-health](service-health.md).
+Related: [sandboxes](sandboxes.md), [containers](containers.md), [instances](instances.md), [automations](deployments.md), [scheduling](scheduling.md), [service-health](service-health.md).

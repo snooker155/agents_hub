@@ -175,7 +175,7 @@ declare only the blocks you mean to own.
 
 ## Deployments
 
-A deployment is a scheduled job ([scheduling](scheduling.md), [deployments](deployments.md)):
+A deployment is a scheduled job ([scheduling](scheduling.md), [automations](deployments.md)):
 
 ```yaml
 kind: deployment

@@ -378,11 +378,11 @@ export default {
     "callout": "Das Pausieren eines Service stoppt jede Instanz und weist neue Turns für dessen Agent zurück, statt sie an den Runner zu senden."
   },
   "deployments": {
-    "nav": "Deployments",
-    "title": "Deployments, Environments und Sandboxes",
-    "lead": "Die Seite **Deployments** ist eine Arbeitsansicht über die geplanten Jobs, die tatsächlich produktive Arbeit leisten: agent-, flow- und loop-Jobs von der Seite [Plan](/plan), jeder mit eigenem Geldlimit, eigenem Environment und einem Protokoll jeder Auslösung. Ein **Environment** bestimmt, wo ein Lauf tatsächlich ausgeführt wird und was er erreichen kann.",
+    "nav": "Automationen",
+    "title": "Automationen, Environments und Sandboxes",
+    "lead": "Die Seite **Automationen** ist eine Arbeitsansicht über die geplanten Jobs, die tatsächlich produktive Arbeit leisten: agent-, flow- und loop-Jobs von der Seite [Plan](/plan), jeder mit eigenem Geldlimit, eigenem Environment und einem Protokoll jeder Auslösung. Ein **Environment** bestimmt, wo ein Lauf tatsächlich ausgeführt wird und was er erreichen kann.",
     "s0": {
-      "h": "Was ein Deployment hinzufügt",
+      "h": "Was eine Automation hinzufügt",
       "points": [
         "**environment_id**: die Environment, in der jede vom Job erzeugte Aufgabe läuft.",
         "**budget_usd**: das Geldlimit, das auf jede vom Job erzeugte Aufgabe kopiert wird.",
@@ -392,7 +392,7 @@ export default {
     },
     "s1": {
       "h": "Das Auslösungsprotokoll",
-      "p": "Jeder Auslöseversuch wird erfasst, erfolgreich oder nicht: wann er stattfand, ob er automatisch war oder ein manuelles **Run now**, und bei Fehlschlag ein Fehlertyp wie `budget_exceeded`, `agent_missing` oder `capacity`. Die Detailansicht eines Deployments zeigt dieses Protokoll mit einem Nur-Fehler-Filter.",
+      "p": "Jeder Auslöseversuch wird erfasst, erfolgreich oder nicht: wann er stattfand, ob er automatisch war oder ein manuelles **Run now**, und bei Fehlschlag ein Fehlertyp wie `budget_exceeded`, `agent_missing` oder `capacity`. Die Detailansicht einer Automation zeigt dieses Protokoll mit einem Nur-Fehler-Filter.",
       "points": [
         "Ein Job, der ständig fehlschlägt, pausiert sich selbst; existiert das Ziel (Agent, Flow oder Loop) nicht mehr, pausiert er sofort.",
         "**Run now** löst einen Job sofort aus, auch pausiert, damit eine Korrektur getestet werden kann, ohne ihn vorher fortzusetzen."

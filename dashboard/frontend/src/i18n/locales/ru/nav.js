@@ -19,7 +19,7 @@ export default {
   projects: 'Проекты',
   tasks: 'Задачи',
   plan: 'План',
-  deployments: 'Развёртывания',
+  deployments: 'Автоматизации',
   widgets: 'Виджеты',
   distribution: 'Дистрибуция',
   agentRegistry: 'Реестр агентов',

@@ -430,7 +430,7 @@ def test_browser_action_stop(multi, hub, monkeypatch):
 def test_our_kinds_are_registered_and_cover_their_pages():
     covered = lookup.covered_pages()
     for page, kind in (("/instances", "instance"), ("/nodes", "instance"), ("/services", "service"),
-                      ("/apps", "deployment"), ("/deployments", "deployment"),
+                      ("/apps", "deployment"), ("/automations", "job"), ("/deployments", "job"),
                       ("/environments", "environment"), ("/browser", "browser")):
         assert covered.get(page) == kind
     assert "instance" not in lookup.kind_names(admin=True)

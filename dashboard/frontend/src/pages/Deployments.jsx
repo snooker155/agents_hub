@@ -20,7 +20,7 @@ import {
   getWorkspaceSecrets,
 } from '../api';
 import { getAgentVersions } from '../api/agentVersions';
-import { Activity, AlertCircle, AlertTriangle, Bot, CheckCircle, Clock, History, Loader, MessageSquare, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, RotateCw, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, Bot, CheckCircle, Clock, History, Loader, MessageSquare, Pause, Pencil, Play, Plus, RefreshCw, Repeat, CalendarCog, RotateCw, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -569,7 +569,7 @@ function DeploymentModal({ job, jobs, agents, flows, loops, environments, resour
             disabled={saving}
             className="flex items-center gap-2 px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
           >
-            {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
+            {saving ? <Loader className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             {isEdit ? t('deployments.save') : t('deployments.deploy')}
           </button>
         </div>
@@ -756,7 +756,7 @@ export default function Deployments() {
   return (
     <PageContainer className="space-y-6">
       <PageHeader
-        icon={Rocket}
+        icon={CalendarCog}
         title={t('deployments.deployments')}
         description={t('deployments.pageDescription')}
         actions={<>
@@ -788,7 +788,7 @@ export default function Deployments() {
         <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>
       ) : visibleJobs.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 text-center py-16">
-          <Rocket className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+          <CalendarCog className="w-10 h-10 text-gray-300 mx-auto mb-3" />
           <p className="text-gray-500 text-sm">{t('deployments.nothingDeployed')}</p>
         </div>
       ) : (

@@ -19,7 +19,7 @@ export default {
   projects: 'Projekte',
   tasks: 'Aufgaben',
   plan: 'Plan',
-  deployments: 'Deployments',
+  deployments: 'Automationen',
   widgets: 'Widgets',
   distribution: 'Verteilung',
   agentRegistry: 'Agentenregister',

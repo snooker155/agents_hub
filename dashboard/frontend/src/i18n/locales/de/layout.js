@@ -59,7 +59,7 @@ export default {
     tasks: 'Aufgaben',
     taskDetails: 'Aufgabendetails',
     plan: 'Plan',
-    deployments: 'Deployments',
+    deployments: 'Automationen',
     agents: 'Agenten',
     agentDetails: 'Agentendetails',
     marketplace: 'Marktplatz',

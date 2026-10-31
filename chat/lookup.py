@@ -628,7 +628,7 @@ _REFERENCE_SUMMARIES = {
     "loop": ("loops", ("/loops",)),
     "flow": ("flows", ("/flows",)),
     "team": ("teams", ("/teams",)),
-    "job": ("scheduled jobs", ("/plan",)),
+    "job": ("scheduled jobs, automations among them", ("/plan", "/automations", "/deployments")),
 }
 
 KINDS: Dict[str, LookupKind] = {}

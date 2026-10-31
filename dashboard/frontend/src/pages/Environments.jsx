@@ -459,7 +459,7 @@ function UsageDrawer({ env, onClose }) {
                 <ul className="space-y-1.5">
                   {usage.jobs.map((j) => (
                     <li key={j.id}>
-                      <Link to="/deployments" className="text-sm text-indigo-600 hover:underline">
+                      <Link to="/automations" className="text-sm text-indigo-600 hover:underline">
                         {j.title || j.id}
                       </Link>
                     </li>

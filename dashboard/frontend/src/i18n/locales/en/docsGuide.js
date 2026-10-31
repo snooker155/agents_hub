@@ -378,11 +378,11 @@ export default {
     "callout": "Pausing a service stops every instance and refuses new turns for its agent rather than sending them to the runner."
   },
   "deployments": {
-    "nav": "Deployments",
-    "title": "Deployments, environments and sandboxes",
-    "lead": "The **Deployments** page is a working view over the scheduled jobs that do production work: agent, flow and loop jobs from the [Plan](/plan) page, each with a money cap, an environment and a journal of every firing. An **environment** decides where a run actually executes and what it can reach.",
+    "nav": "Automations",
+    "title": "Automations, environments and sandboxes",
+    "lead": "The **Automations** page is a working view over the scheduled jobs that do production work: agent, flow and loop jobs from the [Plan](/plan) page, each with a money cap, an environment and a journal of every firing. An **environment** decides where a run actually executes and what it can reach.",
     "s0": {
-      "h": "What a deployment adds",
+      "h": "What an automation adds",
       "points": [
         "**environment_id**: the environment every task the job creates runs in.",
         "**budget_usd**: the money cap copied onto every task the job creates.",
@@ -392,7 +392,7 @@ export default {
     },
     "s1": {
       "h": "The firing journal",
-      "p": "Every attempt to fire a job is recorded, successful or not: when it happened, whether it was automatic or a manual **Run now**, and on failure an error type such as `budget_exceeded`, `agent_missing` or `capacity`. The detail drawer on a deployment shows this journal with an only-failures filter.",
+      "p": "Every attempt to fire a job is recorded, successful or not: when it happened, whether it was automatic or a manual **Run now**, and on failure an error type such as `budget_exceeded`, `agent_missing` or `capacity`. The detail drawer on an automation shows this journal with an only-failures filter.",
       "points": [
         "A job that keeps failing pauses itself; a target that no longer exists (agent, flow or loop) pauses it immediately.",
         "**Run now** fires a job immediately, even while paused, so a fix can be retested without resuming it first."

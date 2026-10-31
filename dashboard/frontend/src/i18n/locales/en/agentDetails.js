@@ -495,7 +495,7 @@ export default {
     hideDiff: 'Hide diff',
     noDiff: 'No differences.',
     pinnedTitle: 'Pinned to version {{n}}',
-    pinnedHint: 'Every run of this agent builds from this version: chats, tasks, flows and delegations. Edits are still saved, but take effect only after unpinning. A task or deployment pinned to its own version keeps it.',
+    pinnedHint: 'Every run of this agent builds from this version: chats, tasks, flows and delegations. Edits are still saved, but take effect only after unpinning. A task or automation pinned to its own version keeps it.',
     liveHint: 'The agent runs on its current state. Pin a version to freeze what it runs while you keep editing.',
     pinCurrent: 'Pin current state',
     unpin: 'Unpin',

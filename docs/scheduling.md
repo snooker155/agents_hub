@@ -30,7 +30,7 @@ memory consolidation, plus the inbox showing what fired.
 [environments](environments.md)) and a `budget_usd`, both copied onto every
 task the job creates. These three kinds, shown as production deployments
 rather than reminders, get their own page: see
-[deployments](deployments.md).
+[automations](deployments.md).
 
 ## Recurrence
 
@@ -59,7 +59,7 @@ drifting.
 Ask in the chat: "remind me tomorrow to review the report", "every morning
 generate a summary". The main agent does not schedule anything itself: it hands
 the request to the Planner (`@planner`), the system agent that owns the Plan and
-Deployments pages, and reports back what was scheduled. You can also talk to the
+Automations pages, and reports back what was scheduled. You can also talk to the
 Planner directly. It confirms the resolved time back to you, because relative
 times are where this goes wrong.
 
@@ -123,7 +123,7 @@ guessed at. `GET /api/plan/jobs/{id}/fires` reads one job's journal,
 `GET /api/plan/fires` reads across all of them; both take `only_errors` and
 `limit`. Rows older than `AGENTS_HUB_PLAN_FIRES_RETENTION_DAYS` (default 90,
 `0` disables it) are pruned by the daily maintenance sweep. The
-[Deployments page](deployments.md) is where this journal is actually read,
+[Automations page](deployments.md) is where this journal is actually read,
 with an only-failures filter and a link from each row to the task it created.
 
 A firing's `ok` says only that the work was started. The one-job journal route and
@@ -147,7 +147,7 @@ counter; resuming a job clears both the reason and the counter. `run_at`
 still advances on a firing that auto-pauses, so resuming waits for the next
 natural slot instead of re-firing a stale one immediately. Run-now works on a
 paused job too, recorded with `trigger: "manual"`, so a fix can be retested
-without resuming first. Full detail: [deployments](deployments.md).
+without resuming first. Full detail: [automations](deployments.md).
 
 ## Gotchas
 
@@ -165,4 +165,4 @@ without resuming first. Full detail: [deployments](deployments.md).
   scheduler's own next run logic, so the hint and the job never disagree. A
   saved recurring job carries the same list as `upcoming_runs_at`.
 
-Related: [tasks](tasks.md), [telegram](telegram.md), [deployments](deployments.md), [environments](environments.md), [proactive](proactive.md).
+Related: [tasks](tasks.md), [telegram](telegram.md), [automations](deployments.md), [environments](environments.md), [proactive](proactive.md).

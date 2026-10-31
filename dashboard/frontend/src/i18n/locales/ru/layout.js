@@ -61,7 +61,7 @@ export default {
     tasks: 'Задачи',
     taskDetails: 'Детали задачи',
     plan: 'План',
-    deployments: 'Развёртывания',
+    deployments: 'Автоматизации',
     agents: 'Агенты',
     agentDetails: 'Детали агента',
     marketplace: 'Маркетплейс',

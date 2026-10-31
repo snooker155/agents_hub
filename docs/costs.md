@@ -265,4 +265,4 @@ decision, not after.
   order makes that a one-field change.
 - Fewer team members. Three focused beats eight watching.
 
-Related: [models](models.md), [loops](loops.md), [playground](playground.md), [tasks](tasks.md), [deployments](deployments.md).
+Related: [models](models.md), [loops](loops.md), [playground](playground.md), [tasks](tasks.md), [automations](deployments.md).

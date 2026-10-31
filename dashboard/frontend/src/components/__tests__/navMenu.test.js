@@ -40,9 +40,9 @@ describe('navMenu', () => {
 
   it('simple menu lights up the home row of a hidden page instead of adding one', () => {
     const shown = visibleGroups(buildMenu({ t, auth: single }), SIMPLE);
-    expect(paths(shown)).not.toContain('/deployments');
+    expect(paths(shown)).not.toContain('/automations');
     const lit = (pathname) => shown.flatMap((g) => g.items).filter((it) => isItemActive(it, pathname)).map((it) => it.path);
-    expect(lit('/deployments')).toEqual(['/plan']);
+    expect(lit('/automations')).toEqual(['/plan']);
     expect(lit('/loops/l1')).toEqual(['/flows']);
     expect(lit('/connectors/slack')).toEqual(['/settings']);
     expect(lit('/sessions')).toEqual(['/settings']);

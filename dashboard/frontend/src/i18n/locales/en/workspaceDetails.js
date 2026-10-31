@@ -173,7 +173,7 @@ export default {
     summaries: {
       coder: 'Writes and changes code and files in the workspace\'s projects.',
       reviewer: 'Reviews code changes for correctness, style and tests.',
-      planner: 'Schedules work for later: reminders, recurring agent work, flows, loops, deployments.',
+      planner: 'Schedules work for later: reminders, recurring agent work, flows, loops, automations.',
       task_manager: 'Keeps the task tracker: turns plans into a task tree, splits and orders tasks.',
       researcher: 'Answers questions that need the workspace, memory and the open web together.',
       web_search: 'Searches the open web and reads the pages it finds.',

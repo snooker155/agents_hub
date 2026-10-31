@@ -1,6 +1,7 @@
-# Deployments
+# Automations
 
-The Deployments page (`/deployments`, under Workspace) is a working view over
+The Automations page (`/automations`, under Workspace; the old `/deployments`
+address leads there) is a working view over
 the scheduled jobs that produce real work: `agent_run`, `agent_task`, `flow`,
 `loop` and `heartbeat` jobs from the [Plan page](scheduling.md), filtered so a
 reminder does not sit in the same list as a recurring pipeline. A `heartbeat`
@@ -11,7 +12,12 @@ resources a job hands to every run it starts, a per-run money cap and an
 environment, and a firing journal that answers "did this actually run, and
 what happened".
 
-## What a deployment is
+Automations were called deployments before; the code, the API and the
+file store keep that name (`deployments`, `/api/plan/jobs`), and a project's
+apps the hub runs are [project deployments](project-deployments.md), listed
+on the Projects page.
+
+## What an automation is
 
 A `ScheduledJob` of kind `agent_run`, `agent_task`, `flow` or `loop`, the same
 records the Plan page manages, listed here through
@@ -50,7 +56,7 @@ otherwise successful firing into a failed one.
 
 ## From the chat
 
-The Planner (`@planner`) creates and looks after deployments for you:
+The Planner (`@planner`) creates and looks after automations for you:
 `schedule_task`, `schedule_flow` and `schedule_loop` take the fields above and the resources
 below, `get_scheduled` reads the firing journal, `pause_scheduled`,
 `resume_scheduled` and `run_scheduled_now` do what the page's buttons do.
@@ -59,7 +65,7 @@ private data to another agent's runs. Add them on this page.
 
 ## Resources
 
-An `agent_run` or `agent_task` deployment can carry what its runs need, the
+An `agent_run` or `agent_task` automation can carry what its runs need, the
 way a session of a hosted agent platform carries a repository, files and
 memory. For a task all of it is copied onto every task the job creates and
 reaches only that task's runs. For an agent run it reaches the one turn each
@@ -81,7 +87,7 @@ another task or a chat of the same agent sees none of it.
   for a run inside a runner, the in-process secret scope. Whether a value
   exists is decided at run time as for the agent's own names. Because a
   secret is a private-data grant, the capability guard checks the agent's
-  tools with these names added when the deployment is saved, and refuses the
+  tools with these names added when the automation is saved, and refuses the
   combination it would refuse on the agent page.
 - **Memory pools** (`memory_pool_ids`) with an access mode
   (`memory_access`, `read` by default or `write`): shared pools bound for
@@ -122,7 +128,7 @@ deliberately conservative: an error that matches nothing known lands in
 `other` rather than a guess, since a wrong bucket could pause a job that would
 have recovered, or fail to pause one that never will.
 
-The detail drawer on a deployment shows its journal with an only-failures
+The detail drawer on an automation shows its journal with an only-failures
 filter (`GET /api/plan/jobs/{id}/fires?only_errors=`); each row links to the
 task it created, or to the conversation an agent run opened. `GET /api/plan/fires` gives the same
 journal across every job in a workspace, for a wider view.

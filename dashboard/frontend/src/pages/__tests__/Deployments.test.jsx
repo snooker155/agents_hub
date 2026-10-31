@@ -30,8 +30,6 @@ const getEnvironments = vi.fn(() => ok([{ id: 'env-1', name: 'sandboxed-python' 
 const previewCron = vi.fn(() => new Promise(() => {}));
 
 vi.mock('../../api', () => ({
-  // Project deployments (the apps table on top of the page): none in these tests.
-  listDeployedApps: () => Promise.resolve({ data: { items: [] } }),
   previewCron: (...args) => previewCron(...args),
   getPlanJobs: (...args) => getPlanJobs(...args),
   createPlanJob: (...args) => createPlanJob(...args),
@@ -134,7 +132,7 @@ describe('Deployments — a new agent run', () => {
     ].filter((f) => !q || f.name.includes(q)) }));
     show();
     await waitFor(() => expect(getPlanJobs).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('button', { name: /new deployment/i }));
+    fireEvent.click(screen.getByRole('button', { name: /new automation/i }));
 
     // The Plan form's picker; no orchestrator to fall back on: a run names its agent.
     const picker = screen.getByTestId('agent-picker');

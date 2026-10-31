@@ -237,7 +237,7 @@ filter). Below it is the tick feed: every tick with its outcome, summary,
 next check, cost and a link to its task. Runs of quiet and skipped ticks fold
 into one row ("12 quiet ticks"), so a pulse that mostly finds nothing to do
 stays readable. The job itself also appears on the Plan and
-[Deployments](deployments.md) pages under the `heartbeat` kind.
+[Automations](deployments.md) pages under the `heartbeat` kind.
 
 The Dashboard shows a **Pulse** card once any pulse is on: how many agents
 have one, and how many ticks of the last day acted, stayed quiet or were
@@ -286,4 +286,4 @@ are removed like any other firing.
   Berlin time, woken early when `supplier-questions.md` is re-uploaded, with
   a seeded tick history ([demo](demo.md)).
 
-Related: [scheduling](scheduling.md), [agents](agents.md), [memory](memory.md), [notifications](notifications.md), [costs](costs.md), [environments](environments.md), [deployments](deployments.md), [tasks](tasks.md), [agent-loop](agent-loop.md), [audit](audit.md), [tools-and-capabilities](tools-and-capabilities.md), [tool-policy](tool-policy.md), [telegram](telegram.md), [files](files.md), [evals](evals.md), [demo](demo.md), [watchers](watchers.md).
+Related: [scheduling](scheduling.md), [agents](agents.md), [memory](memory.md), [notifications](notifications.md), [costs](costs.md), [environments](environments.md), [automations](deployments.md), [tasks](tasks.md), [agent-loop](agent-loop.md), [audit](audit.md), [tools-and-capabilities](tools-and-capabilities.md), [tool-policy](tool-policy.md), [telegram](telegram.md), [files](files.md), [evals](evals.md), [demo](demo.md), [watchers](watchers.md).

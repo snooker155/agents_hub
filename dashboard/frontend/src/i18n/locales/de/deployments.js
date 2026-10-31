@@ -1,9 +1,9 @@
 export default {
-  deployments: 'Deployments',
+  deployments: 'Automationen',
   pageDescription: 'Geplante Agentenläufe und -aufgaben, Flows und Loops: wiederkehrende oder einmalige Läufe nach Zeitplan, jeder mit eigenem Auslösejournal, Budget pro Lauf und eigener Umgebung.',
   refresh: 'Aktualisieren',
-  newDeployment: 'Neues Deployment',
-  editDeployment: 'Deployment bearbeiten',
+  newDeployment: 'Neue Automation',
+  editDeployment: 'Automation bearbeiten',
   showFinished: 'Abgebrochene und fehlgeschlagene anzeigen',
   nothingDeployed: 'Noch nichts geplant.',
   name: 'Name',
@@ -53,7 +53,7 @@ export default {
   memoryAccessWriteHint: 'Der Lauf darf auch speichern, löschen und verknüpfen, wie mit der eigenen Bindung des Agenten.',
   cancel: 'Abbrechen',
   save: 'Speichern',
-  deploy: 'Deployen',
+  deploy: 'Anlegen',
   viewJournal: 'Ausführungsjournal ansehen',
   journalFor: 'Ausführungsjournal für {{name}}',
   onlyFailures: 'Nur Fehler',
@@ -65,10 +65,10 @@ export default {
   pause: 'Pausieren',
   resume: 'Fortsetzen',
   delete: 'Löschen',
-  confirmDelete: 'Deployment „{{name}}" löschen?',
+  confirmDelete: 'Automation „{{name}}" löschen?',
   consecutiveErrors: '{{count}} aufeinanderfolgende Fehler',
   agentPicker: {
-    deployed: 'Bereitgestellt',
+    deployed: 'Automatisiert',
     count: 'Bereitstellungen',
   },
   kinds: {
@@ -91,7 +91,7 @@ export default {
     pickFlow: 'Flow auswählen',
     pickLoop: 'Loop auswählen',
     cronRequired: 'Cron-Ausdruck eingeben',
-    saveFailed: 'Das Deployment konnte nicht gespeichert werden',
+    saveFailed: 'Die Automation konnte nicht gespeichert werden',
     actionFailed: 'Die Aktion ist fehlgeschlagen',
   },
   resultState: {

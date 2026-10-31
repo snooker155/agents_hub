@@ -29,7 +29,7 @@ import {
   Waypoints, LayoutDashboard, CheckSquare, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Workflow, Bot,
   Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, Cpu, FolderGit2, Box, Boxes, Store,
   CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound,
-  GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, Rocket, ShieldCheck, BadgeCheck,
+  GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, CalendarCog, ShieldCheck, BadgeCheck,
   MessageSquareCode, Eye, AudioLines, Send, Laptop, LockKeyhole, Library,
 } from 'lucide-react';
 import { MULTI, isAdmin } from './auth';
@@ -110,7 +110,7 @@ export function buildMenu({ t, auth, features = {} }) {
         { name: t('nav.orchestrator'), path: '/orchestrator', icon: Network, home: '/flows' },
         features.playground !== false && { name: t('nav.playground'), path: '/playground', icon: Gamepad2, home: '/flows' },
         // Schedules of work, opened from the Plan page.
-        { name: t('nav.deployments'), path: '/deployments', icon: Rocket, home: '/plan' },
+        { name: t('nav.deployments'), path: '/automations', icon: CalendarCog, home: '/plan' },
         // Creating a workspace, its settings and its members: the top bar only
         // switches between the ones that exist.
         { name: t('nav.workspaces'), path: '/workspaces', icon: Folder, simple: true },

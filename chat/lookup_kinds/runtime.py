@@ -324,8 +324,8 @@ def _deployment_stop(ctx: Any, deployment_id: str, target: Dict[str, Any]) -> Di
 
 
 lookup.register(LookupKind(
-    "deployment", "a project's app under /apps, and the apps section of /deployments",
-    _list_deployments, _deployment_card, ("/apps", "/deployments"),
+    "deployment", "a project's app under /apps, listed on /projects",
+    _list_deployments, _deployment_card, ("/apps",),
 ))
 register_action(HubAction(
     "deployment", "stop", "stop every service of a project's deployed app",

@@ -21,7 +21,7 @@ import {
   getLoops,
   getSharedMemories,
 } from '../api';
-import { Activity, AlertCircle, Bell, BellRing, Bot, Brain, MessageSquare, CalendarClock, CheckCircle, Clock, Loader, MailOpen, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, RotateCw, Send, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
+import { Activity, AlertCircle, Bell, BellRing, Bot, Brain, MessageSquare, CalendarClock, CheckCircle, Clock, Loader, MailOpen, Pause, Pencil, Play, Plus, RefreshCw, Repeat, CalendarCog, RotateCw, Send, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { TabRow } from '../components/PageTabs';
@@ -687,10 +687,10 @@ export default function Plan() {
               (see Deployments.jsx); this page keeps one-off reminders and
               notifications. */}
           <Link
-            to="/deployments"
+            to="/automations"
             className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
           >
-            <Rocket className="w-4 h-4" /> {t('plan.deployments')}
+            <CalendarCog className="w-4 h-4" /> {t('plan.deployments')}
           </Link>
           <button
             onClick={fetchData}
