@@ -242,10 +242,10 @@ assistant links as "show on screen".
 | `pulse` | proactive agents | schedule, budget, today's use, recent ticks' outcomes | the agent's page |
 | `eval` | eval sets with their last run | a set's cases count, graders and runs, or a run's status, cost and scores | `/evals` |
 | `guardrail` | guardrails | stage, kind, action, event counts by action, never the matched text | `/guardrails` |
-| `tool` | the tool catalog | capabilities, approval, the mode here, which agents hold it, recent decisions | `/tools` |
+| `tool` | the tool catalog | capabilities, approval, the mode here, which agents hold it, recent decisions | none (granted on an agent's Tools tab) |
 | `connection` | connections reporting runs in | kind, disabled or not, reported runs | `/connections/<id>` |
 | `skill` | skills | review state, version, steps count, never the steps | `/skills` |
-| `mcp` | MCP servers (id `workspace/server`) | transport, enabled, tool count, approval, whether there is an error | `/mcp` |
+| `mcp` | MCP servers (id `workspace/server`) | transport, enabled, tool count, approval, whether there is an error | `/mcp`, `/tools` |
 | `widget` | embeddable chat widgets | agent, allowed origins, on or off, threads count | `/widgets` |
 | `registry` | published agents, flows and skills, the MCP allowlist (id `type:id`) | review state, reviewer, owner workspace | `/registry` |
 | `account` | the one row `me` | the person's role, workspaces, spend and limit, API keys (names, never keys), sessions count | `/account` |

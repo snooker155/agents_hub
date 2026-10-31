@@ -372,7 +372,7 @@ def test_tool_list_and_card(single, hub):
     assert card["fields"]["always_needs_approval"] is True
     assert card["fields"]["category"] == "service_ops"
     assert "holder" in card["fields"]["held_by"].get("team", [])
-    assert card["url"] == "/tools"
+    assert card["url"] is None
 
 
 def test_tool_card_counts_recent_decisions_without_their_input(multi, hub):

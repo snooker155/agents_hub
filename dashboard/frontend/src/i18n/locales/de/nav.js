@@ -42,7 +42,7 @@ export default {
   flows: 'Agenten-Flows',
   loops: 'Loops',
   registry: 'Registry',
-  toolbox: 'Werkzeugkasten',
+  toolbox: 'Hinzugefügte Werkzeuge',
   skills: 'Skills',
   memory: 'Speicher',
   webLogs: 'Web-Anfragen',

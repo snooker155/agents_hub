@@ -425,10 +425,6 @@ class SessionContextCreate(BaseModel):
 from chat.models import ChatHistoryMessage, ChatAttachment, ChatReference, ChatRequest  # noqa: E402,F401
 
 
-class ToolSourceUpdate(BaseModel):
-    source_code: str
-
-
 class RepoConfigUpdate(BaseModel):
     type: Optional[str] = None
     url: Optional[str] = None

@@ -1,129 +1,126 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Wrench, Search, Box, ChevronRight, Terminal, Save, FileCode2, Layers } from 'lucide-react';
-import { getTools, getToolSource, updateToolSource } from '../api';
+import { Link } from 'react-router-dom';
+import { Wrench, Search, Box, ChevronRight, Terminal, Layers, Plug } from 'lucide-react';
+import { getWorkspaceMcpTools, listMcpServers } from '../api';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import { capabilityLabel } from '../lib/capabilities';
 import { useI18n } from '../i18n';
+import { useWorkspace } from '../components/workspace';
 import PageLoader from '../components/PageLoader';
+
+const MCP_PREFIX = 'mcp:';
+
+/**
+ * Added tools: the tools the workspace's MCP servers bring, not the hub's own
+ * built-in catalog (that one is picked per agent on its Tools tab). Read-only;
+ * a server is added, changed and removed on the MCP servers page.
+ */
 const ToolsExplorer = () => {
   const { t } = useI18n();
-  const [tools, setTools] = useState({ factory: [], swe: [], all: [] });
+  const { selectedWorkspace } = useWorkspace();
+  const [tools, setTools] = useState([]);
+  const [serverNames, setServerNames] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [selectedTool, setSelectedTool] = useState(null);
-  const [loadingSource, setLoadingSource] = useState(false);
-  const [sourceCode, setSourceCode] = useState('');
-  const [sourceMeta, setSourceMeta] = useState(null);
-  const [saveBusy, setSaveBusy] = useState(false);
-  const [saveMessage, setSaveMessage] = useState('');
+  const [selectedId, setSelectedId] = useState(null);
 
   useEffect(() => {
-    const fetchTools = async () => {
-      try {
-        const resp = await getTools();
-        setTools(resp.data);
-        if (resp.data?.all?.length) {
-          setSelectedTool(resp.data.all[0]);
-        }
-        setLoading(false);
-      } catch (error) {
-        console.error('Error fetching tools:', error);
-        setLoading(false);
-      }
-    };
-    fetchTools();
-  }, []);
+    let cancelled = false;
+    Promise.all([getWorkspaceMcpTools(selectedWorkspace), listMcpServers(selectedWorkspace)])
+      .then(([toolsResp, serversResp]) => {
+        if (cancelled) return;
+        const list = toolsResp.data?.tools || [];
+        const names = {};
+        (serversResp.data?.servers || []).forEach((s) => { names[s.id] = s.name || s.id; });
+        setTools(list);
+        setServerNames(names);
+        setSelectedId(list[0]?.id || null);
+        setError('');
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.response?.data?.detail || err.message);
+      })
+      .then(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedWorkspace]);
 
-  useEffect(() => {
-    const loadSource = async () => {
-      if (!selectedTool?.id && !selectedTool?.name) {
-        setSourceCode('');
-        setSourceMeta(null);
-        return;
-      }
-      setLoadingSource(true);
-      setSaveMessage('');
-      try {
-        const toolId = selectedTool.id || selectedTool.name;
-        const resp = await getToolSource(toolId);
-        setSourceCode(resp.data?.source_code || '');
-        setSourceMeta(resp.data || null);
-      } catch (error) {
-        setSourceMeta(null);
-        setSourceCode('');
-        setSaveMessage(error?.response?.data?.detail || t('toolsExplorer.loadSourceFailed'));
-      } finally {
-        setLoadingSource(false);
-      }
-    };
-    loadSource();
-  }, [selectedTool, t]);
+  const serverOf = (tool) => {
+    const id = (tool.category || '').startsWith(MCP_PREFIX) ? tool.category.slice(MCP_PREFIX.length) : tool.category;
+    return serverNames[id] || id || t('toolsExplorer.unknownServer');
+  };
 
-  const filteredTools = useMemo(
-    () =>
-      (tools.all || []).filter((t) => {
-        const label = (t.display_name || t.name || '').toLowerCase();
-        const desc = (t.description || '').toLowerCase();
-        const cat = (t.category || '').toLowerCase();
-        const q = search.toLowerCase();
-        return label.includes(q) || desc.includes(q) || cat.includes(q);
-      }),
-    [tools.all, search]
-  );
+  const filteredTools = useMemo(() => {
+    const q = search.toLowerCase();
+    return tools.filter((tool) => [tool.name, tool.id, tool.description, tool.category]
+      .some((v) => (v || '').toLowerCase().includes(q)));
+  }, [tools, search]);
 
   const groupedTools = useMemo(() => {
     const grouped = {};
     filteredTools.forEach((tool) => {
-      const category = tool.category || 'other';
-      if (!grouped[category]) grouped[category] = [];
-      grouped[category].push(tool);
+      const server = serverOf(tool);
+      if (!grouped[server]) grouped[server] = [];
+      grouped[server].push(tool);
     });
     return grouped;
-  }, [filteredTools]);
+    // serverOf reads serverNames, which is in the list below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredTools, serverNames]);
 
-  const selectedArgs = selectedTool?.args || {};
-  const isDirty = selectedTool && sourceMeta && sourceCode !== (sourceMeta.source_code || '');
-
-  const handleSave = async () => {
-    if (!selectedTool) return;
-    setSaveBusy(true);
-    setSaveMessage('');
-    try {
-      const toolId = selectedTool.id || selectedTool.name;
-      await updateToolSource(toolId, { source_code: sourceCode });
-      const refreshed = await getToolSource(toolId);
-      setSourceMeta(refreshed.data || null);
-      setSourceCode(refreshed.data?.source_code || '');
-      setSaveMessage(t('common.saved'));
-    } catch (error) {
-      setSaveMessage(error?.response?.data?.detail || t('toolsExplorer.saveSourceFailed'));
-    } finally {
-      setSaveBusy(false);
-    }
-  };
+  const selectedTool = tools.find((tool) => tool.id === selectedId) || null;
+  const params = selectedTool?.parameters || [];
+  const capabilities = selectedTool?.capabilities || [];
 
   return (
     <PageContainer fill>
       <PageHeader
         icon={Wrench}
-        title={t('toolsExplorer.toolInventory')}
-        description={t('toolsExplorer.browseToolsAvailableToAgents')}
+        title={t('toolsExplorer.title')}
+        description={t('toolsExplorer.description')}
         actions={
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder={t('toolsExplorer.searchTools')}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm outline-none w-64 max-w-full"
-            />
+          <div className="flex items-center gap-2">
+            {tools.length > 0 && (
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder={t('toolsExplorer.searchTools')}
+                  className="pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg bg-white w-64 max-w-full"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+            )}
+            <Link
+              to="/mcp"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50"
+            >
+              <Plug className="w-4 h-4" />
+              {t('toolsExplorer.manageServers')}
+            </Link>
           </div>
         }
       />
 
       {loading ? (
         <PageLoader size="lg" label={t('toolsExplorer.loadingToolDefinitions')} />
+      ) : error ? (
+        <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-4">{error}</div>
+      ) : tools.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center bg-gray-50 rounded-xl border border-dashed border-gray-200 text-gray-500 p-12 text-center">
+          <Box className="w-12 h-12 mb-4 opacity-30" />
+          <p className="font-medium text-gray-700">{t('toolsExplorer.emptyTitle')}</p>
+          <p className="text-sm mt-1 max-w-md">{t('toolsExplorer.emptyHint')}</p>
+          <Link
+            to="/mcp"
+            className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+          >
+            <Plug className="w-4 h-4" />
+            {t('toolsExplorer.addServer')}
+          </Link>
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
           <div className="lg:col-span-1 h-full min-h-0 border border-gray-200 rounded-xl bg-white p-3 overflow-y-auto">
@@ -132,25 +129,25 @@ const ToolsExplorer = () => {
             ) : (
               Object.entries(groupedTools)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([category, categoryTools]) => (
-                  <div key={category} className="space-y-2 mb-4 last:mb-0">
+                .map(([server, serverTools]) => (
+                  <div key={server} className="space-y-2 mb-4 last:mb-0">
                     <div className="flex items-center gap-2 px-1">
                       <Layers className="w-3.5 h-3.5 text-gray-400" />
-                      <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500">{category}</div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500">{server}</div>
                     </div>
-                    {categoryTools.map((tool) => (
+                    {serverTools.map((tool) => (
                       <button
-                        key={tool.id || tool.name}
-                        onClick={() => setSelectedTool(tool)}
+                        key={tool.id}
+                        onClick={() => setSelectedId(tool.id)}
                         className={`w-full text-left p-4 rounded-xl border transition-all ${
-                          (selectedTool?.id || selectedTool?.name) === (tool.id || tool.name)
+                          selectedId === tool.id
                             ? 'bg-indigo-50 border-indigo-200 shadow-sm'
                             : 'bg-white border-gray-100 hover:border-gray-200 hover:shadow-sm'
                         }`}
                       >
                         <div className="flex justify-between items-center mb-1">
-                          <span className="font-bold text-gray-800 text-xs">{tool.display_name || tool.name}</span>
-                          <ChevronRight className={`w-4 h-4 text-gray-300 transition-transform ${(selectedTool?.id || selectedTool?.name) === (tool.id || tool.name) ? 'rotate-90' : ''}`} />
+                          <span className="font-bold text-gray-800 text-xs">{tool.name || tool.id}</span>
+                          <ChevronRight className={`w-4 h-4 text-gray-300 transition-transform ${selectedId === tool.id ? 'rotate-90' : ''}`} />
                         </div>
                         <p className="text-xs text-gray-500 line-clamp-2">{tool.description}</p>
                       </button>
@@ -164,75 +161,49 @@ const ToolsExplorer = () => {
             {selectedTool ? (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden h-full min-h-0 flex flex-col">
                 <div className="p-6 border-b border-gray-50 bg-gray-50/50 shrink-0">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-xl font-bold text-gray-800 flex items-center">
-                      <Terminal className="w-5 h-5 mr-2 text-indigo-500" />
-                      {selectedTool.display_name || selectedTool.name}
+                  <div className="flex items-center justify-between mb-4 gap-3">
+                    <h3 className="text-xl font-bold text-gray-800 flex items-center min-w-0">
+                      <Terminal className="w-5 h-5 mr-2 text-indigo-500 shrink-0" />
+                      <span className="truncate">{selectedTool.name || selectedTool.id}</span>
                     </h3>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] bg-indigo-100 text-indigo-700 font-bold px-2 py-1 rounded uppercase tracking-wider">
-                        {selectedTool.category || 'tool'}
-                      </span>
-                      {selectedTool.requires_workspace && (
-                        <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-2 py-1 rounded uppercase tracking-wider">
-                          {t('toolsExplorer.workspace')}
-                        </span>
-                      )}
-                    </div>
+                    <span className="text-[10px] bg-indigo-100 text-indigo-700 font-bold px-2 py-1 rounded uppercase tracking-wider shrink-0">
+                      {serverOf(selectedTool)}
+                    </span>
                   </div>
-                  <p className="text-gray-600 text-sm leading-relaxed">
-                    {selectedTool.description}
-                  </p>
+                  <p className="text-gray-600 text-sm leading-relaxed">{selectedTool.description}</p>
+                  {capabilities.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                      {capabilities.map((cap) => (
+                        <span key={cap} className="text-[11px] bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded">
+                          {capabilityLabel(cap, t)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="p-6 flex-1 min-h-0 overflow-y-auto">
                   <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">{t('toolsExplorer.argumentsSchema')}</h4>
-                  <div className="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-                    <pre className="text-indigo-300 text-xs">
-                      {JSON.stringify(selectedArgs, null, 2)}
-                    </pre>
-                  </div>
-
-                  <div className="mt-8 flex flex-col min-h-[360px] h-[calc(100%-10rem)]">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest">{t('toolsExplorer.sourceCode')}</h4>
-                      <div className="flex items-center gap-2">
-                        {sourceMeta?.path && (
-                          <span className="text-[11px] text-gray-500 inline-flex items-center gap-1">
-                            <FileCode2 className="w-3.5 h-3.5" />
-                            {sourceMeta.path}:{sourceMeta.line || 1}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          disabled={!sourceMeta || !selectedTool || !isDirty || saveBusy}
-                          onClick={handleSave}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-                        >
-                          {saveBusy ? <span className="animate-pulse">{t('toolsExplorer.saving')}</span> : <Save className="w-3.5 h-3.5" />}
-                          Save
-                        </button>
-                      </div>
+                  {params.length === 0 ? (
+                    <p className="text-sm text-gray-500">{t('toolsExplorer.noArguments')}</p>
+                  ) : (
+                    <div className="divide-y divide-gray-100 border border-gray-100 rounded-lg">
+                      {params.map((p) => (
+                        <div key={p.name} className="p-3">
+                          <div className="flex items-center gap-2 text-xs">
+                            <code className="font-mono font-semibold text-gray-800">{p.name}</code>
+                            <span className="text-gray-400">{p.type}</span>
+                            {p.required && (
+                              <span className="text-[10px] text-red-600 uppercase tracking-wider">{t('toolsExplorer.required')}</span>
+                            )}
+                          </div>
+                          {p.description && <p className="text-xs text-gray-500 mt-1">{p.description}</p>}
+                          {Array.isArray(p.enum) && p.enum.length > 0 && (
+                            <p className="text-xs text-gray-500 mt-1 font-mono">{p.enum.join(' | ')}</p>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    <div className="border border-gray-200 rounded-lg overflow-hidden flex-1 min-h-[280px]">
-                      {loadingSource ? (
-                        <div className="p-6 text-sm text-gray-500">{t('toolsExplorer.loadingSource')}</div>
-                      ) : (
-                        <textarea
-                          value={sourceCode}
-                          onChange={(e) => setSourceCode(e.target.value)}
-                          spellCheck={false}
-                          className="w-full h-full p-3 bg-gray-950 text-emerald-300 text-xs outline-none"
-                          placeholder={t('toolsExplorer.noSourceAvailableForThis')}
-                          disabled={!sourceMeta}
-                        />
-                      )}
-                    </div>
-                    {saveMessage && (
-                      <div className={`mt-2 text-xs ${saveMessage === 'Saved' ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {saveMessage}
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </div>
               </div>
             ) : (

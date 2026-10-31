@@ -78,8 +78,8 @@ export const deleteNotifyRule = (id, workspace) =>
   api.delete(`/notify/rules/${encodeURIComponent(id)}`, inWorkspace(workspace));
 // With a workspace the MCP servers attached to it are listed as well.
 export const getTools = (workspace) => api.get('/tools', inWorkspace(workspace));
-export const getToolSource = (toolId) => api.get(`/tools/${encodeURIComponent(toolId)}/source`);
-export const updateToolSource = (toolId, data) => api.put(`/tools/${encodeURIComponent(toolId)}/source`, data);
+// Only the tools of the MCP servers attached to the workspace (the Added tools page).
+export const getWorkspaceMcpTools = (workspace) => api.get('/mcp/tools', inWorkspace(workspace));
 
 // Notifications API — user inbox fed by the plan scheduler
 export const getNotifications = (params) => api.get('/plan/notifications', { params });

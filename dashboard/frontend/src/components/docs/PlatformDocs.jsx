@@ -207,6 +207,7 @@ export function ToolboxDoc() {
         t('docs.feature.toolbox.points1'),
         t('docs.feature.toolbox.points2'),
         t('docs.feature.toolbox.points3'),
+        t('docs.feature.toolbox.points4'),
       ]}
       widget={<ToolExample />}
     />

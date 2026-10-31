@@ -5,7 +5,7 @@ Watchers (watchers/, /watchers), pulses (proactive agents, proactive/,
 dashboard/backend/routes/agent_proactive.py), eval sets and their runs
 (evals/, /evals), guardrails and their recent events (guardrails/,
 /guardrails), and the tool catalog with its recent policy decisions
-(tools/, /tools).
+(tools/; the built-in catalog has no page of its own).
 
 **Metadata, not content**, is stricter here than elsewhere: a watcher's state
 can hold a fetched email's sender and subject or an HTTP body's preview, a
@@ -486,7 +486,7 @@ def _list_tools(ctx: SimpleNamespace, query: str, limit: int) -> List[Dict[str, 
             continue
         n = len(grants_of(spec.id))
         rows.append(lookup.row(spec.id, spec.id, " · ".join(x for x in [
-            spec.category, f"{n} capabilit{'y' if n == 1 else 'ies'}", approval] if x), "/tools"))
+            spec.category, f"{n} capabilit{'y' if n == 1 else 'ies'}", approval] if x)))
     return rows[:limit]
 
 
@@ -528,13 +528,15 @@ def _tool_card(ctx: SimpleNamespace, tool_id: str) -> Optional[Dict[str, Any]]:
         "held_by": held_by,
         "recent_decisions_by_outcome": _tool_decision_counts(ctx, tool_id),
     }
-    return {"title": spec.id, "fields": fields, "url": "/tools"}
+    # No page of its own: a built-in tool is granted on an agent's Tools tab,
+    # and /tools lists only the tools MCP servers added (the "mcp" kind).
+    return {"title": spec.id, "fields": fields, "url": None}
 
 
 lookup.register(lookup.LookupKind(
     "tool", "the tool catalog: category, capabilities, approval (search 'approval'), who holds it, "
             "recent decisions",
-    _list_tools, _tool_card, ("/tools",),
+    _list_tools, _tool_card,
 ))
 
 

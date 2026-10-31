@@ -229,7 +229,7 @@ def _mcp_disable(ctx: SimpleNamespace, entity_id: str, target: Dict[str, Any]) -
 
 lookup.register(lookup.LookupKind(
     "mcp", "MCP servers attached to a workspace: status, tool count, approval setting",
-    _list_mcp, _mcp_card, ("/mcp",), aliases=("mcp_server",)))
+    _list_mcp, _mcp_card, ("/mcp", "/tools"), aliases=("mcp_server",)))
 
 register_action(HubAction(
     "mcp", "enable", "let agents use an MCP server's tools again",

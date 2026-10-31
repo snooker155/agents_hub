@@ -78,10 +78,10 @@ Fragen zu jeder Seite beantwortet der Assistent mit einem einzigen schreibgesch�
 | `pulse` | proaktive Agenten | Zeitplan, Budget, heutige Nutzung, Ergebnisse der letzten Ticks | die Seite des Agenten |
 | `eval` | Eval-Sets mit ihrem letzten Run | Anzahl der Fälle, Grader und Runs eines Sets, oder Status, Kosten und Ergebnisse eines Runs | `/evals` |
 | `guardrail` | Guardrails | Stufe, Art, Aktion, Anzahl der Ereignisse je Aktion, nie der gefundene Text | `/guardrails` |
-| `tool` | der Werkzeugkatalog | Fähigkeiten, Genehmigung, der Modus hier, welche Agenten es halten, jüngste Entscheidungen | `/tools` |
+| `tool` | der Werkzeugkatalog | Fähigkeiten, Genehmigung, der Modus hier, welche Agenten es halten, jüngste Entscheidungen | keine (vergeben auf dem Tab „Werkzeuge“ eines Agenten) |
 | `connection` | Verbindungen, die Runs melden | Art, deaktiviert oder nicht, gemeldete Runs | `/connections/<id>` |
 | `skill` | Skills | Prüfstatus, Version, Anzahl der Schritte, nie die Schritte | `/skills` |
-| `mcp` | MCP-Server (ID `workspace/server`) | Transport, aktiviert, Anzahl der Werkzeuge, Genehmigung, ob ein Fehler vorliegt | `/mcp` |
+| `mcp` | MCP-Server (ID `workspace/server`) | Transport, aktiviert, Anzahl der Werkzeuge, Genehmigung, ob ein Fehler vorliegt | `/mcp`, `/tools` |
 | `widget` | einbettbare Chat-Widgets | Agent, erlaubte Origins, an oder aus, Anzahl der Threads | `/widgets` |
 | `registry` | veröffentlichte Agenten, Flows und Skills, die MCP-Allowlist (ID `type:id`) | Prüfstatus, Prüfer, besitzender Workspace | `/registry` |
 | `account` | die eine Zeile `me` | die Rolle der Person, Workspaces, Ausgaben und Limit, API-Schlüssel (Namen, nie Schlüssel), Anzahl der Sessions | `/account` |

@@ -66,7 +66,7 @@ export default {
     marketplaceAgent: 'Marktplatz-Agent',
     skills: 'Skill-Katalog',
     webLogs: 'Web-Anfragen',
-    tools: 'Werkzeugkasten',
+    tools: 'Hinzugefügte Werkzeuge',
     workspaces: 'Workspaces',
     workspaceDetails: 'Workspace-Details',
     memory: 'Speicher',
