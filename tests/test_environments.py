@@ -612,6 +612,9 @@ def launched(monkeypatch):
     monkeypatch.setattr(cm, "start_instance_container", _fake_start_node_container)
     monkeypatch.setattr(carrier.subprocess, "Popen", _fake_popen)
     monkeypatch.setattr(cm, "container_running", lambda name: False)
+    # The carrier looks for a left-over container under the instance's
+    # name before docker run (`docker inspect`): there is none.
+    monkeypatch.setattr(cm, "container_status", lambda name: None)
     return calls
 
 

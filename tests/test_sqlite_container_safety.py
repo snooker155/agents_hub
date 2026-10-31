@@ -10,6 +10,7 @@ operator tools that ask it (the state volume and its sync).
 """
 import pytest
 
+from common import db
 from managers import container_manager as cm
 
 
@@ -26,6 +27,8 @@ def test_docker_desktop_cannot_share_the_database(desktop):
 def test_a_linux_host_with_local_state_can(monkeypatch):
     monkeypatch.setattr(cm.sys, "platform", "linux")
     monkeypatch.setattr(cm, "_fs_type", lambda path: "ext4")
+    # The Postgres CI job would answer no before the filesystem is read.
+    monkeypatch.setattr(db, "is_postgres", lambda: False)
     assert cm.db_shared_with_containers() is True
 
 
@@ -122,7 +125,6 @@ def test_postgres_runs_go_into_containers_without_the_database(monkeypatch):
     network: an instance in one used to write its ready mark and heartbeat to
     an SQLite file in the state mount. It now has no state mount and no
     database URL at all, and its store calls go to the hub."""
-    from common import db
     monkeypatch.setattr(cm.sys, "platform", "linux")
     monkeypatch.setattr(cm, "_fs_type", lambda path: "ext4")
     monkeypatch.setattr(db, "is_postgres", lambda: True)

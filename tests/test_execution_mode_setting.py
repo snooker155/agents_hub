@@ -110,6 +110,9 @@ def launched(monkeypatch):
     # broken-fake) subprocess call the fixture never intended to exercise.
     # Pretend nothing is running, the same as a docker-less test host.
     monkeypatch.setattr(cm, "container_running", lambda name: False)
+    # The carrier looks for a left-over container under the instance's
+    # name before docker run (`docker inspect`): there is none.
+    monkeypatch.setattr(cm, "container_status", lambda name: None)
     return calls
 
 

@@ -9,6 +9,7 @@ import os
 import pytest
 
 from common.paths import AGENTS_HUB_ROOT
+from common import db
 from managers import container_manager as cm
 
 
@@ -89,6 +90,8 @@ def test_a_hub_with_state_on_a_volume_may_share_the_database(monkeypatch):
     """Inside the hub container the volume reads as the VM's own disk."""
     monkeypatch.setattr(cm.sys, "platform", "linux")
     monkeypatch.setattr(cm, "_fs_type", lambda path: "ext4")
+    # The Postgres CI job would answer no before the filesystem is read.
+    monkeypatch.setattr(db, "is_postgres", lambda: False)
     assert cm.db_shared_with_containers() is True
 
 
