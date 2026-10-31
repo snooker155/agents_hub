@@ -68,7 +68,7 @@ export default {
     marketplaceAgent: 'Агент маркетплейса',
     skills: 'Каталог навыков',
     webLogs: 'Веб-запросы',
-    tools: 'Добавленные инструменты',
+    tools: 'MCP-инструменты',
     workspaces: 'Рабочие пространства',
     workspaceDetails: 'Детали пространства',
     memory: 'Память',

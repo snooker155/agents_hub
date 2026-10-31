@@ -42,7 +42,7 @@ export default {
   flows: 'Потоки агентов',
   loops: 'Циклы',
   registry: 'Реестр',
-  toolbox: 'Добавленные инструменты',
+  toolbox: 'MCP-инструменты',
   skills: 'Навыки',
   memory: 'Память',
   webLogs: 'Веб-запросы',

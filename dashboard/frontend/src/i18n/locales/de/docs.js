@@ -399,7 +399,7 @@ export default {
       points1: 'Visualisierung ist die größte Familie — die Werkzeuge create_view / view_apply_ops / graph_* / scene_* / sim_*, die Ansichten erstellen und bearbeiten.',
       points2: 'Die Web-Werkzeuge (web_search, fetch_url) werden Aufruf für Aufruf unter Web-Anfragen erfasst.',
       points3: 'Werkzeuge werden von allen Agenten geteilt; die Bindung erfolgt pro Agent.',
-      points4: 'Eigene Werkzeuge kommen mit den MCP-Servern des Arbeitsbereichs. Die Seite „Hinzugefügte Werkzeuge“ zeigt nur diese; eingebaute vergibt man auf dem Tab „Werkzeuge“ des Agenten.',
+      points4: 'Eigene Werkzeuge kommen mit den MCP-Servern des Arbeitsbereichs. Die Seite „MCP-Werkzeuge“ zeigt nur diese; eingebaute vergibt man auf dem Tab „Werkzeuge“ des Agenten.',
     },
     orchestrator: {
       lead: 'Der Orchestrator entscheidet, welcher Agent eine Aufgabe übernimmt. Konfigurieren Sie das Routing je Workspace — Auto-Zuweisung einschalten, Folgeschritte festlegen und den Ausführungsmodus wählen.',

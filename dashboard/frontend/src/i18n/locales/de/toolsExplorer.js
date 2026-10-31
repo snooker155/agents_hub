@@ -1,5 +1,5 @@
 export default {
-  title: 'Hinzugefügte Werkzeuge',
+  title: 'MCP-Werkzeuge',
   description: 'Werkzeuge der MCP-Server, die an diesen Arbeitsbereich angebunden sind. Die eingebauten Werkzeuge des Hubs vergibt man einem Agenten auf seinem Tab „Werkzeuge“.',
   searchTools: 'Werkzeuge suchen…',
   loadingToolDefinitions: 'Werkzeugbeschreibungen werden geladen…',
@@ -10,7 +10,7 @@ export default {
   selectAToolFromThe: 'Wählen Sie ein Werkzeug in der Liste, um seine Beschreibung zu sehen.',
   unknownServer: 'MCP-Server',
   manageServers: 'MCP-Server',
-  emptyTitle: 'Noch keine hinzugefügten Werkzeuge',
+  emptyTitle: 'Noch keine MCP-Werkzeuge',
   emptyHint: 'Binden Sie einen MCP-Server an diesen Arbeitsbereich an, dann erscheinen seine Werkzeuge hier und lassen sich Agenten zuweisen.',
   addServer: 'MCP-Server anbinden',
 };

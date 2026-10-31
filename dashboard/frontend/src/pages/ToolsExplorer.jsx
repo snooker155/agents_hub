@@ -12,7 +12,7 @@ import PageLoader from '../components/PageLoader';
 const MCP_PREFIX = 'mcp:';
 
 /**
- * Added tools: the tools the workspace's MCP servers bring, not the hub's own
+ * MCP tools: the tools the workspace's MCP servers bring, not the hub's own
  * built-in catalog (that one is picked per agent on its Tools tab). Read-only;
  * a server is added, changed and removed on the MCP servers page.
  */

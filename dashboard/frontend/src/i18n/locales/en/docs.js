@@ -399,7 +399,7 @@ export default {
       points1: 'Visualization is the largest family — the create_view / view_apply_ops / graph_* / scene_* / sim_* tools that build and edit views.',
       points2: 'The web tools (web_search, fetch_url) are recorded call-by-call under Web Requests.',
       points3: 'Tools are shared across agents; the binding is per agent.',
-      points4: 'Your own tools come with the workspace\'s MCP servers. The Added tools page lists only those; built-in ones are granted on the agent\'s Tools tab.',
+      points4: 'Your own tools come with the workspace\'s MCP servers. The MCP tools page lists only those; built-in ones are granted on the agent\'s Tools tab.',
     },
     orchestrator: {
       lead: 'The Orchestrator decides which agent handles a task. Configure routing per workspace — turn auto-assignment on, choose how follow-ups are handled, and pick the execution mode.',

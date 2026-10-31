@@ -1,5 +1,5 @@
 export default {
-  title: 'Added tools',
+  title: 'MCP tools',
   description: 'Tools of the MCP servers attached to this workspace. The hub\'s built-in tools are granted to an agent on its Tools tab.',
   searchTools: 'Search tools…',
   loadingToolDefinitions: 'Loading tool definitions…',
@@ -10,7 +10,7 @@ export default {
   selectAToolFromThe: 'Select a tool in the list to see its description.',
   unknownServer: 'MCP server',
   manageServers: 'MCP servers',
-  emptyTitle: 'No added tools yet',
+  emptyTitle: 'No MCP tools yet',
   emptyHint: 'Attach an MCP server to this workspace and its tools show up here, ready to grant to agents.',
   addServer: 'Attach an MCP server',
 };
