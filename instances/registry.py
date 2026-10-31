@@ -32,7 +32,7 @@ DELTA_FIELDS = (
     "instance_id", "agent_id", "workspace", "kind", "state", "label",
     "current_run_id", "task_id", "node_id", "container_name", "session_id",
     "last_activity", "last_activity_at", "finished_at", "runs_count",
-    "total_tokens", "total_duration_ms", "error", "service_id",
+    "total_tokens", "total_duration_ms", "error", "service_id", "carrier_status",
 )
 
 # Environment variable carrying the instance id into a spawned agent process.
@@ -201,6 +201,13 @@ def mark_finished(instance_id: str, activity: Optional[str] = None
         except Exception:  # noqa: BLE001 - retention sweep is hygiene, finishing must not fail on it
             log.debug("retention sweep failed", exc_info=True)
     return inst
+
+
+@remote_state.hub_call("instance:instance_id")
+def mark_stopping(instance_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+    """A stop was asked of the carrier: the badge says so at once, while the
+    process (here, or on the host that carries it) winds down."""
+    return _publish(store.update(instance_id, carrier_status="stopping", **fields))
 
 
 @remote_state.hub_call("instance:instance_id")

@@ -983,13 +983,16 @@ def stop(instance_id: str, *, reason: str = "stopped by operator") -> bool:
     if not _carried_here(instance):
         # No signal reaches another host; the process reads this on its next
         # heartbeat and stops itself (runtime/instance_run.py).
-        store.update(instance_id, stop_requested_at=_now(), carrier_status="stopping")
+        registry.mark_stopping(instance_id, stop_requested_at=_now())
+        # Woken now rather than on its next heartbeat (runtime/instance_run.py).
+        from instances import wake
+        wake.signal(instance_id)
         append_log(instance, f"[carrier_stop] {reason} (requested from {socket.gethostname()}, "
                              f"the carrier on {instance.get('carrier_host') or 'another host'} stops on its next beat)")
         return True
 
     append_log(instance, f"[carrier_stop] {reason}")
-    store.update(instance_id, carrier_status="stopping")
+    registry.mark_stopping(instance_id)
     if instance.get("carrier_mode") == "docker" or instance.get("container_name"):
         cname = instance.get("container_name")
         from managers.container_manager import stop_container
@@ -1011,7 +1014,7 @@ def stop(instance_id: str, *, reason: str = "stopped by operator") -> bool:
     if sent:
         fail_in_progress_runs(instance_id, "Instance was stopped")
     else:
-        store.update(instance_id, carrier_status=instance.get("carrier_status"))
+        registry._publish(store.update(instance_id, carrier_status=instance.get("carrier_status")))
         append_log(instance, "[carrier_stop] could not reach the process")
     return bool(sent)
 

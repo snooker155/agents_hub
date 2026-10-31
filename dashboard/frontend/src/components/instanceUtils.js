@@ -13,9 +13,20 @@ export const STATE_STYLES = {
   active:   { dot: 'bg-green-500 animate-pulse',  badge: 'bg-green-100 text-green-800' },
   standby:  { dot: 'bg-blue-400',                 badge: 'bg-blue-100 text-blue-700' },
   finished: { dot: 'bg-gray-400',                 badge: 'bg-gray-100 text-gray-600' },
+  stopping: { dot: 'bg-amber-400 animate-pulse',  badge: 'bg-amber-100 text-amber-800' },
   stopped:  { dot: 'bg-gray-400',                 badge: 'bg-gray-100 text-gray-600' },
   failed:   { dot: 'bg-red-500',                  badge: 'bg-red-100 text-red-700' },
 };
+
+/** The state the badge shows: a live copy whose carrier was asked to stop
+ * reads "stopping" until its process has gone and the row says "stopped". */
+export function displayState(instance) {
+  const state = instance?.state;
+  if (instance?.carrier_status === 'stopping' && ['starting', 'active', 'standby'].includes(state)) {
+    return 'stopping';
+  }
+  return state;
+}
 
 export const KIND_ICONS = {
   resident: Radio,

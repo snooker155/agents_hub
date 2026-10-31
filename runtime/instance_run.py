@@ -745,6 +745,10 @@ class InstanceLoop:
         self.lock = threading.Lock()
         self.task_thread: Optional[threading.Thread] = None
         self.next_sweep = 0.0
+        # Set to beat before the interval is up: a wake that brought no mail
+        # may be a stop asked from another host (instances/wake.py).
+        self.beat_now = threading.Event()
+        self.last_beat = 0.0
 
     # Conversations answering right now (stored form; None is the main one).
     def busy_conversations(self) -> Set[Optional[str]]:
@@ -849,8 +853,14 @@ class InstanceLoop:
             try:
                 instance = self.follows
                 concurrency = carrier.clamp_concurrency(instance.get("concurrency") or 1)
-                if mail:
-                    self.claim_messages(concurrency)
+                if mail and not self.claim_messages(concurrency) and self.running() < concurrency:
+                    # Woken without mail to take: maybe a stop. At most one
+                    # extra beat a second; a wake that keeps coming meanwhile
+                    # (the stop not read yet) is slowed to the poll interval.
+                    if time.monotonic() - self.last_beat >= 1.0:
+                        self.beat_now.set()
+                    else:
+                        time.sleep(wake.poll_seconds())
                 self.maybe_sweep_tasks(instance)
                 # Idle, one long wait (the hub answers when mail comes); while
                 # turns run, a short one, so the next message of a conversation
@@ -882,7 +892,12 @@ class InstanceLoop:
 
     def _heartbeat(self) -> None:
         from instances import carrier
-        while not _stopping.wait(HEARTBEAT_SECONDS):
+        while True:
+            self.beat_now.wait(HEARTBEAT_SECONDS)
+            self.beat_now.clear()
+            if _stopping.is_set():
+                return
+            self.last_beat = time.monotonic()
             try:
                 follows = carrier.heartbeat(self.instance_id, **_build_counts()) or {}
             except TokenRefused as exc:

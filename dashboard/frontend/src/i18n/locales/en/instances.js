@@ -16,6 +16,7 @@ export default {
     active: 'working',
     standby: 'standby',
     finished: 'finished',
+    stopping: 'stopping',
     stopped: 'stopped',
     failed: 'failed',
   },

@@ -16,6 +16,7 @@ export default {
     active: 'работает',
     standby: 'ожидает',
     finished: 'завершён',
+    stopping: 'останавливается',
     stopped: 'остановлен',
     failed: 'ошибка',
   },

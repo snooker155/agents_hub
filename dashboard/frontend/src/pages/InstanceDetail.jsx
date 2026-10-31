@@ -15,7 +15,7 @@ import ComposerDock from '../components/ComposerDock';
 import InstanceComposer from '../components/instances/InstanceComposer';
 import { useStream, useChannel, useStreamEvent } from '../components/stream';
 import { StateBadge } from '../components/InstanceList';
-import { formatDuration, relativeTime } from '../components/instanceUtils';
+import { displayState, formatDuration, relativeTime } from '../components/instanceUtils';
 import AgentTranscript from '../components/chat/AgentTranscript';
 import ViewModeToggle from '../components/chat/ViewModeToggle';
 import { useChatViewMode } from '../components/chat/viewMode';
@@ -356,6 +356,8 @@ export default function InstanceDetail() {
 
   const handleStop = async () => {
     setBusy('stopping');
+    // The badge turns at the click; the server's delta confirms it.
+    if (resident) setInstance((prev) => (prev ? { ...prev, carrier_status: 'stopping' } : prev));
     try { await stopInstance(instanceId); await load(); }
     catch (e) { setPageError(e.response?.data?.detail || ''); }
     finally { setBusy(''); }
@@ -467,12 +469,12 @@ export default function InstanceDetail() {
         )}
         actions={(
           <div className="flex items-center gap-2">
-            <StateBadge state={instance.state} t={t} />
+            <StateBadge state={displayState(instance)} t={t} />
             {resident ? (
               <>
                 {isLive ? (
                   <>
-                    {instance.state === 'active' && (
+                    {displayState(instance) === 'active' && (
                       <button type="button" onClick={handleInterrupt} disabled={!!busy}
                               className="px-3 py-1.5 text-sm rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50 inline-flex items-center gap-1.5 disabled:opacity-50">
                         <Square className="w-3.5 h-3.5" />{t('instanceDetail.interrupt')}
@@ -482,7 +484,7 @@ export default function InstanceDetail() {
                             className="px-3 py-1.5 text-sm rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 inline-flex items-center gap-1.5 disabled:opacity-50">
                       <RotateCw className="w-3.5 h-3.5" />{t('instanceDetail.restart')}
                     </button>
-                    <button type="button" onClick={handleStop} disabled={!!busy}
+                    <button type="button" onClick={handleStop} disabled={!!busy || displayState(instance) === 'stopping'}
                             className="px-3 py-1.5 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50 inline-flex items-center gap-1.5 disabled:opacity-50">
                       <Square className="w-3.5 h-3.5" />{t('instanceDetail.stop')}
                     </button>

@@ -87,11 +87,19 @@ def signal(instance_id: str) -> None:
 
 
 def _pending(instance_id: str, exclude: Any = ()) -> bool:
+    """Mail to claim, or a stop asked of the carrier: either ends its wait
+    (a stop from another host is read on the carrier's next beat, which a
+    wake brings forward)."""
     from instances import inbox
     try:
-        return inbox.has_pending(instance_id, exclude)
+        return inbox.has_pending(instance_id, exclude) or _stop_requested(instance_id)
     except Exception:  # noqa: BLE001 - a failed read is retried on the next tick
         return False
+
+
+def _stop_requested(instance_id: str) -> bool:
+    from instances import store
+    return bool((store.get(instance_id) or {}).get("stop_requested_at"))
 
 
 def wait(instance_id: str, timeout: float, exclude: Any = ()) -> bool:

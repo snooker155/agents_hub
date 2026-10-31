@@ -7,7 +7,7 @@ import {
 
 import { getInstances, stopInstance } from '../api';
 import { useStreamEvent, useLiveRefetch } from './stream';
-import { CARRIER_MODE_ICONS, KIND_ICONS, STATE_STYLES, formatDuration, relativeTime } from './instanceUtils';
+import { CARRIER_MODE_ICONS, KIND_ICONS, STATE_STYLES, displayState, formatDuration, relativeTime } from './instanceUtils';
 import { useI18n } from '../i18n';
 import { ListLoadMore, ListPagingControls } from './ListPaging';
 import { useListPaging } from './listPagingState';
@@ -115,7 +115,7 @@ function InstanceRow({ instance, showAgent, onStop, onTerminal, busy, t }) {
           )}
         </td>
       )}
-      <td className="px-3 py-2 whitespace-nowrap"><StateBadge state={instance.state} t={t} /></td>
+      <td className="px-3 py-2 whitespace-nowrap"><StateBadge state={displayState(instance)} t={t} /></td>
       <td className="px-3 py-2 max-w-[280px]">
         <div className="text-xs text-gray-600 truncate" title={instance.last_activity || ''}>
           {instance.last_activity || <span className="text-gray-300">—</span>}
@@ -147,7 +147,7 @@ function InstanceRow({ instance, showAgent, onStop, onTerminal, busy, t }) {
               <SquareTerminal className="w-3.5 h-3.5" />
             </button>
           )}
-          {['active', 'starting'].includes(instance.state) && (
+          {['active', 'starting'].includes(displayState(instance)) && (
             <button type="button" onClick={(e) => { e.stopPropagation(); onStop(instance); }} disabled={busy}
                     title={t('instances.actions.stop')}
                     className="p-1.5 rounded hover:bg-red-50 text-red-600 disabled:opacity-40">
@@ -289,6 +289,9 @@ export default function InstanceList({
 
   const handleStop = async (instance) => {
     setBusyIds((b) => ({ ...b, [instance.instance_id]: true }));
+    // The badge turns at the click; the server's delta confirms it.
+    setItems((prev) => prev.map((i) => (i.instance_id === instance.instance_id
+      ? { ...i, carrier_status: i.resident ? 'stopping' : i.carrier_status } : i)));
     try {
       await stopInstance(instance.instance_id);
       await fetchPage();

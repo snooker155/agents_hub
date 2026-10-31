@@ -91,6 +91,26 @@ def test_stopping_a_queued_carrier_withdraws_its_launch(fake_agent, popen, api_r
     assert popen == []
 
 
+def test_a_stop_for_another_host_shows_at_once_and_ends_the_carriers_wait(fake_agent, api_role, monkeypatch):
+    from instances import wake
+    base = registry.ensure_instance("swe_agent", kind=store.RESIDENT_KIND, workspace="default", state="standby")
+    iid = base["instance_id"]
+    now = datetime.now(timezone.utc).isoformat()
+    store.update(iid, carrier_status="running", carrier_mode="local", carrier_host="other-host",
+                 pid=111, heartbeat_at=now, carrier_started_at=now)
+    deltas, signals = [], []
+    monkeypatch.setattr(registry, "notify_delta", lambda kind, key, delta: deltas.append(delta))
+    monkeypatch.setattr(wake, "signal", signals.append)
+    assert not wake._pending(iid)
+
+    assert carrier.stop(iid)
+    # The badge reads "stopping" now, not on the carrier's next beat.
+    assert deltas and deltas[-1]["carrier_status"] == "stopping" and deltas[-1]["state"] == "standby"
+    # The carrier is woken, and its wait ends on the request even without a broker.
+    assert signals == [iid]
+    assert wake._pending(iid)
+
+
 def test_a_launch_no_worker_could_start_fails_the_instance(fake_agent, popen, api_role):
     inst = carrier.start("swe_agent", workspace="default")
     run_queue.finish(inst["instance_id"], error="RuntimeError: no docker here")
