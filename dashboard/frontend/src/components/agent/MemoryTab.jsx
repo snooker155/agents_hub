@@ -1,10 +1,11 @@
-import { updateAgentEpisodicConfig, updateAgentTools } from '../../api';
+import { updateAgentEpisodicConfig, updateAgentMemoryWrite } from '../../api';
 import { errorDetail } from '../toast';
 import { MemoryPoolDetails } from './memoryPool';
 import PersonalMemoryCard from './PersonalMemoryCard';
 import { isPersonalPool, poolName } from '../memoryManager/helpers';
 import { AlertCircle, Database, Loader, Save, Trash2, Wrench, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { InfoHint } from '../PageLayout';
 import { useAgentPage } from './context';
 
 /** What the agent remembers: its own store, the pools it shares, episodic recall. */
@@ -12,15 +13,29 @@ export default function MemoryTab() {
   const {
     addExtraPool, agent, connectedPool, episodicEffective, episodicMode, episodicSaving,
     fetchData, handleEraseMemory, handleUpdateMemory, id, isUpdatingMemory, loadingPool,
-    markMemoryDraftDirty, memoryData, memoryPools, memoryReadOnly, toggleReadOnly, memoryType,
-    removePool, selectedTools,
+    markMemoryDraftDirty, memoryPools, memoryReadOnly, toggleReadOnly, memoryType,
+    personalMemory, removePool,
     selectedWorkspace, setConnectedPool, setEpisodicEffective, setEpisodicMode,
-    setEpisodicSaving, setMemoryData, setMemoryType, setPrimaryPool, setSelectedTools,
+    setEpisodicSaving, setMemoryType, setPrimaryPool,
     setPersonalMemory, setToolsSaving, sharedMemories, t, toast,
   } = useAgentPage();
   // The default workspace lists every workspace's pools: name the one a
   // personal pool belongs to.
   const onDefault = !selectedWorkspace || selectedWorkspace === 'default';
+  // Both selectors keep a compact width instead of filling the card.
+  const typeSelect = (
+    <div className="w-full sm:w-72">
+      <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.memoryType')}</label>
+      <select
+        value={memoryType}
+        onChange={(e) => { setMemoryType(e.target.value); markMemoryDraftDirty(); if (e.target.value !== 'shared') setConnectedPool(null); }}
+        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
+      >
+        <option value="none">{t('agentDetails.none')}</option>
+        <option value="shared">{t('agentDetails.sharedMemoryPool')}</option>
+      </select>
+    </div>
+  );
   return (
         <div className="space-y-5">
           {/* ── Configuration card ── */}
@@ -33,21 +48,12 @@ export default function MemoryTab() {
             </p>
             <div className="space-y-4">
               <PersonalMemoryCard agentId={id} workspace={selectedWorkspace} t={t} toast={toast} onChange={setPersonalMemory} />
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.memoryType')}</label>
-                <select
-                  value={memoryType}
-                  onChange={(e) => { setMemoryType(e.target.value); markMemoryDraftDirty(); if (e.target.value !== 'shared') setConnectedPool(null); }}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                >
-                  <option value="none">{t('agentDetails.none')}</option>
-                  <option value="local">{t('agentDetails.localAgentSpecificOption')}</option>
-                  <option value="shared">{t('agentDetails.sharedMemoryPool')}</option>
-                </select>
-              </div>
+              {memoryType !== 'shared' && typeSelect}
 
               {memoryType === 'shared' && (() => {
                 const poolNameById = Object.fromEntries(sharedMemories.map(m => [m.id, poolName(m, t, onDefault)]));
+                const poolById = Object.fromEntries(sharedMemories.map(m => [m.id, m]));
+                const poolDesc = (pid) => (poolById[pid]?.description || '').trim();
                 const primary = memoryPools[0] || '';
                 const extras = memoryPools.slice(1);
                 // A personal pool is attached by the personal memory switch
@@ -57,9 +63,14 @@ export default function MemoryTab() {
                 const unattached = sharedMemories.filter(m => !isPersonalPool(m) && !memoryPools.includes(m.id));
                 return (
                   <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.primaryPool')}</label>
-                      <p className="text-xs text-gray-400 mb-1.5">{t('agentDetails.primaryPoolHint')}</p>
+                    {/* The type and the primary pool side by side, one row. */}
+                    <div className="flex flex-wrap gap-4 items-start">
+                    {typeSelect}
+                    <div className="w-full sm:w-72">
+                      <label className="flex items-center text-sm font-medium text-gray-700 mb-1">
+                        {t('agentDetails.primaryPool')}
+                        <InfoHint text={t('agentDetails.primaryPoolHint')} label={t('agentDetails.primaryPool')} className="ml-1.5 font-normal" />
+                      </label>
                       {pickable.length > 0 ? (
                         <select
                           value={primary}
@@ -84,7 +95,6 @@ export default function MemoryTab() {
                       )}
                       {primary && (
                         <>
-                          <p className="text-xs text-gray-400 mt-1 truncate">ID: {primary}</p>
                           <label className="flex items-center gap-1.5 mt-1.5 text-xs text-gray-600 cursor-pointer">
                             <input
                               type="checkbox"
@@ -97,10 +107,13 @@ export default function MemoryTab() {
                         </>
                       )}
                     </div>
+                    </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.additionalPools')}</label>
-                      <p className="text-xs text-gray-400 mb-1.5">{t('agentDetails.additionalPoolsHint')}</p>
+                      <label className="flex items-center text-sm font-medium text-gray-700 mb-1">
+                        {t('agentDetails.additionalPools')}
+                        <InfoHint text={t('agentDetails.additionalPoolsHint')} label={t('agentDetails.additionalPools')} className="ml-1.5 font-normal" />
+                      </label>
                       {extras.length > 0 && (
                         <div className="space-y-1.5 mb-2">
                           {extras.map(pid => (
@@ -108,6 +121,11 @@ export default function MemoryTab() {
                               <span className="text-sm text-gray-700 truncate flex-1" title={pid}>
                                 {poolNameById[pid] || pid}
                               </span>
+                              {!poolDesc(pid) ? (
+                                <span className="text-xs text-gray-400 shrink-0">{t('agentDetails.poolNoDescription')}</span>
+                              ) : !memoryReadOnly.has(pid) && (
+                                <span className="text-xs text-emerald-600 shrink-0" title={poolDesc(pid)}>{t('agentDetails.poolWrites')}</span>
+                              )}
                               <label className="flex items-center gap-1 text-xs text-gray-500 shrink-0 cursor-pointer" title={t('agentDetails.poolReadOnlyHint')}>
                                 <input
                                   type="checkbox"
@@ -133,7 +151,7 @@ export default function MemoryTab() {
                         <select
                           value=""
                           onChange={(e) => addExtraPool(e.target.value)}
-                          className="w-full border border-dashed border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-500 focus:outline-none"
+                          className="w-full sm:w-72 border border-dashed border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-500 focus:outline-none"
                         >
                           <option value="">{t('agentDetails.attachAnotherPool')}</option>
                           {unattached.map(m => (
@@ -148,46 +166,37 @@ export default function MemoryTab() {
                 );
               })()}
 
-              {memoryType === 'local' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('agentDetails.memoryContent')}</label>
-                  <textarea
-                    value={memoryData}
-                    onChange={(e) => { setMemoryData(e.target.value); markMemoryDraftDirty(); }}
-                    placeholder={t('agentDetails.enterMemoryContentOrConfiguration')}
-                    rows={5}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  />
-                </div>
-              )}
 
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={handleUpdateMemory}
-                  disabled={isUpdatingMemory || (memoryType === 'shared' && memoryPools.length === 0)}
-                  className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {isUpdatingMemory ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {isUpdatingMemory ? t('common.saving') : t('common.save')}
-                </button>
+              {/* Small and on the right, like the Save button of the Tools tab. */}
+              <div className="flex justify-end gap-2 pt-1">
                 <button
                   onClick={handleEraseMemory}
                   disabled={isUpdatingMemory || agent.memory_type === 'none'}
-                  className="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-100 flex items-center justify-center gap-2 disabled:opacity-50 border border-red-200"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 disabled:opacity-50"
                 >
-                  <Trash2 className="w-4 h-4" /> {t('agentDetails.erase')}
+                  <Trash2 className="w-3.5 h-3.5" /> {t('agentDetails.erase')}
+                </button>
+                <button
+                  onClick={handleUpdateMemory}
+                  disabled={isUpdatingMemory || (memoryType === 'shared' && memoryPools.length === 0)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {isUpdatingMemory ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  {isUpdatingMemory ? t('common.saving') : t('common.save')}
                 </button>
               </div>
             </div>
           </div>
 
-          {/* ── Memory Tools ── */}
-          {memoryType === 'shared' && memoryPools.length > 0 && (
+          {/* ── Memory Tools ── shown whenever the agent has a pool to write to,
+              its own or the user's personal memory. */}
+          {((memoryType === 'shared' && memoryPools.length > 0) || personalMemory?.effective) && (
             <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
               <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
                 <Wrench className="w-4 h-4 text-indigo-500" /> {t('agentDetails.memoryTools')}
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* The three switches in one row, two on a medium screen. */}
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                 {/* read_memory — always on */}
                 <div className="p-3 border-2 border-green-200 bg-green-50 rounded-xl flex items-center justify-between gap-3">
                   <div>
@@ -198,9 +207,9 @@ export default function MemoryTab() {
                     {t('agentDetails.alwaysOn')}
                   </span>
                 </div>
-                {/* write_memory — toggleable */}
+                {/* Every memory write, for every pool (AgentSpec.memory_write). */}
                 {(() => {
-                  const enabled = selectedTools.includes('write_memory');
+                  const enabled = agent.memory_write !== false;
                   return (
                     <div className={`p-3 border-2 rounded-xl flex items-center justify-between gap-3 transition-colors ${enabled ? 'border-indigo-200 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
                       <div>
@@ -209,13 +218,11 @@ export default function MemoryTab() {
                       </div>
                       <button
                         type="button"
+                        aria-pressed={enabled}
+                        aria-label={t('agentDetails.writeMemory')}
                         onClick={async () => {
-                          const next = enabled
-                            ? selectedTools.filter(t => t !== 'write_memory')
-                            : [...selectedTools, 'write_memory'];
-                          setSelectedTools(next);
                           setToolsSaving(true);
-                          try { await updateAgentTools(id, { tools: next }); await fetchData(); } catch (e) { toast.error(t('agentDetails.errors.updateTools'), errorDetail(e)); } finally { setToolsSaving(false); }
+                          try { await updateAgentMemoryWrite(id, !enabled); await fetchData(); } catch (e) { toast.error(t('agentDetails.errors.updateTools'), errorDetail(e)); } finally { setToolsSaving(false); }
                         }}
                         className={`px-2.5 py-1 rounded-full text-xs font-semibold border shrink-0 ${
                           enabled ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-500 border-gray-300'
@@ -227,13 +234,18 @@ export default function MemoryTab() {
                   );
                 })()}
                 {/* record_episode — episodic write tool, tri-state selector */}
-                <div className={`p-3 border-2 rounded-xl flex items-center justify-between gap-3 transition-colors ${episodicEffective ? 'border-indigo-200 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
+                <div className={`p-3 border-2 rounded-xl flex flex-wrap items-center justify-between gap-3 transition-colors ${episodicEffective ? 'border-indigo-200 bg-indigo-50' : 'border-gray-200 bg-gray-50'}`}>
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-gray-900">{t('agentDetails.episodicWrite')}</div>
+                    <div className="text-sm font-semibold text-gray-900 flex items-center">
+                      {t('agentDetails.episodicWrite')}
+                      <InfoHint
+                        text={`${t('agentDetails.episodicHintBefore')} ${t('agentDetails.auto')} ${t('agentDetails.episodicHintAuto')}`}
+                        label={t('agentDetails.episodicWrite')}
+                        className="ml-1.5 font-normal"
+                      />
+                    </div>
                     <div className="text-xs text-gray-500 mt-0.5">
-                      {t('agentDetails.episodicHintBefore')}
-                      {' '}<span className="font-medium">{t('agentDetails.auto')}</span> {t('agentDetails.episodicHintAuto')}
-                      {' '}{t('agentDetails.currently')} <span className="font-semibold">{episodicEffective ? t('agentDetails.active') : t('agentDetails.inactive')}</span>.
+                      {t('agentDetails.currently')} <span className="font-semibold">{episodicEffective ? t('agentDetails.active') : t('agentDetails.inactive')}</span>.
                     </div>
                   </div>
                   <div className="inline-flex rounded-lg border border-gray-300 overflow-hidden shrink-0">

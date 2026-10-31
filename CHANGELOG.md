@@ -33,6 +33,37 @@ turns that section into the next release.
 
 ### Changed
 
+- An agent writes to more than one pool: an additional pool whose description
+  says what to save there takes writes, with `pool` (its name) on `remember`,
+  `forget`, `record_episode` and `link`, and the prompt names it with that
+  description. A pool without a description stays read only, and a binding
+  marked read only stays read only whatever the description says. The
+  description is editable on the Memory page (`PATCH /api/shared-memory/{id}`),
+  and the read only checkbox is in the Memory page's assign window too, which
+  used to drop the mark on save.
+- The agent's "Write memory" switch (Memory tab) turns every memory write off,
+  for every pool and personal memory too (`memory_write` on the agent record,
+  `POST /api/agents/{id}/memory-write`). It used to remove only the legacy
+  `write_memory` tool, so an agent with a pool kept `remember` and the other
+  write tools. The tab shows it whenever the agent has a pool to write to,
+  personal memory alone included.
+- The "local" memory type is removed: it never reached the prompt or the
+  tools. A record that holds it reads as none.
+- On the agent's Memory tab the memory type and the primary pool sit side by
+  side with compact selectors and their hints behind an info icon, Save and
+  Erase are small buttons on the right, and the three memory switches share
+  one row. The pool shown under them has a tab for every kind of memory
+  (blocks, slots, notes, journal, episodes, graph, files), read only; it used
+  to list a `files` field the pool route never sends, so it always looked
+  empty.
+- The test suite reads its own empty `.env` (`AGENTS_HUB_ENV_FILE` in
+  tests/conftest.py), so a developer `.env` on multi mode or with a blob URL
+  no longer turns route tests into 403s or sends blobs to S3.
+- Personal memory is set on the Memory page, on a Personal memory tab of its
+  own, for the workspace picked in the header: the workspace switch and one
+  switch per agent, as before. It is no longer a section of the workspace's
+  Settings tab. The agent card's "off in this workspace" link and the note in
+  the Settings menu open the tab (`/memory?tab=personal&workspace=<name>`).
 - An agent container's state calls, model calls and wait for mail go to the
   worker that started it (the hub where no worker runs); the API backend only
   gets its live events. An idle carrier makes a heartbeat every 15 seconds

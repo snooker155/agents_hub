@@ -59,10 +59,10 @@ export default function PersonalMemoryCard({ agentId, workspace, t, toast, onCha
             <>
               {' '}{t('agentDetails.personalMemory.workspaceOff')}{' '}
               <Link
-                to={`/workspaces/${encodeURIComponent(config.workspace)}?tab=settings&section=personalMemory`}
+                to={`/memory?tab=personal&workspace=${encodeURIComponent(config.workspace)}`}
                 className="text-indigo-600 hover:text-indigo-800"
               >
-                {t('agentDetails.personalMemory.openWorkspaceSettings')}
+                {t('agentDetails.personalMemory.openMemorySettings')}
               </Link>
             </>
           ) : config.effective && config.has_own_pool ? (

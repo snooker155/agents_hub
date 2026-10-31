@@ -81,7 +81,7 @@ export default function OverviewTab() {
   const {
     activeRun, agent, availableTools, defaultChatMessage, defaultChatSaving, descDraft,
     descSaving, fetchData, handleSaveDescription, handleSaveWsCapacity,
-    handleToggleDefaultChat, handleToggleShared, isDefaultChat, memoryData, memoryPools,
+    handleToggleDefaultChat, handleToggleShared, isDefaultChat, memoryPools,
     memoryType, personalMemory, selectedTools, sharedMemories, selectedWorkspace, setActiveTab, setDescDraft,
     setWsCapacityEdits, shared, sharingMessage, sharingSaving, t, toolsMeta, wsCapacities,
     wsCapacityEdits, wsCapacitySaving,
@@ -287,7 +287,6 @@ export default function OverviewTab() {
                   const primary = shared && sharedMemories.find(m => m.id === memoryPools[0]);
                   const pool = (primary && poolName(primary, t)) || memoryPools[0];
                   const label = memoryType === 'none' ? t('agentDetails.noMemory')
-                    : memoryType === 'local' ? t('agentDetails.localAgentSpecific')
                     : !shared ? t('agentDetails.sharedPool')
                     : memoryPools.length === 1 ? t('agentDetails.poolSingle', { pool })
                     : t('agentDetails.poolMulti', { pool, more: memoryPools.length - 1 });
@@ -295,20 +294,15 @@ export default function OverviewTab() {
                     <span title={shared ? memoryPools.join(', ') : undefined}
                       className={`inline-flex max-w-full items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold ${
                         memoryType === 'none'   ? 'bg-gray-100 text-gray-500' :
-                        memoryType === 'local'  ? 'bg-blue-100 text-blue-700' :
                                                   'bg-amber-100 text-amber-700'
                       }`}>
                       <span className={`w-2 h-2 shrink-0 rounded-full ${
-                        memoryType === 'none'  ? 'bg-gray-400' :
-                        memoryType === 'local' ? 'bg-blue-500' : 'bg-amber-500 animate-pulse'
+                        memoryType === 'none'  ? 'bg-gray-400' : 'bg-amber-500 animate-pulse'
                       }`} />
                       <span className="truncate">{label}</span>
                     </span>
                   );
                 })()}
-                {memoryType === 'local' && memoryData && (
-                  <div className="text-xs text-gray-500 italic line-clamp-2">{memoryData.slice(0, 120)}{memoryData.length > 120 ? '…' : ''}</div>
-                )}
                 {/* With no memory of its own the card says one thing: personal
                     memory when it is in use, "No memory" when it is not. */}
                 {(memoryType !== 'none' || personalOn) && <PersonalMemoryLine config={personalMemory} t={t} />}

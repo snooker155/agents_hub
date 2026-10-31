@@ -1,30 +1,58 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
 import { MemoryPoolDetails } from '../memoryPool';
+import { I18nProvider } from '../../../i18n';
 
-// The Memory tab of an agent. Six of its icons were used without an import,
-// so the tab threw a ReferenceError as soon as an agent had a pool attached:
-// ESLint 10 started reading JSX names as references and caught it.
+// The bottom of an agent's Memory tab: every kind of memory its primary pool
+// holds, read only, one tab each. It used to list `pool.files`, a field the
+// pool route never sends, so it always said the pool had no files.
+vi.mock('../../../api', () => ({
+  listMemoryEpisodes: () => Promise.resolve({ data: { episodes: [
+    { id: 'e1', kind: 'decision', outcome: 'success', summary: 'Picked Postgres', occurred_at: '2026-10-30T10:00:00Z' },
+  ] } }),
+  getMemoryGraphStats: () => Promise.resolve({ data: {
+    node_count: 3, edge_count: 2, types: { person: 2, team: 1 }, relations: { member_of: 2 },
+  } }),
+}));
+
 const pool = {
   id: 'pool-1', name: 'HR knowledge', description: 'Policies',
-  files: [
-    { name: 'handbook.md', size: 2048, rag_status: 'indexed', vectorized: true, chunk_count: 4,
-      embedding_dims: 1536, preview: '# Leave\n30 days a year' },
+  blocks: [{ name: 'persona', value: 'You are careful.', limit_chars: 500, description: '' }],
+  structured_data: { leave: { days: 30, carry_over: true } },
+  notes: [
+    { id: 'n1', title: 'Onboarding', content: 'Laptop on day one' },
+    { id: 'n2', title: 'journal:2026-10-30', content: 'Asked about leave' },
   ],
+  rag_files: [{ filename: 'handbook.md', workspace: 'default', status: 'indexed', chunks: 4 }],
 };
 
-describe('MemoryPoolDetails', () => {
-  it('shows an attached pool with its files', () => {
-    render(<MemoryPoolDetails pool={pool} />);
-    expect(screen.getByText('pool-1')).toBeInTheDocument();
-    expect(screen.getByText('handbook.md')).toBeInTheDocument();
-  });
+const show = () => render(<I18nProvider><MemoryPoolDetails pool={pool} /></I18nProvider>);
 
-  it('opens a file preview and its tool call', () => {
-    render(<MemoryPoolDetails pool={pool} />);
-    const previews = screen.getAllByRole('button').filter((b) => /preview/i.test(b.textContent));
-    expect(previews.length).toBeGreaterThan(0);
-    fireEvent.click(previews[0]);
-    expect(screen.getByText(/"memory_id": "pool-1"/)).toBeInTheDocument();
+describe('MemoryPoolDetails', () => {
+  it('shows every kind of memory the pool holds, one tab each', async () => {
+    show();
+    expect(screen.getByText('You are careful.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Structured/ }));
+    expect(screen.getByText('leave')).toBeInTheDocument();
+    expect(screen.getByText('carry_over')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Notes/ }));
+    expect(screen.getByText('Onboarding')).toBeInTheDocument();
+    expect(screen.queryByText('Asked about leave')).toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Journal/ }));
+    expect(screen.getByText('2026-10-30')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Episodes/ }));
+    expect(await screen.findByText('Picked Postgres')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Graph/ }));
+    await waitFor(() => expect(screen.getByText('3 nodes, 2 edges.')).toBeInTheDocument());
+    expect(screen.getByText('person · 2')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Files/ }));
+    expect(screen.getByText('handbook.md')).toBeInTheDocument();
+    expect(screen.getByText('indexed')).toBeInTheDocument();
   });
 });

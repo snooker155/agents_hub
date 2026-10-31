@@ -6,7 +6,7 @@ import { I18nProvider, translate } from '../../i18n';
 
 // Personal memory (memory/personal.py) is on or off per agent and workspace,
 // and a workspace can turn it off for every agent: the agent card then shows
-// it off and locked, and the workspace section locks every agent's switch.
+// it off and locked, and the Memory page's tab locks every agent's switch.
 
 const ok = (data) => Promise.resolve({ data });
 
@@ -25,7 +25,7 @@ vi.mock('../../api', () => ({
 }));
 
 import PersonalMemoryCard from '../agent/PersonalMemoryCard';
-import WorkspacePersonalMemory from '../workspace/WorkspacePersonalMemory';
+import { PersonalMemoryTab } from '../memoryManager/PersonalMemoryTab';
 
 const t = (key) => translate('en', key);
 const wrap = (node) => render(<MemoryRouter><I18nProvider>{node}</I18nProvider></MemoryRouter>);
@@ -55,34 +55,49 @@ describe('PersonalMemoryCard', () => {
     expect(off).toHaveAttribute('aria-pressed', 'true');
     expect(off).toBeDisabled();
     expect(screen.getByRole('button', { name: 'on' })).toBeDisabled();
-    expect(screen.getByRole('link', { name: 'Workspace settings' }))
-      .toHaveAttribute('href', '/workspaces/alpha?tab=settings&section=personalMemory');
+    expect(screen.getByRole('link', { name: 'Memory → Personal memory' }))
+      .toHaveAttribute('href', '/memory?tab=personal&workspace=alpha');
   });
 });
 
-describe('WorkspacePersonalMemory', () => {
+describe('PersonalMemoryTab', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('lists the main agent first, on, and every other agent off', async () => {
     getWorkspacePersonalMemory.mockReturnValue(ok({
       workspace: 'alpha', enabled: true, main_agent: 'main-agent', agents: { 'main-agent': true },
     }));
-    wrap(<WorkspacePersonalMemory workspace="alpha" agents={['scout', 'main-agent']} />);
+    getAgents.mockReturnValueOnce(ok([{ id: 'scout', name: 'Scout' }, { id: 'main-agent', name: 'Main' }]));
+    wrap(<PersonalMemoryTab workspaceFilter="alpha" />);
     const rows = await screen.findByTestId('personal-memory-agents');
     await waitFor(() => expect(rows).toHaveTextContent('Main'));
-    const boxes = rows.querySelectorAll('input[type=checkbox]');
-    expect(rows.textContent.indexOf('Main')).toBeLessThan(rows.textContent.indexOf('Scout'));
-    expect([...boxes].map((b) => b.checked)).toEqual([true, false]);
-    expect([...boxes].every((b) => !b.disabled)).toBe(true);
+    const cards = [...rows.querySelectorAll('[role=checkbox]')];
+    expect(cards.map((c) => c.getAttribute('aria-label'))).toEqual(['Main', 'Scout']);
+    expect(cards.map((c) => c.getAttribute('aria-checked'))).toEqual(['true', 'false']);
+    expect(cards.every((c) => !c.hasAttribute('aria-disabled'))).toBe(true);
+    expect(getAgents).toHaveBeenCalledWith('alpha');
   });
 
   it('locks every agent off while the workspace has it off', async () => {
     getWorkspacePersonalMemory.mockReturnValue(ok({
       workspace: 'alpha', enabled: false, main_agent: 'main-agent', agents: { 'main-agent': true, scout: true },
     }));
-    wrap(<WorkspacePersonalMemory workspace="alpha" agents={['main-agent', 'scout']} />);
+    wrap(<PersonalMemoryTab workspaceFilter="alpha" />);
     const rows = await screen.findByTestId('personal-memory-agents');
-    const boxes = [...rows.querySelectorAll('input[type=checkbox]')];
-    expect(boxes.map((b) => [b.checked, b.disabled])).toEqual([[false, true], [false, true]]);
+    const cards = [...rows.querySelectorAll('[role=checkbox]')];
+    expect(cards.map((c) => [c.getAttribute('aria-checked'), c.getAttribute('aria-disabled')]))
+      .toEqual([['false', 'true'], ['false', 'true']]);
+    fireEvent.click(cards[1]);
+    expect(updateAgentPersonalMemory).not.toHaveBeenCalled();
+  });
+
+  it('turns an agent on with a click on its card', async () => {
+    getWorkspacePersonalMemory.mockReturnValue(ok({
+      workspace: 'alpha', enabled: true, main_agent: 'main-agent', agents: { 'main-agent': true },
+    }));
+    updateAgentPersonalMemory.mockReturnValue(ok({}));
+    wrap(<PersonalMemoryTab workspaceFilter="alpha" />);
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Scout' }));
+    await waitFor(() => expect(updateAgentPersonalMemory).toHaveBeenCalledWith('scout', true, 'alpha'));
   });
 });

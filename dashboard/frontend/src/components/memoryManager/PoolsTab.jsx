@@ -8,7 +8,7 @@ import {
   StickyNote, Layers, Activity, BookOpen, Share2, Brain, History,
 } from 'lucide-react';
 import {
-  getSharedMemory, createSharedMemory, deleteSharedMemory,
+  getSharedMemory, createSharedMemory, updateSharedMemory, deleteSharedMemory,
   addMemoryNote, updateMemoryNote, deleteMemoryNote,
   upsertMemoryBlock, deleteMemoryBlock,
   upsertMemoryStructuredSlot, deleteMemoryStructuredSlot,
@@ -45,6 +45,10 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+
+  // The selected pool's description under edit (null when not editing).
+  const [descDraft, setDescDraft] = useState(null);
+  const [savingDesc, setSavingDesc] = useState(false);
 
   // Structured slot state
   const [editingSlot, setEditingSlot] = useState(null);
@@ -85,7 +89,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
       setViewingNote(null); setShowAddNote(false); setEditingNote(null);
       setShowAddSlot(false); setEditingSlot(null);
       setBlockDrafts({}); setShowAddBlock(false);
-      setHistoryTarget(null);
+      setHistoryTarget(null); setDescDraft(null);
       return resp.data;
     } catch (e) {
       toast.error(t('memoryManager.errors.openMemory'), errorDetail(e));
@@ -98,6 +102,19 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
     await createSharedMemory({ name: newName, description: newDesc, workspace: workspaceFilter || null });
     setNewName(''); setNewDesc(''); setShowCreate(false);
     onRefresh();
+  };
+
+  const handleSaveDescription = async () => {
+    setSavingDesc(true);
+    try {
+      const description = descDraft.trim();
+      await updateSharedMemory(selected.id, { description });
+      setSelected(prev => ({ ...prev, description }));
+      setDescDraft(null);
+      onRefresh();
+    } catch (e) {
+      toast.error(t('memoryManager.errors.saveDescription'), errorDetail(e));
+    } finally { setSavingDesc(false); }
   };
 
   const handleDelete = async (id) => {
@@ -468,7 +485,40 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                   )}
                 </h2>
                 <p className="text-xs text-gray-400 mt-0.5">{selected.id}</p>
-                {!isPersonalPool(selected) && poolDescription(selected, t) && <p className="text-sm text-gray-600 mt-1">{poolDescription(selected, t)}</p>}
+                {isPersonalPool(selected) ? null : descDraft !== null ? (
+                  <div className="mt-1 max-w-xl">
+                    <textarea
+                      value={descDraft}
+                      onChange={e => setDescDraft(e.target.value)}
+                      placeholder={t('memoryManager.whatIsThisFor')}
+                      aria-label={t('memoryManager.description')}
+                      rows={3}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">{t('memoryManager.descriptionHint')}</p>
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={handleSaveDescription} disabled={savingDesc}
+                        className="flex items-center gap-1 text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                        <Save className="w-3.5 h-3.5" /> {t('common.save')}
+                      </button>
+                      <button onClick={() => setDescDraft(null)} disabled={savingDesc}
+                        className="text-xs border border-gray-200 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50">
+                        {t('memoryManager.cancel')}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-1 flex items-start gap-1.5">
+                    {poolDescription(selected, t)
+                      ? <p className="text-sm text-gray-600">{poolDescription(selected, t)}</p>
+                      : <p className="text-sm text-gray-400 italic">{t('memoryManager.noDescription')}</p>}
+                    <button onClick={() => setDescDraft(selected.description || '')}
+                      className="text-gray-400 hover:text-indigo-600 p-0.5 shrink-0"
+                      title={t('memoryManager.editDescription')} aria-label={t('memoryManager.editDescription')}>
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="flex gap-2">
                 <button
@@ -951,6 +1001,7 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.description')}</label>
                 <textarea value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder={t('memoryManager.whatIsThisFor')} rows={3}
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none" />
+                <p className="text-xs text-gray-400 mt-1">{t('memoryManager.descriptionHint')}</p>
               </div>
               <div className="flex gap-3 pt-1">
                 <button type="button" onClick={() => setShowCreate(false)} className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 font-medium">{t('memoryManager.cancel')}</button>

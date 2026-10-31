@@ -22,7 +22,9 @@ def build_write_tools(ctx):
     _refuse_write = ctx._refuse_write
     _ro_ids = ctx._ro_ids
     _where = ctx._where
-    _write_target = ctx._write_target
+    _pick_target = ctx._pick_target
+    _pool_field_description = ctx._pool_field_description
+    described_extras = ctx.described_extras
     multi = ctx.multi
     personal_extra = ctx.personal_extra
     pool_ids = ctx.pool_ids
@@ -60,8 +62,11 @@ def build_write_tools(ctx):
         note_content: Optional[str] = None,
         link_to_graph: bool = True,
         personal: bool = False,
+        pool: Optional[str] = None,
     ) -> str:
-        target = _write_target(personal)
+        target, refused = _pick_target(personal, pool)
+        if refused:
+            return refused
         if target in _ro_ids:
             return _refuse_write(target)
         saved = []
@@ -162,6 +167,12 @@ def build_write_tools(ctx):
     class _RememberPersonalInput(_RememberInput):
         personal: bool = Field(False, description=_personal_field_description)
 
+    _remember_args = _RememberPersonalInput if personal_extra else _RememberInput
+    if described_extras:
+        class _RememberPoolInput(_remember_args):  # type: ignore[valid-type,misc]
+            pool: Optional[str] = Field(None, description=_pool_field_description)
+        _remember_args = _RememberPoolInput
+
     remember_tool = StructuredTool.from_function(
         name="remember",
         description=(
@@ -180,12 +191,14 @@ def build_write_tools(ctx):
             "so `link` and `traverse` can reach it. Set `link_to_graph=False` to skip the bridge."
             + (
                 f" Multiple memory pools are attached; writes go to the primary pool ({_pool_name(pool_ids[0])})"
+                + (", to another pool named in `pool` when its description covers what you save"
+                   if described_extras else "")
                 + (", or to the user's personal memory with `personal=True`." if personal_extra else ".")
                 if multi else ""
             )
         ),
         func=_remember_impl,
-        args_schema=_RememberPersonalInput if personal_extra else _RememberInput,
+        args_schema=_remember_args,
     )
 
     # -----------------------------------------------------------------------
@@ -217,8 +230,11 @@ def build_write_tools(ctx):
         file: Optional[str] = None,
         unlink_graph: bool = True,
         personal: bool = False,
+        pool: Optional[str] = None,
     ) -> str:
-        target = _write_target(personal)
+        target, refused = _pick_target(personal, pool)
+        if refused:
+            return refused
         if target in _ro_ids:
             return _refuse_write(target)
         deleted = []
@@ -313,6 +329,12 @@ def build_write_tools(ctx):
     class _ForgetPersonalInput(_ForgetInput):
         personal: bool = Field(False, description="True to delete from the user's personal memory instead of your own pool.")
 
+    _forget_args = _ForgetPersonalInput if personal_extra else _ForgetInput
+    if described_extras:
+        class _ForgetPoolInput(_forget_args):  # type: ignore[valid-type,misc]
+            pool: Optional[str] = Field(None, description="Name of the pool to delete from instead of the primary one.")
+        _forget_args = _ForgetPoolInput
+
     forget_tool = StructuredTool.from_function(
         name="forget",
         description=(
@@ -326,12 +348,14 @@ def build_write_tools(ctx):
             "Deletion is permanent — when the request is ambiguous, `recall` first to confirm what exists."
             + (
                 f" Multiple memory pools are attached; deletes affect the primary pool ({_pool_name(pool_ids[0])})"
-                + (", or the user's personal memory with `personal=True`." if personal_extra else " only.")
+                + (", another writable pool named in `pool`" if described_extras else "")
+                + (", or the user's personal memory with `personal=True`." if personal_extra
+                   else "." if described_extras else " only.")
                 if multi else ""
             )
         ),
         func=_forget_impl,
-        args_schema=_ForgetPersonalInput if personal_extra else _ForgetInput,
+        args_schema=_forget_args,
     )
 
     return remember_tool, forget_tool

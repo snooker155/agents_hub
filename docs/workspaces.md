@@ -34,10 +34,10 @@ context between them.
 ## The Settings tab
 
 The workspace page has a Settings tab holding what only a workspace has:
-agent roles ([workspace-roles](workspace-roles.md)), **personal memory** (the
-switch that lets the agents keep a private pool about the user,
-[memory](memory.md)), the special models, isolation ([isolation](isolation.md)),
-secrets and the palette. The workspace's overrides of
+agent roles ([workspace-roles](workspace-roles.md)), the special models,
+isolation ([isolation](isolation.md)), secrets and the palette. Personal memory
+is per workspace too, but it is set on the Memory page, on its own tab
+([memory](memory.md)). The workspace's overrides of
 global values (execution mode, tool policy, its own allow and deny domain
 lists at `/api/workspaces/{name}/web-policy`, task assignment) are on the
 [settings](settings.md) page, beside the global values, for the workspace

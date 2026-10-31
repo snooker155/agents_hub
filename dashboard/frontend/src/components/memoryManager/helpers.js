@@ -37,11 +37,21 @@ export const STATUS_CONFIG = {
   failed:     { label: 'Failed',     color: 'bg-red-100 text-red-700',      icon: AlertCircle },
 };
 
+// One memory_data entry is a plain id or {id, read_only}.
+const entryId = (e) => String(e && typeof e === 'object' ? e.id : e);
+
 // Attached pool ids for an agent, primary first. memory_data holds a single
-// pool id (legacy) or a list of ids.
+// pool id (legacy) or a list of entries (an id, or {id, read_only}).
 export function agentPools(a) {
   if (a.memory_type !== 'shared' || !a.memory_data) return [];
-  return Array.isArray(a.memory_data) ? a.memory_data.map(String) : [String(a.memory_data)];
+  return Array.isArray(a.memory_data) ? a.memory_data.map(entryId) : [entryId(a.memory_data)];
+}
+
+// Ids of the attached pools the agent's binding marks read only.
+export function agentReadOnlyPools(a) {
+  if (a.memory_type !== 'shared' || !a.memory_data) return new Set();
+  const entries = Array.isArray(a.memory_data) ? a.memory_data : [a.memory_data];
+  return new Set(entries.filter(e => e && typeof e === 'object' && e.read_only).map(entryId));
 }
 
 // Knowledge graph node type colours (foreground, background), assigned by

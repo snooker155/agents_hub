@@ -94,6 +94,9 @@ def _spec_parts(spec: Any) -> Dict[str, Any]:
             "fallback_models": list(getattr(spec, "fallback_models", None) or []),
             # The advisor model (tools/advisor.py); left out while unset.
             "advisor_model": getattr(spec, "advisor_model", None) or None,
+            # Memory writes switched off (registry.AgentSpec.memory_write);
+            # left out while on, so existing hashes stay as they were.
+            "memory_write": False if getattr(spec, "memory_write", True) is False else None,
             # The delegate concurrency limit (tools/delegation.py); left out
             # at its default (6) like an unset loop policy.
             "max_concurrent_delegates": (getattr(spec, "max_concurrent_delegates", None)

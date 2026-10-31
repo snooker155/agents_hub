@@ -925,6 +925,19 @@
         "title": "AgentMemoryUpdate",
         "type": "object"
       },
+      "AgentMemoryWriteUpdate": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AgentMemoryWriteUpdate",
+        "type": "object"
+      },
       "AgentModelUpdate": {
         "properties": {
           "api_key": {
@@ -8061,6 +8074,34 @@
           "data"
         ],
         "title": "MemoryStructuredSlotUpsert",
+        "type": "object"
+      },
+      "MemoryUpdate": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "MemoryUpdate",
         "type": "object"
       },
       "MirrorChats": {
@@ -18844,6 +18885,56 @@
           }
         },
         "summary": "Update Agent Memory",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/api/agents/{agent_id}/memory-write": {
+      "post": {
+        "description": "The Memory tab's \"Write memory\" switch. Off, the agent keeps reading its\npools but gets none of the write tools for any of them, the personal pool\nincluded (registry.AgentSpec.memory_write).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "title": "Agent Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentMemoryWriteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Agent Memory Write",
         "tags": [
           "agents"
         ]
@@ -51163,6 +51254,55 @@
           }
         },
         "summary": "Get Shared Memory",
+        "tags": [
+          "memory"
+        ]
+      },
+      "patch": {
+        "description": "Rename a pool or change its description. The description is also what\nan agent with this pool as an additional one is told to save there: with\nnone, the agent only reads the pool (memory.binding.described_extra_pools).",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Memory Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Shared Memory",
         "tags": [
           "memory"
         ]

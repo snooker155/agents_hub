@@ -16,8 +16,9 @@ def build_graph_tools(ctx):
     _pool_name = ctx._pool_name
     _refuse_write = ctx._refuse_write
     _ro_ids = ctx._ro_ids
+    _pick_target = ctx._pick_target
+    described_extras = ctx.described_extras
     multi = ctx.multi
-    pool_id = ctx.pool_id
     pool_ids = ctx.pool_ids
 
     # -----------------------------------------------------------------------
@@ -36,15 +37,25 @@ def build_graph_tools(ctx):
         edge_properties: Optional[dict] = Field(None, description="Optional fields stored on the edge (merged if the edge already exists).")
         weight: Optional[float] = Field(None, description="Optional numeric weight on the edge.")
 
+    _link_args = _LinkInput
+    if described_extras:
+        class _LinkPoolInput(_LinkInput):
+            pool: Optional[str] = Field(None, description=ctx._pool_field_description)
+        _link_args = _LinkPoolInput
+
     def _link_impl(
         source,
         target,
         relation: str,
         edge_properties: Optional[dict] = None,
         weight: Optional[float] = None,
+        pool: Optional[str] = None,
     ) -> str:
-        if pool_id in _ro_ids:
-            return _refuse_write(pool_id)
+        graph_pool, refused = _pick_target(False, pool)
+        if refused:
+            return refused
+        if graph_pool in _ro_ids:
+            return _refuse_write(graph_pool)
         try:
             from memory.graph import GraphStore
 
@@ -57,7 +68,7 @@ def build_graph_tools(ctx):
 
             src = _coerce(source)
             tgt = _coerce(target)
-            store = GraphStore(pool_id)
+            store = GraphStore(graph_pool)
             src_node, src_mode = store.upsert_node(
                 type=src["type"],
                 name=src["name"],
@@ -94,10 +105,12 @@ def build_graph_tools(ctx):
             "The edge is directed: source -[relation]-> target. "
             "Use for facts that connect things: who owns what, what depends on what, what mentions what. "
             "Pick consistent type and relation names (lowercase, snake_case) — they're matched case-insensitively but stored as given."
-            + (" Edges are written to the primary pool's graph." if multi else "")
+            + (" Edges are written to the primary pool's graph"
+               + (", or to the graph of another writable pool named in `pool`." if described_extras else ".")
+               if multi else "")
         ),
         func=_link_impl,
-        args_schema=_LinkInput,
+        args_schema=_link_args,
     )
 
     # -----------------------------------------------------------------------

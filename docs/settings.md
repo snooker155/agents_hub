@@ -36,9 +36,10 @@ The Agents group shows each global value beside the override of the workspace
 picked in the header: execution, tool policy, web access and task assignment
 are set here for a workspace, not on the workspace's own page.
 
-Personal memory and agent roles have no global value, so they are only on
-the workspace's own Settings tab ([workspaces](workspaces.md), "The Settings
-tab"); a note in this page's menu links there.
+Agent roles have no global value, so they are only on the workspace's own
+Settings tab ([workspaces](workspaces.md), "The Settings tab"), and personal
+memory is on the Memory page's Personal memory tab ([memory](memory.md)); a
+note in this page's menu links to both.
 
 Connectors are **not** here any more. Telegram, GitHub/GitLab and Blender moved
 to Integrations → Connectors ([connectors](connectors.md)), because a connector is

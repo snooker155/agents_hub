@@ -115,7 +115,8 @@ def build_block_tools(ctx):
                     "ok": False,
                     "error": f"Block {name!r} is in pool {_pool_name(pid)!r}, which is attached "
                              "read-only context here; block edits only reach the primary pool"
-                             + (" or the personal pool" if personal_extra else "") + ".",
+                             + (", the personal pool" if personal_extra else "")
+                             + " and pools whose description says what to save there.",
                 })
             if block.read_only:
                 return json.dumps({"ok": False, "error": f"Block {block.name!r} is read-only"})
@@ -182,7 +183,8 @@ def build_block_tools(ctx):
                     "ok": False,
                     "error": f"Block {name!r} is in pool {_pool_name(pid)!r}, which is attached "
                              "read-only context here; block edits only reach the primary pool"
-                             + (" or the personal pool" if personal_extra else "") + ".",
+                             + (", the personal pool" if personal_extra else "")
+                             + " and pools whose description says what to save there.",
                 })
             if block.read_only:
                 return json.dumps({"ok": False, "error": f"Block {block.name!r} is read-only"})

@@ -8,7 +8,7 @@ from pathlib import Path
 from agents import registry
 from managers import run_manager
 from agents import prompt_assembly
-from models import AgentMemoryUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentPersonalMemoryUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentStreamingUpdate, AgentSkillCreate
+from models import AgentMemoryUpdate, AgentMemoryWriteUpdate, AgentSkillsConfigUpdate, AgentEpisodicConfigUpdate, AgentPersonalMemoryUpdate, AgentResponseFormatUpdate, AgentClarifyGateUpdate, AgentSelfDelegationUpdate, AgentStreamingUpdate, AgentSkillCreate
 
 
 
@@ -285,6 +285,19 @@ async def update_agent_episodic_config(agent_id: str, data: AgentEpisodicConfigU
         "effective": resolve_episodic_write(new_spec.episodic_write_enabled, provider),
         "provider": provider,
     }
+
+
+@router.post("/{agent_id}/memory-write")
+async def update_agent_memory_write(agent_id: str, data: AgentMemoryWriteUpdate):
+    """The Memory tab's "Write memory" switch. Off, the agent keeps reading its
+    pools but gets none of the write tools for any of them, the personal pool
+    included (registry.AgentSpec.memory_write)."""
+    spec = registry.get_agent(agent_id)
+    if not spec:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    new_spec = dataclasses.replace(spec, memory_write=bool(data.enabled))
+    registry.add_agent(new_spec)
+    return {"memory_write": new_spec.memory_write}
 
 
 def _personal_memory_config(spec, workspace: Optional[str]) -> dict:

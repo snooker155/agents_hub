@@ -7,6 +7,9 @@ import api from './index';
 export const getSharedMemories = (workspace) => api.get('/shared-memory', { params: workspace ? { workspace } : {} });
 export const createSharedMemory = (data) => api.post('/shared-memory', data);
 export const getSharedMemory = (id) => api.get(`/shared-memory/${id}`);
+// Edit a pool's description (and name): the description tells agents with this
+// pool as an additional pool what to save there.
+export const updateSharedMemory = (id, data) => api.patch(`/shared-memory/${id}`, data);
 export const deleteSharedMemory = (id) => api.delete(`/shared-memory/${id}`);
 export const getRagConfig = () => api.get('/shared-memory/rag-config');
 // The Memory Agent's chat — workspace-scoped, because the agent's pool binding

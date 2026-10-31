@@ -17,6 +17,8 @@ What the fingerprint covers (a change to any of these rebuilds):
 - the workspace metadata store (workspace instructions, model override, settings)
 - the procedures store (skills catalog, when the agent has skills enabled)
 - the global ``.env`` (default provider/model)
+- the names and descriptions of the agent's memory pools: a description
+  decides whether an extra pool takes writes (memory/binding.py)
 - the target workspace, the build override params, and project-scope
 
 The key (not only the fingerprint) carries the build overrides, and that is
@@ -135,6 +137,12 @@ def compute_fingerprint(
     from connectors.consent.store import settings_signature
     parts.append("consent=" + settings_signature(agent_id))
     parts.append("env=" + _stat_sig(Path(PROJECT_ROOT) / ".env"))
+    try:
+        from memory.binding import write_rules_signature
+        parts.append("pools=" + write_rules_signature(
+            agent_id, workspace, override_params.get("memory_pool"), override_params.get("personal_pool")))
+    except Exception:  # noqa: BLE001 - an unreadable pool must not stop the build; the TTL still bounds it
+        log.debug("agent cache: pool signature unavailable for %s", agent_id, exc_info=True)
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 

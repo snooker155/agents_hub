@@ -179,6 +179,11 @@ class AgentSpec:
     #   False — never attach it (other memory — recall/remember/recall_episodes/
     #     graph — and the automatic silent journal are unaffected).
     episodic_write_enabled: Optional[bool] = None
+    # Memory writes (the Memory tab's "Write memory" switch). False builds the
+    # agent the way a deployment's read-only memory does (Task.memory_access):
+    # remember, forget, link, record_episode and the block edits are dropped
+    # for every pool, the personal one included; recall and search stay.
+    memory_write: bool = True
     # Delegation allowlist — agent ids this agent may delegate to / see via the
     # coordination tools (list_agents_tool, run_agent_tool, assign_agent_tool).
     # Empty list (default) means no restriction: every agent available in the
@@ -454,6 +459,9 @@ class AgentSpec:
         # Only write when explicitly set (True/False); omit when auto (None).
         if self.episodic_write_enabled is not None:
             d["episodic_write_enabled"] = self.episodic_write_enabled
+        # Only written when off, so records keep their shape while it is on.
+        if not self.memory_write:
+            d["memory_write"] = False
         if self.reasoning:
             d["reasoning"] = dict(self.reasoning)
         # Only write when set, to keep default records clean.
@@ -803,6 +811,11 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
 
     memory_type = ad.get("memory_type", "none")
     memory_data = ad.get("memory_data")
+    # "local" (a text the agent record held) never reached the prompt or the
+    # tools, so it was memory in name only: it reads as none, and the Memory
+    # tab no longer offers it.
+    if memory_type == "local":
+        memory_type, memory_data = "none", None
     default_workspace_only = bool(ad.get("default_workspace_only", False))
     definition_id = ad.get("definition_id") or None
     owner_workspace = ad.get("owner_workspace") or None
@@ -831,6 +844,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
     skills_enabled = bool(ad.get("skills_enabled", False))
     _raw_epi = ad.get("episodic_write_enabled")
     episodic_write_enabled = bool(_raw_epi) if _raw_epi is not None else None
+    memory_write = ad.get("memory_write") is not False
     reasoning = dict(ad.get("reasoning") or {}) if isinstance(ad.get("reasoning"), dict) else {}
     # The effort used to live in reasoning as thinking_level, set on the
     # Behavior tab. A positive level carries over as the agent's own effort;
@@ -996,6 +1010,7 @@ def _validate_agent_dict(ad: Dict[str, Any]) -> AgentSpec:
         user_modified=user_modified,
         skills_enabled=skills_enabled,
         episodic_write_enabled=episodic_write_enabled,
+        memory_write=memory_write,
         reasoning=reasoning,
         response_format=response_format,
         clarify_gate=clarify_gate,

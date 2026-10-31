@@ -441,8 +441,10 @@ export default {
       nodes: 'Nodes',
     },
   },
-  workspaceOnlyHint: 'Personal memory and agent roles are set per workspace:',
+  workspaceOnlyHint: 'Agent roles are set per workspace:',
   workspaceOnlyLink: 'Settings of workspace {{workspace}} →',
+  personalMemoryHint: 'Personal memory is on the Memory page:',
+  personalMemoryLink: 'Personal memory →',
   demo: {
     title: 'Demo workspace',
     intro: 'Seeds a workspace named demo with agents, a project, a flow, a team, a scenario, views and recorded runs, so there is something to explore before your own work is set up.',

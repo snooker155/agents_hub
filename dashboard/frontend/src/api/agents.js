@@ -42,6 +42,7 @@ export const updateAgentTools = (id, data) => api.post(`/agents/${id}/tools`, da
 export const getAgentDelegates = (id) => api.get(`/agents/${id}/delegates`);
 export const updateAgentDelegates = (id, delegates) => api.post(`/agents/${id}/delegates`, { delegates });
 export const getAgentEpisodicConfig = (id) => api.get(`/agents/${id}/episodic-config`);
+export const updateAgentMemoryWrite = (id, enabled) => api.post(`/agents/${id}/memory-write`, { enabled });
 export const updateAgentEpisodicConfig = (id, episodic_write_enabled) => api.post(`/agents/${id}/episodic-config`, { episodic_write_enabled });
 export const getAgentPersonalMemory = (id, workspace) => api.get(`/agents/${id}/personal-memory`, { params: workspace ? { workspace } : {} });
 export const updateAgentPersonalMemory = (id, enabled, workspace) => api.post(`/agents/${id}/personal-memory`, { enabled }, { params: workspace ? { workspace } : {} });

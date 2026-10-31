@@ -8,7 +8,7 @@ import {
 import { getAgents, getWorkspacePersonalMemory, updateAgentMemory } from '../../api';
 import { useI18n } from '../../i18n';
 import { useToast, errorDetail } from '../toast';
-import { agentPools, isPersonalPool, poolName } from './helpers';
+import { agentPools, agentReadOnlyPools, isPersonalPool, poolName } from './helpers';
 import PageLoader from '../PageLoader';
 
 function AgentsTab({ memories, workspaceFilter }) {
@@ -18,7 +18,8 @@ function AgentsTab({ memories, workspaceFilter }) {
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(null);
   const [selectedPoolId, setSelectedPoolId] = useState('');   // primary (write) pool
-  const [selectedExtraIds, setSelectedExtraIds] = useState([]); // read-only pools
+  const [selectedExtraIds, setSelectedExtraIds] = useState([]); // additional pools
+  const [readOnlyIds, setReadOnlyIds] = useState([]); // pools the binding marks read only
   const [saving, setSaving] = useState(false);
   // The workspace's personal memory settings: {enabled, agents: {id: bool}}.
   const [personal, setPersonal] = useState(null);
@@ -55,9 +56,11 @@ function AgentsTab({ memories, workspaceFilter }) {
       const pools = selectedPoolId
         ? [selectedPoolId, ...selectedExtraIds.filter(p => p !== selectedPoolId)]
         : [];
+      // A pool marked read only goes as {id, read_only}, the rest as plain ids.
+      const entries = pools.map(p => (readOnlyIds.includes(p) ? { id: p, read_only: true } : p));
       await updateAgentMemory(assigning.agentId, {
         memory_type: pools.length ? 'shared' : 'none',
-        memory_data: pools.length === 0 ? null : pools.length === 1 ? pools[0] : pools,
+        memory_data: entries.length === 0 ? null : entries.length === 1 ? entries[0] : entries,
         workspace: workspaceFilter || 'default',
       });
       const resp = await getAgents(workspaceFilter);
@@ -73,6 +76,11 @@ function AgentsTab({ memories, workspaceFilter }) {
   // (memory/personal.py resolve). Count those agents as its users.
   const personalPool = memories.find(m => m.kind === 'personal' && (m.workspace || 'default') === ws) || null;
   const personalName = personalPool ? poolName(personalPool, t, !workspaceFilter) : t('memoryManager.personalMemory');
+  const toggleReadOnlyId = (pid, on) =>
+    setReadOnlyIds(prev => (on ? [...prev.filter(p => p !== pid), pid] : prev.filter(p => p !== pid)));
+  // An additional pool takes the agent's writes only with a description (it
+  // says what to save there) and no read only mark.
+  const hasDescription = (pid) => !!(poolById[pid]?.description || '').trim();
   const usesPersonal = (a) => !!(personal?.enabled && personal.agents?.[a.id]);
   const agentsWithMemory = agents.filter(a => agentPools(a).length > 0 || usesPersonal(a));
   const poolUsage = {};
@@ -154,6 +162,8 @@ function AgentsTab({ memories, workspaceFilter }) {
                 const viaPersonal = usesPersonal(a);
                 const primaryPool = pools[0] ? poolById[pools[0]] : null;
                 const extraPools = pools.slice(1);
+                const readOnly = agentReadOnlyPools(a);
+                const takesWrites = (pid) => !readOnly.has(pid) && hasDescription(pid);
                 const connected = pools.length + (viaPersonal ? 1 : 0);
                 return (
                   <tr key={a.id} className="hover:bg-gray-50">
@@ -168,10 +178,20 @@ function AgentsTab({ memories, workspaceFilter }) {
                             {extraPools.length > 0 && (
                               <span className="ml-1.5 text-[10px] font-semibold text-amber-600 uppercase tracking-wider">{t('memoryManager.primary')}</span>
                             )}
+                            {readOnly.has(pools[0]) && (
+                              <span className="ml-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{t('memoryManager.readOnlyTag')}</span>
+                            )}
                           </p>
                           {extraPools.length > 0 && (
                             <p className="text-xs text-gray-400 mt-0.5">
-                              + {extraPools.map(pid => poolById[pid]?.name || pid).join(', ')} (read-only)
+                              {extraPools.map((pid, i) => (
+                                <span key={pid}>
+                                  {i === 0 ? '+ ' : ', '}{poolById[pid]?.name || pid}{' '}
+                                  <span className={takesWrites(pid) ? 'text-emerald-600' : 'text-gray-500'}>
+                                    ({takesWrites(pid) ? t('memoryManager.takesWrites') : t('memoryManager.readOnlyTag')})
+                                  </span>
+                                </span>
+                              ))}
                             </p>
                           )}
                           {viaPersonal && (
@@ -204,6 +224,7 @@ function AgentsTab({ memories, workspaceFilter }) {
                           setAssigning({ agentId: a.id, agentName: a.name || a.id });
                           setSelectedPoolId(own[0] || '');
                           setSelectedExtraIds(own.slice(1));
+                          setReadOnlyIds([...agentReadOnlyPools(a)].filter(pid => own.includes(pid)));
                         }}
                         className="text-xs border border-indigo-200 text-indigo-600 px-2 py-1 rounded-lg hover:bg-indigo-50"
                       >
@@ -243,25 +264,63 @@ function AgentsTab({ memories, workspaceFilter }) {
                   <option value="">{t('memoryManager.noneNoSharedMemory')}</option>
                   {assignable.map(m => <option key={m.id} value={m.id}>{poolName(m, t, !workspaceFilter)}</option>)}
                 </select>
+                {selectedPoolId && (
+                  <label className="flex items-center gap-1.5 mt-1.5 text-xs text-gray-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={readOnlyIds.includes(selectedPoolId)}
+                      onChange={e => toggleReadOnlyId(selectedPoolId, e.target.checked)}
+                      className="rounded border-gray-300 text-indigo-600"
+                    />
+                    {t('memoryManager.readOnlyPool')}
+                  </label>
+                )}
               </div>
               {selectedPoolId && assignable.filter(m => m.id !== selectedPoolId).length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('memoryManager.additionalPools')}</label>
                   <p className="text-xs text-gray-400 mb-2">{t('memoryManager.additionalPoolsHint')}</p>
                   <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
-                    {assignable.filter(m => m.id !== selectedPoolId).map(m => (
-                      <label key={m.id} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={selectedExtraIds.includes(m.id)}
-                          onChange={e => setSelectedExtraIds(prev =>
-                            e.target.checked ? [...prev, m.id] : prev.filter(p => p !== m.id)
+                    {assignable.filter(m => m.id !== selectedPoolId).map(m => {
+                      const checked = selectedExtraIds.includes(m.id);
+                      const ro = readOnlyIds.includes(m.id);
+                      const described = hasDescription(m.id);
+                      return (
+                        <div key={m.id}>
+                          <div className="flex items-center gap-2 text-sm text-gray-700">
+                            <label className="flex items-center gap-2 cursor-pointer min-w-0 flex-1">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={e => setSelectedExtraIds(prev =>
+                                  e.target.checked ? [...prev, m.id] : prev.filter(p => p !== m.id)
+                                )}
+                                className="rounded border-gray-300 text-indigo-600"
+                              />
+                              <span className="truncate">{poolName(m, t, !workspaceFilter)}</span>
+                            </label>
+                            {checked && (
+                              <label className="flex items-center gap-1 text-xs text-gray-500 shrink-0 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={ro}
+                                  onChange={e => toggleReadOnlyId(m.id, e.target.checked)}
+                                  className="rounded border-gray-300 text-indigo-600"
+                                />
+                                {t('memoryManager.readOnlyShort')}
+                              </label>
+                            )}
+                          </div>
+                          {checked && (
+                            <p className={`text-xs ml-6 ${!ro && described ? 'text-emerald-600' : 'text-gray-400'}`}>
+                              {ro ? t('memoryManager.stateReadOnlySwitch')
+                                : described ? t('memoryManager.stateWritable')
+                                : t('memoryManager.stateNoDescription')}
+                            </p>
                           )}
-                          className="rounded border-gray-300 text-indigo-600"
-                        />
-                        <span className="truncate">{poolName(m, t, !workspaceFilter)}</span>
-                      </label>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Database, Cpu, Users, RefreshCw, FileSearch } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Database, Cpu, Users, RefreshCw, FileSearch, UserRound } from 'lucide-react';
 import { getSharedMemories } from '../api';
 import { useWorkspace } from '../components/workspace';
 import EntityChat from '../components/EntityChat';
@@ -15,6 +16,7 @@ import { PoolsTab } from '../components/memoryManager/PoolsTab';
 import { AgentsTab } from '../components/memoryManager/AgentsTab';
 import { RagPipelineTab } from '../components/memoryManager/RagPipelineTab';
 import { IndexedFilesTab } from '../components/memoryManager/IndexedFilesTab';
+import { PersonalMemoryTab } from '../components/memoryManager/PersonalMemoryTab';
 import { useMemoryChatDescriptor } from '../components/memoryManager/useMemoryChatDescriptor';
 
 // ---------------------------------------------------------------------------
@@ -23,6 +25,7 @@ import { useMemoryChatDescriptor } from '../components/memoryManager/useMemoryCh
 const TABS = [
   { id: 'pools',   labelKey: 'memoryManager.tabs.pools',   icon: Database   },
   { id: 'agents',  labelKey: 'memoryManager.tabs.agents',  icon: Users      },
+  { id: 'personal', labelKey: 'memoryManager.tabs.personal', icon: UserRound },
   { id: 'rag',     labelKey: 'memoryManager.tabs.rag',     icon: Cpu        },
   { id: 'indexed', labelKey: 'memoryManager.tabs.indexed', icon: FileSearch },
 ];
@@ -30,8 +33,23 @@ const TABS = [
 export default function MemoryManager() {
   const { t } = useI18n();
   const toast = useToast();
-  const { workspaceFilter } = useWorkspace();
-  const [activeTab, setActiveTab] = useState('pools');
+  const { workspaceFilter, selectedWorkspace, setSelectedWorkspace } = useWorkspace();
+  // A link from an agent page or Settings opens a tab, maybe in another
+  // workspace (?tab=personal&workspace=dev): switch the header's workspace,
+  // then drop the workspace so the header stays the one source after that.
+  const [params, setParams] = useSearchParams();
+  const linkedTab = params.get('tab');
+  const linkedWorkspace = params.get('workspace');
+  const [activeTab, setActiveTab] = useState(TABS.some(tab => tab.id === linkedTab) ? linkedTab : 'pools');
+  useEffect(() => {
+    if (!linkedWorkspace) return;
+    if (linkedWorkspace !== (selectedWorkspace || 'default')) setSelectedWorkspace(linkedWorkspace);
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('workspace');
+      return next;
+    }, { replace: true });
+  }, [linkedWorkspace, selectedWorkspace, setSelectedWorkspace, setParams]);
   const [memories, setMemories] = useState([]);
   const [loading, setLoading] = useState(true);
   // Lifted out of PoolsTab: the chat beside it is bound to whichever pool is
@@ -105,6 +123,7 @@ export default function MemoryManager() {
           {activeTab === 'agents'  && <AgentsTab memories={memories} workspaceFilter={workspaceFilter} />}
           {activeTab === 'rag'     && <RagPipelineTab memories={memories} workspaceFilter={workspaceFilter} />}
           {activeTab === 'indexed' && <IndexedFilesTab memories={memories} />}
+          {activeTab === 'personal' && <PersonalMemoryTab workspaceFilter={workspaceFilter} />}
         </div>
 
         {chatVisible && (

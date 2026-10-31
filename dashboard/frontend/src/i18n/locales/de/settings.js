@@ -441,8 +441,10 @@ export default {
       nodes: 'Knoten',
     },
   },
-  workspaceOnlyHint: 'Persönlicher Speicher und Agentenrollen werden pro Workspace eingestellt:',
+  workspaceOnlyHint: 'Agentenrollen werden pro Workspace eingestellt:',
   workspaceOnlyLink: 'Einstellungen von Workspace {{workspace}} →',
+  personalMemoryHint: 'Der persönliche Speicher wird auf der Seite Speicher eingestellt:',
+  personalMemoryLink: 'Persönlicher Speicher →',
   demo: {
     title: 'Demo-Workspace',
     intro: 'Legt einen Workspace namens demo mit Agenten, einem Projekt, einem Flow, einem Team, einem Szenario, Ansichten und aufgezeichneten Läufen an, damit es etwas zu entdecken gibt, bevor Ihre eigene Arbeit eingerichtet ist.',

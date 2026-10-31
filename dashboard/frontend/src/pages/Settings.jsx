@@ -619,10 +619,17 @@ export default function Settings() {
               <UserRound className="mb-1 h-3.5 w-3.5" />
               {t('settings.workspaceOnlyHint')}{' '}
               <Link
-                to={`/workspaces/${encodeURIComponent(activeWorkspace)}?tab=settings&section=personalMemory`}
+                to={`/workspaces/${encodeURIComponent(activeWorkspace)}?tab=settings&section=roles`}
                 className="text-indigo-600 hover:text-indigo-800"
               >
                 {t('settings.workspaceOnlyLink', { workspace: activeWorkspace })}
+              </Link>
+              {' '}{t('settings.personalMemoryHint')}{' '}
+              <Link
+                to={`/memory?tab=personal&workspace=${encodeURIComponent(activeWorkspace)}`}
+                className="text-indigo-600 hover:text-indigo-800"
+              >
+                {t('settings.personalMemoryLink')}
               </Link>
             </p>
           </div>

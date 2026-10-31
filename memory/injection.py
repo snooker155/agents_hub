@@ -100,6 +100,10 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
     # what the prompt tells the agent to expect from them.
     ro_ids = effective_read_only_pools(spec, workspace) if not pool_override else frozenset()
     primary_read_only = pool_id in ro_ids
+    # Extra pools whose description says what to save there take writes too,
+    # with `pool=<name>` (memory.binding.described_extra_pools).
+    from memory.binding import described_extra_pools
+    described = {pid: (name, desc) for pid, name, desc in described_extra_pools(extra_pools, personal_extra, ro_ids)}
 
     # Extraction agents declare the extraction tools explicitly: they get the
     # dedicated two-step pipeline (extract_from_text → save_extraction). A PURE
@@ -146,12 +150,18 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
         + (", except the user's personal memory, which `remember` and `forget` still reach with "
            "`personal=true`." if personal_extra else ".")
     ) if primary_read_only else ""
+    _described_note = (
+        " Pools marked WRITABLE below take writes too: pass `pool` with the pool's name to "
+        f"{_write_list} or `forget`, and save in such a pool only what its description says "
+        "belongs there. Anything its description does not cover goes to the primary pool."
+    ) if described else ""
     intro = (
         f"You have access to a shared memory pool.{_ro_note} Use these tools in order:"
         if not extra_pools else
         f"You have access to {len(pools)} shared memory pools. The first one is the PRIMARY pool — "
-        f"all writes ({_write_list}) go there." + _ro_note + " The other pools are read-only "
-        "context that `recall`, `recall_episodes`, and `traverse` also search"
+        f"writes ({_write_list}) go there by default." + _ro_note + _described_note
+        + (" The rest are" if described else " The other pools are")
+        + " read-only context that `recall`, `recall_episodes`, and `traverse` also search"
         + (", except the user's personal memory, which `remember` and `forget` reach with `personal=true`"
            if personal_extra and not primary_read_only else "")
         + ". Use these tools in order:"
@@ -213,8 +223,11 @@ def inject_memory_into_definition(agent_id: str, definition: Dict[str, Any], wor
             role = ("PRIMARY, attached read only: recall only, writes refuse" if is_primary and primary_read_only
                     else "PRIMARY — writes go here" if is_primary
                     else "the user's personal memory — write with personal=true" if pid == personal_extra
+                    else f'WRITABLE — write with pool="{_pname}"' if pid in described
                     else "read-only context")
             lines.append(f"\n### Pool: {_pname} ({role})")
+            if pid in described:
+                lines.append(f"**What to save here:** {described[pid][1]}")
 
         # Structured slots + journal index — inject names so agent knows what exists
         try:

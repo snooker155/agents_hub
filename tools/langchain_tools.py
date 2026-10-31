@@ -1650,7 +1650,7 @@ class ModifyAgentInput(BaseModel):
     usage: Optional[str] = Field(None, description="Replacement usage.md content; empty string deletes the file")
     tools: Optional[List[str]] = Field(None, description="Replacement list of tool IDs")
     capacity: Optional[int] = Field(None, ge=1, description="New max concurrent sessions")
-    memory_type: Optional[str] = Field(None, description="Memory type: none, local, or shared")
+    memory_type: Optional[str] = Field(None, description="Memory type: none or shared (a shared memory pool)")
     memory_data: Optional[Any] = Field(None, description="Memory payload, such as a shared memory pool id")
     skills_enabled: Optional[bool] = Field(None, description="Enable or disable procedural skills for this agent")
     episodic_write_enabled: Optional[bool] = Field(None, description="Enable or disable the episodic write tool (record_episode). Other memory (recall/remember/recall_episodes) is unaffected.")

@@ -152,6 +152,10 @@ export type AgentMemoryUpdate = {
   "workspace"?: string | null;
 };
 
+export type AgentMemoryWriteUpdate = {
+  "enabled": boolean;
+};
+
 export type AgentModelUpdate = {
   "provider"?: string | null;
   "model"?: string | null;
@@ -1340,6 +1344,11 @@ export type MemoryNoteUpdate = {
 
 export type MemoryStructuredSlotUpsert = {
   "data": Record<string, unknown>;
+};
+
+export type MemoryUpdate = {
+  "name"?: string | null;
+  "description"?: string | null;
 };
 
 export type MirrorChats = {
@@ -2775,6 +2784,9 @@ export interface ApiPaths {
   "/api/agents/{agent_id}/memory": {
     post: { body: AgentMemoryUpdate; response: unknown };
     delete: { response: unknown };
+  };
+  "/api/agents/{agent_id}/memory-write": {
+    post: { body: AgentMemoryWriteUpdate; response: unknown };
   };
   "/api/agents/{agent_id}/model": {
     get: { response: unknown };
@@ -4680,6 +4692,7 @@ export interface ApiPaths {
   };
   "/api/shared-memory/{memory_id}": {
     get: { response: unknown };
+    patch: { body: MemoryUpdate; response: unknown };
     delete: { response: unknown };
   };
   "/api/shared-memory/{memory_id}/blocks": {

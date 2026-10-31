@@ -152,6 +152,8 @@ describe('Settings agents group', () => {
     }
     expect(screen.queryByText('Tool Policy')).toBeNull();
     const link = screen.getByRole('link', { name: /Settings of workspace default/ });
-    expect(link.getAttribute('href')).toBe('/workspaces/default?tab=settings&section=personalMemory');
+    expect(link.getAttribute('href')).toBe('/workspaces/default?tab=settings&section=roles');
+    const personal = screen.getByRole('link', { name: /Personal memory/ });
+    expect(personal.getAttribute('href')).toBe('/memory?tab=personal&workspace=default');
   });
 });

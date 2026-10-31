@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, UserRound, ShieldAlert, Sparkles, Repeat, Cpu } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, ShieldAlert, Sparkles, Repeat, Cpu } from 'lucide-react';
 import { isHtmlFile } from '../lib/fileKind';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
@@ -11,7 +11,6 @@ import ProjectCard from '../components/projects/ProjectCard';
 import { PROJECT_GRID } from '../components/projects/projectCardConfig';
 import WorkspaceMembers from '../components/workspace/WorkspaceMembers';
 import WorkspaceSecrets from '../components/workspace/WorkspaceSecrets';
-import WorkspacePersonalMemory from '../components/workspace/WorkspacePersonalMemory';
 import WorkspaceIsolation from '../components/workspace/WorkspaceIsolation';
 import WorkspaceDataClass from '../components/workspace/WorkspaceDataClass';
 import WorkspaceHubSync from '../components/workspace/WorkspaceHubSync';
@@ -1165,7 +1164,6 @@ const WorkspaceDetails = () => {
       {activeTab === 'settings' && (
         <WorkspaceSettingsTab
           workspace={name}
-          agents={allowedAgentIds}
           agentRecords={allowedAgentIds.map((id) => agentById.get(id) || { id })}
         />
       )}
@@ -1225,8 +1223,9 @@ const WorkspaceDetails = () => {
 // web access and task assignment are workspace overrides too, but they sit
 // beside their global values on the Settings page (for the workspace picked
 // in the header), so they are not repeated here. Isolation and the special
-// models stay here, with personal memory, secrets and the palette. `saves`
-// marks the sections whose fields ride on the Save button; the others save themselves.
+// models stay here, with secrets and the palette; personal memory is a tab of
+// the Memory page. `saves` marks the sections whose fields ride on the Save
+// button; the others save themselves.
 const SETTINGS_GROUPS = [
   {
     key: 'agents',
@@ -1234,7 +1233,6 @@ const SETTINGS_GROUPS = [
       { id: 'roles', icon: Repeat },
       { id: 'specialModels', icon: Sparkles },
       { id: 'modelPolicy', icon: Cpu, label: 'modelPolicy.section' },
-      { id: 'personalMemory', icon: UserRound },
       { id: 'isolation', icon: ShieldAlert },
     ],
   },
@@ -1251,10 +1249,10 @@ const SETTINGS_GROUPS = [
 ];
 
 /**
- * The workspace's own settings: agent roles, personal memory, secrets and the
- * default palette. The open section lives in the URL (?tab=settings&section=…).
+ * The workspace's own settings: agent roles, the special models, isolation,
+ * secrets and the default palette. The open section lives in the URL (?tab=settings&section=…).
  */
-function WorkspaceSettingsTab({ workspace, agents, agentRecords }) {
+function WorkspaceSettingsTab({ workspace, agentRecords }) {
   const { t } = useI18n();
   const auth = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1335,7 +1333,6 @@ function WorkspaceSettingsTab({ workspace, agents, agentRecords }) {
           {active.id === 'roles' && <WorkspaceRoles key={workspace} workspace={workspace} />}
           {active.id === 'modelPolicy' && <ModelPolicyCard key={workspace} workspace={workspace} />}
           {active.id === 'specialModels' && <WorkspaceSpecialModels key={workspace} workspace={workspace} />}
-          {active.id === 'personalMemory' && <WorkspacePersonalMemory workspace={workspace} agents={agents} />}
           {active.id === 'isolation' && (
             <div className="space-y-6">
               <WorkspaceIsolation key={workspace} workspace={workspace} />

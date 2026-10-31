@@ -125,6 +125,11 @@ class AgentSkillsConfigUpdate(BaseModel):
     skills_enabled: bool
 
 
+class AgentMemoryWriteUpdate(BaseModel):
+    # The Memory tab's "Write memory" switch (registry.AgentSpec.memory_write).
+    enabled: bool
+
+
 class AgentEpisodicConfigUpdate(BaseModel):
     # Tri-state: null = auto (off for local providers), True = on, False = off.
     episodic_write_enabled: Optional[bool] = None

@@ -99,6 +99,60 @@ def effective_memory_pools(spec, workspace: Optional[str] = None,
     return pools
 
 
+def described_extra_pools(extra_pool_ids, personal_pool: Optional[str] = None,
+                          read_only_ids: frozenset = frozenset()) -> list:
+    """The extra pools an agent may also write to: ``[(pool_id, name, description)]``
+    in binding order.
+
+    An extra pool (any pool after the primary) is read-only context unless its
+    description says what to save there: the user decides what goes in which
+    pool, so a pool without one is never written to. Left out as well: the
+    personal pool (reached with ``personal=true``), any other personal pool,
+    and a binding marked read only.
+    """
+    from memory.personal import is_personal
+    from memory.store import MemoryStore
+    personal_pool = str(personal_pool or "").strip()
+    out: list = []
+    store = MemoryStore()
+    for pid in extra_pool_ids or ():
+        pid = str(pid).strip()
+        if not pid or pid == personal_pool or pid in read_only_ids:
+            continue
+        try:
+            mem = store.get(pid)
+        except Exception:  # noqa: BLE001 - an unreadable pool stays read-only context
+            log.debug("memory pool %s unreadable", pid, exc_info=True)
+            continue
+        if mem is None or is_personal(mem):
+            continue
+        description = (mem.description or "").strip()
+        if description:
+            out.append((pid, mem.name, description))
+    return out
+
+
+def write_rules_signature(agent_id: str, workspace: Optional[str],
+                          pool_override: Optional[Any] = None,
+                          personal_pool: Optional[str] = None) -> str:
+    """What of the agent's pools shapes its build: each bound pool's name and
+    description, which decide whether an extra pool takes writes and what the
+    prompt and the ``pool`` field say about it (:func:`described_extra_pools`).
+    Part of the agent cache fingerprint (agents/agent_cache.py), so editing a
+    pool's description rebuilds the agents bound to it in every process."""
+    from agents.registry import get_agent
+    from memory.store import MemoryStore
+    spec = get_agent(agent_id)
+    if spec is None:
+        return ""
+    store = MemoryStore()
+    parts = []
+    for pid in effective_memory_pools(spec, workspace, pool_override, personal_pool):
+        mem = store.get(pid)
+        parts.append(f"{pid}:{mem.name}:{(mem.description or '').strip()}" if mem else f"{pid}:-")
+    return "\x1f".join(parts)
+
+
 #: The memory tools that change a pool. A run whose task binds pools read-only
 #: (``Task.memory_access == "read"``, set by a deployment) is built without
 #: them; everything else of the memory tool set stays (memory/tool.py,

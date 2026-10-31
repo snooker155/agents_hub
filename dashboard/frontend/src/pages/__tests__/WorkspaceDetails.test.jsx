@@ -58,7 +58,6 @@ vi.mock('../../components/theme', () => ({
 vi.mock('../../components/workspace/WorkspaceMembers', () => ({ default: () => null }));
 vi.mock('../../components/workspace/WorkspaceSecrets', () => ({ default: () => <section>SECRETS CARD</section> }));
 vi.mock('../../components/workspace/WorkspaceRoles', () => ({ default: () => <section>ROLES CARD</section> }));
-vi.mock('../../components/workspace/WorkspacePersonalMemory', () => ({ default: () => <section>PERSONAL MEMORY CARD</section> }));
 vi.mock('../../components/settings/ToolPolicySettings', () => ({ default: () => null }));
 vi.mock('../../components/settings/LoopSettingsWorkspace', () => ({ default: () => null }));
 vi.mock('../../components/TaskBoard', () => ({ default: () => null }));
@@ -116,16 +115,15 @@ describe('WorkspaceDetails settings tab', () => {
     show('en', 'settings');
     expect(await screen.findByText('ROLES CARD')).toBeTruthy();
     const menu = document.querySelector('nav.md\\:block');
-    for (const label of ['Agent roles', 'Personal memory', 'Secrets', 'Palette']) {
+    for (const label of ['Agent roles', 'Secrets', 'Palette']) {
       expect(within(menu).getByText(label)).toBeTruthy();
     }
-    // Overrides with a global value sit beside it on the Settings page.
-    for (const label of ['Execution', 'Tool policy', 'Web access', 'Task assignment']) {
+    // Overrides with a global value sit beside it on the Settings page, and
+    // personal memory is a tab of the Memory page.
+    for (const label of ['Execution', 'Tool policy', 'Web access', 'Task assignment', 'Personal memory']) {
       expect(within(menu).queryByText(label)).toBeNull();
     }
     expect(screen.queryByText('Agent Execution Mode')).toBeNull();
-    fireEvent.click(within(menu).getByText('Personal memory'));
-    expect(await screen.findByText('PERSONAL MEMORY CARD')).toBeTruthy();
     fireEvent.click(within(menu).getByText('Secrets'));
     expect(await screen.findByText('SECRETS CARD')).toBeTruthy();
     fireEvent.click(within(menu).getByText('Palette'));

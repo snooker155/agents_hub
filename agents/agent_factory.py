@@ -1443,6 +1443,10 @@ class AgentFactory:
                     config.get("system_prompt", "") + "\n\n---\n\n" + _roles_text
                 )
 
+        # The agent's own "Write memory" switch off reads every pool the same
+        # way a deployment's read-only memory does (registry.AgentSpec.memory_write).
+        if _spec is not None and getattr(_spec, "memory_write", True) is False:
+            _memory_access = "read"
         if _memory_access == "read":
             from memory.binding import MEMORY_WRITE_TOOLS
             _before = len(tools)

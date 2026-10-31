@@ -47,6 +47,17 @@ With `recall`, `remember` and `forget` when a pool is bound, or the generic
 `read_memory` / `write_memory` / `search_memory` when one is not. A pool-bound
 agent never has to know or guess a pool id.
 
+The memory type is none or shared. The old "local" type (a text kept on the
+agent record) never reached the prompt or the tools, so it is gone from the
+Memory tab and an agent record that still holds it reads as none.
+
+**The "Write memory" switch** on the agent's Memory tab
+(`AgentSpec.memory_write`, `POST /api/agents/{id}/memory-write`) turns every
+write off: the agent is built the way a deployment's read-only memory builds
+it (`Task.memory_access`), without `remember`, `forget`, `link`,
+`record_episode` or the block edits for any pool, the personal pool included,
+and the prompt says memory is read only. Recall and search stay.
+
 Apart from the blocks, only **names and stats** are injected into the prompt.
 Values are fetched at runtime through tools, so a large pool does not crowd out
 the conversation.
@@ -55,11 +66,14 @@ the conversation.
 
 What the agents learn about the person they work with: one private pool per
 user and workspace, shared by every agent in that workspace that has it
-switched on (`memory/personal.py`). It is set per workspace, in two places:
+switched on (`memory/personal.py`). It is set per workspace, for the
+workspace picked in the header, on the Memory page's Personal memory tab
+(`/memory?tab=personal`, `&workspace=<name>` switches the header first):
 
-- **The workspace switch.** Workspace settings, "Personal memory". Off hides
-  and refuses the chat's "save formula" and locks the agents' switches.
-- **The agent switch.** The Memory tab of the agent page. The workspace's
+- **The workspace switch.** Off hides and refuses the chat's "save formula"
+  and locks the agents' switches.
+- **The agent switches.** One per agent of the workspace, main agent first;
+  the same switch is on the Memory tab of the agent page. The workspace's
   main agent starts on, every other agent off, and a new main agent is
   switched on when it takes over.
 
@@ -209,6 +223,23 @@ API: `GET /api/memory/{id}/versions?kind=&item_key=&limit=`, `GET /api/memory/{i
 
 UI: Memory page, Pools tab, a "Pool history" button and a history icon next to each block, note and slot, with a diff against the previous version, Restore and Redact.
 
+## Writing to several pools
+
+An agent's first pool is the primary one: writes go there by default. An
+additional pool takes writes too once its **description** says what to save
+there (`memory.binding.described_extra_pools`): the prompt names the pool and
+quotes its description under "What to save here", and `remember`, `forget`,
+`record_episode` and `link` take `pool` (the pool's name) to write there; the
+block-edit tools reach its blocks. A pool without a description stays
+read-only context, since the user, not the agent, decides what goes in which
+pool, and naming it in `pool` is refused with a message listing the pools
+that do take writes. The personal pool keeps its own `personal=true` path.
+
+Edit a pool's description on the Memory page (the pencil next to it,
+`PATCH /api/shared-memory/{id}` with `description` or `name`). A description
+is part of the agent cache fingerprint (`agents/agent_cache.py`), so the
+agents bound to the pool are rebuilt with the new rules on their next run.
+
 ## Read only pools
 
 A pool bound to an agent is normally a plain id. One binding can instead be
@@ -221,9 +252,11 @@ including the personal pool, are unaffected. This is a separate, finer
 switch from a deployment's `Task.memory_access` (`docs/deployments.md`,
 "Resources"), which drops the memory write tools for the whole run.
 
-Set it on the agent's Memory tab, a checkbox next to the primary pool and
-each additional one, or by posting the entry shape to
-`POST /api/agents/{id}/memory`.
+A read only binding wins over a description: the pool is only read, however
+well its description says what belongs there. Set it on the agent's Memory
+tab or in the Memory page's assign window (Agent Connections), a checkbox
+next to the primary pool and each additional one, or by posting the entry
+shape to `POST /api/agents/{id}/memory`.
 
 ## Consolidation
 

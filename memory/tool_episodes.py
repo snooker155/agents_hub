@@ -16,8 +16,9 @@ def build_episode_tools(ctx):
     _pool_name = ctx._pool_name
     _refuse_write = ctx._refuse_write
     _ro_ids = ctx._ro_ids
+    _pick_target = ctx._pick_target
+    described_extras = ctx.described_extras
     multi = ctx.multi
-    pool_id = ctx.pool_id
     pool_ids = ctx.pool_ids
 
     # -----------------------------------------------------------------------
@@ -52,6 +53,12 @@ def build_episode_tools(ctx):
             ),
         )
 
+    _record_episode_args = _RecordEpisodeInput
+    if described_extras:
+        class _RecordEpisodePoolInput(_RecordEpisodeInput):
+            pool: Optional[str] = Field(None, description=ctx._pool_field_description)
+        _record_episode_args = _RecordEpisodePoolInput
+
     def _record_episode_impl(
         kind: str,
         summary: str,
@@ -61,9 +68,13 @@ def build_episode_tools(ctx):
         tags: Optional[list] = None,
         details: Optional[dict] = None,
         pinned: bool = False,
+        pool: Optional[str] = None,
     ) -> str:
-        if pool_id in _ro_ids:
-            return _refuse_write(pool_id)
+        target, refused = _pick_target(False, pool)
+        if refused:
+            return refused
+        if target in _ro_ids:
+            return _refuse_write(target)
         try:
             from memory.episodic import Episode, EpisodeStore
             valid_kinds = {"interaction", "task", "decision", "error", "observation"}
@@ -74,7 +85,7 @@ def build_episode_tools(ctx):
                 return json.dumps({"ok": False, "error": f"outcome must be one of {sorted(valid_outcomes)} or omitted"})
 
             ep = Episode(
-                pool_id=pool_id,
+                pool_id=target,
                 kind=kind,  # type: ignore[arg-type]
                 summary=summary,
                 actor=actor,
@@ -87,8 +98,11 @@ def build_episode_tools(ctx):
                 explicit=True,
                 pinned=bool(pinned),
             )
-            EpisodeStore(pool_id).add(ep)
-            return json.dumps({"ok": True, "id": str(ep.id), "kind": ep.kind, "explicit": True, "pinned": ep.pinned})
+            EpisodeStore(target).add(ep)
+            out = {"ok": True, "id": str(ep.id), "kind": ep.kind, "explicit": True, "pinned": ep.pinned}
+            if multi:
+                out["pool"] = _pool_name(target)
+            return json.dumps(out)
         except Exception as e:  # noqa: BLE001 - the tool returns the error to the model as a string
             return json.dumps({"ok": False, "error": f"record_episode failed: {e}"})
 
@@ -101,10 +115,12 @@ def build_episode_tools(ctx):
             "Keep `summary` short (1-3 sentences). An episode you record here is never pruned to make room "
             "for the automatic per-exchange entries, so recording deliberately is how something survives. "
             "Set `pinned=True` for the rare event that must outlive everything else."
-            + (" Episodes are recorded in the primary pool." if multi else "")
+            + (" Episodes are recorded in the primary pool"
+               + (", or in another writable pool named in `pool`." if described_extras else ".")
+               if multi else "")
         ),
         func=_record_episode_impl,
-        args_schema=_RecordEpisodeInput,
+        args_schema=_record_episode_args,
     )
 
     # -----------------------------------------------------------------------

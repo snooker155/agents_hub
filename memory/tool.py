@@ -432,6 +432,13 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
     it is one of the extra pools, remember and forget take ``personal=True``
     to write there instead of the primary pool.
 
+    An extra pool whose description says what to save there
+    (memory.binding.described_extra_pools) takes writes too: remember,
+    forget, record_episode and link then take ``pool`` (its name) to write
+    there instead of the primary, and the block-edit tools reach its blocks.
+    One without a description stays read-only context: the user decides what
+    goes in which pool.
+
     read_only_pool_ids (agents.registry.memory_pool_read_only_ids, resolved by
     memory.binding.effective_read_only_pools) marks individual bindings, pool_id
     included, as read only for this run: recall and the other read tools still
@@ -452,8 +459,32 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
     personal_extra = _personal if _personal and _personal in pool_ids[1:] else None
     _ro_ids = frozenset(str(p).strip() for p in (read_only_pool_ids or ()) if str(p or "").strip())
 
+    from memory.binding import described_extra_pools
+    # [(pool_id, name, description)]: the extra pools the agent may also write to.
+    described_extras = described_extra_pools(pool_ids[1:], personal_extra, _ro_ids)
+
     def _write_target(personal: bool) -> str:
         return personal_extra if personal and personal_extra else pool_id
+
+    def _pick_target(personal: bool = False, pool: Optional[str] = None):
+        """(target pool id, None), or (None, error JSON) when ``pool`` names
+        no pool this agent may write to."""
+        wanted = str(pool or "").strip()
+        if not wanted:
+            return _write_target(personal), None
+        if personal:
+            return None, json.dumps({"ok": False, "error": "Pass either `personal=true` or `pool`, not both."})
+        choices = [(pool_id, _pool_name(pool_id))] + [(pid, name) for pid, name, _d in described_extras]
+        for pid, name in choices:
+            if wanted == pid or wanted.casefold() == str(name).casefold():
+                return pid, None
+        listed = ", ".join(repr(name) for _pid, name in choices)
+        if any(wanted == pid or wanted.casefold() == _pool_name(pid).casefold() for pid in pool_ids):
+            error = (f"Pool {wanted!r} is attached as read-only context: its description does not say "
+                     f"what to save there, so it takes no writes. Writable pools: {listed}.")
+        else:
+            error = f"No attached pool is named {wanted!r}. Writable pools: {listed}."
+        return None, json.dumps({"ok": False, "error": error})
 
     def _refuse_write(target_pid: str) -> str:
         return json.dumps({
@@ -469,7 +500,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
     # parameter existed (see the class docstring); a block found there is
     # refused below with its own message rather than silently edited, which
     # is the bug this parameter's addition also closes.
-    _block_writable_ids = {pid for pid in (pool_id, personal_extra) if pid} - _ro_ids
+    _block_writable_ids = ({pid for pid in (pool_id, personal_extra) if pid}
+                           | {pid for pid, _n, _d in described_extras}) - _ro_ids
 
     _personal_field_description = (
         "True to write to the user's personal memory instead of your own pool: facts about the "
@@ -489,6 +521,13 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
                 return pid
         return _pool_names[pid]
 
+    _pool_field_description = (
+        "Name of the pool to write to instead of the primary one ("
+        + _pool_name(pool_id) + "): "
+        + "; ".join(f"{name!r}: {desc}" for _pid, name, desc in described_extras)
+        + ". Pick the pool whose description covers what you are saving; omit it for the primary pool."
+    ) if described_extras else ""
+
     def _where(mem) -> dict:
         """Which memory a write changed, for the step in the chat: the pool,
         its workspace and whether it is the person's personal memory."""
@@ -501,6 +540,8 @@ def create_memory_tools(pool_id: str, extra_pool_ids: Optional[list] = None, inc
         _ro_ids=_ro_ids, _block_writable_ids=_block_writable_ids,
         _personal_field_description=_personal_field_description,
         _write_target=_write_target, _refuse_write=_refuse_write,
+        _pick_target=_pick_target, described_extras=described_extras,
+        _pool_field_description=_pool_field_description,
         _pool_name=_pool_name, _where=_where,
     )
     (memory_block_read_tool, memory_block_replace_tool,

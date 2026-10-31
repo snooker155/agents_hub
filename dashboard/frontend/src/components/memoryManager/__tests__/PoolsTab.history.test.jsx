@@ -10,7 +10,10 @@ const POOL = {
   structured_data: {},
 };
 
+const updateSharedMemory = vi.fn(() => Promise.resolve({ data: {} }));
+
 vi.mock('../../../api', () => ({
+  updateSharedMemory: (...a) => updateSharedMemory(...a),
   getSharedMemory: () => Promise.resolve({ data: POOL }),
   createSharedMemory: () => Promise.resolve({ data: POOL }),
   deleteSharedMemory: () => Promise.resolve({ data: {} }),

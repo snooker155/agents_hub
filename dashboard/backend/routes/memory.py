@@ -329,6 +329,31 @@ async def get_shared_memory(memory_id: UUID, request: Request):
     return _mem_dump(mem)
 
 
+class MemoryUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+@router.patch("/{memory_id}")
+async def update_shared_memory(memory_id: UUID, data: MemoryUpdate, request: Request):
+    """Rename a pool or change its description. The description is also what
+    an agent with this pool as an additional one is told to save there: with
+    none, the agent only reads the pool (memory.binding.described_extra_pools)."""
+    store = MemoryStore()
+    mem = store.get(memory_id)
+    if not mem:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    _require_pool_visible(request, mem)
+    if data.name is not None:
+        name = data.name.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="A pool needs a name")
+        mem.name = name
+    if data.description is not None:
+        mem.description = data.description.strip()
+    return _mem_dump(_persist_mem(store, mem))
+
+
 @router.delete("/{memory_id}")
 async def delete_shared_memory(memory_id: UUID, request: Request):
     store = MemoryStore()
