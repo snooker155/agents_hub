@@ -5,7 +5,7 @@ reachability and the row counts of the core stores, the liveness of every
 background service, on-disk state sizes, provider readiness, the agent
 build cache, and a summary of every flow/loop/team/scenario run by kind
 (common/entity_runs.py); the individual active runs are the deployment
-map's job (dashboard/backend/routes/deployment.py), this is just the count.
+map's job (dashboard/backend/routes/cluster.py), this is just the count.
 
 It lives here rather than in the route so both callers can use it: the
 ``GET /api/health`` endpoint and the Service Agent's ``service_health`` tool.
@@ -249,7 +249,7 @@ def _entity_runs() -> Dict[str, Any]:
     in an active status: the one table every kind's run lives in now
     (common/entity_runs.py). A summary only: the individual active runs (with
     their host and heartbeat age) are the deployment map's job
-    (dashboard/backend/routes/deployment.py), not this snapshot's."""
+    (dashboard/backend/routes/cluster.py), not this snapshot's."""
     try:
         from common import entity_runs
         from common.run_status import ACTIVE_STATUSES

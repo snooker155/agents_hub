@@ -1,5 +1,5 @@
 """The members registry (common/members.py) and the deployment map
-(dashboard/backend/routes/deployment.py)."""
+(dashboard/backend/routes/cluster.py)."""
 from __future__ import annotations
 
 import logging

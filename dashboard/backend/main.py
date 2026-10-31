@@ -82,7 +82,7 @@ from routes import run_state as run_state_router
 from routes import settings as settings_router
 from routes import models as models_router
 from routes import ops as ops_router
-from routes import deployment as deployment_router
+from routes import cluster as cluster_router
 from routes import system as system_router
 from routes import demo as demo_router
 
@@ -968,8 +968,8 @@ app.include_router(ops_router.router)
 # Cluster domain: the map of members, leases, queue and where everything runs
 # (docs/deployment.md, "The cluster map"), under /api/cluster; /api/deployment
 # stays live as an alias for anything still calling the old path.
-app.include_router(deployment_router.router)
-app.include_router(deployment_router.deployment_alias_router)
+app.include_router(cluster_router.router)
+app.include_router(cluster_router.deployment_alias_router)
 
 # System workspace domain: the repository copy, the maintenance loop and its
 # branches (docs/system-workspace.md).

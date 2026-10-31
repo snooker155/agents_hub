@@ -468,6 +468,8 @@ async def forget_member(member_id: str):
 
 
 # ── workers started and stopped from here, and their autoscaling ─────────────
+# Under /api/cluster only: the /api/deployment alias is for callers of the
+# routes above that predate the rename.
 
 def _audit(request: Request, action: str, object_id: Optional[str] = None, **details: Any) -> None:
     from common import audit, identity
@@ -476,7 +478,6 @@ def _audit(request: Request, action: str, object_id: Optional[str] = None, **det
 
 
 @router.get("/workers")
-@deployment_alias_router.get("/workers")
 async def workers_overview():
     """The live workers (who started each, what it runs and carries, whether
     it may be stopped), how this hub starts one, and the autoscaling."""
@@ -490,7 +491,6 @@ async def workers_overview():
 
 
 @router.post("/workers")
-@deployment_alias_router.post("/workers")
 async def add_workers(request: Request):
     """Start workers: ``{"count": n}`` (1 to 10, default 1)."""
     import asyncio
@@ -511,7 +511,6 @@ async def add_workers(request: Request):
 
 
 @router.post("/workers/{member_id}/stop")
-@deployment_alias_router.post("/workers/{member_id}/stop")
 async def stop_worker(member_id: str, request: Request):
     """Ask a worker to finish its runs and exit. 409 for one that carries
     live instances: their containers reach their state through it."""
@@ -529,7 +528,6 @@ async def stop_worker(member_id: str, request: Request):
 
 
 @router.delete("/workers/{member_id}/stop")
-@deployment_alias_router.delete("/workers/{member_id}/stop")
 async def cancel_worker_stop(member_id: str, request: Request):
     """Take a stop back while the worker still lives."""
     import asyncio
@@ -541,7 +539,6 @@ async def cancel_worker_stop(member_id: str, request: Request):
 
 
 @router.put("/autoscale")
-@deployment_alias_router.put("/autoscale")
 async def update_autoscale(request: Request):
     """Change the autoscaling policy (common/worker_autoscale.py)."""
     import asyncio

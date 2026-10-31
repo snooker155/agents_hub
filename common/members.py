@@ -7,7 +7,7 @@ service up" stops being one process's answer. A backend replica and a worker
 each register a row in ``members`` (``common/migrations/0008_members.sql``)
 when they start and refresh it every :data:`BEAT_SECONDS` with a small
 ``load`` snapshot (runs they carry, SSE clients they serve, launches they
-track). The deployment map (``dashboard/backend/routes/deployment.py``,
+track). The deployment map (``dashboard/backend/routes/cluster.py``,
 ``ah deployment``) reads those rows beside the leases, the launch queue and
 the per-host state of runs, nodes and containers, so an operator sees where
 everything runs, how busy each process is and which one holds which role.

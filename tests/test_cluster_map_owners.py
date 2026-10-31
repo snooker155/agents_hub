@@ -4,7 +4,7 @@ started it, and marks which hosts are active (the page hides the rest).
 """
 from __future__ import annotations
 
-from dashboard.backend.routes.deployment import _host_row, _owned_containers
+from dashboard.backend.routes.cluster import _host_row, _owned_containers
 
 MEMBERS = [
     {"member_id": "w1:1", "role": "worker", "status": "live", "host": "w1"},

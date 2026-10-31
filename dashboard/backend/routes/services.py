@@ -412,7 +412,7 @@ async def service_connections(service_id: str):
 
 
 def services_map() -> List[Dict[str, Any]]:
-    """The cluster map's services section (routes/deployment.py)."""
+    """The cluster map's services section (routes/cluster.py)."""
     out = []
     for svc in store.list_services(limit=1000):
         out.append({

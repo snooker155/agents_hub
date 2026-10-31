@@ -273,13 +273,13 @@ def test_ah_doctor_passes_the_broker_check_without_a_bridge(monkeypatch):
 def cluster_app(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from routes import deployment
+    from routes import cluster
 
-    monkeypatch.setattr(deployment, "build_map", lambda: {"hub_nodes": []})
-    monkeypatch.setattr(deployment, "_stack", lambda: [])
+    monkeypatch.setattr(cluster, "build_map", lambda: {"hub_nodes": []})
+    monkeypatch.setattr(cluster, "_stack", lambda: [])
     app = FastAPI()
-    app.include_router(deployment.router)
-    app.include_router(deployment.deployment_alias_router)
+    app.include_router(cluster.router)
+    app.include_router(cluster.deployment_alias_router)
     return TestClient(app)
 
 

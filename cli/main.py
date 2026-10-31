@@ -449,7 +449,7 @@ def deployment(
     holds, the launch queue, and where runs, resident instances and
     containers live (docs/deployment.md)."""
     _require_direct_mode("ah deployment")
-    from dashboard.backend.routes.deployment import build_map
+    from dashboard.backend.routes.cluster import build_map
     from common import members as _members
 
     if logs:

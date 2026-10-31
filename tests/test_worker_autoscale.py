@@ -2,7 +2,7 @@
 Worker autoscaling (common/worker_autoscale.py): more workers when launches
 wait with no free slot, fewer when one has been idle a while, inside the
 page's bounds, one action per cooldown; and the Cluster routes that start,
-stop and scale workers (dashboard/backend/routes/deployment.py).
+stop and scale workers (dashboard/backend/routes/cluster.py).
 """
 from __future__ import annotations
 
@@ -119,10 +119,10 @@ def client(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dashboard" / "backend"))
-    from routes import deployment
+    from routes import cluster
     app = FastAPI()
-    app.include_router(deployment.router)
-    app.dependency_overrides[deployment._require_operator] = lambda: None
+    app.include_router(cluster.router)
+    app.dependency_overrides[cluster._require_operator] = lambda: None
     monkeypatch.setattr(worker_fleet, "_docker_reachable", lambda: False)
     return TestClient(app)
 
