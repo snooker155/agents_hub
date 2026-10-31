@@ -50,7 +50,7 @@ from teams.models import (
     Team, TeamMember, TeamMessage, TeamRun, utc_iso,
 )
 from teams.prompts import (
-    board_block, entry_instruction, handoff_instruction, leader_turn_prompt,
+    addressed_instruction, board_block, entry_instruction, handoff_instruction, leader_turn_prompt,
     member_turn_prompt, parse_leader_plan, parse_member_reply, synthesis_prompt,
     team_system_prompt,
 )
@@ -595,8 +595,14 @@ def run_team(
     on_message: Optional[Callable[[TeamMessage], None]] = None,
     run: Optional[TeamRun] = None,
     checkpoint: Optional[Dict[str, Any]] = None,
+    addressed_to: str = "",
 ) -> TeamRun:
     """Run a team against one goal until it finishes or hits a ceiling.
+
+    ``addressed_to`` (the mint-your-own path; a pre-created ``run`` carries
+    its own) is the member the person handed the request to with @: a
+    member's agent id or name, which takes the first round alone
+    (:func:`_run_addressed`). One not on the team is a ValueError.
 
     Two ways in, both ending up in the same round loop below:
 
@@ -640,7 +646,11 @@ def run_team(
         # The run id is minted before anything else because the task, the run
         # record and the stop event all key off it: a team that claims a task
         # has to be able to say which run holds it.
+        addressed = team.member_by_name(addressed_to) if (addressed_to or "").strip() else None
+        if (addressed_to or "").strip() and addressed is None:
+            raise ValueError(f"'{addressed_to}' is not a member of this team")
         run = TeamRun(team_id=team_id, mode=team.mode, goal=goal,
+                      addressed_to=addressed.agent_id if addressed else "",
                       conversation_id=conversation_id)
         control.register(run.team_run_id)
 
@@ -717,7 +727,10 @@ def run_team(
                 _check_between_rounds(run.team_run_id, started, wall_cap, spend, team, ws_name)
                 _publish(run.team_run_id, {"type": "round_start", "round": round_no})
 
-                round_cost, finished, answer = driver(
+                # A request the person addressed to one member (@name) is
+                # that member's alone in the first round.
+                round_driver = _run_addressed if round_no == 1 and run.addressed_to else driver
+                round_cost, finished, answer = round_driver(
                     team=team, run=run, board=board, goal=work_goal, round_no=round_no,
                     workspace=ws_path, task_id=task_id, session_id=session_id,
                     state=state, member_in_process=member_in_process,
@@ -802,6 +815,54 @@ def _driver_for(team: Team) -> Callable[..., Tuple[float, bool, str]]:
     if team.mode in HANDOFF_MODES:
         return _run_handoff
     return _run_parallel
+
+
+def _run_addressed(
+    *, team: Team, run: TeamRun, board: _Board, goal: str, round_no: int,
+    workspace: str, task_id: str, session_id: str, state: Dict[str, Any],
+    member_in_process: bool = True,
+) -> Tuple[float, bool, str]:
+    """The first round of a request the person addressed to one member.
+
+    Typing ``@name`` in the request box hands the request to that member: it
+    alone acts in this round, told the person chose it (no lead assigns, no
+    entry member routes, the other members wait). From round two the team's
+    own shape takes over with what it posted on the board: the lead reads it,
+    every member acts, or, in autonomous mode, whoever it handed work to.
+    A member that has left the team since the run started leaves the round
+    to the mode's own driver.
+    """
+    member = team.member_by_name(run.addressed_to)
+    if member is None:
+        return _driver_for(team)(
+            team=team, run=run, board=board, goal=goal, round_no=round_no,
+            workspace=workspace, task_id=task_id, session_id=session_id,
+            state=state, member_in_process=member_in_process,
+        )
+    name = member.display_name()
+    # A resumed round finds its line on the board already.
+    if not any(m.kind == "system" and m.round == round_no for m in board.messages):
+        board.post(
+            sender="(request)", content=f"Handed to {name} by the person.",
+            round_no=round_no, kind="system", recipients=[name],
+        )
+    jobs = [(member, member_turn_prompt(
+        team=team, member=member, goal=goal, board=board.view(name),
+        round_no=round_no, instruction=addressed_instruction(),
+    ))]
+    turns = _run_turns(
+        jobs, team=team, team_run_id=run.team_run_id, workspace=workspace,
+        task_id=task_id, session_id=session_id, round_no=round_no, board=board,
+        member_in_process=member_in_process,
+    )
+    handoff = team.mode in HANDOFF_MODES
+    cost, handoffs = _post_turns(team, board, turns, round_no, handoff=handoff)
+    if handoff:
+        # The queue _run_handoff reads next round: nothing handed on means
+        # the member did it all.
+        state["queue"] = handoffs
+        return cost, not handoffs, ""
+    return cost, False, ""
 
 
 def _run_centralized(

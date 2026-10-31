@@ -1,6 +1,6 @@
 import ContextMeter from '../ContextMeter';
 import { Clock, Send, Send as SendIcon, StopCircle, Terminal, X, Zap } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useChatPage } from './context';
 import { useI18n } from '../../i18n';
 import ComposerMic from './ComposerMic';
@@ -9,6 +9,9 @@ import ComposerBox from './ComposerBox';
 import { BackgroundRunsButton } from './BackgroundRuns';
 import { COMPOSER_SEND_CLS, COMPOSER_STOP_CLS, COMPOSER_TEXTAREA_CLS } from './composerStyles';
 import { AttachButton, AttachPickers, PendingAttachments, PendingReferences } from './ComposerAttachments';
+import { MentionChip, MentionMenu } from './MentionMenu';
+import useAgentMention from './useAgentMention';
+import { teamMentionMembers } from './agentMention';
 
 function isTyping(target) {
   const tag = target?.tagName;
@@ -171,8 +174,23 @@ export default function ChatComposer() {
     };
   }, [micUsable, textareaRef, voice]);
 
+  // `@agent`: the list of agents the chat can be handed to (agentMention.js);
+  // the send hands it over (useChatSend). Not the agent it is with already.
+  // With a team as the target, only its members: the request goes to one.
+  const { selectableAgents, selectedAgent, selectedTeam, targetMode, teams } = page;
+  const teamMode = targetMode === 'team';
+  const mentionAgents = useMemo(() => {
+    if (currentTelegramBinding || mirrored) return [];
+    if (teamMode) return teamMentionMembers((teams || []).find((tm) => tm.team_id === selectedTeam));
+    return (selectableAgents || [])
+      .filter((a) => !(targetMode === 'agent' && a.id === selectedAgent))
+      .map((a) => ({ id: a.id, name: a.name, description: a.description }));
+  }, [currentTelegramBinding, mirrored, selectableAgents, selectedAgent, selectedTeam, targetMode, teamMode, teams]);
+  const mention = useAgentMention({ text: input, setText: setInput, textareaRef, agents: mentionAgents });
+
   const { autoMode } = page;
   const onKeyDown = (e) => {
+    if (mention.onKeyDown(e)) return;
     // Shift+Tab switches auto mode, as in Claude Code.
     if (e.key === 'Tab' && e.shiftKey && autoMode?.allowed && !currentTelegramBinding) {
       e.preventDefault();
@@ -228,6 +246,20 @@ export default function ChatComposer() {
                   </button>
                 ))}
               </div>
+            )}
+
+            <MentionMenu
+              mention={mention}
+              label={t(teamMode ? 'chat.mention.memberLabel' : 'chat.mention.label')}
+              hint={t(teamMode ? 'chat.mention.memberHint' : 'chat.mention.hint')}
+            />
+            {!steering.busy && !mention.open && (
+              <MentionChip
+                agent={mention.named}
+                label={mention.named
+                  ? t(teamMode ? 'chat.mention.toMember' : 'chat.mention.handTo', { agent: mention.named.name || mention.named.id })
+                  : ''}
+              />
             )}
 
             <SteerBar steering={steering} t={t} />
@@ -324,7 +356,7 @@ export default function ChatComposer() {
               // typing hint while it runs (BackgroundRuns.jsx).
               hint={page.backgroundRuns?.some((r) => !r.finished)
                 ? <BackgroundRunsButton runs={page.backgroundRuns} />
-                : <>{t('chat.composerHint')} / {t('chat.forCommands')}</>}
+                : <>{t('chat.composerHint')} / {t('chat.forCommands')} · {t(teamMode ? 'chat.mention.memberComposerHint' : 'chat.mention.composerHint')}</>}
               footerRight={(
                   <ContextMeter
                     usage={contextUsage}
@@ -346,7 +378,9 @@ export default function ChatComposer() {
                     resizeTextarea();
                     setCommandMenuOpen(val.startsWith('/'));
                     setCommandMenuIndex(0);
+                    mention.onChange(e);
                   }}
+                  onBlur={mention.close}
                   onKeyDown={onKeyDown}
                 />
             </ComposerBox>

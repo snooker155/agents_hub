@@ -241,8 +241,20 @@ def handoff_instruction(sender: str, text: str) -> str:
     )
 
 
+_ADDRESSED_INSTRUCTION = """The person who asked for this addressed the request to you by name: the
+team handed it to you, and nobody else has looked at it yet. Take it yourself:
+do the work now and post the result. If a part of it clearly belongs to a
+teammate under their manifest, say so on the board by name, but do not pass the
+whole request on: the person chose you."""
+
+
 def entry_instruction() -> str:
     return _ENTRY_INSTRUCTION
+
+
+def addressed_instruction() -> str:
+    """What the member the person named with @ is told in the first round."""
+    return _ADDRESSED_INSTRUCTION
 
 
 def member_turn_prompt(

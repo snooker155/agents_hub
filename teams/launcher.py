@@ -56,11 +56,14 @@ def start_team_run(
     context: str = "",
     attached: Optional[List[Dict[str, str]]] = None,
     origin: Optional[Dict[str, Any]] = None,
+    addressed_to: str = "",
 ) -> TeamRun:
     """The database half of launching a team run.
 
     ``origin`` is the chat that started it (chat/background_runs.py), told
-    when the run ends.
+    when the run ends. ``addressed_to`` is the member the person handed the
+    request to (``@name``): a member's agent id or display name, stored as the
+    agent id; one that is not on the team is a ValueError.
 
     Validates the team the same way ``teams.runner.run_team``'s own
     mint-a-record path does (``teams.runner._validate_for_run`` — one rule,
@@ -84,9 +87,13 @@ def start_team_run(
     _validate_for_run(team)
 
     goal = (goal or "").strip() or (team.description or "").strip()
+    addressed = team.member_by_name(addressed_to) if (addressed_to or "").strip() else None
+    if (addressed_to or "").strip() and addressed is None:
+        raise ValueError(f"'{addressed_to}' is not a member of this team")
 
     run = TeamRun(team_id=team_id, mode=team.mode, goal=goal,
                   context=context or "", attached=list(attached or []),
+                  addressed_to=addressed.agent_id if addressed else "",
                   conversation_id=conversation_id, parent_run_id=parent_run_id)
 
     ws_name, ws_path, task_id, session_id = _prepare_context(

@@ -1,6 +1,8 @@
 import { genId } from './turnState';
 import { stopMessage, streamChat } from '../../api';
 import { targetId } from './targets';
+import { takeMention, teamMentionMembers } from './agentMention';
+import { applyPersonHandoff, personHandoff } from './handoff';
 import { EMPTY_GRAPH_RUN } from '../graphRun';
 import { useCallback } from 'react';
 import { buildAttachmentLine, buildHistoryPayload, buildStreamRequestBody, resolveConversationTitle } from './send/buildRequest';
@@ -63,15 +65,23 @@ function targetOf(conv) {
  * through the Assistant's own route while the Assistant is the target; with
  * another agent picked, the message starts an ordinary conversation that
  * carries the Assistant conversation's text.
+ *
+ * `@agent` in the text (agentMention.js) hands the open conversation to that
+ * agent: the mention leaves the text, the turn goes to the agent, its bubble
+ * carries the handoff (the divider says the person made it), and the
+ * conversation talks to it from then on. A mention with nothing else to say
+ * hands the chat over without a turn. With a team as the target only its
+ * members can be named, and the request goes to that member first
+ * (`team_member`); the chat stays with the team.
  */
 export function useChatSend(deps) {
   const {
-    autoMode, beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
+    agents, autoMode, beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
     isTurnRunning, loadProcessData, mergeArtifact, navigate, noteTurn, pendingAttachments,
     pendingReferences, processOpen, reloadChat, selectCommand, selectedAgent, selectedFlow, selectedProject,
     selectedTeam, selectedWorkspace, setActiveRunId, setAttachmentError, setConversations,
     setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences,
-    setProcessInsights, setSelectedAgent, setSessionId, stream, t, targetMode, textareaRef,
+    setProcessInsights, setSelectedAgent, setSessionId, setTargetMode, stream, t, targetMode, teams, textareaRef,
   } = deps;
 
   // ---- a turn of a conversation with the Assistant ----
@@ -148,15 +158,47 @@ export function useChatSend(deps) {
     const background = Boolean(toConvId && toConvId !== currentConvId);
     const backgroundConv = background ? conversations.find((c) => c.id === toConvId) : null;
     if (background && !backgroundConv) return;
-    const target = background
+    let target = background
       ? targetOf(backgroundConv)
       : { targetMode, selectedAgent, selectedFlow, selectedTeam };
     // Button clicks call this with their value; the onClick handler passes a
     // SyntheticEvent, so only honour an explicit string override.
-    const text = (typeof overrideText === 'string' ? overrideText : input).trim();
+    let text = (typeof overrideText === 'string' ? overrideText : input).trim();
     // The composer's attachments belong to the open conversation.
     const attachments = background ? [] : pendingAttachments;
     const references = background ? [] : pendingReferences;
+
+    // `@member` with a team as the target: the request goes to that member
+    // first, the chat stays with the team. A bare mention is sent as typed.
+    const team = target.targetMode === 'team'
+      ? (teams || []).find((tm) => tm.team_id === target.selectedTeam) : null;
+    const namedMember = background || target.targetMode !== 'team' ? null : takeMention(text, teamMentionMembers(team));
+    const teamMember = namedMember?.text ? namedMember.agent : null;
+    if (teamMember) text = namedMember.text;
+    // `@agent`: the person hands the chat to another agent. Naming the agent
+    // the chat is with already changes nothing.
+    const named = background || target.targetMode === 'team' ? null : takeMention(text, agents);
+    const handTo = named && !(target.targetMode === 'agent' && named.agent.id === target.selectedAgent)
+      ? named.agent : null;
+    const handedConv = handTo ? conversations.find((c) => c.id === currentConvId) : null;
+    // The agent that had it, told to the receiving one (chat/handoff.py).
+    const handedFrom = handTo && target.targetMode === 'agent' ? target.selectedAgent || null : null;
+    if (handTo) {
+      text = named.text;
+      target = { ...target, targetMode: 'agent', selectedAgent: handTo.id };
+      if (!text && !attachments.length && !references.length) {
+        if (isTurnRunning(currentConvId)) return;
+        // Nothing to say: the chat changes hands, and the line says so.
+        if (handedConv?.messages?.length && !isAssistantThread(handedConv) && handedConv.origin !== 'mirror') {
+          const marker = { id: genId(), role: 'system', content: '', handoff: personHandoff(handTo, handedFrom) };
+          setConversations((prev) => applyPersonHandoff(prev, handedConv.id, handTo, marker));
+        }
+        setTargetMode?.('agent');
+        setSelectedAgent?.(handTo.id);
+        setInput('');
+        return;
+      }
+    }
     const isFlowMode = target.targetMode === 'flow';
     const isTeamMode = target.targetMode === 'team';
     // Flows and teams both answer with several bubbles rather than one streamed
@@ -200,8 +242,8 @@ export function useChatSend(deps) {
     if (!convId) {
       convId = genId();
       const newConv = buildNewConversation({
-        convId, text, attachmentLine, t, targetMode, isFlowMode, isTeamMode,
-        selectedAgent, selectedFlow, selectedTeam, selectedWorkspace, selectedProject,
+        convId, text, attachmentLine, t, targetMode: target.targetMode, isFlowMode, isTeamMode,
+        selectedAgent: target.selectedAgent, selectedFlow, selectedTeam, selectedWorkspace, selectedProject,
       });
       if (forkFrom) {
         newConv.messages = forkMessages(forkFrom.messages);
@@ -220,6 +262,23 @@ export function useChatSend(deps) {
 
     // Append user message
     setConversations((prev) => appendUserMessage(prev, convId, userMsg, text, attachmentLine));
+    // Handed over with @: the conversation is the named agent's from this
+    // turn on, and the bubble below says the person chose it. A chat that
+    // starts here has nobody to hand over from.
+    const handoff = handTo && !createdConv ? personHandoff(handTo, handedFrom) : null;
+    // The line under the request: whom of the team it went to.
+    if (teamMember) {
+      const marker = {
+        id: genId(), role: 'system', content: '',
+        handoff: { ...personHandoff(teamMember, null), member: true },
+      };
+      setConversations((prev) => prev.map((c) => (c.id !== convId ? c : { ...c, messages: [...c.messages, marker] })));
+    }
+    if (handTo) {
+      setConversations((prev) => applyPersonHandoff(prev, convId, handTo));
+      setTargetMode?.('agent');
+      setSelectedAgent?.(handTo.id);
+    }
 
     if (!background) {
       setInput('');
@@ -271,7 +330,13 @@ export function useChatSend(deps) {
         setConversations((prev) =>
           prev.map((c) =>
             c.id === convId
-              ? { ...c, messages: [...c.messages, buildAssistantBubble(assistantId, target.selectedAgent)] }
+              ? {
+                ...c,
+                messages: [...c.messages, {
+                  ...buildAssistantBubble(assistantId, target.selectedAgent),
+                  ...(handoff ? { handoff } : {}),
+                }],
+              }
               : c,
           ),
         );
@@ -290,7 +355,7 @@ export function useChatSend(deps) {
         setProcessInsights: (update) => { if (here()) setProcessInsights(update); },
         mergeArtifact: (art) => { if (here()) mergeArtifact(art); },
         processOpen, isMultiAgent, isFlowMode,
-        assistantId, userMsgText, t, state,
+        assistantId, userMsgText, t, state, teamMember,
       };
 
       const body = {
@@ -300,6 +365,8 @@ export function useChatSend(deps) {
           selectedTeam: target.selectedTeam, text, effectiveWorkspace,
           projectId: convRecord?.project_id, convId, convTitle, clientId, historyPayload,
           pendingAttachments: attachments, pendingReferences: references, selectedWorkspace,
+          handedFrom: handoff ? handedFrom : null,
+          teamMember: teamMember?.id || null,
         }),
         client_turn_id: turnKey,
         // The server checks it too (an interactive chat, a workspace that allows it).
@@ -383,7 +450,7 @@ export function useChatSend(deps) {
         ),
       );
     }
-  }, [autoMode, sendToAssistant, input, pendingAttachments, pendingReferences, targetMode, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, currentConvIdRef, conversations, setConversations, clientId, stream, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, beginTurn, noteTurn, endTurn, isTurnRunning, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, textareaRef]);
+  }, [agents, autoMode, sendToAssistant, input, pendingAttachments, pendingReferences, targetMode, selectedAgent, selectedFlow, selectedTeam, t, currentConvId, currentConvIdRef, conversations, setConversations, clientId, stream, selectedWorkspace, selectCommand, selectedProject, navigate, processOpen, mergeArtifact, loadProcessData, beginTurn, noteTurn, endTurn, isTurnRunning, setActiveRunId, setAttachmentError, setCurrentConvId, setGraphRun, setInput, setPendingAttachments, setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, setTargetMode, teams, textareaRef]);
 
   // Build view: clicking a file chip in the transcript scrolls the always-open
   // Artifacts panel to that file's diff.

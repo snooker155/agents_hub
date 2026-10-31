@@ -129,6 +129,17 @@ agent's `from_response`) when the conversation changed hands.
   streams below with its name. After the turn the top bar shows the new agent
   and the conversation is saved with it. A second tab following the
   conversation shows the same.
+- **Handed over by the person.** Typing `@` in the chat composer lists the
+  agents of the workspace; a pick writes `@<agent id>` into the message. On
+  send the mention leaves the text, the turn goes to that agent with
+  `handed_from` (the agent that had the conversation), and its prompt opens
+  with a note saying the user handed it over and that the earlier replies
+  were the other agent's. The divider reads "You handed the chat to Coder",
+  and the conversation stays with that agent. A message that is only the
+  mention hands the chat over without a turn. No limits or history filters
+  apply: the person chose, and the whole history comes along. With a team as
+  the target `@` lists only the team's members and addresses the request to
+  one (see [teams](teams.md)); the chat is not handed to anyone.
 - **Terminal client.** `ah chat` prints each handing reply and who took
   over, and the session continues with the new agent.
 - **Telegram.** The handing agent's reply goes out first with a line naming

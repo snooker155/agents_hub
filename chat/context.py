@@ -352,6 +352,11 @@ def build_chat_context(request: ChatRequest, *, embed_history: bool = False) -> 
     note = project_scope_note(request)
     if note:
         lines.extend([note, ""])
+    # The person handed the conversation to this agent with @ (composer).
+    from chat.handoff import person_handoff_note
+    handed = person_handoff_note(request)
+    if handed:
+        lines.extend([handed, ""])
 
     # The "Latest user message:" marker pairs with the "Conversation history:"
     # block (split_embedded_history reads them back together), so it is gated on

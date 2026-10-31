@@ -68,6 +68,13 @@ export default {
   newRunHint: 'Sag, was das Team liefern soll, und drück auf Starten. Wer im Team ist und was jeder Zug tut, steht in der Spalte rechts.',
   roundN: 'Runde {{n}}',
   requestHandedTo: 'Die Anfrage ging an {{name}} zum Erledigen oder Weitergeben',
+  requestAddressedTo: 'Sie haben die Anfrage an {{name}} übergeben',
+  // `@member` in the request box (components/chat/agentMention.js).
+  mention: {
+    label: 'Anfrage übergeben an',
+    handTo: 'Die Anfrage geht zuerst an {{name}}',
+    composerHint: '@ übergibt an ein Mitglied',
+  },
   noContribution: 'Kein Beitrag: {{error}}',
   isWorking: 'arbeitet…',
   participants: 'Mitglieder',

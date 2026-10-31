@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Loader, Play, RotateCcw, StopCircle, UsersRound } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useI18n } from '../../i18n';
@@ -9,6 +9,9 @@ import ComposerBox from '../chat/ComposerBox';
 import { COMPOSER_SEND_CLS, COMPOSER_STOP_CLS, COMPOSER_TEXTAREA_CLS } from '../chat/composerStyles';
 import { useChatComposerInput } from '../chat/useChatComposerInput';
 import { AttachButton, AttachPickers, PendingAttachments, PendingReferences } from '../chat/ComposerAttachments';
+import { MentionChip, MentionMenu } from '../chat/MentionMenu';
+import { takeMention, teamMentionMembers } from '../chat/agentMention';
+import useAgentMention from '../chat/useAgentMention';
 import { StatusBadge } from '../loops/loopUi';
 import { stopReasonText } from './teamFormat';
 import { TEAM_SENDER } from './teamBoard';
@@ -23,7 +26,9 @@ import { TEAM_SENDER } from './teamBoard';
  *
  * The box at the foot asks for the next run, files and hub records attached
  * as in the flow chat: Enter, or the round button, starts it; while the team
- * works the button stops it instead.
+ * works the button stops it instead. `@member` in the box (chat/agentMention.js)
+ * gives the request to that member: it alone takes the first round
+ * (teams/runner.py `_run_addressed`).
  */
 export default function TeamRunChat({
   team, run, messages, live, workspace, active = true, viewMode, onViewModeChange,
@@ -76,10 +81,18 @@ export default function TeamRunChat({
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  // The members the request can be addressed to with @.
+  const memberAgents = useMemo(() => teamMentionMembers(team), [team]);
+  const mention = useAgentMention({ text: goal, setText: onGoalChange, textareaRef, agents: memberAgents });
+
   const canRun = !live && !starting && team.members.length > 0;
   const startRun = async () => {
     if (!canRun) return;
-    const started = await onRun({ attachments: pendingAttachments, references: pendingReferences });
+    const named = takeMention(goal, memberAgents);
+    const started = await onRun({
+      attachments: pendingAttachments, references: pendingReferences,
+      ...(named ? { addressedTo: named.agent.id, request: named.text } : {}),
+    });
     if (started) {
       setPendingAttachments([]);
       setPendingReferences([]);
@@ -87,6 +100,7 @@ export default function TeamRunChat({
     }
   };
   const onKeyDown = (e) => {
+    if (mention.onKeyDown(e)) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       startRun();
@@ -179,8 +193,15 @@ export default function TeamRunChat({
               onRemove={removeAttachment}
               disabled={live}
             />
+            <MentionMenu mention={mention} label={t('teamDetails.mention.label')} hint={t('chat.mention.hint')} />
+            {!live && !mention.open && (
+              <MentionChip
+                agent={mention.named}
+                label={mention.named ? t('teamDetails.mention.handTo', { name: mention.named.name }) : ''}
+              />
+            )}
             <ComposerBox
-              hint={t('teamDetails.enterToRun')}
+              hint={`${t('teamDetails.enterToRun')} · ${t('teamDetails.mention.composerHint')}`}
               leading={(
                 <AttachButton
                   open={attachMenuOpen}
@@ -214,7 +235,8 @@ export default function TeamRunChat({
                 rows={1}
                 value={goal}
                 disabled={live}
-                onChange={(e) => { onGoalChange(e.target.value); resizeTextarea(); }}
+                onChange={(e) => { onGoalChange(e.target.value); resizeTextarea(); mention.onChange(e); }}
+                onBlur={mention.close}
                 onKeyDown={onKeyDown}
               />
             </ComposerBox>

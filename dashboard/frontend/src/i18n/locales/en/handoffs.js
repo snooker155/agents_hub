@@ -35,6 +35,8 @@ export default {
   passing: 'Passing the chat to {{agent}}.',
   divider: 'Handed over to {{agent}}: {{reason}}',
   dividerNoReason: 'Handed over to {{agent}}',
+  dividerByUser: 'You handed the chat to {{agent}}',
+  dividerToMember: 'You handed the request to {{agent}}',
   openRun: 'Open the run',
   runHandedOffTo: 'Handed over to',
   runReceivedFrom: 'Received by handoff from',

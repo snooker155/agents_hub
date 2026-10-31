@@ -68,9 +68,13 @@ export function boardChatMessages({ run, messages, working = [], trails = {}, t 
     } else if (m.kind === 'steer') {
       out.push({ id, role: 'user', content: m.content });
     } else if (m.kind === 'system') {
+      // The first round of a request the person addressed with @ (teams/runner.py _run_addressed).
+      const addressed = run?.addressed_to && m.round === 1;
       out.push({
         id, role: 'system',
-        content: recipients.length ? t('teamDetails.requestHandedTo', { name: recipients.join(', ') }) : m.content,
+        content: recipients.length
+          ? t(addressed ? 'teamDetails.requestAddressedTo' : 'teamDetails.requestHandedTo', { name: recipients.join(', ') })
+          : m.content,
       });
     } else if (m.kind === 'instruction') {
       const line = `**→ ${recipients.join(', ')}:** ${quotesToMarkdown(m.content, t)}`;

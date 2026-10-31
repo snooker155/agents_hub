@@ -41,7 +41,9 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
-from agents.registry import HANDOFF_HISTORY_KINDS, normalize_handoff_history, parse_handoff_history
+from agents.registry import (
+    HANDOFF_HISTORY_KINDS, get_agent, normalize_handoff_history, parse_handoff_history,
+)
 
 log = logging.getLogger(__name__)
 
@@ -276,6 +278,28 @@ def handoff_note(intent: HandoffIntent, *, replies: Sequence[Dict[str, str]] = (
     lines.append(f"History you received: {describe_filter(intent.history_filter)}.")
     lines.append("Answer the user's message below. Do not restate the handoff unless it helps the user.")
     return "\n".join(lines)
+
+
+def person_handoff_note(request: Any) -> str:
+    """The note in front of a turn the person handed to this agent with @.
+
+    Empty unless ``request.handed_from`` names another agent than the one
+    answering. Unlike :func:`handoff_note` nobody wrote a reason: the person
+    chose the agent, and the full history came along.
+    """
+    from_id = str(getattr(request, "handed_from", None) or "").strip()
+    to_id = str(getattr(request, "agent_id", None) or "").strip()
+    if not from_id or from_id == to_id:
+        return ""
+    spec = get_agent(from_id)
+    from_name = (getattr(spec, "name", "") or from_id) if spec else from_id
+    return "\n".join([
+        "## The user handed this conversation to you",
+        f"Until now the conversation was with {from_name} (agent `{from_id}`); the user "
+        "chose you by name for this message and the ones after it. The earlier agent "
+        f"replies in the history were written by {from_name}, not by you.",
+        "Answer the user's message below yourself. Do not hand it back unless the user asks.",
+    ])
 
 
 def receiving_prompt(note: str, prompt: str) -> str:

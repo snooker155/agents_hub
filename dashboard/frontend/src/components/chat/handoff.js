@@ -101,7 +101,8 @@ export function liveHandoffBubbles(handoffs) {
  */
 export function withHandoffLine(msg, next, line) {
   const handoff = next?.role === 'agent' ? next.handoff : null;
-  if (!handoff || msg?.role !== 'agent') return msg;
+  // The person handed the chat over (@agent): the agent before said nothing about it.
+  if (!handoff || msg?.role !== 'agent' || handoff.by === 'user') return msg;
   if (handoff.from_agent_id && msg.agent_id && handoff.from_agent_id !== msg.agent_id) return msg;
   const reason = String(handoff.reason || '').trim();
   const own = (text) => {
@@ -117,6 +118,35 @@ export function withHandoffLine(msg, next, line) {
     ];
   }
   return out;
+}
+
+/**
+ * The person handed the chat to `agent` with @ in the composer
+ * (agentMention.js): the handoff a receiving bubble, or the line of a chat
+ * handed over without a message, carries. `by: 'user'` tells it from one an
+ * agent made, which has a reason and a handing bubble.
+ */
+export function personHandoff(agent, fromAgentId) {
+  return {
+    by: 'user',
+    from_agent_id: fromAgentId || null,
+    to_agent_id: agent.id,
+    to_agent_name: agent.name || agent.id,
+  };
+}
+
+/**
+ * Point the conversation `convId` at `agent`, the person's pick: the next
+ * turns go to it. With `marker` (a chat handed over without a message), the
+ * line that says so is appended as a system message.
+ */
+export function applyPersonHandoff(conversations, convId, agent, marker = null) {
+  return conversations.map((c) => (c.id !== convId ? c : {
+    ...c,
+    agent_id: agent.id,
+    target_mode: 'agent',
+    ...(marker ? { messages: [...(c.messages || []), marker] } : {}),
+  }));
 }
 
 /**

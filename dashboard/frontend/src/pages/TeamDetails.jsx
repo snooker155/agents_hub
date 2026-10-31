@@ -292,14 +292,17 @@ export default function TeamDetails() {
 
   // A run is only a run: it makes no task. What the box carried (files, hub
   // records) goes with it; an attached task is the one the team works on.
+  // `@member` in the box (TeamRunChat) gives the request to that member
+  // first: `addressedTo` is its agent id, `request` the text without it.
   // Says whether the run started, so the box can let go of its attachments.
-  const handleStart = async ({ attachments = [], references = [] } = {}) => {
+  const handleStart = async ({ attachments = [], references = [], addressedTo = '', request = goal } = {}) => {
     if (!team) return false;
     setStarting(true);
     try {
       const { data } = await startTeamRun(team.team_id, {
-        goal,
+        goal: request,
         workspace: selectedWorkspace,
+        ...(addressedTo ? { addressed_to: addressedTo } : {}),
         attachments: attachmentsPayload(attachments, selectedWorkspace),
         references: referencesPayload(references),
       });

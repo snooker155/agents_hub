@@ -138,6 +138,7 @@ def _to_run(rec: Dict[str, Any]) -> TeamRun:
         goal=rec.get("goal") or "",
         context=rec.get("context") or "",
         attached=list(rec.get("attached") or []),
+        addressed_to=rec.get("addressed_to") or "",
         task_id=rec.get("task_id"),
         session_id=rec.get("session_id"),
         conversation_id=rec.get("conversation_id"),

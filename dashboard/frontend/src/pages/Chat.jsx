@@ -812,13 +812,13 @@ export default function Chat() {
     currentConv, setConversations, workspace: currentConv?.workspace || selectedWorkspace,
   });
   const { sendMessage } = useChatSend({
-    autoMode, beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
+    agents: selectableAgents, autoMode, beginTurn, clientId, conversations, currentConvId, currentConvIdRef, endTurn, input,
     isTurnRunning, loadProcessData, mergeArtifact, navigate, noteTurn, pendingAttachments,
     pendingReferences, processOpen: runDataWanted, reloadChat, selectCommand, selectedAgent, selectedFlow,
     selectedProject, selectedTeam, selectedWorkspace, setActiveRunId, setAttachmentError,
     setConversations, setCurrentConvId, setGraphRun, setInput, setPendingAttachments,
-    setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, stream, t,
-    targetMode, textareaRef,
+    setPendingReferences, setProcessInsights, setSelectedAgent, setSessionId, setTargetMode, stream, t,
+    targetMode, teams, textareaRef,
   });
   // A file a turn changed, clicked in the chat: shown in the Artifacts
   // column, which opens for it; the file's own page is a click further.

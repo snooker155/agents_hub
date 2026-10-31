@@ -36,6 +36,8 @@ export default {
   passing: 'Передаю чат агенту {{agent}}.',
   divider: 'Разговор передан агенту {{agent}}: {{reason}}',
   dividerNoReason: 'Разговор передан агенту {{agent}}',
+  dividerByUser: 'Вы передали чат агенту {{agent}}',
+  dividerToMember: 'Вы передали запрос участнику {{agent}}',
   openRun: 'Открыть запуск',
   runHandedOffTo: 'Передан агенту',
   runReceivedFrom: 'Получен по передаче от',

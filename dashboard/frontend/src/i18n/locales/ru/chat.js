@@ -308,6 +308,18 @@ export default {
     dropped: 'Отброшено при проверке',
   },
   commandsLabel: 'Команды',
+  // `@agent` in the composer (components/chat/agentMention.js).
+  mention: {
+    label: 'Передать чат',
+    hint: '↑↓ выбрать, Enter передать',
+    handTo: 'Чат перейдёт к агенту {{agent}}',
+    composerHint: '@ передать чат агенту',
+    // With a team as the target: only its members, the request goes to one.
+    memberLabel: 'Передать запрос участнику',
+    memberHint: '↑↓ выбрать, Enter подставить',
+    toMember: 'Запрос сначала получит {{agent}}',
+    memberComposerHint: '@ передать участнику команды',
+  },
   commands: {
     help: 'Показать доступные команды',
     clear: 'Очистить текущий диалог',

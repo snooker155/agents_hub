@@ -26,6 +26,10 @@ function handleTeamEvent(event, ctx) {
   if (event.type === 'team_message') {
     if (event.run_id) { state.runId = event.run_id; setActiveRunId(event.run_id); }
     const recipients = (event.recipients || []).filter((r) => r !== '*');
+    // The request the person addressed with @ (teams/runner.py _run_addressed):
+    // the line under it already says whom it went to (useChatSend).
+    if (event.kind === 'system' && ctx.teamMember && event.round === 1
+      && recipients.includes(ctx.teamMember.name)) return true;
     setConversations((prev) =>
       prev.map((c) =>
         c.id !== convId ? c : {

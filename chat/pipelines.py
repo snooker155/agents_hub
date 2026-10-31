@@ -994,6 +994,9 @@ async def _run_chat_team_pipeline(request: ChatRequest):
         raise HTTPException(status_code=404, detail=f"Team '{request.team_id}' not found")
     if not team.members:
         raise HTTPException(status_code=400, detail="Team has no members")
+    if request.team_member and team.member_by_name(request.team_member) is None:
+        raise HTTPException(status_code=400,
+                            detail=f"'{request.team_member}' is not a member of team '{team.name}'")
 
     materialize_attachments(request)
     resolve_references(request)
@@ -1046,7 +1049,7 @@ async def _run_chat_team_pipeline(request: ChatRequest):
     task = asyncio.create_task(asyncio.to_thread(
         run_team, request.team_id, goal,
         workspace=request.workspace, conversation_id=conv_id,
-        on_message=_on_message,
+        on_message=_on_message, addressed_to=request.team_member or "",
     ))
 
     # Drain the board until the run finishes, then flush whatever landed between

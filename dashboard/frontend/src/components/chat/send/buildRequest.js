@@ -81,12 +81,17 @@ function resolveConversationTitle({ text, attachmentLine, convRecord, t }) {
 function buildStreamRequestBody({
   targetMode, isFlowMode, isTeamMode, selectedAgent, selectedFlow, selectedTeam,
   text, effectiveWorkspace, projectId, convId, convTitle, clientId, historyPayload,
-  pendingAttachments, pendingReferences, selectedWorkspace,
+  pendingAttachments, pendingReferences, selectedWorkspace, handedFrom = null, teamMember = null,
 }) {
   return {
     agent_id: targetMode === 'agent' ? selectedAgent : null,
+    // The person handed the chat to this agent with @: the one that had it
+    // (chat/handoff.py person_handoff_note).
+    ...(handedFrom ? { handed_from: handedFrom } : {}),
     flow_id: isFlowMode ? selectedFlow : null,
     team_id: isTeamMode ? selectedTeam : null,
+    // The member the person addressed the request to with @ (teams/runner.py).
+    ...(isTeamMode && teamMember ? { team_member: teamMember } : {}),
     message: text,
     workspace: effectiveWorkspace || null,
     project_id: projectId || null,

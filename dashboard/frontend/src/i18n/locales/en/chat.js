@@ -304,6 +304,18 @@ export default {
     dropped: 'Dropped on review',
   },
   commandsLabel: 'Commands',
+  // `@agent` in the composer (components/chat/agentMention.js).
+  mention: {
+    label: 'Hand the chat to',
+    hint: '↑↓ to choose, Enter to hand over',
+    handTo: 'The chat goes to {{agent}}',
+    composerHint: '@ to hand the chat to an agent',
+    // With a team as the target: only its members, the request goes to one.
+    memberLabel: 'Give the request to',
+    memberHint: '↑↓ to choose, Enter to pick',
+    toMember: 'The request goes to {{agent}} first',
+    memberComposerHint: '@ gives it to a team member',
+  },
   commands: {
     help: 'Show available commands',
     clear: 'Clear the current conversation',

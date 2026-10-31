@@ -68,6 +68,13 @@ export default {
   newRunHint: 'Say what the team should deliver and press Run. Who is on the team and what each turn does are in the column on the right.',
   roundN: 'Round {{n}}',
   requestHandedTo: 'The request went to {{name}} to take or route',
+  requestAddressedTo: 'You handed the request to {{name}}',
+  // `@member` in the request box (components/chat/agentMention.js).
+  mention: {
+    label: 'Give the request to',
+    handTo: 'The request goes to {{name}} first',
+    composerHint: '@ gives it to a member',
+  },
   noContribution: 'No contribution: {{error}}',
   isWorking: 'working…',
   participants: 'Participants',

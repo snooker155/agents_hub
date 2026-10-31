@@ -35,6 +35,8 @@ export default {
   passing: 'Ich übergebe den Chat an {{agent}}.',
   divider: 'Übergeben an {{agent}}: {{reason}}',
   dividerNoReason: 'Übergeben an {{agent}}',
+  dividerByUser: 'Sie haben den Chat an {{agent}} übergeben',
+  dividerToMember: 'Sie haben die Anfrage an {{agent}} übergeben',
   openRun: 'Lauf öffnen',
   runHandedOffTo: 'Übergeben an',
   runReceivedFrom: 'Per Übergabe erhalten von',

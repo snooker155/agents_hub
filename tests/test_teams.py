@@ -670,3 +670,84 @@ def test_a_stopped_run_leaves_its_task_stopped_rather_than_blocked():
     runner._finalize_task(run)
 
     assert task_service.get_task(task.id).status == TaskStatus.stopped
+
+
+# ── Addressed with @: the person picks the member ─────────────────────────────
+
+def _addressed_run(monkeypatch, team, addressed_to, goal="ship the page"):
+    """A run started the way the team page starts one, addressed to a member."""
+    import teams.runner as runner
+    from teams.launcher import start_team_run
+
+    monkeypatch.setattr("teams.launcher.launch_prepared", lambda spec: None)
+    monkeypatch.setattr(runner, "_resolve_run_workspace", lambda run: ("ws", "/tmp/ws"))
+    run = start_team_run(team.team_id, goal, addressed_to=addressed_to)
+    stored = store.get_run(run.team_run_id)
+    return run_team(team.team_id, stored.goal, run=stored)
+
+
+def test_an_addressed_request_goes_to_that_member_in_place_of_the_lead(stub_members, monkeypatch):
+    team = store.save_team(_team(mode="centralized", leader_agent_id="orch",
+                                 leader_name="Lead", max_rounds=2, synthesize=False))
+    calls = stub_members({
+        "Rae": ["reviewed the page"],
+        "Lead": ['{"assignments": [], "done": true, "final": "reviewed"}'],
+    })
+    run = _addressed_run(monkeypatch, team, "Rae")
+    # Round one is Rae's alone, told the person chose it; the lead takes round two.
+    assert [c["speaker"] for c in calls] == ["Rae", "Lead"]
+    assert "addressed the request to you by name" in calls[0]["prompt"]
+    assert run.addressed_to == "rev" and run.stop_reason == "goal_met"
+    line = next(m for m in store.list_messages(run.team_run_id) if m.kind == "system")
+    assert line.round == 1 and line.recipients == ["Rae"]
+
+
+def test_an_addressed_request_skips_the_entry_member_of_an_autonomous_team(stub_members, monkeypatch):
+    team = store.save_team(_team(mode="autonomous", max_rounds=3, synthesize=False))
+    calls = stub_members({"Rae": ["@Sam: please fix the header"], "Sam": ["fixed"]})
+    run = _addressed_run(monkeypatch, team, "rev")
+    assert [c["speaker"] for c in calls] == ["Rae", "Sam"]
+    assert run.rounds_done == 2
+
+
+def test_an_addressed_parallel_round_is_one_member_then_everyone(stub_members, monkeypatch):
+    team = store.save_team(_team(mode="parallel", max_rounds=2, synthesize=False))
+    calls = stub_members({"*": [f"done\n{DONE_TOKEN}"]})
+    _addressed_run(monkeypatch, team, "Sam")
+    speakers = [c["speaker"] for c in calls]
+    assert speakers[0] == "Sam" and sorted(speakers[1:]) == ["Rae", "Sam"]
+
+
+def test_a_request_addressed_to_someone_off_the_team_is_refused(monkeypatch):
+    from teams.launcher import start_team_run
+
+    monkeypatch.setattr("teams.launcher.launch_prepared", lambda spec: None)
+    team = store.save_team(_team(mode="parallel"))
+    with pytest.raises(ValueError, match="not a member"):
+        start_team_run(team.team_id, "ship the page", addressed_to="nobody")
+
+
+def test_a_chat_turn_addressed_to_a_member_starts_with_that_member(stub_members):
+    """The main chat's team target: run_team mints the record with the member."""
+    team = store.save_team(_team(mode="parallel", max_rounds=1, synthesize=False))
+    calls = stub_members({"*": ["on it"]})
+    run = run_team(team.team_id, "ship the page", addressed_to="Rae")
+    assert run.addressed_to == "rev"
+    assert [c["speaker"] for c in calls] == ["Rae"]
+    with pytest.raises(ValueError, match="not a member"):
+        run_team(team.team_id, "ship the page", addressed_to="nobody")
+
+
+def test_the_chat_refuses_a_team_member_that_is_not_on_the_team():
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from chat.models import ChatRequest
+    from chat.pipelines import _run_chat_team_pipeline
+
+    team = store.save_team(_team(mode="parallel"))
+    gen = _run_chat_team_pipeline(ChatRequest(team_id=team.team_id, team_member="nobody", message="hi"))
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(gen.__anext__())
+    assert err.value.status_code == 400

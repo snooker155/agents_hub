@@ -438,3 +438,25 @@ def test_a_turn_ended_by_a_tool_skips_the_answer_schema():
     state = agent_loop.LoopState()
     state.ended_by = {"tool": HANDOFF_TOOL_NAME, "output": "x"}
     assert agent._structured_output(state, "plain text, no schema here") == ("plain text, no schema here", None)
+
+
+# ── Handed over by the person (@agent in the composer) ───────────────────────
+
+def test_the_person_handing_the_chat_over_is_told_to_the_receiving_agent(monkeypatch):
+    from types import SimpleNamespace
+
+    from chat import handoff as handoff_mod
+    from chat.context import build_chat_context
+    from chat.models import ChatRequest
+
+    monkeypatch.setattr(handoff_mod, "get_agent",
+                        lambda agent_id: SimpleNamespace(name="Main agent") if agent_id == "main-agent" else None)
+    req = ChatRequest(agent_id="swe_agent", message="fix the build", handed_from="main-agent")
+    prompt, _ws = build_chat_context(req)
+    assert prompt.startswith("## The user handed this conversation to you")
+    assert "Main agent (agent `main-agent`)" in prompt
+    assert prompt.rstrip().endswith("fix the build")
+
+    same = ChatRequest(agent_id="swe_agent", message="hi", handed_from="swe_agent")
+    assert handoff_mod.person_handoff_note(same) == ""
+    assert handoff_mod.person_handoff_note(ChatRequest(agent_id="swe_agent", message="hi")) == ""

@@ -304,6 +304,18 @@ export default {
     dropped: 'Bei der Prüfung verworfen',
   },
   commandsLabel: 'Befehle',
+  // `@agent` in the composer (components/chat/agentMention.js).
+  mention: {
+    label: 'Chat übergeben an',
+    hint: '↑↓ wählen, Enter übergeben',
+    handTo: 'Der Chat geht an {{agent}}',
+    composerHint: '@ übergibt den Chat an einen Agenten',
+    // With a team as the target: only its members, the request goes to one.
+    memberLabel: 'Anfrage übergeben an',
+    memberHint: '↑↓ wählen, Enter übernehmen',
+    toMember: 'Die Anfrage geht zuerst an {{agent}}',
+    memberComposerHint: '@ übergibt an ein Teammitglied',
+  },
   commands: {
     help: 'Verfügbare Befehle anzeigen',
     clear: 'Aktuelle Unterhaltung leeren',

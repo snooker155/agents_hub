@@ -296,6 +296,11 @@ class TeamRun:
     #: is the list of what it was, for the page to show.
     context: str = ""
     attached: List[Dict[str, str]] = field(default_factory=list)
+    #: The member the person addressed the request to (``@name`` in the
+    #: request box), by agent id: it alone takes the first round, and the
+    #: team's own shape carries on from what it posted (teams/runner.py
+    #: ``_run_addressed``). Empty: the request lands as the mode decides.
+    addressed_to: str = ""
     task_id: Optional[str] = None
     session_id: Optional[str] = None
     conversation_id: Optional[str] = None
@@ -322,6 +327,7 @@ class TeamRun:
             "team_run_id": self.team_run_id, "team_id": self.team_id,
             "workspace": self.workspace, "mode": self.mode, "status": self.status,
             "goal": self.goal, "context": self.context, "attached": list(self.attached),
+            "addressed_to": self.addressed_to,
             "task_id": self.task_id,
             "session_id": self.session_id, "conversation_id": self.conversation_id,
             "parent_run_id": self.parent_run_id,

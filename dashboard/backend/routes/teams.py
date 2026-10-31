@@ -82,6 +82,9 @@ class RunIn(BaseModel):
     # files and hub records (chat/models.py).
     attachments: List[ChatAttachment] = []
     references: List[ChatReference] = []
+    # The member the person addressed the request to with @ (agent id or
+    # display name): it takes the first round alone (teams/runner.py).
+    addressed_to: str = ""
 
 
 def _attached_context(data: RunIn, team: Team, workspace: Optional[str]) -> tuple[str, List[Dict[str, str]], Optional[str]]:
@@ -407,7 +410,7 @@ async def start_run(team_id: str, data: RunIn):
         run = start_team_run(
             team_id, goal, workspace=workspace,
             task_id=task_id, conversation_id=data.conversation_id,
-            context=context, attached=attached,
+            context=context, attached=attached, addressed_to=data.addressed_to,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

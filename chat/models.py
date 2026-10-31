@@ -56,6 +56,10 @@ class ChatRequest(BaseModel):
     # A team target: the message is handed to a roster of agents that talk to
     # each other (teams/), rather than to one agent or a flow's DAG.
     team_id: Optional[str] = None
+    # With a team target: the member the person addressed the request to with
+    # @ (agent id or name). It takes the first round alone (teams/runner.py
+    # ``_run_addressed``); one not on the team is a 400.
+    team_member: Optional[str] = None
     # A flow turn can start at one node instead of the flow's start
     # (``flow_start_node``: the message is that node's input, the flow runs on
     # to the end), or run the conversation's last turn again from a node
@@ -67,6 +71,11 @@ class ChatRequest(BaseModel):
     # with one message summing up what was done (chat/flow_summary.py).
     flow_summary: bool = False
     message: str
+    # The person handed the conversation to ``agent_id`` with @ in the
+    # composer: the agent that held it until this turn. The turn's prompt
+    # says so (chat/handoff.py ``person_handoff_note``), since the earlier
+    # agent replies in ``history`` were not written by the one answering now.
+    handed_from: Optional[str] = None
     workspace: Optional[str] = None
     project_id: Optional[str] = None
     history: List[ChatHistoryMessage] = []

@@ -41,6 +41,15 @@ but beats a heartbeat too. A team run makes no task of its own; one on a task cl
 `GET /api/teams/runs/{id}` includes `has_checkpoint`, `host`, `heartbeat_at`,
 `resume_attempts`, `pid`, `log_file`.
 
+`@member` in the request box on the team page (or `addressed_to` in the run
+request, a member's agent id or name) gives the request to that member: it
+alone takes the first round, told the person chose it, and the team's own
+mode carries on from round two (the lead reads its reply, everyone acts, or,
+in autonomous mode, whoever it handed work to). A name that is not on the team
+is a 400. The Chat page with a team as the target does the same: `@` there
+lists only that team's members, the turn carries `team_member`, and the chat
+stays with the team.
+
 A person can talk to a running team: `POST /api/runs/{team_run_id}/steer`
 (or the chat composer while a team turn runs) puts the message on the board as
 a message from `user` to everyone, and the next member whose prompt is built

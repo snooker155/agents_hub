@@ -69,6 +69,13 @@ export default {
   newRunHint: 'Напишите, что команда должна сделать, и нажмите «Запустить». Кто в команде и что делает каждый ход, видно в колонке справа.',
   roundN: 'Раунд {{n}}',
   requestHandedTo: 'Запрос передан участнику {{name}}: выполнить или передать дальше',
+  requestAddressedTo: 'Вы передали запрос участнику {{name}}',
+  // `@member` in the request box (components/chat/agentMention.js).
+  mention: {
+    label: 'Передать запрос',
+    handTo: 'Запрос сначала получит {{name}}',
+    composerHint: '@ передать участнику',
+  },
   noContribution: 'Ход не удался: {{error}}',
   isWorking: 'работает…',
   participants: 'Участники',

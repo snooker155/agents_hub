@@ -61,6 +61,18 @@ export default function ChatMessageList() {
     // The line that a background run ended stands centred in the Build view
     // only; the chat view keeps to the replies (the reply after it says so).
     if (!isBuild && rawMsg.role === 'system' && rawMsg.notice?.type === 'background_run_finished') return null;
+    // The person handed the chat over without a message (@agent): only the line.
+    if (rawMsg.role === 'system' && rawMsg.handoff) {
+      return (
+        <HandoffDivider
+          key={rawMsg.id}
+          handoff={rawMsg.handoff}
+          // A team member goes by its seat's name, not its agent's.
+          agentName={rawMsg.handoff.member ? rawMsg.handoff.to_agent_name
+            : agents.find((a) => a.id === rawMsg.handoff.to_agent_id)?.name}
+        />
+      );
+    }
     // A bubble that handed the chat over says to whom (chat/handoff.js).
     const nextMsg = renderedMessages[idx + 1];
     const msg = withHandoffLine(rawMsg, nextMsg, t('handoffs.passing', {

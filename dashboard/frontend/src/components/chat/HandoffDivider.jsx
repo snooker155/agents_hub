@@ -4,16 +4,21 @@ import { useI18n } from '../../i18n';
 /**
  * The line between the agent that handed the conversation over and the one
  * that took it (chat/handoff.py): who took over and why. Drawn above the
- * receiving agent's bubble, from the `handoff` that bubble carries.
+ * receiving agent's bubble, from the `handoff` that bubble carries. The
+ * person handing it over with @ says so instead (chat/handoff.js
+ * `personHandoff`).
  */
 export default function HandoffDivider({ handoff, agentName }) {
   const { t } = useI18n();
   if (!handoff) return null;
   const agent = agentName || handoff.to_agent_name || handoff.to_agent_id || '';
   const reason = String(handoff.reason || '').trim();
-  const label = reason
-    ? t('handoffs.divider', { agent, reason })
-    : t('handoffs.dividerNoReason', { agent });
+  // Handed over by the person (@agent in the composer) or by an agent.
+  const label = handoff.by === 'user'
+    ? t(handoff.member ? 'handoffs.dividerToMember' : 'handoffs.dividerByUser', { agent })
+    : reason
+      ? t('handoffs.divider', { agent, reason })
+      : t('handoffs.dividerNoReason', { agent });
   return (
     <div
       className="flex items-center gap-3 mb-6 mx-2"
