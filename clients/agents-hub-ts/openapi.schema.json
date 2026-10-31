@@ -2461,6 +2461,17 @@
             "title": "Flow Summary",
             "type": "boolean"
           },
+          "handed_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handed From"
+          },
           "history": {
             "default": [],
             "items": {
@@ -2548,6 +2559,17 @@
               }
             ],
             "title": "Team Id"
+          },
+          "team_member": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Member"
           },
           "view_id": {
             "anyOf": [
@@ -13840,19 +13862,6 @@
         "title": "ToolPolicyUpdate",
         "type": "object"
       },
-      "ToolSourceUpdate": {
-        "properties": {
-          "source_code": {
-            "title": "Source Code",
-            "type": "string"
-          }
-        },
-        "required": [
-          "source_code"
-        ],
-        "title": "ToolSourceUpdate",
-        "type": "object"
-      },
       "TopologyRequest": {
         "properties": {
           "edges": {
@@ -15768,6 +15777,11 @@
       },
       "routes__teams__RunIn": {
         "properties": {
+          "addressed_to": {
+            "default": "",
+            "title": "Addressed To",
+            "type": "string"
+          },
           "attachments": {
             "default": [],
             "items": {
@@ -25335,6 +25349,25 @@
         ]
       }
     },
+    "/api/cluster/autoscale": {
+      "put": {
+        "description": "Change the autoscaling policy (common/worker_autoscale.py).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Update Autoscale",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
     "/api/cluster/members": {
       "get": {
         "responses": {
@@ -25459,6 +25492,120 @@
           }
         },
         "summary": "Stack Components",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
+    "/api/cluster/workers": {
+      "get": {
+        "description": "The live workers (who started each, what it runs and carries, whether\nit may be stopped), how this hub starts one, and the autoscaling.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Workers Overview",
+        "tags": [
+          "cluster"
+        ]
+      },
+      "post": {
+        "description": "Start workers: ``{\"count\": n}`` (1 to 10, default 1).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Add Workers",
+        "tags": [
+          "cluster"
+        ]
+      }
+    },
+    "/api/cluster/workers/{member_id}/stop": {
+      "delete": {
+        "description": "Take a stop back while the worker still lives.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "title": "Member Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Worker Stop",
+        "tags": [
+          "cluster"
+        ]
+      },
+      "post": {
+        "description": "Ask a worker to finish its runs and exit. 409 for one that carries\nlive instances: their containers reach their state through it.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "member_id",
+            "required": true,
+            "schema": {
+              "title": "Member Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop Worker",
         "tags": [
           "cluster"
         ]
@@ -57690,92 +57837,6 @@
           }
         },
         "summary": "List Tools",
-        "tags": [
-          "tools"
-        ]
-      }
-    },
-    "/api/tools/{tool_id}/source": {
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "tool_id",
-            "required": true,
-            "schema": {
-              "title": "Tool Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Tool Source",
-        "tags": [
-          "tools"
-        ]
-      },
-      "put": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "tool_id",
-            "required": true,
-            "schema": {
-              "title": "Tool Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ToolSourceUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Update Tool Source",
         "tags": [
           "tools"
         ]

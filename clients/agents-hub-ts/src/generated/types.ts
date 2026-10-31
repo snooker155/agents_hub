@@ -417,10 +417,12 @@ export type ChatRequest = {
   "agent_id"?: string | null;
   "flow_id"?: string | null;
   "team_id"?: string | null;
+  "team_member"?: string | null;
   "flow_start_node"?: string | null;
   "flow_rerun"?: Record<string, string> | null;
   "flow_summary"?: boolean;
   "message": string;
+  "handed_from"?: string | null;
   "workspace"?: string | null;
   "project_id"?: string | null;
   "history"?: ChatHistoryMessage[];
@@ -2258,10 +2260,6 @@ export type ToolPolicyUpdate = {
   "tool_policy"?: Record<string, unknown>;
 };
 
-export type ToolSourceUpdate = {
-  "source_code": string;
-};
-
 export type TopologyRequest = {
   "framework"?: string;
   "nodes"?: Record<string, unknown>[];
@@ -2578,6 +2576,7 @@ export type routes__teams__RunIn = {
   "conversation_id"?: string | null;
   "attachments"?: ChatAttachment[];
   "references"?: ChatReference[];
+  "addressed_to"?: string;
 };
 
 export type routes__telegram__BindingCreate = {
@@ -3164,6 +3163,9 @@ export interface ApiPaths {
   "/api/cluster": {
     get: { response: unknown };
   };
+  "/api/cluster/autoscale": {
+    put: { response: unknown };
+  };
   "/api/cluster/members": {
     get: { response: unknown };
   };
@@ -3175,6 +3177,14 @@ export interface ApiPaths {
   };
   "/api/cluster/stack": {
     get: { response: unknown };
+  };
+  "/api/cluster/workers": {
+    get: { response: unknown };
+    post: { response: unknown };
+  };
+  "/api/cluster/workers/{member_id}/stop": {
+    post: { response: unknown };
+    delete: { response: unknown };
   };
   "/api/connection-proposals": {
     get: { response: unknown };
@@ -5053,10 +5063,6 @@ export interface ApiPaths {
   };
   "/api/tools": {
     get: { response: unknown };
-  };
-  "/api/tools/{tool_id}/source": {
-    get: { response: unknown };
-    put: { body: ToolSourceUpdate; response: unknown };
   };
   "/api/trackers/projects/{project_id}": {
     get: { response: unknown };
