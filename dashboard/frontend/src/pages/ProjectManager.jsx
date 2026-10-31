@@ -10,6 +10,7 @@ import { usePageChat } from '../components/pageChat/pageChat';
 import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
 import ImportRepoModal from '../components/ImportRepoModal';
 import ProjectCard from '../components/projects/ProjectCard';
+import DeployedApps from '../components/projects/DeployedApps';
 import { PROJECT_GRID, TYPE_CONFIG } from '../components/projects/projectCardConfig';
 import {
   FolderGit2,
@@ -187,6 +188,8 @@ export default function ProjectManager() {
           {importNotice}
         </div>
       )}
+
+      <DeployedApps t={t} />
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">

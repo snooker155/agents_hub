@@ -23,8 +23,6 @@ import { getAgentVersions } from '../api/agentVersions';
 import { Activity, AlertCircle, AlertTriangle, Bot, CheckCircle, Clock, History, Loader, MessageSquare, Pause, Pencil, Play, Plus, RefreshCw, Repeat, Rocket, RotateCw, Trash2, Workflow, X, XCircle, Zap } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
-import { DeployStatusPill } from '../components/projects/DeployPanel';
-import { listDeployedApps } from '../api';
 import { useI18n } from '../i18n';
 import CronHint from '../components/CronHint';
 import AgentPicker from '../components/chat/AgentPicker';
@@ -32,46 +30,6 @@ import FileIdsField from '../components/files/FileIdsField';
 import { agentJobStats } from '../components/chat/agentPickerModel';
 import { describeRecurrence, RECURRENCE_OPTIONS } from '../lib/recurrenceText';
 
-// Project deployments (docs/project-deployments.md): the apps the hub runs
-// for projects of this workspace, each opening on its project's Deploy tab.
-function DeployedApps({ workspace, t }) {
-  const [apps, setApps] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    listDeployedApps(workspace).then(({ data }) => { if (!cancelled) setApps(data.items || []); }).catch(() => {});
-    const timer = setInterval(() => {
-      listDeployedApps(workspace).then(({ data }) => { if (!cancelled) setApps(data.items || []); }).catch(() => {});
-    }, 10000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [workspace]);
-  if (!apps.length) return null;
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="px-4 py-2 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-        {t('projectDeploy.appsTitle')}
-      </div>
-      <table className="w-full text-sm">
-        <tbody className="divide-y divide-gray-100">
-          {apps.map((app) => (
-            <tr key={app.id}>
-              <td className="px-4 py-2 font-medium text-gray-800">
-                <Link to={`/projects/${app.project_id}`} className="hover:text-indigo-600">{app.name || app.project_id}</Link>
-              </td>
-              <td className="px-4 py-2"><DeployStatusPill status={app.status} t={t} /></td>
-              <td className="px-4 py-2 text-xs text-gray-500">{t(`projectDeploy.modes.${app.mode}`)} · {(app.services || []).length} {t('projectDeploy.servicesCount')}</td>
-              <td className="px-4 py-2 text-xs text-gray-500">{app.workspace}</td>
-              <td className="px-4 py-2 text-right text-xs">
-                {app.status === 'running' && app.links?.path ? (
-                  <a href={app.links.path} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800">{t('projectDeploy.open')}</a>
-                ) : null}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 import DateInput from '../components/DateInput';
 import PageLoader from '../components/PageLoader';
 
@@ -825,7 +783,6 @@ export default function Deployments() {
           </button>
         </>}
       />
-      <DeployedApps workspace={workspaceFilter || undefined} t={t} />
 
       {loading ? (
         <div className="bg-white rounded-xl border border-gray-200"><PageLoader /></div>

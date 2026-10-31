@@ -4,8 +4,8 @@ A project's frontend and backend, run from inside the hub: deployed with one
 button (or one tool call), watched, restarted when they die, shown inside the
 dashboard, opened from outside through a share link, and opened by the agent's
 own browser so it can test what it built. The Deploy tab of a
-[project](projects.md) is where this lives; the Deployments page lists every
-deployed app of the workspace.
+[project](projects.md) is where this lives; the Projects page lists every
+deployed app of the workspace above the projects.
 
 ## What a deployment is
 
