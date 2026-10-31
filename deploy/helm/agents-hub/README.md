@@ -117,6 +117,7 @@ likely to change on a real install:
 
 - `image.repository` / `image.tag`, `frontend.image.repository` / `frontend.image.tag`
 - `backend.replicas`, `worker.replicas`
+- `workerScaling.enabled` (on): the backend's service account may change the worker Deployment's replica count and annotate pods, so the Cluster page can add and stop workers and autoscale them ([docs/workers.md](../../../docs/workers.md)). Off leaves the count to you.
 - `secret.AGENTS_HUB_DATABASE_URL`, `secret.AGENTS_HUB_BROKER_URL`
 - `secret.AGENTS_HUB_BLOB_URL`, `secret.AGENTS_HUB_BLOB_ENDPOINT`, `secret.AWS_ACCESS_KEY_ID`, `secret.AWS_SECRET_ACCESS_KEY`
 - `persistence.storageClassName`, `persistence.size`

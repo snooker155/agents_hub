@@ -58,6 +58,18 @@ worker:
   # cluster worker only ever runs agents as local subprocesses.
   workerModes: "local"
   workerConcurrency: 4
+  # How long a pod being replaced (a rolling update, a node drain) keeps its
+  # running agents going before Kubernetes kills it; the worker drains for up
+  # to AGENTS_HUB_WORKER_DRAIN_SECONDS (300) on SIGTERM.
+  terminationGracePeriodSeconds: 330
+
+# Workers added and stopped from the Cluster page, and their autoscaling
+# (docs/workers.md): the backend gets a service account allowed to change
+# the worker Deployment's replica count and to annotate worker pods, nothing
+# else. `helm upgrade` keeps a replica count the hub set as long as
+# worker.replicas above is unchanged.
+workerScaling:
+  enabled: true
 
 # Plain (non-secret) environment, applied to the backend, worker and frontend
 # pods via a ConfigMap. Anything provider- or credential-shaped belongs in

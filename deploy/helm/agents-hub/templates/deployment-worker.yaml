@@ -28,6 +28,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: worker
     spec:
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       containers:
         - name: worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -45,6 +46,12 @@ spec:
               value: {{ .Values.worker.workerModes | quote }}
             - name: AGENTS_HUB_WORKER_CONCURRENCY
               value: {{ .Values.worker.workerConcurrency | quote }}
+            # A drained worker stays up until the hub takes its pod away:
+            # exiting would only have the Deployment start it again.
+            - name: AGENTS_HUB_WORKER_EXIT_ON_DRAIN
+              value: "0"
+            - name: AGENTS_HUB_WORKER_ORIGIN
+              value: kubernetes
           livenessProbe:
             exec:
               command: ["python", "-c", "import sys; sys.exit(0)"]

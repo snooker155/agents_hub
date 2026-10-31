@@ -142,6 +142,11 @@ class Worker:
         # Asked to drain (the Cluster page's Stop, the autoscaler): no new
         # claims, exit once nothing of this worker's runs any more.
         self.draining = threading.Event()
+        # A pod of a Deployment would only be started again: there a drained
+        # worker stays up, claiming nothing, until the hub takes its pod away
+        # (common/worker_fleet.py reconcile).
+        self.exit_on_drain = os.environ.get("AGENTS_HUB_WORKER_EXIT_ON_DRAIN", "1").strip() != "0"
+        self.drained = False
         self.launched = 0
         self.failed = 0
         self.started_at = time.time()
@@ -254,7 +259,7 @@ class Worker:
             "origin": os.environ.get("AGENTS_HUB_WORKER_ORIGIN", ""),
         }, load_fn=lambda: {"tracked": len(self.tracked), "launched": self.launched,
                             "failed": self.failed, "stopping": self.stopping.is_set(),
-                            "draining": self.draining.is_set()},
+                            "draining": self.draining.is_set(), "drained": self.drained},
             on_drain=self.request_drain)
         beat.start()
         # The egress proxy for environments with a limited or no network
@@ -278,9 +283,13 @@ class Worker:
             try:
                 self.tick()
                 if self.draining.is_set() and self._drained():
-                    log.info("worker %s drained: nothing of its own runs any more, exiting", self.owner)
-                    self.stopping.set()
-                    break
+                    if self.exit_on_drain:
+                        log.info("worker %s drained: nothing of its own runs any more, exiting", self.owner)
+                        self.stopping.set()
+                        break
+                    if not self.drained:
+                        log.info("worker %s drained: waiting to be taken away", self.owner)
+                    self.drained = True
             except Exception:
                 log.exception("worker tick failed")
             self.stopping.wait(TICK_SECONDS)
@@ -311,6 +320,7 @@ class Worker:
             if self.draining.is_set():
                 log.info("worker %s: drain taken back, claiming again", self.owner)
             self.draining.clear()
+            self.drained = False
             return
         if not self.draining.is_set():
             log.info("worker %s draining on request: no more claims, %d run(s) to finish",

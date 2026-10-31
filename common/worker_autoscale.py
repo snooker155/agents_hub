@@ -125,15 +125,19 @@ def queue_waiting() -> Dict[str, Any]:
 
 
 def decide(pol: Dict[str, Any], workers: List[Dict[str, Any]], waiting: Dict[str, Any],
-           idle_for: Dict[str, float]) -> Dict[str, Any]:
+           idle_for: Dict[str, float], pending: int = 0) -> Dict[str, Any]:
     """What to do now: ``{"action": "up", "count", "reason"}``,
     ``{"action": "down", "member_id", "reason"}`` or ``{"action": None,
-    "reason"}``. Pure: the caller supplies every input."""
+    "reason"}``. ``pending`` is the workers started but not registered yet:
+    they count toward the bounds, and nothing more starts while they come
+    up. Pure: the caller supplies every input."""
     live = [w for w in workers if not w.get("draining")]
     n = len(live)
     lo, hi = int(pol["min_workers"]), int(pol["max_workers"])
-    if n < lo:
-        return {"action": "up", "count": lo - n, "reason": "below_min"}
+    if n + pending < lo:
+        return {"action": "up", "count": lo - n - pending, "reason": "below_min"}
+    if pending:
+        return {"action": None, "reason": "starting"}
     free = sum(max(0, int(w.get("concurrency") or 0) - int(w.get("runs") or 0)) for w in live)
     if waiting["runs"] and waiting["oldest_seconds"] >= pol["scale_up_wait_seconds"] and free == 0:
         if n >= hi:
@@ -184,12 +188,16 @@ class Autoscaler:
         from common import worker_fleet
         now = time.time() if now is None else now
         pol = policy()
+        # A drained Kubernetes worker is taken away whether or not
+        # autoscaling is on: the Cluster page's Stop needs it too.
+        for pod in worker_fleet.reconcile():
+            _record("retire", "drained", member_id=pod)
         workers = worker_fleet.workers()
         idle = self._idle_for(workers, now)
         if not pol["enabled"]:
             self._remember({"action": None, "reason": "off"})
             return self.last_decision
-        decision = decide(pol, workers, queue_waiting(), idle)
+        decision = decide(pol, workers, queue_waiting(), idle, worker_fleet.pending(workers))
         self._remember(decision)
         if not decision["action"] or now - self.last_action < float(pol["cooldown_seconds"]):
             return decision

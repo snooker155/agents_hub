@@ -116,13 +116,29 @@ it carries.
   container is the pattern.
 - a hub on the host starts `python -m runtime.worker` as a process, on a
   free port for its state host.
+- a hub in a pod of the Helm chart adds a replica to the worker Deployment
+  (`AGENTS_HUB_WORKER_DEPLOYMENT`) through the Kubernetes API with its own
+  service account (`common/k8s_api.py`, no client library). The chart's
+  `workerScaling.enabled` (on by default) creates that service account and a
+  Role that allows only reading and changing the worker Deployment's replica
+  count and reading and annotating pods.
 
 **Stop** works on any worker, whoever started it: the hub writes
 `members.drain_requested_at`, the worker reads it on its next beat, claims
 nothing more and exits once none of its runs and none of the instance
 carriers it started is left. **Cancel stop** takes that back while it lives.
 A worker that carries live instances is never stopped (409): their
-containers reach their state through it. A container the hub can see has
+containers reach their state through it.
+
+In Kubernetes a pod that exits is started again by its Deployment, so a
+worker there (`AGENTS_HUB_WORKER_EXIT_ON_DRAIN=0`, set by the chart) stays
+up once drained, claiming nothing, and the hub takes it away: the pod gets
+the annotation `controller.kubernetes.io/pod-deletion-cost: "-100000"`
+(and `agents-hub/retiring`), then the Deployment one replica fewer, so the
+ReplicaSet removes exactly that pod. The autoscaling loop does this every
+15 seconds whether or not autoscaling is on. `helm upgrade` keeps the
+replica count the hub set as long as `worker.replicas` in the values does
+not change. A container the hub can see has
 its restart policy turned off first, so `restart: unless-stopped` does not
 bring it straight back; `docker compose up` brings a stopped compose worker
 back.
@@ -139,6 +155,10 @@ Off by default; set on the same card (`PUT /api/cluster/autoscale`,
 | `scale_up_wait_seconds` | 30 | A run waiting this long with every slot taken starts as many workers as the waiting runs need at the workers' concurrency. |
 | `scale_down_idle_minutes` | 10 | A worker that ran nothing and carried no instance this long is stopped, the hub's own first, one at a time, never below the minimum and never while something waits. |
 | `cooldown_seconds` | 90 | The pause after any action, so a new worker registers before the next decision. |
+
+Workers started but not registered yet (a container or a pod still pulling
+its image) count toward the bounds, and nothing more starts while they come
+up.
 
 An instance waiting with no worker at all starts one too (a carrier takes no
 slot). One API replica decides, under the lease `worker_autoscale`, every

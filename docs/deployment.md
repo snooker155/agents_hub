@@ -175,6 +175,10 @@ differs from the compose profile:
   are ReadWriteOnce and will not schedule a second pod onto another node.
   Once `AGENTS_HUB_BLOB_URL` is set, the PVC stops being load-bearing for
   correctness (see the next section) and can shrink or be turned off.
+- **Workers from the Cluster page.** With `workerScaling.enabled` (on by
+  default) the backend may change the worker Deployment's replica count, so
+  the Cluster page adds and stops workers and can autoscale them
+  ([workers](workers.md), "Adding and stopping workers from the hub").
 
 ## The cluster map
 

@@ -2,7 +2,11 @@
 Workers started and stopped from the hub: the Cluster page's Add and Stop,
 and the autoscaler (common/worker_autoscale.py).
 
-Two ways to start one, whichever this hub can use (:func:`launcher`):
+Three ways to start one, whichever this hub can use (:func:`launcher`):
+
+- ``kubernetes``: a hub in a pod of the Helm chart (``workerScaling``) adds
+  replicas to the worker Deployment (``AGENTS_HUB_WORKER_DEPLOYMENT``)
+  through the API, with its service account (common/k8s_api.py).
 
 - ``docker``: a hub in a container with the Docker socket (the compose
   stack) starts a container like a worker it already has: the same image,
@@ -16,7 +20,11 @@ Two ways to start one, whichever this hub can use (:func:`launcher`):
 
 Stopping is the same for every worker, whoever started it: the hub asks it to
 drain (``members.drain_requested_at``); the worker stops claiming and exits
-once nothing of its own runs any more (runtime/worker.py). A worker with live
+once nothing of its own runs any more (runtime/worker.py). A pod of the
+Deployment would be started again, so there the worker stays up once
+drained (``AGENTS_HUB_WORKER_EXIT_ON_DRAIN=0``) and :func:`reconcile` takes
+it away: the pod gets the lowest deletion cost and the Deployment one
+replica fewer, so that pod is the one removed. A worker with live
 instance carriers is never asked: their containers reach their state through
 it. A container the hub can see has its restart policy turned off first, so
 compose's ``restart: unless-stopped`` does not bring it straight back.
@@ -82,12 +90,31 @@ def _docker_reachable() -> bool:
         return False
 
 
+DEPLOYMENT_ENV = "AGENTS_HUB_WORKER_DEPLOYMENT"
+#: Pod annotations of a drained worker being taken away.
+RETIRING_ANNOTATION = "agents-hub/retiring"
+DELETION_COST = "controller.kubernetes.io/pod-deletion-cost"
+
+
+def _deployment() -> str:
+    return os.environ.get(DEPLOYMENT_ENV, "").strip()
+
+
 def launcher() -> str:
-    """``docker`` for a hub in a container that can reach the Docker daemon,
-    ``local`` for a hub on the host, ``""`` when it can start none."""
+    """``kubernetes`` for a hub in a pod allowed to scale the worker
+    Deployment, ``docker`` for a hub in a container that can reach the Docker
+    daemon, ``local`` for a hub on the host, ``""`` when it can start none."""
+    from common import k8s_api
+    if k8s_api.in_cluster():
+        return "kubernetes" if _deployment() else ""
     if _in_container():
         return "docker" if _docker_reachable() else ""
     return "local"
+
+
+def launcher_detail() -> str:
+    """What :func:`launcher` acts on: the Deployment's name in Kubernetes."""
+    return _deployment() if launcher() == "kubernetes" else ""
 
 
 # ── what runs where ──────────────────────────────────────────────────────────
@@ -143,6 +170,8 @@ def workers(*, containers: Optional[List[Dict[str, Any]]] = None) -> List[Dict[s
             "runs": int((m.get("load") or {}).get("tracked") or 0),
             "concurrency": int((m.get("capabilities") or {}).get("concurrency") or 0),
             "carriers": carriers, "draining": bool(m.get("draining")),
+            # Drained and waiting to be taken away (a Kubernetes pod).
+            "drained": bool((m.get("load") or {}).get("drained")),
             "stoppable": carriers == 0,
         })
     return out
@@ -258,6 +287,10 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+#: Worker processes this hub started: pid -> when, until they register.
+_spawned: Dict[int, float] = {}
+
+
 def _start_process() -> str:
     from common.paths import PROJECT_ROOT
     env = {k: v for k, v in os.environ.items() if k not in _DROP_ENV}
@@ -268,17 +301,92 @@ def _start_process() -> str:
                             stderr=subprocess.DEVNULL, start_new_session=True)
     # Reaped when it exits, so a stopped worker leaves no zombie behind.
     threading.Thread(target=proc.wait, name=f"worker-{proc.pid}", daemon=True).start()
+    import time
+    _spawned[proc.pid] = time.time()
     log.info("started worker process %s", proc.pid)
     return f"pid {proc.pid}"
 
 
+def _scale_up(count: int) -> List[str]:
+    from common import k8s_api
+    deployment = _deployment()
+    try:
+        target = k8s_api.change_replicas(deployment, count)
+    except k8s_api.K8sError as exc:
+        raise FleetError(str(exc)) from exc
+    log.info("worker deployment %s scaled to %d", deployment, target)
+    return [f"{deployment}: {target} replicas"]
+
+
 def add(count: int = 1) -> List[str]:
-    """Start ``count`` workers; their names (containers) or pids."""
+    """Start ``count`` workers; their names (containers), pids, or the
+    Deployment with its new replica count."""
     kind = launcher()
+    count = max(1, int(count))
+    if kind == "kubernetes":
+        return _scale_up(count)
     if not kind:
-        raise FleetError("this hub cannot start workers: it runs in a container without the Docker socket")
+        raise FleetError("this hub cannot start workers: it runs in a container without the Docker "
+                         "socket, or in a pod without the worker Deployment to scale")
     start = _start_container if kind == "docker" else _start_process
-    return [start() for _ in range(max(1, int(count)))]
+    return [start() for _ in range(count)]
+
+
+def pending(live: Optional[List[Dict[str, Any]]] = None) -> int:
+    """Workers started but not registered yet (a container or pod still
+    starting), so the autoscaler does not start them twice."""
+    import time
+    from common import members
+    if live is None:
+        live = workers()
+    kind = launcher()
+    if kind == "kubernetes":
+        from common import k8s_api
+        try:
+            wanted = k8s_api.get_replicas(_deployment())
+        except k8s_api.K8sError:
+            return 0
+        # A retiring pod has already left the Deployment's count.
+        present = [w for w in live if w.get("origin") == "kubernetes" and not w.get("drained")]
+        return max(0, wanted - len(present))
+    if kind == "docker":
+        hosts = {w["host"] for w in live}
+        return sum(1 for c in _worker_containers()
+                   if c["origin"] == ORIGIN_HUB and c["state"] in ("created", "running")
+                   and not any(c["id"].startswith(h) for h in hosts if h))
+    here = socket.gethostname()
+    pids = {int(m.get("pid") or 0) for m in members.list_members(include_stopped=False)
+            if m.get("host") == here}
+    now = time.time()
+    for pid, at in list(_spawned.items()):
+        if pid in pids or now - at > 180:
+            _spawned.pop(pid, None)
+    return len(_spawned)
+
+
+def reconcile() -> List[str]:
+    """Take away the Kubernetes workers that drained: the pod gets the lowest
+    deletion cost, then the Deployment one replica fewer, so the ReplicaSet
+    removes that pod. The pods taken away; nothing outside Kubernetes."""
+    if launcher() != "kubernetes":
+        return []
+    from common import k8s_api
+    gone = []
+    for w in workers():
+        if not (w.get("draining") and w.get("drained") and w.get("host")):
+            continue
+        try:
+            pod = k8s_api.get_pod(w["host"])
+            if ((pod.get("metadata") or {}).get("annotations") or {}).get(RETIRING_ANNOTATION):
+                continue
+            k8s_api.annotate_pod(w["host"], {DELETION_COST: "-100000", RETIRING_ANNOTATION: "true"})
+            k8s_api.change_replicas(_deployment(), -1)
+        except k8s_api.K8sError as exc:
+            log.warning("could not take worker pod %s away: %s", w["host"], exc)
+            continue
+        log.info("worker pod %s drained and taken away", w["host"])
+        gone.append(w["host"])
+    return gone
 
 
 # ── stopping ─────────────────────────────────────────────────────────────────
@@ -310,5 +418,6 @@ def cancel_stop(member_id: str) -> bool:
     return members.request_drain(member_id, on=False)
 
 
-__all__ = ["FLEET_LABEL", "FleetError", "ORIGIN_ENV", "ORIGIN_HUB", "WorkerBusy", "add",
-           "cancel_stop", "docker_run_args", "launcher", "live_carriers", "stop", "workers"]
+__all__ = ["DEPLOYMENT_ENV", "FLEET_LABEL", "FleetError", "ORIGIN_ENV", "ORIGIN_HUB", "WorkerBusy", "add",
+           "cancel_stop", "docker_run_args", "launcher", "launcher_detail", "live_carriers", "pending",
+           "reconcile", "stop", "workers"]

@@ -72,6 +72,19 @@ describe('WorkersCard', () => {
     await waitFor(() => expect(cancelWorkerStop).toHaveBeenCalledWith('w-going'));
   });
 
+  it('in Kubernetes names the Deployment and shows a drained pod without a button', async () => {
+    getWorkers.mockImplementationOnce(() => ok({
+      ...DATA, launcher: 'kubernetes', launcher_detail: 'hub-worker',
+      workers: [{ member_id: 'pod-1', host: 'pod-1', origin: 'kubernetes', container: '', runs: 0,
+                  concurrency: 4, carriers: 0, draining: true, drained: true, stoppable: true }],
+    }));
+    show();
+    await screen.findByText('A new worker is one more replica of the Deployment hub-worker in Kubernetes.');
+    const row = screen.getByText(/pod-1/).closest('tr');
+    expect(row.textContent).toMatch(/kubernetes.*done, being taken away/);
+    expect(row.querySelector('button')).toBeNull();
+  });
+
   it('turns autoscaling on and saves its bounds', async () => {
     show();
     await screen.findByTestId('autoscale');

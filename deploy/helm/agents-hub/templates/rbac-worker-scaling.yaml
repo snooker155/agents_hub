@@ -1,0 +1,43 @@
+{{- if .Values.workerScaling.enabled }}
+# Workers added and stopped from the hub, and their autoscaling
+# (docs/workers.md, common/worker_fleet.py): the backend changes the worker
+# Deployment's replica count and marks a drained worker's pod so that pod is
+# the one the ReplicaSet removes. Nothing more: the Role names the one
+# Deployment, and pods only get read and annotated.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "agents-hub.fullname" . }}-backend
+  labels:
+    {{- include "agents-hub.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "agents-hub.fullname" . }}-worker-scaling
+  labels:
+    {{- include "agents-hub.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: [{{ printf "%s-worker" (include "agents-hub.fullname" .) | quote }}]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "agents-hub.fullname" . }}-worker-scaling
+  labels:
+    {{- include "agents-hub.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "agents-hub.fullname" . }}-worker-scaling
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agents-hub.fullname" . }}-backend
+    namespace: {{ .Release.Namespace }}
+{{- end }}

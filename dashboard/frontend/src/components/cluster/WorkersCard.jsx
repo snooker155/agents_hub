@@ -155,7 +155,7 @@ export default function WorkersCard({ onChanged }) {
           {busy === 'add' ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
           {t('cluster.workers.add')}
         </button>
-        <span className="text-xs text-gray-500">{t(`cluster.workers.launcher.${launcher}`)}</span>
+        <span className="text-xs text-gray-500">{t(`cluster.workers.launcher.${launcher}`, { name: data.launcher_detail })}</span>
         {note && <span className="text-xs text-emerald-600">{note}</span>}
       </div>
       {error && <p className="text-xs text-red-600 mb-2">{error}</p>}
@@ -172,10 +172,11 @@ export default function WorkersCard({ onChanged }) {
           { key: 'carriers', label: t('cluster.workers.instances') },
           { key: 'state', label: t('cluster.workers.state'), render: (w) => (
             <span className={w.draining ? 'text-amber-700' : 'text-emerald-700'}>
-              {w.draining ? t('cluster.workers.draining') : t('cluster.workers.working')}
+              {w.drained ? t('cluster.workers.drained')
+                : w.draining ? t('cluster.workers.draining') : t('cluster.workers.working')}
             </span>
           ) },
-          { key: 'actions', label: '', render: (w) => (w.draining ? (
+          { key: 'actions', label: '', render: (w) => (w.drained ? null : w.draining ? (
             <button type="button" disabled={!!busy} onClick={() => act(w.member_id, () => cancelWorkerStop(w.member_id))}
                     className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:underline disabled:opacity-50">
               <Undo2 className="w-3.5 h-3.5" /> {t('cluster.workers.cancelStop')}

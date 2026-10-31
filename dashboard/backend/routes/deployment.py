@@ -484,8 +484,8 @@ async def workers_overview():
     from common import worker_autoscale, worker_fleet
 
     def _read() -> Dict[str, Any]:
-        return {"launcher": worker_fleet.launcher(), "workers": worker_fleet.workers(),
-                "autoscale": worker_autoscale.status()}
+        return {"launcher": worker_fleet.launcher(), "launcher_detail": worker_fleet.launcher_detail(),
+                "workers": worker_fleet.workers(), "autoscale": worker_autoscale.status()}
     return await asyncio.to_thread(_read)
 
 
