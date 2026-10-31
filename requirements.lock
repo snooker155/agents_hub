@@ -162,7 +162,7 @@ jiter==0.17.0
     # via
     #   anthropic
     #   openai
-joserfc==1.7.5
+joserfc==1.7.7
     # via authlib
 jsonpatch==1.33
     # via langchain-core
@@ -229,7 +229,7 @@ protobuf==5.29.6
     #   googleapis-common-protos
     #   grpcio-status
     #   proto-plus
-pyasn1==0.6.4
+pyasn1==0.6.5
     # via pyasn1-modules
 pyasn1-modules==0.4.2
     # via google-auth
