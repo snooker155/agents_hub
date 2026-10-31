@@ -110,7 +110,7 @@ turns that section into the next release.
   process of about 150 MB for good. The workspace's own runner keeps its
   minimum (docs/services.md).
 - The dashboard and the docs call an instance a service started an
-  instance, not a replica: "instance of <service>", "Min instances", "Max
+  instance, not a replica: `instance of <service>`, "Min instances", "Max
   instances", "Parallel per instance". A copy of the backend process is a
   "backend copy" (Cluster page, health checks). The API keeps its names
   (`replicas_min`, `replicas_max`, `/api/services/{id}/replicas`).
