@@ -37,8 +37,12 @@ from dotenv import load_dotenv
 
 # In a container the backend runs as uid 1000 and .env is usually a file bind
 # mounted from the host, which keeps the host owner on Linux. Say so plainly
-# instead of a bare PermissionError from the first read.
-_env_file = project_root / ".env"
+# instead of a bare PermissionError from the first read. The file is the one
+# every other reader uses: AGENTS_HUB_ENV_FILE may name another (the test suite
+# points it at an empty one, so a developer's .env stays out of it).
+from common.dotenv import env_path
+
+_env_file = env_path()
 if _env_file.is_file() and not os.access(_env_file, os.R_OK | os.W_OK):
     _fix = (f"{_env_file} is not readable and writable by uid {os.getuid()}. "
             f"On the host, in the folder with docker-compose.yml: sudo chown {os.getuid()}:{os.getgid()} .env "

@@ -188,6 +188,10 @@ def _seed_team(seed: Dict[str, Any]) -> None:
 
 
 def _seed_scenario(seed: Dict[str, Any]) -> None:
+    # A hub with the playground off loads none of it (PLAYGROUND_ENABLED).
+    from common.config import playground_enabled
+    if not playground_enabled():
+        return
     from playground.models import Scenario
     from playground.store import save_scenario
 
