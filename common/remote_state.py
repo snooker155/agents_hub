@@ -810,7 +810,7 @@ def decode(value: Any) -> Any:
     tag = value.get(_TAG)
     if tag is None:
         return {k: decode(v) for k, v in value.items()}
-    raw = value.get("v")
+    raw: Any = value.get("v")
     if tag == "map":
         return {decode(k): decode(v) for k, v in raw}
     if tag == "tuple":

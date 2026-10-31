@@ -30,7 +30,7 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 log = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ def probe_broker() -> Dict[str, Any]:
             latency = _ms(started)
             info: Dict[str, Any] = {}
             try:
-                info = client.info() or {}
+                info = cast(Dict[str, Any], client.info()) or {}
             except Exception:  # noqa: BLE001 - INFO may be disabled; PING already answered
                 log.debug("redis INFO failed", exc_info=True)
         finally:

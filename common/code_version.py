@@ -30,7 +30,7 @@ import hashlib
 import os
 import subprocess
 import time
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from common.paths import PROJECT_ROOT
 
@@ -45,7 +45,7 @@ DISK_TTL_SECONDS = 15.0
 IMAGE_TTL_SECONDS = 30.0
 IMAGE_PREFIX = "img:"
 
-_disk: Dict[str, object] = {"at": 0.0, "stamp": ""}
+_disk: Dict[str, Any] = {"at": 0.0, "stamp": ""}
 _images: Dict[str, Tuple[float, str]] = {}
 
 
