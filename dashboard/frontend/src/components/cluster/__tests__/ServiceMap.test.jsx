@@ -172,4 +172,17 @@ describe('ServiceMap', () => {
     fireEvent.click(screen.getByTestId('pane'));
     expect(screen.getByTestId('node-s:database').firstChild).not.toHaveAttribute('data-selected');
   });
+
+  it('offers the log of a picked member or container, not of a service', () => {
+    const onViewLogs = vi.fn();
+    render(<I18nProvider><ServiceMap map={MAP} onViewLogs={onViewLogs} /></I18nProvider>);
+    fireEvent.click(screen.getByTestId('node-m:wk-1'));
+    fireEvent.click(screen.getByRole('button', { name: /log/i }));
+    expect(onViewLogs).toHaveBeenLastCalledWith({ member: expect.objectContaining({ member_id: 'wk-1' }) });
+    fireEvent.click(screen.getByTestId('node-c:agents-hub-node-inst_1'));
+    fireEvent.click(screen.getByRole('button', { name: /log/i }));
+    expect(onViewLogs).toHaveBeenLastCalledWith({ container: expect.objectContaining({ name: 'agents-hub-node-inst_1' }) });
+    fireEvent.click(screen.getByTestId('node-s:database'));
+    expect(screen.queryByRole('button', { name: /log/i })).toBeNull();
+  });
 });

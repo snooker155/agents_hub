@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import ReactFlow, { Background, Controls, Handle, MarkerType, Position } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { X } from 'lucide-react';
+import { ScrollText, X } from 'lucide-react';
 import { useI18n } from '../../i18n';
 
 /**
@@ -83,7 +83,7 @@ function memberNode(t, m, kind, x, y) {
     position: { x, y },
     data: {
       kind, title: m.member_id, sub: `${m.role}${m.host ? ` · ${m.host}` : ''}`,
-      status: MEMBER_STATUS[m.status] || 'unknown', line,
+      status: MEMBER_STATUS[m.status] || 'unknown', line, logOf: { member: m },
       load: isWorker ? tracked ?? 0 : null, capacity: isWorker ? cap : null,
       detail: { member: m.member_id, role: m.role, host: m.host, status: m.status, version: m.version,
                 leases: (m.leases || []).join(', '), load: m.load, capabilities: m.capabilities },
@@ -270,7 +270,7 @@ export function buildGraph(map, t) {
       data: { kind: 'container', title: c.agent_id || c.name,
               sub: [c.owner_kind ? t(`cluster.map.owner.${c.owner_kind}`, { defaultValue: c.owner_kind }) : '',
                     c.workspace].filter(Boolean).join(' · '),
-              status: CONTAINER_STATUS[state] || 'unknown', line: c.name,
+              status: CONTAINER_STATUS[state] || 'unknown', line: c.name, logOf: { container: c },
               detail: { container: c.name, worker: c.worker, launched_on: c.launched_on, docker_host: c.host,
                         owner: [c.owner_kind, c.owner_id].filter(Boolean).join(' '), workspace: c.workspace,
                         state: c.state || c.status, image: c.image } } });
@@ -312,6 +312,9 @@ export function buildGraph(map, t) {
   return { nodes, edges, idle };
 }
 
+const SELECTED_SHADOW = '0 0 0 3px var(--brand-500), '
+  + '0 0 0 9px color-mix(in srgb, var(--brand-500) 25%, transparent), 0 10px 24px rgba(0, 0, 0, 0.18)';
+
 function SvcNode({ data, selected }) {
   const { t } = useI18n();
   const paint = PAINT[data.kind] || 'external';
@@ -319,9 +322,12 @@ function SvcNode({ data, selected }) {
   const hidden = { opacity: 0, width: 6, height: 6 };
   return (
     <div
-      style={{ width: NODE_W, background: `var(--graph-${paint}-bg)`, border: `1.5px solid var(--graph-${paint}-border)` }}
-      className={`rounded-lg px-3 py-2 text-left cursor-pointer transition-shadow ${selected
-        ? 'ring-2 ring-indigo-500 ring-offset-2 shadow-lg' : 'shadow-sm'}`}
+      style={{ width: NODE_W, background: `var(--graph-${paint}-bg)`,
+               border: `1.5px solid ${selected ? 'var(--brand-500)' : `var(--graph-${paint}-border)`}`,
+               // The map is drawn scaled down to fit, so the mark is wide: a
+               // solid edge and a soft halo, as shadows that move nothing.
+               boxShadow: selected ? SELECTED_SHADOW : undefined }}
+      className={`rounded-lg px-3 py-2 text-left cursor-pointer transition-shadow ${selected ? '' : 'shadow-sm'}`}
       data-selected={selected ? 'true' : undefined}
     >
       <Handle id="l" type="target" position={Position.Left} style={hidden} isConnectable={false} />
@@ -362,7 +368,7 @@ function flat(detail) {
   return rows;
 }
 
-export default function ServiceMap({ map }) {
+export default function ServiceMap({ map, onViewLogs }) {
   const { t } = useI18n();
   const [picked, setPicked] = useState(null);
   const graph = useMemo(() => buildGraph(map, t), [map, t]);
@@ -435,6 +441,12 @@ export default function ServiceMap({ map }) {
               </div>
             ))}
           </dl>
+          {onViewLogs && selected.data.logOf && (
+            <button onClick={() => onViewLogs(selected.data.logOf)}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100">
+              <ScrollText className="h-3.5 w-3.5" /> {t('cluster.viewLogs')}
+            </button>
+          )}
         </div>
       )}
     </div>
