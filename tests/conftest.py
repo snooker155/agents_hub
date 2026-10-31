@@ -43,6 +43,14 @@ os.environ["AGENTS_HUB_DATABASE_URL"] = TEST_DATABASE_URL
 # Tests of the routing itself patch ``chat.routing.enabled``.
 os.environ.setdefault("AGENTS_HUB_CHAT_EXECUTION", "inprocess")
 
+# A member's machine and Docker sampler (common/host_metrics.py) shells out to
+# docker on its own thread; the suite's members do not need it. Its tests
+# drive the probes directly.
+os.environ["AGENTS_HUB_HOST_METRICS"] = "0"
+# Nor does a carrier follow the output of a container the suite only pretends
+# to start (instances/carrier.py _follow_container_start).
+os.environ["AGENTS_HUB_FOLLOW_CONTAINER_START"] = "0"
+
 # The backend's route modules import their request models as a top level
 # ``models`` package (``from models import TaskCreate``), which only resolves
 # with dashboard/backend on the path. Put it there before any test module is

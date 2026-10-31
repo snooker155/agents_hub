@@ -824,15 +824,22 @@ class InstanceLoop:
         self.task_thread.start()
 
     def run(self) -> None:
-        from instances import carrier, store, wake
+        from instances import carrier, wake
 
-        log(f"Instance {self.instance_id} ({self.agent_id or 'runner'}) ready, workspace scope {self.scope}")
         os.environ["AGENT_WORKSPACE"] = self.scope
-        _set_status(self.instance_id, "running")
         # What the carrier follows from its row (concurrency, task intake),
         # read once here and then from every heartbeat's answer: a loop that
-        # read the row each turn made most of an idle carrier's calls.
-        row = store.get(self.instance_id) or {}
+        # read the row each turn made most of an idle carrier's calls. It is
+        # also this process's first word with its state.
+        try:
+            row = _first_contact(self.instance_id)
+        except TokenRefused as exc:
+            _stop_refused(exc)
+            return
+        log(f"Instance {self.instance_id} ({self.agent_id or 'runner'}) ready "
+            f"{time.monotonic() - _BOOT:.1f}s after start, workspace scope {self.scope}, "
+            f"concurrency {row.get('concurrency') or 1}, tasks {'on' if row.get('take_tasks') else 'off'}")
+        _set_status(self.instance_id, "running")
         self.follows = {k: row.get(k) for k in carrier.CARRIER_FOLLOWS}
         heartbeat = threading.Thread(target=self._heartbeat, name="instance-heartbeat", daemon=True)
         heartbeat.start()
@@ -891,6 +898,99 @@ class InstanceLoop:
                 log(f"Stop requested through the instance record: {follows.get('stop_reason') or 'no reason given'}")
                 os.kill(os.getpid(), signal.SIGTERM)
                 return
+
+
+#: When this process started, for the "ready in" line.
+_BOOT = time.monotonic()
+#: Tries of the first call to the instance's state before the start fails.
+FIRST_CONTACT_TRIES = 8
+
+
+def _first_contact(instance_id: str) -> Dict[str, Any]:
+    """Read the instance's row, retrying while its state cannot be reached
+    (the hub restarting, a network still coming up), each failure in the log
+    so a carrier that cannot reach the hub says so instead of hanging silent.
+    Raises once :data:`FIRST_CONTACT_TRIES` are spent; a refused token at once."""
+    from instances import store
+    began = time.monotonic()
+    delay = 1.0
+    for attempt in range(1, FIRST_CONTACT_TRIES + 1):
+        try:
+            row = store.get(instance_id)
+        except TokenRefused:
+            raise
+        except Exception as exc:  # noqa: BLE001 - retried, then reported as the start's failure
+            if attempt == FIRST_CONTACT_TRIES:
+                raise RuntimeError(f"the instance's state could not be reached after {attempt} tries "
+                                   f"({time.monotonic() - began:.0f}s): {exc}") from exc
+            log(f"[warn] State not reachable yet (try {attempt} of {FIRST_CONTACT_TRIES}): {exc}; "
+                f"again in {delay:.0f}s")
+            time.sleep(delay)
+            delay = min(delay * 2, 15.0)
+            continue
+        if row is None:
+            log(f"[warn] The hub has no row for instance {instance_id} (removed while it started?)")
+            return {}
+        log(f"State reached in {time.monotonic() - began:.1f}s"
+            + (f" after {attempt} tries" if attempt > 1 else ""))
+        return row
+    return {}
+
+
+def _cgroup_limits() -> str:
+    """The container's memory, CPU and process limits as its cgroup sets
+    them (v2, then v1); empty outside a limited cgroup."""
+    def read(*paths: str) -> str:
+        for path in paths:
+            try:
+                return Path(path).read_text().strip()
+            except OSError:
+                continue
+        return ""
+
+    parts = []
+    mem = read("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes")
+    if mem.isdigit() and int(mem) < 1 << 60:
+        parts.append(f"memory {int(mem) / 1024 ** 3:.1f} GiB")
+    cpu = read("/sys/fs/cgroup/cpu.max").split()
+    if len(cpu) == 2 and cpu[0].isdigit() and cpu[1].isdigit() and int(cpu[1]):
+        parts.append(f"cpus {int(cpu[0]) / int(cpu[1]):g}")
+    pids = read("/sys/fs/cgroup/pids.max", "/sys/fs/cgroup/pids/pids.max")
+    if pids.isdigit():
+        parts.append(f"pids {pids}")
+    return ", ".join(parts)
+
+
+def _startup_report(args: argparse.Namespace) -> None:
+    """Who and where this process is, before it does anything: what the log
+    of a carrier that never comes up needs to tell why."""
+    import platform
+    import socket
+    try:
+        from common import remote_state
+        remote = remote_state.is_remote()
+    except Exception:  # noqa: BLE001 - reporting only
+        remote = False
+    in_container = Path("/.dockerenv").exists()
+    log(f"Process {os.getpid()} on {socket.gethostname()}"
+        + (" (in a container)" if in_container else "")
+        + f", Python {platform.python_version()}, {platform.system()} {platform.release()}")
+    if remote:
+        from common.hostnet import hub_base_url, state_base_url
+        state, hub = state_base_url(), hub_base_url()
+        log(f"State through {state} (no database in this process)"
+            + (f", live events to {hub}" if hub != state else ""))
+    else:
+        try:
+            from common import db
+            log(f"State in the database ({db.dialect()})")
+        except Exception:  # noqa: BLE001 - reporting only
+            log("State in the database")
+    log(f"Workspace {args.workspace or '-'} as {os.environ.get('AGENT_WORKSPACE') or 'default'}"
+        + (f", network {os.environ['AGENTS_HUB_RUN_NETWORK']}" if os.environ.get("AGENTS_HUB_RUN_NETWORK") else ""))
+    limits = _cgroup_limits() if in_container else ""
+    if limits:
+        log(f"Limits: {limits}")
 
 
 def _stop_refused(exc: Exception) -> None:
@@ -1011,6 +1111,10 @@ def main() -> None:
     os.environ.setdefault("AGENT_INSTANCE_ID", args.instance_id)
     log(f"=== Instance {args.instance_id} starting, agent={args.agent_id or 'runner'} ===")
     signal.signal(signal.SIGTERM, _on_sigterm(args.instance_id))
+    try:
+        _startup_report(args)
+    except Exception as exc:  # noqa: BLE001 - the report must not stop the start
+        log(f"[warn] Startup report incomplete: {exc}")
 
     try:
         InstanceLoop(args.instance_id, args.agent_id, args.workspace).run()

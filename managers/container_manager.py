@@ -69,13 +69,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import shlex
 import socket
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from common.hostnet import to_host_gateway
 from common.paths import AGENTS_HUB_ROOT, PROJECT_ROOT
@@ -1335,6 +1337,18 @@ def exec_shell_argv(container_name: str) -> List[str]:
             container_name, "/bin/sh", "-c", TERMINAL_SHELL]
 
 
+def _stepper(on_step: Optional[Callable[[str], None]]) -> Callable[[str], None]:
+    """``on_step`` that never raises: a log line must not stop a start."""
+    def step(message: str) -> None:
+        if on_step is None:
+            return
+        try:
+            on_step(message)
+        except Exception:  # noqa: BLE001 - reporting only
+            logger.debug("start step callback failed", exc_info=True)
+    return step
+
+
 def start_container(
     container_name: str,
     agent_id: str,
@@ -1350,6 +1364,7 @@ def start_container(
     snapshot_dir: Optional[str] = None,
     image: Optional[str] = None,
     extra_env: Optional[Dict[str, str]] = None,
+    on_step: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Start a detached container for an agent.
 
@@ -1386,11 +1401,20 @@ def start_container(
     allowlist would otherwise drop (the environment's own variables, the
     allowlist and proxy settings).
 
+    ``on_step`` hears each step of the start in a line of its own (the image
+    and whether this host has it, the network, the limits, how long
+    ``docker run`` took): an instance's carrier writes them to its log.
+
     Returns: {success, container_id, container_name, image, error,
               started_at}
     """
+    step = _stepper(on_step)
     network = agent_network()
     image = image or image_tag_for_agent(agent_id)
+    if image_exists(image):
+        step(f"image {image}: on this host")
+    else:
+        step(f"image {image}: not on this host, docker run pulls it first (this can take minutes)")
 
     # Build path mapping: our path → container path. These are the paths the
     # command line carries, so they are translated as we see them; the bind
@@ -1486,10 +1510,23 @@ def start_container(
         docker_cmd.append(image)
         docker_cmd.extend(translated_cmd)
 
+    if hardened:
+        limits = (f"memory={memory or live_setting('AGENT_DOCKER_MEMORY', DEFAULT_RUN_MEMORY)} "
+                  f"cpus={cpus or live_setting('AGENT_DOCKER_CPUS', DEFAULT_RUN_CPUS)} "
+                  f"pids={pids_limit or DEFAULT_RUN_PIDS_LIMIT}, read-only root, no capabilities")
+    else:
+        limits = " ".join(f"{k}={v}" for k, v in (("memory", memory), ("cpus", cpus), ("pids", pids_limit))
+                          if v) or "none"
+    step(f"docker run {container_name}: network={network} limits: {limits}; "
+         f"daemon {os.environ.get('DOCKER_HOST') or 'on the local socket'}"
+         + (f"; extra args: {extra}" if extra else ""))
+    began = time.monotonic()
     try:
         result = _run(docker_cmd, timeout=30)
+        took = time.monotonic() - began
         if result.returncode == 0:
             container_id = (result.stdout or "").strip()
+            step(f"container {container_id[:12]} created in {took:.1f}s")
             out: Dict[str, Any] = {
                 "success": True,
                 "container_id": container_id,
@@ -1507,6 +1544,7 @@ def start_container(
             "error": missing_image_hint(image, (result.stderr or result.stdout or "docker run failed").strip()),
         }
     except (OSError, subprocess.SubprocessError) as exc:
+        step(f"docker run did not finish: {exc}")
         return {
             "success": False,
             "container_id": None,
@@ -1552,6 +1590,7 @@ def start_instance_container(
     env: Optional[Dict[str, str]] = None,
     options: Optional[Dict[str, Any]] = None,
     extra_env: Optional[Dict[str, str]] = None,
+    on_step: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Start the container of one resident instance or service instance (its
     carrier, runtime/instance_run.py): one instance, one container.
@@ -1560,8 +1599,16 @@ def start_instance_container(
     no database and no state mount, limits (the environment's, else the run
     defaults), a read-only root, no capabilities. ``options`` is the docker
     profile of the instance's environment (environments/launch.py) and
-    ``extra_env`` the variables it adds."""
+    ``extra_env`` the variables it adds. ``on_step`` hears each step of the
+    start (see :func:`start_container`)."""
+    step = _stepper(on_step)
+    packages = [str(p) for p in ((options or {}).get("packages") or []) if str(p).strip()]
+    if packages:
+        step(f"environment packages {', '.join(packages)}: preparing their image")
+    began = time.monotonic()
     kwargs: Dict[str, Any] = options_to_kwargs(agent_id, options) if options else {}
+    if packages:
+        step(f"environment image {kwargs.get('image')} ready in {time.monotonic() - began:.1f}s")
     if extra_env:
         kwargs["extra_env"] = dict(extra_env)
     return start_container(
@@ -1571,6 +1618,7 @@ def start_instance_container(
         workspace=workspace,
         env=env,
         hardened=True,
+        on_step=on_step,
         **kwargs,
     )
 
@@ -1613,6 +1661,78 @@ def get_logs(container_name: str, tail: int = 200) -> str:
         return (result.stdout or "") + (result.stderr or "")
     except (OSError, subprocess.SubprocessError) as exc:
         return f"[error fetching logs: {exc}]"
+
+
+#: The process's own log lines start with their timestamp; it writes them to
+#: the log file itself, so the follower below leaves them out.
+_OWN_LINE = re.compile(r"^\[\d{4}-\d\d-\d\dT")
+
+
+def follow_startup_logs(container_name: str, on_line: Callable[[str], None],
+                        until: Callable[[], bool], *, timeout: float = 180.0,
+                        max_lines: int = 400) -> str:
+    """Pass what a container prints while it starts to ``on_line``: a
+    traceback on stderr before the process can write its own log (an import
+    that fails, a missing module) is otherwise lost, since the container is
+    started with ``--rm`` and goes with its output.
+
+    Lines the process writes to its log file itself (timestamped) are left
+    out. Stops once ``until()`` says the start is over, after ``timeout``, or
+    when the container exits. Returns ``ready``, ``timeout`` or ``exited``.
+    """
+    import threading
+    try:
+        proc = subprocess.Popen(["docker", "logs", "-f", container_name], stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace")
+    except OSError as exc:
+        on_line(f"could not follow the container's output: {exc}")
+        return "exited"
+    ended = threading.Event()
+    count = [0]
+
+    def read() -> None:
+        try:
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                line = raw.rstrip("\n")
+                if not line.strip() or _OWN_LINE.match(line):
+                    continue
+                count[0] += 1
+                if count[0] <= max_lines:
+                    on_line(line)
+                elif count[0] == max_lines + 1:
+                    on_line(f"... more output, see docker logs {container_name}")
+        except (OSError, ValueError):
+            # The pipe closed under us: the follow was stopped.
+            pass
+        finally:
+            ended.set()
+
+    reader = threading.Thread(target=read, name="container-startup-log", daemon=True)
+    reader.start()
+    deadline = time.monotonic() + timeout
+    outcome = "timeout"
+    while time.monotonic() < deadline:
+        if ended.wait(1.0):
+            outcome = "exited"
+            break
+        try:
+            if until():
+                outcome = "ready"
+                break
+        except Exception:  # noqa: BLE001 - keep following until the timeout
+            logger.debug("startup follow check failed", exc_info=True)
+    if proc.poll() is None:
+        proc.kill()
+    reader.join(timeout=2)
+    if outcome == "exited":
+        # The pipe can close a moment before the process says it is ready.
+        try:
+            if until():
+                outcome = "ready"
+        except Exception:  # noqa: BLE001 - reporting only
+            logger.debug("startup follow check failed", exc_info=True)
+    return outcome
 
 
 def list_containers() -> List[Dict[str, Any]]:

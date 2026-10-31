@@ -48,6 +48,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -395,14 +396,29 @@ def spawn_queued(spec: Dict[str, Any]) -> str:
         instance = store.get(instance_id) or instance
     elif status != "queued" and not spec.get("after_stop"):
         return "skipped"
+    from common.leases import owner_id
+    waited = _seconds_since(instance.get("queued_at"))
+    append_log(instance, f"[carrier_picked] worker {owner_id()} on {socket.gethostname()} takes the launch"
+                         + (f" after {waited:.0f}s in the queue" if waited is not None else ""))
     env_fields = _environment_fields(instance.get("workspace"), instance.get("environment_request"))
     try:
         _spawn(instance, env_fields, reason=str(spec.get("reason") or "start"))
     except Exception as exc:
         store.update(instance_id, carrier_error=str(exc)[:2000])
-        append_log(instance, f"[carrier_spawn_failed] {exc}")
         raise
     return "spawned"
+
+
+def _seconds_since(ts: Optional[str]) -> Optional[float]:
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
 
 
 def _queued_launch_pending(instance_id: str) -> bool:
@@ -415,7 +431,73 @@ def _queued_launch_pending(instance_id: str) -> bool:
 
 
 def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
-    """Start the carrier process (or container) for ``instance``."""
+    """Start the carrier process (or container) for ``instance``, writing
+    each step and a failure to the carrier's log."""
+    began = time.monotonic()
+    try:
+        out = _spawn_carrier(instance, env_fields, reason=reason)
+    except Exception as exc:
+        append_log(instance, f"[carrier_spawn_failed] after {time.monotonic() - began:.1f}s: {exc}")
+        raise
+    return out
+
+
+def _describe_launch(instance: Dict[str, Any], env_fields: Dict[str, Any], *, mode: str,
+                     reason: str) -> None:
+    """Where, how and with what the carrier starts, before it does."""
+    from common.leases import owner_id
+    from common.config import hub_role
+    env_name = env_fields.get("environment_name")
+    append_log(instance, f"[carrier_spawn] reason={reason} mode={mode} on {socket.gethostname()} "
+                         f"(member {owner_id()}, role {hub_role()}) agent={instance.get('agent_id') or 'runner'} "
+                         f"workspace={instance.get('workspace') or '-'} "
+                         f"environment={env_name or 'none'} concurrency={instance.get('concurrency') or 1} "
+                         f"take_tasks={'on' if instance.get('take_tasks') else 'off'}")
+    docker = env_fields.get("docker") or {}
+    if docker:
+        shown = {k: v for k, v in docker.items() if v not in (None, "", [], {})}
+        append_log(instance, "[carrier_spawn] environment docker options: "
+                             + (", ".join(f"{k}={v}" for k, v in shown.items()) or "defaults"))
+    names = sorted((env_fields.get("env") or {}).keys())
+    if names:
+        # Names only: the values may be secrets.
+        append_log(instance, f"[carrier_spawn] environment variables: {', '.join(names)}")
+
+
+def _follow_container_start(instance: Dict[str, Any], container_name: str) -> None:
+    """Copy what the container prints until the instance reports it is up
+    (runtime/instance_run.py), on a thread of its own: a crash before the
+    process can write its own log would otherwise leave nothing behind."""
+    if os.environ.get("AGENTS_HUB_FOLLOW_CONTAINER_START", "1").strip().lower() in ("0", "false", "no", "off"):
+        return
+    instance_id = str(instance["instance_id"])
+    began = time.monotonic()
+
+    def ready() -> bool:
+        row = store.get(instance_id) or {}
+        return row.get("carrier_status") in ("running", "stopping", "stopped", "failed") \
+            or row.get("container_name") != container_name
+
+    def follow() -> None:
+        from managers.container_manager import follow_startup_logs
+        try:
+            outcome = follow_startup_logs(
+                container_name, lambda line: append_log(instance, f"[container] {line}"), ready)
+        except Exception:  # noqa: BLE001 - reporting only
+            log.debug("could not follow the start of %s", container_name, exc_info=True)
+            return
+        took = time.monotonic() - began
+        if outcome == "exited":
+            append_log(instance, f"[container] {container_name} exited {took:.1f}s after it was "
+                                 "created, before the instance was up; its output is above")
+        elif outcome == "timeout":
+            append_log(instance, f"[container] the instance has not reported itself up {took:.0f}s "
+                                 "after its container was created")
+
+    threading.Thread(target=follow, name=f"follow-{container_name}", daemon=True).start()
+
+
+def _spawn_carrier(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str) -> Dict[str, Any]:
     instance_id = instance["instance_id"]
     agent_id = str(instance.get("agent_id") or "")
     workspace = instance.get("workspace")
@@ -492,6 +574,7 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     }
     instance = store.update(instance_id, **updates) or {**instance, **updates}
     registry.ensure_instance(agent_id or "", instance_id=instance_id, state="starting")
+    _describe_launch(instance, env_fields, mode=mode, reason=reason)
 
     if mode == "docker":
         from managers.container_manager import container_name_for_node, start_instance_container
@@ -503,13 +586,16 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
             kwargs["extra_env"] = env_vars
         result = start_instance_container(
             instance_id, agent_id or "runner", inner_cmd + ["--write-stdout-to-log"],
-            _abs_workspace(workspace), env, **kwargs,
+            _abs_workspace(workspace), env,
+            on_step=lambda msg: append_log(instance, f"[container] {msg}"), **kwargs,
         )
         if not result.get("success"):
             raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")
         image, stamp = code_version.container_stamp(container_name)
         if stamp:
             instance = store.update(instance_id, carrier_image=image, carrier_code=stamp) or instance
+            append_log(instance, f"[container] image build {stamp}")
+        _follow_container_start(instance, container_name)
     else:
         popen_kwargs: Dict[str, Any] = {}
         if os.name == "nt":
@@ -524,6 +610,7 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
                 stdout=log_fh, stderr=subprocess.STDOUT, **popen_kwargs,
             )
         pid = proc.pid
+        append_log(instance, f"[process] pid {pid}: {' '.join(inner_cmd[:3])} in {PROJECT_ROOT}")
 
     instance = store.update(instance_id, pid=pid, container_name=container_name) or {
         **instance, "pid": pid, "container_name": container_name}

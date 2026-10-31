@@ -70,6 +70,30 @@ The carrier writes its own log (starts, state changes, errors) to
 `instance_logs/instance_<id>.log`, shown on the instance page. Each run keeps
 its own log as before.
 
+A start is written step by step, so a carrier that never comes up says why:
+
+- `[carrier_queued]` and `[carrier_picked]`: a launch handed to the workers,
+  and which worker on which host took it, after how long in the queue.
+- `[carrier_spawn]`: where it starts (host, member, role), the mode, agent,
+  workspace, environment, concurrency and task intake; the environment's
+  docker options and the names (never the values) of its variables.
+- `[container]` in docker mode: the image and whether this host has it (a
+  missing one is pulled first), the network, the limits, the daemon, how long
+  `docker run` took, the image build. Until the instance reports itself up,
+  everything the container prints that the process does not write to the log
+  itself (a traceback of an import that fails) is copied in, and a container
+  that exits first is named as such: it is started with `--rm`, so without
+  this its output would go with it. `[process]` in local mode: the pid.
+- From the process itself: its pid, host, Python and kernel, where its state
+  is (the hub's URL for a container with no database), the workspace, the
+  container's cgroup limits, each failed try to reach its state with the next
+  wait, and `ready N s after start`.
+- `[carrier_spawn_failed]` with the time and the error when a start fails.
+
+What a [service](services.md) decides about its replicas (a crash loop, a
+runner removed for lack of use) is in the service's journal, not here: the
+instance's log only says the service paused or stopped it.
+
 ### Inputs
 
 What a resident instance listens to. Both can be switched on the running
