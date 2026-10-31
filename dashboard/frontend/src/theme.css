@@ -470,6 +470,7 @@ html.dark {
 :where(html) .ring-purple-200,
 :where(html) .ring-violet-200 { --tw-ring-color: var(--brand-200); }
 :where(html) .focus-visible\:ring-indigo-300:focus-visible,
+:where(html) .focus\:ring-indigo-300:focus,
 :where(html) .ring-fuchsia-300,
 :where(html) .ring-indigo-300,
 :where(html) .ring-purple-300,
@@ -1191,6 +1192,7 @@ html.dark {
 :where(html.dark) .ring-purple-200,
 :where(html.dark) .ring-violet-200 { --tw-ring-color: var(--brand-border-200); }
 :where(html.dark) .focus-visible\:ring-indigo-300:focus-visible,
+:where(html.dark) .focus\:ring-indigo-300:focus,
 :where(html.dark) .ring-fuchsia-300,
 :where(html.dark) .ring-indigo-300,
 :where(html.dark) .ring-purple-300,
