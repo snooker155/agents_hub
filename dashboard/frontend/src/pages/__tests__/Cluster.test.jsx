@@ -52,6 +52,7 @@ vi.mock('../../components/stream', () => ({
 
 // The diagram has its own test; here reactflow would need a layout engine.
 vi.mock('../../components/cluster/ServiceMap', () => ({ default: () => <div data-testid="service-map" /> }));
+vi.mock('../../components/cluster/WorkersCard', () => ({ default: () => <div data-testid="workers-card" /> }));
 
 import Cluster from '../Cluster';
 

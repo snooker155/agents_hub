@@ -13,6 +13,15 @@ export const getMemberLogs = (memberId, tail = 500) =>
   api.get(`/cluster/members/${encodeURIComponent(memberId)}/logs`, { params: { tail } });
 export const forgetMember = (memberId) =>
   api.delete(`/cluster/members/${encodeURIComponent(memberId)}`);
+// Workers started and stopped from the hub, and their autoscaling
+// (common/worker_fleet.py, common/worker_autoscale.py).
+export const getWorkers = () => api.get('/cluster/workers');
+export const addWorkers = (count = 1) => api.post('/cluster/workers', { count });
+export const stopWorker = (memberId) =>
+  api.post(`/cluster/workers/${encodeURIComponent(memberId)}/stop`);
+export const cancelWorkerStop = (memberId) =>
+  api.delete(`/cluster/workers/${encodeURIComponent(memberId)}/stop`);
+export const updateAutoscale = (policy) => api.put('/cluster/autoscale', policy);
 export const getServiceChat = () => api.get('/health/chat');
 export const clearServiceChat = () => api.delete('/health/chat');
 export const stopServiceChat = () => api.post('/health/chat/stop');

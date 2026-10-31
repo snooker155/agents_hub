@@ -98,6 +98,54 @@ a message arrives (Redis when there is a broker) or after 25 seconds. It takes
 mail only when the wait says some is there, and mail of a conversation it is
 still answering does not end the wait.
 
+## Adding and stopping workers from the hub
+
+The Cluster page's **Workers** card (`/api/cluster/workers`,
+`common/worker_fleet.py`) lists every live worker: who started it (the hub,
+compose, or someone by hand), its runs against its slots, and the instances
+it carries.
+
+**Add worker** starts one the way this hub can:
+
+- a hub in a container with the Docker socket (the compose stack) starts a
+  container like a worker it already has: the same image, environment
+  (passed through an env file), mounts, groups, extra hosts and network. It
+  is labelled `agents-hub.fleet=worker`, belongs to the compose project
+  (`docker compose down --remove-orphans` removes it), never restarts and is
+  removed once it exits. With no worker container to copy, the backend's own
+  container is the pattern.
+- a hub on the host starts `python -m runtime.worker` as a process, on a
+  free port for its state host.
+
+**Stop** works on any worker, whoever started it: the hub writes
+`members.drain_requested_at`, the worker reads it on its next beat, claims
+nothing more and exits once none of its runs and none of the instance
+carriers it started is left. **Cancel stop** takes that back while it lives.
+A worker that carries live instances is never stopped (409): their
+containers reach their state through it. A container the hub can see has
+its restart policy turned off first, so `restart: unless-stopped` does not
+bring it straight back; `docker compose up` brings a stopped compose worker
+back.
+
+### Autoscaling
+
+Off by default; set on the same card (`PUT /api/cluster/autoscale`,
+`common/worker_autoscale.py`):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `min_workers` | 1 | Fewer live workers than this starts the difference. |
+| `max_workers` | 4 | Never more than this. |
+| `scale_up_wait_seconds` | 30 | A run waiting this long with every slot taken starts as many workers as the waiting runs need at the workers' concurrency. |
+| `scale_down_idle_minutes` | 10 | A worker that ran nothing and carried no instance this long is stopped, the hub's own first, one at a time, never below the minimum and never while something waits. |
+| `cooldown_seconds` | 90 | The pause after any action, so a new worker registers before the next decision. |
+
+An instance waiting with no worker at all starts one too (a carrier takes no
+slot). One API replica decides, under the lease `worker_autoscale`, every
+15 seconds; a backend in the `all` role launches its runs itself and never
+scales. The card shows the latest decision and the last actions with their
+reasons; every Add, Stop and policy change is in the audit log.
+
 ## Heartbeats instead of pids
 
 Every agent run and every entity run stamps `heartbeat_at` every `RUN_HEARTBEAT_SECONDS`
