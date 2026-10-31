@@ -12,9 +12,9 @@ One tick (:func:`reconcile_once`) walks every service:
   :data:`CRASH_WINDOW_SECONDS`) is paused with the reason ``crash loop``
   rather than restarted forever; the operator resumes it once the cause is
   fixed;
-- a replica started from other code than the backend runs (a release, or a
-  reload while editing; common/code_version.py) is stopped once idle and
-  replaced by the minimum;
+- a replica a new one would not share code with (the sources on disk
+  changed, or its container's image was rebuilt; common/code_version.py)
+  is stopped once idle and replaced by the minimum;
 - replicas of a service that no longer exists are stopped;
 - a runner kept only for when it is used (:func:`on_demand`: a personal
   workspace's, or one for an environment that is not the workspace's
@@ -283,8 +283,8 @@ class ServiceSupervisor:
     async def start(self) -> None:
         if self.is_running():
             return
-        # The code stamp is taken now, while the files on disk are the ones
-        # this process loaded (common/code_version.py).
+        # The first code stamp off the event loop: hashing the sources takes
+        # a moment (common/code_version.py).
         from common import code_version
         await asyncio.to_thread(code_version.current)
         self._stop = asyncio.Event()

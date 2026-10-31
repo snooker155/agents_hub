@@ -92,13 +92,20 @@ def conversation_holder(service_id: str, replica_ids: List[str],
 
 
 def is_stale(replica: Dict[str, Any]) -> bool:
-    """Whether ``replica`` was started from other code than this process runs
-    (common/code_version.py), or with other model provider settings than the
-    ones in force (common/provider_env.py: a key added on the Settings page
-    or by the guided setup). One started before replicas were stamped has no
-    code stamp and counts as stale."""
+    """Whether a new replica would start from other code than ``replica``
+    (common/code_version.py: the sources on disk changed, or the image a
+    container replica came from was rebuilt), or with other model provider
+    settings than the ones in force (common/provider_env.py: a key added on
+    the Settings page or by the guided setup). One started before replicas
+    were stamped has no code stamp and counts as stale; a container replica
+    whose image this host's Docker cannot read is left alone."""
     from common import code_version, provider_env
-    if replica.get("carrier_code") != code_version.current():
+    code = str(replica.get("carrier_code") or "")
+    if code.startswith(code_version.IMAGE_PREFIX):
+        now = code_version.image_stamp(replica.get("carrier_image"))
+        if now and now != code:
+            return True
+    elif code != code_version.current():
         return True
     given = replica.get("carrier_env")
     return bool(given) and given != provider_env.stamp()

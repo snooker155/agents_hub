@@ -466,9 +466,12 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
     updates: Dict[str, Any] = {
         "carrier_mode": mode,
         "carrier_host": socket.gethostname(),
-        # The code the carrier was started from: a service replica whose
-        # stamp is not the backend's is replaced (services/supervisor.py).
+        # The code the carrier starts from (the sources on disk; for a
+        # container, its image's build, set once it runs): a service replica
+        # whose code a new one would not share is replaced
+        # (services/replicas.py is_stale).
         "carrier_code": code_version.current(),
+        "carrier_image": None,
         # And the provider settings it was given: one started before a key
         # changed is replaced the same way.
         "carrier_env": provider_env.stamp(),
@@ -504,6 +507,9 @@ def _spawn(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reason: str)
         )
         if not result.get("success"):
             raise RuntimeError(f"Failed to start Docker container: {result.get('error')}")
+        image, stamp = code_version.container_stamp(container_name)
+        if stamp:
+            instance = store.update(instance_id, carrier_image=image, carrier_code=stamp) or instance
     else:
         popen_kwargs: Dict[str, Any] = {}
         if os.name == "nt":
