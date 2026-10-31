@@ -154,10 +154,15 @@ def start_replica(service: Dict[str, Any], *, reason: str = "scale up") -> Dict[
     return replica
 
 
-def stop_replica(service: Dict[str, Any], replica: Dict[str, Any], *, reason: str) -> bool:
+def stop_replica(service: Dict[str, Any], replica: Dict[str, Any], *, reason: str,
+                 instance_reason: Optional[str] = None) -> bool:
+    """Stop one replica. ``reason`` goes to the service's journal;
+    ``instance_reason``, when given, is what the instance's own log and page
+    say instead: why the service did something (a crash loop of its
+    replicas) belongs to the service, not to each instance it stopped."""
     sid = str(service["service_id"])
     iid = str(replica["instance_id"])
-    stopped = carrier.stop(iid, reason=f"service: {reason}")
+    stopped = carrier.stop(iid, reason=f"service: {instance_reason or reason}")
     store.add_event(sid, "replica_stopped" if stopped else "replica_stop_failed",
                     f"{reason}: {replica.get('label') or iid}", iid)
     return stopped

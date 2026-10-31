@@ -116,8 +116,9 @@ def _unused_seconds(service: Dict[str, Any]) -> float:
 def _retire_if_unused(service: Dict[str, Any], live_count: int) -> bool:
     """Remove an on-demand runner with no instance and no use for its idle time.
 
-    Its events go with it, so the reason is written where it stays: the log
-    of each of its instances (their pages keep it) and the audit log."""
+    Its events go with it, so the reason is written where it stays: the
+    audit log and this backend's own log. The instances' logs do not get it:
+    it is the service's doing, and they all stopped before it."""
     idle_after = int(service.get("idle_stop_seconds") or 0)
     if live_count or idle_after <= 0 or not on_demand(service):
         return False
@@ -126,9 +127,6 @@ def _retire_if_unused(service: Dict[str, Any], live_count: int) -> bool:
         return False
     reason = (f"runner '{service.get('name')}' removed: no instance and no use for {int(unused)} s "
               f"(limit {idle_after} s); the next chat turn in {service.get('workspace')} makes it again")
-    from instances import carrier
-    for rep in replicas.list_replicas(service["service_id"])[:20]:
-        carrier.append_log(rep, f"[service] {reason}")
     try:
         from common import audit
         audit.record("service.removed", object_type="service", object_id=service["service_id"],
@@ -147,7 +145,8 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
     if service.get("status") != store.STATUS_ACTIVE:
         for rep in live:
             why = service.get("paused_reason") or "paused"
-            if replicas.stop_replica(service, rep, reason=f"the service is paused ({why})"):
+            if replicas.stop_replica(service, rep, reason=f"the service is paused ({why})",
+                                     instance_reason="the service is paused"):
                 counts["stopped"] += 1
         return counts
 
@@ -155,8 +154,11 @@ def reconcile_service(service: Dict[str, Any]) -> Dict[str, int]:
     if _crash_looping(service):
         store.pause(sid, "crash loop: replicas kept dying, fix the cause and resume")
         for rep in live:
+            # The crash loop is the service's story (its journal and its
+            # paused reason); the instance only learns its service paused.
             if replicas.stop_replica(service, rep, reason="crash loop: its instances kept dying, "
-                                                          "the service is paused until resumed"):
+                                                          "the service is paused until resumed",
+                                     instance_reason="the service is paused"):
                 counts["stopped"] += 1
         return counts
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -296,9 +297,10 @@ def test_reconcile_stops_everything_of_a_paused_service(monkeypatch):
     svc = store.pause(svc["service_id"], "maintenance")
     stopped = []
     monkeypatch.setattr(replicas, "stop_replica",
-                        lambda service, rep, reason="": stopped.append(reason) or True)
+                        lambda service, rep, reason="", instance_reason=None:
+                        stopped.append((reason, instance_reason)) or True)
     assert supervisor.reconcile_service(svc)["stopped"] == 1
-    assert stopped == ["the service is paused (maintenance)"]
+    assert stopped == [("the service is paused (maintenance)", "the service is paused")]
 
 
 def test_replicas_that_keep_dying_pause_the_service(monkeypatch):
@@ -315,6 +317,21 @@ def test_replicas_that_keep_dying_pause_the_service(monkeypatch):
     assert started == []
     kinds = [e["kind"] for e in store.events(svc["service_id"])]
     assert kinds.count("replica_crashed") == 3 and "paused" in kinds
+
+
+def test_a_crash_loop_stays_in_the_service_journal_not_the_instance_log(monkeypatch):
+    svc = store.create(name="s", agent_id="swe_agent", workspace="ws", replicas_min=1)
+    for _ in range(3):
+        dead = _replica(svc)
+        istore.update(dead["instance_id"], state="failed", carrier_status="failed",
+                      carrier_error="boom", carrier_exit_code=1)
+    _replica(svc)
+    reasons = []
+    monkeypatch.setattr(carrier, "stop", lambda iid, reason="": reasons.append(reason) or True)
+    supervisor.reconcile_service(svc)
+    assert reasons == ["service: the service is paused"]
+    events = store.events(svc["service_id"])
+    assert any(e["kind"] == "replica_stopped" and "crash loop" in (e.get("detail") or "") for e in events)
 
 
 def test_the_default_runner_is_created_only_when_turns_run_on_instances(monkeypatch):
@@ -642,7 +659,7 @@ def test_a_runner_someone_made_by_hand_is_never_removed(monkeypatch):
     assert store.get(manual["service_id"]) is not None
 
 
-def test_removing_an_unused_runner_leaves_its_reason_in_the_instance_log_and_the_audit(monkeypatch):
+def test_removing_an_unused_runner_leaves_its_reason_in_the_audit_not_the_instance_log(monkeypatch):
     monkeypatch.setattr("common.personal_workspace.is_personal", lambda ws: True)
     runner = _aged(store.ensure_runner("personal-u4"))
     old = (datetime.now(timezone.utc) - timedelta(minutes=40)).isoformat()
@@ -652,7 +669,8 @@ def test_removing_an_unused_runner_leaves_its_reason_in_the_instance_log_and_the
     recorded = []
     monkeypatch.setattr("common.audit.record", lambda action, **kw: recorded.append((action, kw)))
     assert supervisor.reconcile_service(store.get(runner["service_id"])).get("removed") == 1
-    log = open(istore.get(rep["instance_id"])["carrier_log_file"]).read()
-    assert "[service] runner 'personal-u4 runner' removed: no instance and no use for" in log
+    log_file = Path(istore.get(rep["instance_id"])["carrier_log_file"])
+    # The removal is the service's doing: its instance's log stays its own.
+    assert not log_file.exists() or "removed" not in log_file.read_text()
     assert recorded and recorded[0][0] == "service.removed"
     assert "next chat turn in personal-u4" in recorded[0][1]["details"]["reason"]
