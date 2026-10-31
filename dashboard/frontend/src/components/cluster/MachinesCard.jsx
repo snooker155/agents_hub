@@ -38,6 +38,12 @@ function Meter({ pct, part, label, sub }) {
   );
 }
 
+// The trend lines and their legend swatches share these text classes (the
+// swatch paints currentColor): the theme maps bg-* and text-* of one hue to
+// different shades in dark mode, so a bg-* swatch drifted off its line.
+const CPU_LINE = 'text-indigo-600';
+const MEM_LINE = 'text-sky-500';
+
 /** CPU and memory over the last minutes, two lines on one small chart. */
 function Trend({ history }) {
   const { t } = useI18n();
@@ -61,8 +67,8 @@ function Trend({ history }) {
     <svg width={w} height={h} role="img" className="block"
          aria-label={t('cluster.machines.trendLabel', { minutes })}>
       <title>{t('cluster.machines.trendLabel', { minutes })}</title>
-      <path d={path(2)} fill="none" stroke="currentColor" className="text-sky-500" strokeWidth="1.5" />
-      <path d={path(1)} fill="none" stroke="currentColor" className="text-indigo-600" strokeWidth="1.5" />
+      <path d={path(2)} fill="none" stroke="currentColor" className={MEM_LINE} strokeWidth="1.5" />
+      <path d={path(1)} fill="none" stroke="currentColor" className={CPU_LINE} strokeWidth="1.5" />
     </svg>
   );
 }
@@ -162,15 +168,15 @@ export default function MachinesCard({ machines }) {
   ];
 
   return (
-    <Card icon={HardDrive} title={t('cluster.machines.title')} hint={t('cluster.machines.hint')}>
+    <Card icon={HardDrive} title={t('cluster.machines.title')} hint={t('cluster.machines.hint')} aside={rows.length > 0 && (
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500">
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-emerald-500 opacity-60" /> {t('cluster.machines.legendMachine')}</span>
+        <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-indigo-500" /> {t('cluster.machines.legendContainers')}</span>
+        <span className="inline-flex items-center gap-1"><span className={`w-3 h-0.5 bg-current ${CPU_LINE}`} /> CPU</span>
+        <span className="inline-flex items-center gap-1"><span className={`w-3 h-0.5 bg-current ${MEM_LINE}`} /> {t('cluster.machines.memory')}</span>
+      </div>
+    )}>
       <Table empty={t('cluster.machines.none')} rows={rows.map((r) => ({ ...r, key: r.id }))} columns={columns} />
-      {rows.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-4 text-[11px] text-gray-500">
-          <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-emerald-500 opacity-60" /> {t('cluster.machines.legendMachine')}</span>
-          <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-indigo-500" /> {t('cluster.machines.legendContainers')}</span>
-          <span className="inline-flex items-center gap-1"><span className="w-3 h-0.5 bg-indigo-600" /> CPU <span className="w-3 h-0.5 bg-sky-500 ml-2" /> {t('cluster.machines.memory')}</span>
-        </div>
-      )}
     </Card>
   );
 }
