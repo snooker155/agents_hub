@@ -428,6 +428,12 @@ export default function ServiceMap({ map, onViewLogs }) {
             <span className="flex items-center gap-2 text-sm font-bold text-gray-800">
               <StatusDot status={selected.data.status} /> {selected.data.title}
               <span className="text-xs font-normal text-gray-500">{t(`cluster.stack.status.${selected.data.status}`)}</span>
+              {onViewLogs && selected.data.logOf && (
+                <button onClick={() => onViewLogs(selected.data.logOf)}
+                        className="ml-1 inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2 py-0.5 text-xs font-medium text-gray-700 hover:bg-gray-100">
+                  <ScrollText className="h-3.5 w-3.5" /> {t('cluster.viewLogs')}
+                </button>
+              )}
             </span>
             <button onClick={() => setPicked(null)} title={t('cluster.close')} className="p-1 text-gray-500 hover:text-gray-800">
               <X className="h-4 w-4" />
@@ -441,12 +447,6 @@ export default function ServiceMap({ map, onViewLogs }) {
               </div>
             ))}
           </dl>
-          {onViewLogs && selected.data.logOf && (
-            <button onClick={() => onViewLogs(selected.data.logOf)}
-                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100">
-              <ScrollText className="h-3.5 w-3.5" /> {t('cluster.viewLogs')}
-            </button>
-          )}
         </div>
       )}
     </div>
