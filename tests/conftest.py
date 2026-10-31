@@ -35,6 +35,16 @@ os.environ["AGENTS_HUB_ROOT"] = str(_TEST_ROOT)
 # make. Tests of that module turn it back on with a fake spawn.
 os.environ["AGENTS_HUB_MODELS_MANAGED"] = "false"
 
+# The suite reads its own empty .env, never the developer's: a hub switched to
+# multi mode with an API token made every route test that reads a workspace
+# record answer 403, and a blob URL there sent blobs to S3. Settings written
+# by a test land in this file too, not in the real one.
+_TEST_ENV_FILE = _TEST_ROOT / ".env"
+_TEST_ENV_FILE.touch()
+os.environ["AGENTS_HUB_ENV_FILE"] = str(_TEST_ENV_FILE)
+os.environ["AUTH_MODE"] = "single"
+os.environ["AGENTS_HUB_API_TOKEN"] = ""
+
 TEST_DATABASE_URL = os.environ.get("AGENTS_HUB_TEST_DATABASE_URL", "").strip()
 os.environ["AGENTS_HUB_DATABASE_URL"] = TEST_DATABASE_URL
 

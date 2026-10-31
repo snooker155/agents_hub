@@ -187,6 +187,8 @@ def test_invalidate_with_no_argument_clears_every_cached_path(tmp_path):
 # ── env_path() ───────────────────────────────────────────────────────────────
 
 def test_env_path_is_project_root_slash_dotenv(tmp_path, monkeypatch):
+    # The suite points AGENTS_HUB_ENV_FILE at its own file (tests/conftest.py).
+    monkeypatch.delenv(dotenv.ENV_FILE_ENV, raising=False)
     monkeypatch.setattr(dotenv, "PROJECT_ROOT", tmp_path)
     assert dotenv.env_path() == tmp_path / ".env"
 
@@ -197,6 +199,7 @@ def test_config_read_dot_env_delegates_to_the_shared_parser(tmp_path, monkeypatc
     from common import config
 
     env = _write(tmp_path / ".env", 'AGENT_DOCKER_IMAGE="from-file:latest"\n')
+    monkeypatch.delenv(dotenv.ENV_FILE_ENV, raising=False)
     monkeypatch.setattr(dotenv, "PROJECT_ROOT", tmp_path)
     dotenv.invalidate()
     assert config.read_dot_env() == {"AGENT_DOCKER_IMAGE": "from-file:latest"}
