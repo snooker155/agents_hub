@@ -210,6 +210,89 @@ def _containers() -> List[Dict[str, Any]]:
         return []
 
 
+def _newer(a: Optional[Dict[str, Any]], b: Dict[str, Any]) -> bool:
+    """Whether sample ``b`` is fresher than ``a``."""
+    return a is None or str(b.get("sampled_at") or "") > str(a.get("sampled_at") or "")
+
+
+def _docker_reports(members: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """The freshest full sample of each Docker daemon (common/host_metrics.py),
+    by daemon id, with the member that took it."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for m in members:
+        if m.get("status") != "live":
+            continue
+        docker = (m.get("metrics") or {}).get("docker") or {}
+        did = docker.get("daemon_id")
+        if not did or docker.get("shared"):
+            continue
+        if _newer(out.get(did), docker):
+            out[did] = {**docker, "reported_by": m.get("member_id"),
+                        "reporter_machine": ((m.get("metrics") or {}).get("machine") or {}).get("machine_id")}
+    return out
+
+
+def _container_stats(members: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """CPU, memory, network, disk and processes of every sampled container, by name."""
+    stats: Dict[str, Dict[str, Any]] = {}
+    for rep in _docker_reports(members).values():
+        for row in rep.get("containers_sampled") or []:
+            if row.get("name"):
+                stats[str(row["name"])] = {**row, "sampled_at": rep.get("sampled_at"),
+                                           "daemon": rep.get("name") or ""}
+    return stats
+
+
+def _same_machine(machine: Dict[str, Any], docker: Dict[str, Any]) -> bool:
+    """Whether a daemon runs on the machine a member sampled: one kernel and
+    one CPU count (a backend in compose, or a worker beside its daemon). A
+    process on a Mac and Docker Desktop's VM are two machines."""
+    return bool(machine.get("kernel")) and machine.get("kernel") == docker.get("kernel") \
+        and machine.get("cpus") == docker.get("cpus")
+
+
+def _docker_summary(rep: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: v for k, v in rep.items() if k not in ("containers_sampled", "reporter_machine", "shared")}
+
+
+def _machines(members: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The machines under the cluster: each machine a live member runs on,
+    with its CPU, memory, disk and load (the freshest sample of any member
+    there), and each Docker daemon with the agent containers on it. A daemon
+    on a member's own machine is shown on that machine's row; one elsewhere
+    (Docker Desktop's VM, a remote DOCKER_HOST) gets a row of its own."""
+    rows: Dict[str, Dict[str, Any]] = {}
+    for m in members:
+        if m.get("status") != "live":
+            continue
+        machine = (m.get("metrics") or {}).get("machine") or {}
+        mid = machine.get("machine_id")
+        if not mid:
+            continue
+        row = rows.setdefault(mid, {"id": mid, "hosts": [], "members": [], "metrics": None, "docker": []})
+        if machine.get("host") and machine["host"] not in row["hosts"]:
+            row["hosts"].append(machine["host"])
+        row["members"].append({"member_id": m.get("member_id"), "role": m.get("role")})
+        if _newer(row["metrics"], machine):
+            row["metrics"] = machine
+    for did, rep in _docker_reports(members).items():
+        home = rows.get(str(rep.get("reporter_machine") or ""))
+        if home is not None and home["metrics"] and _same_machine(home["metrics"], rep):
+            home["docker"].append(_docker_summary(rep))
+            continue
+        rows[f"docker:{did}"] = {"id": f"docker:{did}", "hosts": [rep.get("name") or did[:12]],
+                                 "members": [], "metrics": None, "docker": [_docker_summary(rep)]}
+    out = list(rows.values())
+    for r in out:
+        # Members in containers know their machine only by container ids; the
+        # daemon running them names it (docker-desktop, the server's name).
+        by_daemon = r["docker"] and (not r["members"] or (r["metrics"] or {}).get("in_container"))
+        r["name"] = (r["docker"][0].get("name") if by_daemon else None) \
+            or ", ".join(r["hosts"]) or r["id"][:12]
+    out.sort(key=lambda r: (not r["members"], r["name"]))
+    return out
+
+
 def _owned_containers(containers: List[Dict[str, Any]], instances: List[Dict[str, Any]],
                       runs: List[Dict[str, Any]], entity_runs: List[Dict[str, Any]],
                       members: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -255,6 +338,10 @@ def _owned_containers(containers: List[Dict[str, Any]], instances: List[Dict[str
         launched_on = own.get("launched_on") or ""
         out.append({"name": name, "host": launched_on, "remote": True, **own,
                     "worker": workers_by_host.get(launched_on, "")})
+    stats = _container_stats(members)
+    for c in out:
+        if str(c.get("name") or "") in stats:
+            c["stats"] = stats[str(c["name"])]
     return out
 
 
@@ -360,6 +447,11 @@ def build_map() -> Dict[str, Any]:
                    | set(_by_host(runs)) | set(_by_host(instances, "carrier_host"))
                    | set(_by_host(containers)))
     hosts = [h for h in hosts if h]
+    machines = _machines(member_rows)
+    # The samples went into ``machines`` and the containers' ``stats``; the
+    # member rows do not carry them a second time.
+    for m in member_rows:
+        m.pop("metrics", None)
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -384,6 +476,7 @@ def build_map() -> Dict[str, Any]:
         "stack": stack_rows,
         "hub_nodes": _hub_nodes(),
         "hub_link": _hub_link(),
+        "machines": machines,
         "hosts": [_host_row(h, member_rows, runs, flows, instances, containers) for h in hosts],
     }
 

@@ -39,11 +39,15 @@ const MAP = {
 const getCluster = vi.fn(() => ok(MAP));
 const getMemberLogs = vi.fn(() => ok('2026-09-23 10:00:00 INFO worker ready'));
 const forgetMember = vi.fn(() => ok({ forgotten: 'worker-b' }));
+const getContainerLogs = vi.fn(() => ok('Traceback: boom'));
+const getInstanceLogs = vi.fn(() => ok({ logs: '[carrier_spawn] reason=start mode=docker' }));
 
 vi.mock('../../api', () => ({
   getCluster: (...a) => getCluster(...a),
   getMemberLogs: (...a) => getMemberLogs(...a),
   forgetMember: (...a) => forgetMember(...a),
+  getContainerLogs: (...a) => getContainerLogs(...a),
+  getInstanceLogs: (...a) => getInstanceLogs(...a),
 }));
 
 vi.mock('../../components/stream', () => ({
@@ -171,6 +175,41 @@ describe('Cluster map', () => {
     expect(screen.getByText(/old-host/)).toBeInTheDocument();
     expect(screen.getByText('host-b:7')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'writer' })).toHaveAttribute('href', '/instances/inst_1');
+    getCluster.mockImplementation(() => ok(MAP));
+  });
+
+  it('shows the load of each machine, the usage of each container and its log', async () => {
+    getCluster.mockImplementation(() => ok({
+      ...MAP,
+      machines: [{
+        id: 'boot-1', name: 'api-ctr', hosts: ['api-ctr'], members: [{ member_id: 'host-a:100', role: 'api' }],
+        metrics: { cpus: 8, cpu_percent: 42, mem_total: 8 * 1024 ** 3, mem_used: 2 * 1024 ** 3, mem_percent: 25,
+                   load: [1.5, 1.2, 1.0], sampled_at: new Date().toISOString(),
+                   history: [[1, 40, 25], [16, 42, 25]] },
+        docker: [{ daemon_id: 'D1', name: 'docker-desktop', server_version: '28.1.1', cpus: 8,
+                   agent_containers: 1, containers_running: 5, containers_cpu_percent: 80, containers_mem_used: 1024 ** 3 }],
+      }],
+      containers: [{ name: 'agents-hub-node-inst_1', agent_id: 'writer', state: 'running', host: 'daemon-1',
+                     owner_kind: 'instance', owner_id: 'inst_1',
+                     stats: { cpu_percent: 12.5, mem_used: 100 * 1024 ** 2, mem_limit: 2 * 1024 ** 3, pids: 3 } }],
+    }));
+    show();
+    await waitFor(() => expect(screen.getByText('Machines')).toBeInTheDocument());
+    expect(screen.getByText('42% of 8 CPU')).toBeInTheDocument();
+    expect(screen.getByText('2.0 GB of 8.0 GB')).toBeInTheDocument();
+    // docker counts a busy core as 100%: 80% over 8 CPUs is a tenth of the machine.
+    expect(screen.getByText('agent containers: 10.0%')).toBeInTheDocument();
+    expect(screen.getByText('1 / 5')).toBeInTheDocument();
+    expect(screen.getByText('12.5%')).toBeInTheDocument();
+    expect(screen.getByText('100 MB / 2.0 GB')).toBeInTheDocument();
+
+    const logButtons = screen.getAllByLabelText('View log');
+    fireEvent.click(logButtons[logButtons.length - 1]);
+    await waitFor(() => expect(screen.getByText('Traceback: boom')).toBeInTheDocument());
+    expect(getContainerLogs).toHaveBeenCalledWith('agents-hub-node-inst_1', 500);
+    fireEvent.click(screen.getByRole('button', { name: 'Instance log' }));
+    await waitFor(() => expect(screen.getByText(/\[carrier_spawn\]/)).toBeInTheDocument());
+    expect(getInstanceLogs).toHaveBeenCalledWith('inst_1');
     getCluster.mockImplementation(() => ok(MAP));
   });
 });

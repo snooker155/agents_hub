@@ -11,6 +11,9 @@ import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 import ServiceMap from '../components/cluster/ServiceMap';
 import WorkersCard from '../components/cluster/WorkersCard';
+import MachinesCard from '../components/cluster/MachinesCard';
+import ContainerLogModal from '../components/cluster/ContainerLogModal';
+import { humanBytes } from '../components/models/jobs';
 import { Card, Table } from '../components/cluster/ClusterCard';
 import { ListLoadMore, ListPagingControls } from '../components/ListPaging';
 import { useListPaging } from '../components/listPagingState';
@@ -151,6 +154,7 @@ export default function Cluster() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [logMember, setLogMember] = useState(null);
+  const [logContainer, setLogContainer] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -250,6 +254,7 @@ export default function Cluster() {
       ) : (
         <div className="grid grid-cols-1 gap-4">
           <ServiceMap map={map} />
+          <MachinesCard machines={map?.machines} />
           <WorkersCard onChanged={load} />
           <Card icon={Server} title={t('cluster.members')} hint={t('cluster.membersHint')}>
             {members.length > 0 && (
@@ -471,7 +476,8 @@ export default function Cluster() {
             </Card>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Containers carry usage columns now: each card takes the full width. */}
+          <div className="grid grid-cols-1 gap-4">
             <Card icon={Server} title={t('cluster.activeInstances')}>
               <Table
                 empty="—"
@@ -507,12 +513,37 @@ export default function Cluster() {
                     return c.agent_id || '—';
                   } },
                   { key: 'state', label: t('cluster.status'), render: (c) => c.state || c.status },
+                  { key: 'cpu', label: 'CPU', render: (c) => (
+                    <span className="text-xs tabular-nums">{c.stats?.cpu_percent != null ? `${c.stats.cpu_percent.toFixed(1)}%` : '—'}</span>
+                  ) },
+                  { key: 'mem', label: t('cluster.machines.memory'), render: (c) => (
+                    <span className="text-xs tabular-nums" title={c.stats?.mem_percent != null ? `${c.stats.mem_percent}%` : undefined}>
+                      {c.stats?.mem_used != null
+                        ? `${humanBytes(c.stats.mem_used)}${c.stats.mem_limit ? ` / ${humanBytes(c.stats.mem_limit)}` : ''}`
+                        : '—'}
+                    </span>
+                  ) },
+                  { key: 'net', label: t('cluster.machines.net'), render: (c) => (
+                    <span className="text-xs tabular-nums text-gray-600">
+                      {c.stats?.net_rx != null ? `↓${humanBytes(c.stats.net_rx)} ↑${humanBytes(c.stats.net_tx || 0)}` : '—'}
+                    </span>
+                  ) },
+                  { key: 'pids', label: t('cluster.machines.pids'), render: (c) => (
+                    <span className="text-xs tabular-nums">{c.stats?.pids ?? '—'}</span>
+                  ) },
                   { key: 'worker', label: t('cluster.queueWorker'), render: (c) => (
                     <span className="font-mono text-xs">{c.worker || c.launched_on || '—'}</span>
                   ) },
                   { key: 'host', label: t('cluster.dockerHost'), render: (c) => (
                     <span className="font-mono text-xs">{c.host || t('cluster.unknownHost')}
                       {c.remote && <span className="ml-1 text-amber-700">({t('cluster.remote')})</span>}</span>
+                  ) },
+                  { key: 'logs', label: '', render: (c) => (
+                    <button onClick={() => setLogContainer(c)} title={t('cluster.viewLogs')}
+                            aria-label={t('cluster.viewLogs')}
+                            className="p-1 rounded hover:bg-gray-100 text-gray-600">
+                      <ScrollText className="w-4 h-4" />
+                    </button>
                   ) },
                 ]}
               />
@@ -522,6 +553,7 @@ export default function Cluster() {
       )}
 
       {logMember && <MemberLogModal member={logMember} onClose={() => setLogMember(null)} />}
+      {logContainer && <ContainerLogModal container={logContainer} onClose={() => setLogContainer(null)} />}
     </PageContainer>
   );
 }

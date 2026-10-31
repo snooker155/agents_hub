@@ -98,7 +98,8 @@ def log_path(member_id: Optional[str] = None) -> Path:
 # ── the row ──────────────────────────────────────────────────────────────────
 
 def register(role: str, *, capabilities: Optional[Dict[str, Any]] = None,
-             load: Optional[Dict[str, Any]] = None, member_id: Optional[str] = None) -> Dict[str, Any]:
+             load: Optional[Dict[str, Any]] = None, member_id: Optional[str] = None,
+             metrics: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Create or take over this process's row. Called once at startup; a row
     left by an earlier process with the same id (a pinned
     AGENTS_HUB_INSTANCE_ID restarted) is simply overwritten."""
@@ -109,6 +110,7 @@ def register(role: str, *, capabilities: Optional[Dict[str, Any]] = None,
         "pid": os.getpid(), "version": app_version(), "started_at": now,
         "heartbeat_at": now, "stopped_at": None, "drain_requested_at": None,
         "capabilities": db.dumps(capabilities or {}), "load": db.dumps(load or {}),
+        "metrics": db.dumps(metrics or {}),
         "log_file": str(_log_state.get("path") or log_path(member_id)),
     }
     with db.transaction() as conn:
@@ -124,20 +126,53 @@ def register(role: str, *, capabilities: Optional[Dict[str, Any]] = None,
     return get(member_id) or row
 
 
-def beat(load: Optional[Dict[str, Any]] = None, *, member_id: Optional[str] = None) -> bool:
-    """Refresh the heartbeat and the load snapshot. False when the row is
-    missing (never registered, or pruned): the caller registers again."""
+def beat(load: Optional[Dict[str, Any]] = None, *, member_id: Optional[str] = None,
+         metrics: Optional[Dict[str, Any]] = None) -> bool:
+    """Refresh the heartbeat, the load snapshot and the machine metrics
+    (common/host_metrics.py). False when the row is missing (never
+    registered, or pruned): the caller registers again."""
     member_id = member_id or owner_id()
+    sets = ["heartbeat_at = ?", "stopped_at = NULL"]
+    params: List[Any] = [_now().isoformat()]
+    if load is not None:
+        sets.append("load = ?")
+        params.append(db.dumps(load))
+    if metrics:
+        sets.append("metrics = ?")
+        params.append(db.dumps(metrics))
     with db.transaction() as conn:
-        if load is None:
-            cur = conn.execute(
-                "UPDATE members SET heartbeat_at = ?, stopped_at = NULL WHERE member_id = ?",
-                (_now().isoformat(), member_id))
-        else:
-            cur = conn.execute(
-                "UPDATE members SET heartbeat_at = ?, stopped_at = NULL, load = ? WHERE member_id = ?",
-                (_now().isoformat(), db.dumps(load), member_id))
+        cur = conn.execute(f"UPDATE members SET {', '.join(sets)} WHERE member_id = ?",
+                           (*params, member_id))
         return int(getattr(cur, "rowcount", 0) or 0) > 0
+
+
+def docker_reported_elsewhere(daemon_id: str, *, member_id: Optional[str] = None,
+                              fresh_seconds: Optional[float] = None) -> bool:
+    """Whether another live member sent a full sample of this Docker daemon
+    within ``fresh_seconds``: then this one leaves ``docker stats`` to it
+    (common/host_metrics.py). The earliest-started such member keeps it, so
+    two members of one daemon do not take turns."""
+    member_id = member_id or owner_id()
+    fresh = fresh_seconds if fresh_seconds is not None else BEAT_SECONDS * 2.5
+    now = _now()
+    me = None
+    for m in list_members(include_stopped=False):
+        if m.get("member_id") == member_id:
+            me = m
+            continue
+        if m.get("status") != "live":
+            continue
+        docker = (m.get("metrics") or {}).get("docker") or {}
+        if docker.get("daemon_id") != daemon_id or docker.get("shared"):
+            continue
+        at = _parse(docker.get("sampled_at"))
+        if at is None or (now - at).total_seconds() > fresh:
+            continue
+        # Both sample it: the one started first keeps it.
+        mine = me or get(member_id) or {}
+        if str(m.get("started_at") or "") <= str(mine.get("started_at") or "~"):
+            return True
+    return False
 
 
 def mark_stopped(member_id: Optional[str] = None) -> None:
@@ -180,6 +215,7 @@ def _decorate(rec: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, 
     now = now or _now()
     rec["capabilities"] = db.loads(rec.get("capabilities"), {}) or {}
     rec["load"] = db.loads(rec.get("load"), {}) or {}
+    rec["metrics"] = db.loads(rec.get("metrics"), {}) or {}
     beat_at = _parse(rec.get("heartbeat_at"))
     started = _parse(rec.get("started_at"))
     age = (now - beat_at).total_seconds() if beat_at else None
@@ -342,6 +378,7 @@ class MemberBeat(threading.Thread):
         self._halt = threading.Event()
         self.beats = 0
         self.registered = False
+        self.sampler = None
 
     def _load(self) -> Dict[str, Any]:
         if self.load_fn is None:
@@ -352,10 +389,31 @@ class MemberBeat(threading.Thread):
             log.debug("load_fn failed", exc_info=True)
             return {}
 
+    def _metrics(self) -> Dict[str, Any]:
+        return self.sampler.latest() if self.sampler is not None else {}
+
+    def _start_sampler(self) -> None:
+        """The machine and Docker numbers (common/host_metrics.py), sampled
+        on a thread of their own: a daemon that hangs must not stop the beat."""
+        if os.environ.get("AGENTS_HUB_HOST_METRICS", "1").strip().lower() in ("0", "false", "no", "off"):
+            return
+        try:
+            from common import host_metrics
+            from managers.container_manager import LABEL_MANAGED
+            self.sampler = host_metrics.Sampler(
+                interval=self.interval, label=LABEL_MANAGED, disk_path=AGENTS_HUB_ROOT,
+                skip_docker=lambda daemon_id: docker_reported_elsewhere(daemon_id))
+            self.sampler.start()
+        except Exception:  # noqa: BLE001 - the member works without its metrics
+            log.warning("host metrics not started", exc_info=True)
+            self.sampler = None
+
     def start(self) -> None:  # type: ignore[override]
         attach_log_file()
+        self._start_sampler()
         try:
-            register(self.role, capabilities=self.capabilities, load=self._load())
+            register(self.role, capabilities=self.capabilities, load=self._load(),
+                     metrics=self._metrics())
             self.registered = True
         except Exception:  # noqa: BLE001 - startup must not raise, the next beat retries
             log.warning("member registration failed; will retry on the next beat", exc_info=True)
@@ -364,8 +422,9 @@ class MemberBeat(threading.Thread):
     def run(self) -> None:
         while not self._halt.wait(self.interval):
             try:
-                if not beat(self._load()):
-                    register(self.role, capabilities=self.capabilities, load=self._load())
+                if not beat(self._load(), metrics=self._metrics()):
+                    register(self.role, capabilities=self.capabilities, load=self._load(),
+                             metrics=self._metrics())
                 self.beats += 1
                 if self.on_drain is not None:
                     wanted = drain_requested()
@@ -380,13 +439,15 @@ class MemberBeat(threading.Thread):
 
     def stop(self) -> None:
         self._halt.set()
+        if self.sampler is not None:
+            self.sampler.stop()
         mark_stopped()
         mirror_log(force=True)
 
 
 __all__ = [
     "BEAT_SECONDS", "STALE_AFTER_SECONDS", "MemberBeat", "app_version", "attach_log_file",
-    "drain_requested", "request_drain",
+    "docker_reported_elsewhere", "drain_requested", "request_drain",
     "beat", "detach_log_file", "forget", "get", "list_members", "log_path", "mark_stopped",
     "mirror_log", "prune", "read_log", "register",
 ]

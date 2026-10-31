@@ -208,6 +208,25 @@ in the dashboard, `ah deployment` in a terminal) is that page:
   when one is configured, and served as
   `GET /api/cluster/members/<id>/logs` with a live tail over the stream on
   `logs:member:<id>`, the same way an instance's carrier log is.
+- **Machines.** Every beat, each member also samples the machine it runs on
+  and the Docker daemon it talks to (`common/host_metrics.py`, stored in
+  `members.metrics`): CPU in use, memory, the disk under the state root, the
+  load average and ten minutes of CPU and memory history, plus
+  `docker info` and `docker stats` of the agents-hub containers. Members on
+  one kernel (a backend and a worker in compose) make one machine; a daemon
+  on no member's machine (Docker Desktop's VM seen from a process on the
+  Mac, a remote `DOCKER_HOST`) gets its own row with its CPUs, its memory
+  and what the agent containers use of them. Several members of one daemon
+  do not each run `docker stats`: the one started first samples it, the
+  others send its id. The sampler runs on its own thread, so a daemon that
+  hangs never holds up the heartbeat. `AGENTS_HUB_HOST_METRICS=0` turns it
+  off.
+- **Container usage and logs.** The containers table shows each sampled
+  container's CPU, memory against its limit, network and processes. Its log
+  button opens the container's output (`docker logs`, live on
+  `logs:container:<name>`) and, for an instance's container, the instance's
+  carrier log. A container on another worker's daemon has only the
+  instance log: this backend cannot read that daemon.
 
 Stale rows older than a day are pruned by the maintenance sweep; a stale
 or stopped row can also be dropped from the page. `AGENTS_HUB_INSTANCE_ID`
