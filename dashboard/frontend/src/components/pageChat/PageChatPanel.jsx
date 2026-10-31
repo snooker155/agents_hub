@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   Bot, ChevronsLeft, ChevronsRight, MessageCircle, X,
@@ -51,6 +51,8 @@ export default function PageChatPanel() {
   // from state so the callbacks are this render's, not the ones that happened
   // to be current when the signature last changed.
   const entityChat = ctx?.entitySig ? ctx.entityRef.current : null;
+  // A chat the page draws itself into the panel (`usePageChatHost`).
+  const hostChat = ctx?.hostSig ? ctx.hostRef.current : null;
   const subject = ctx?.subjectSig ? ctx.subjectRef.current : null;
 
   const isChatPage = /^\/(chat(\/.*)?)?$/.test(location.pathname);
@@ -59,10 +61,13 @@ export default function PageChatPanel() {
   // across renders because EntityChat reloads its transcript whenever they
   // change; they are reached only when the page registered no chat of its own.
   const pageScope = route.scope;
-  // Slot in this header for the chat's Clear, so it sits with the panel's own
-  // controls rather than on a row of its own above the feed. State, not a ref:
-  // the chat has to re-render once the node exists to portal into.
-  const [clearSlot, setClearSlot] = useState(null);
+  // Slot in this header for the chat's Clear (and a hosted chat's other
+  // controls), so they sit with the panel's own controls rather than on a row
+  // of their own above the feed. Held in the provider, not here: a hosted
+  // chat is rendered by its page and portals into it.
+  const clearSlot = ctx?.toolsSlot || null;
+  const setClearSlot = ctx?.setToolsSlot || null;
+  const setHostSlot = ctx?.setHostSlot || null;
   const loadPage = useCallback(() => getPageChat(pageScope), [pageScope]);
   const clearPage = useCallback(() => clearPageChat(pageScope), [pageScope]);
   const stopPage = useCallback(() => stopPageChat(pageScope), [pageScope]);
@@ -83,7 +88,7 @@ export default function PageChatPanel() {
 
   if (isChatPage) return null;
 
-  const title = entityChat?.title || pageTitle || t('pageChat.title');
+  const title = hostChat?.title || entityChat?.title || pageTitle || t('pageChat.title');
   const suggestions = entityChat?.suggestions || [
     t('pageChat.suggestWhatIsHere'),
     t('pageChat.suggestExplain'),
@@ -124,10 +129,10 @@ export default function PageChatPanel() {
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-gray-900 truncate">{title}</div>
           <div className="text-[11px] text-gray-500 truncate">
-            {entityChat ? t('pageChat.pageOwnChat') : t('pageChat.aboutThisPage')}
+            {hostChat || entityChat ? t('pageChat.pageOwnChat') : t('pageChat.aboutThisPage')}
           </div>
         </div>
-        <span ref={setClearSlot} className="flex items-center shrink-0" />
+        <span ref={setClearSlot} className="flex items-center gap-2 shrink-0" />
         <button
           type="button"
           onClick={() => setWide((w) => !w)}
@@ -146,9 +151,13 @@ export default function PageChatPanel() {
         </button>
       </header>
 
-      {/* Keyed on the conversation: moving to another page is another thread,
-          and a feed left over from the previous one must not flash in the new
-          one before its transcript loads. */}
+      {/* A hosted chat is the page's own component, portalled in here. */}
+      {hostChat ? (
+        <div ref={setHostSlot} className="flex-1 min-h-0 flex flex-col" />
+      ) : (
+      /* Keyed on the conversation: moving to another page is another thread,
+         and a feed left over from the previous one must not flash in the new
+         one before its transcript loads. */
       <EntityChat
         key={`${entityChat ? 'entity' : 'page'}:${scope}`}
         path={entityChat ? entityChat.path : pageChatUrl()}
@@ -168,6 +177,7 @@ export default function PageChatPanel() {
         className="flex-1 min-h-0 p-4"
         composerClassName="mt-auto pt-3 -mx-4 px-4"
       />
+      )}
     </aside>
   );
 }

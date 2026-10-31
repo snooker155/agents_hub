@@ -9,7 +9,6 @@ import {
   estimateTeam, getTeamChat, clearTeamChat, stopTeamChat, teamChatUrl,
 } from '../api';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
-import InPanelNote from '../components/pageChat/InPanelNote';
 import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { useWorkspace } from '../components/workspace';
 import { useChannel, useLiveRefetch, useStream } from '../components/stream';
@@ -29,7 +28,6 @@ import TeamRunHistory from '../components/teams/TeamRunHistory';
 import TeamRunChat from '../components/teams/TeamRunChat';
 import TeamRunSide from '../components/teams/TeamRunSide';
 import TeamSettingsForm from '../components/teams/TeamSettingsForm';
-import TeamCreatorChat from '../components/teams/TeamCreatorChat';
 import { boardChatMessages, isTurnLive } from '../components/teams/teamBoard';
 import { useLiveTrails } from '../components/teams/liveTrails';
 import { useLiveTurns } from '../components/runs/liveTurns';
@@ -76,7 +74,6 @@ export default function TeamDetails() {
   const [stopping, setStopping] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
   // How many model calls a run may take at most (routes/teams estimate).
   const [estimate, setEstimate] = useState(null);
   // "To eval case": a finished run seeds an eval dataset (components/evals/).
@@ -389,12 +386,11 @@ export default function TeamDetails() {
     }
   };
 
-  // The Team Creator's conversation, drawn either in the column here or in the
-  // floating page-chat panel: one descriptor, so it is the same conversation
-  // either way, and the column says so while the panel holds it.
+  // The Team Creator's conversation is the page chat: the header button and the
+  // corner launcher open the same floating panel with this one conversation.
   const teamChat = useTeamChatDescriptor(team?.team_id, applyTeamFromChat);
   usePageChat(teamChat);
-  const { inlineSuppressed: panelHoldsChat } = usePageChatPanel();
+  const { open: chatOpen, toggle: toggleChat } = usePageChatPanel();
 
   if (!team || !draft) {
     return <div className="h-full bg-white"><PageLoader label={t('teamDetails.loadingTheTeam')} /></div>;
@@ -409,18 +405,6 @@ export default function TeamDetails() {
     t('teamDetails.upToRounds', { count: team.max_rounds }),
   ].filter(Boolean).join(' · ');
 
-  const creator = chatOpen && (panelHoldsChat ? (
-    <div className="absolute inset-y-0 right-0 z-30 flex w-full flex-col overflow-hidden border-l border-slate-200 bg-white p-4 shadow-2xl sm:w-[26rem] 2xl:static 2xl:z-auto 2xl:w-[34.5rem] 2xl:shrink-0 2xl:shadow-none">
-      <InPanelNote />
-    </div>
-  ) : (
-    <TeamCreatorChat
-      teamId={team.team_id}
-      onTeamChanged={applyTeamFromChat}
-      onClose={() => setChatOpen(false)}
-      className="absolute inset-y-0 right-0 z-30 w-full border-l border-slate-200 shadow-2xl sm:w-[26rem] 2xl:static 2xl:z-auto 2xl:w-[34.5rem] 2xl:shrink-0 2xl:shadow-none"
-    />
-  ));
 
   return (
     <FileOpenContext.Provider value={showFileInArtifacts}>
@@ -483,7 +467,7 @@ export default function TeamDetails() {
             <span className="hidden sm:inline">{settingsOpen ? t('teamDetails.backToRuns') : t('teamDetails.tabSettings')}</span>
           </button>
           <button
-            onClick={() => setChatOpen((v) => !v)} aria-pressed={chatOpen}
+            onClick={toggleChat} aria-pressed={chatOpen}
             title={chatOpen ? t('teamDetails.hideBuildChat') : t('teamDetails.showBuildChat')}
             className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold shadow-sm transition ${
               chatOpen ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-gray-50 text-emerald-600 hover:bg-emerald-50'}`}
@@ -564,7 +548,6 @@ export default function TeamDetails() {
             />
           </>
         )}
-        {creator}
       </section>
       {caseDialogOpen && run?.team_run_id && (
         <SaveAsEvalCaseDialog
@@ -579,7 +562,7 @@ export default function TeamDetails() {
 }
 
 // The team's build chat as the page-chat panel's descriptor (components/pageChat):
-// the same callbacks TeamCreatorChat hands EntityChat, so both draw one conversation.
+// the panel draws the Team Creator's conversation from it.
 function useTeamChatDescriptor(teamId, onTeamChanged) {
   const { t } = useI18n();
   const loadChat = useCallback(() => getTeamChat(teamId), [teamId]);

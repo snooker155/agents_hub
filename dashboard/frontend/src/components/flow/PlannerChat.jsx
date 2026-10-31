@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { autoGrowTextarea } from '../../lib/autoGrow';
-import { Square, MessageSquare, MessageSquarePlus, PanelRightClose, Send } from 'lucide-react';
+import { Square, MessageSquarePlus, Send } from 'lucide-react';
 import AgentTranscript from '../chat/AgentTranscript';
 import ViewModeToggle from '../chat/ViewModeToggle';
 import { useChatViewMode } from '../chat/viewMode';
@@ -14,7 +15,6 @@ import ComposerBox from '../chat/ComposerBox';
 import { COMPOSER_SEND_CLS, COMPOSER_SIDE_TEXTAREA_CLS, COMPOSER_STOP_CLS } from '../chat/composerStyles';
 import { useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
-import { useInlineChatOpen } from '../pageChat/pageChat';
 import {
   getProjectTasksChat, clearProjectTasksChat,
   streamProjectTasksGenerate, stopProjectGraphChat,
@@ -36,7 +36,9 @@ const plannerCalls = (projectId, workspace) => (projectId ? {
   stream: (opts) => streamWorkspacePlanner({ workspace, ...opts }),
 });
 
-// Sidebar chat panel for the Tasks tab. The page's "Generate from
+// The task manager's chat, drawn by its page inside the floating page-chat
+// panel (usePageChatHost): `tools` is the panel header's slot for its Clear,
+// history and view-mode controls. The page's "Generate from
 // architecture" button opens it with `generateRequested` set, and the panel
 // runs the default plan once its transcript is loaded (then calls
 // `onGenerateStarted` so the page clears the request); the chat input sends
@@ -45,11 +47,8 @@ const plannerCalls = (projectId, workspace) => (projectId ? {
 // way the other build chats do (common/entity_chat_store.py, kind projtasks).
 // Calls onGenerated when tasks change. With `workspace` instead of
 // `projectId` it plans over the whole workspace (the Tasks page).
-function PlannerChat({ projectId, workspace, onGenerated, onClose, generateRequested = false, onGenerateStarted }) {
+function PlannerChat({ projectId, workspace, tools, onGenerated, generateRequested = false, onGenerateStarted }) {
   const { t } = useI18n();
-  // Drawn only while the Tasks tab has the planner open, so being mounted is
-  // being on screen: the floating launcher stands down meanwhile.
-  useInlineChatOpen();
   const calls = React.useMemo(() => plannerCalls(projectId, workspace), [projectId, workspace]);
   // The conversation, in the Chat page's message shape.
   const [messages, setMessages] = useState([]);
@@ -232,33 +231,24 @@ function PlannerChat({ projectId, workspace, onGenerated, onClose, generateReque
     });
   }, [sessionHistory]);
 
+  const controls = (
+    <>
+      {messages.length > 0 && !historyOpen && (
+        <button onClick={newChat} disabled={busy} title={t('entityChat.clearChat')}
+          className="inline-flex items-center gap-1 text-[11px] font-normal text-gray-400 hover:text-indigo-600 disabled:opacity-40">
+          <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
+        </button>
+      )}
+      {sessionHistory.hasHistory && (
+        <ChatSessionsToggle open={historyOpen} count={sessionHistory.count} disabled={busy} onToggle={toggleHistory} />
+      )}
+      {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
+    </>
+  );
+
   return (
-    <div className="w-[36rem] 2xl:w-[41.5rem] max-w-[50%] shrink-0 flex flex-col bg-white border border-gray-200 rounded-xl overflow-hidden">
-      {/* A fixed height: the controls come and go with the conversation and
-          the history list, and the row must not move when they do. */}
-      <div className="flex items-center justify-between h-11 shrink-0 px-3 border-b border-gray-100 gap-2">
-        <div className="flex items-center gap-2 text-sm font-medium text-gray-700 min-w-0">
-          <MessageSquare className={`w-4 h-4 shrink-0 ${busy ? 'text-emerald-500 animate-pulse' : 'text-gray-400'}`} />
-          <span className="truncate">{t('flowPlannerChat.taskPlanner')}</span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {messages.length > 0 && !historyOpen && (
-            <button onClick={newChat} disabled={busy} title={t('entityChat.clearChat')}
-              className="inline-flex items-center gap-1 text-[11px] font-normal text-gray-400 hover:text-indigo-600 disabled:opacity-40">
-              <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
-            </button>
-          )}
-          {sessionHistory.hasHistory && (
-            <ChatSessionsToggle open={historyOpen} count={sessionHistory.count} disabled={busy} onToggle={toggleHistory} />
-          )}
-          {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
-          {onClose && (
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600" title={t('flowPlannerChat.hidePlanner')}>
-              <PanelRightClose className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      </div>
+    <div className="flex-1 min-h-0 flex flex-col bg-white">
+      {tools && createPortal(controls, tools)}
 
       {error ? <div className="px-4 py-2 text-xs text-red-600 bg-red-50 border-b border-red-100">{error}</div> : null}
 

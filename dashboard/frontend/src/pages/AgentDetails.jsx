@@ -8,9 +8,8 @@ import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
 import { toolCategoryLabel, toolLabel } from '../lib/toolText';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
 import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getServices, getAgentDefinition, updateAgentDefinition, restoreShippedDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
-import EntityChat from '../components/EntityChat';
-import { usePageChat } from '../components/pageChat/pageChat';
-import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
+import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
+import { ChatToggle } from '../components/ChatColumn';
 import { TabRow } from '../components/PageTabs';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
@@ -66,9 +65,9 @@ const AgentDetails = () => {
   const { id } = useParams();
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
   const auth = useAuth();
-  // The definition chat sits beside the Config tab, folded away by default:
-  // most visits to this page are to read, not to rewrite.
-  const defChat = useChatColumn(false, { wide: true });
+  // The definition chat lives in the floating page chat panel: the header
+  // button and the corner launcher open the same panel, the same conversation.
+  const pageChatPanel = usePageChatPanel();
   // Only the Config tab has a chat beside it, so only that tab turns the page
   // into a bounded flex column — the other twelve keep scrolling normally.
   const [agent, setAgent] = useState(null);
@@ -298,8 +297,8 @@ const AgentDetails = () => {
     }
   }, [id, selectedWorkspace, workspaceFilter]);
 
-  // The definition chat: the column beside the Config tab and the floating page
-  // chat are two frames around this one conversation.
+  // The definition chat, registered as this page's own chat so the floating
+  // panel hosts Agent Creator rather than the general page assistant.
   const definitionChat = useDefinitionChatDescriptor(agent?.id, selectedWorkspace, fetchData);
 
   // Three tabs own enough state to be their own concern; each loads on the tab
@@ -807,8 +806,8 @@ const AgentDetails = () => {
     capabilityOverridden, capabilityViolation, capabilityOverride, capabilityOverrideSaving,
     capabilityGuardInfo, capabilitySoftened, handleToggleCapabilityOverride,
     delegatesViolation, toolsServerWarning, autoTools, clarifyGate, clarifyGateSaving, connectedPool,
-    customBackends, defChat, defDraft, defError, defSaving, defaultChatMessage,
-    defaultChatSaving, definitionChat, delegates, delegatesDirty, markDelegatesDirty,
+    customBackends, defDraft, defError, defSaving, defaultChatMessage,
+    defaultChatSaving, delegates, delegatesDirty, markDelegatesDirty,
     markMemoryDraftDirty, delegatesMessage, delegatesSaving, descDraft, descSaving,
     episodicEffective, episodicMode, episodicSaving, fetchData,
     handleDefinitionDraftChange, handleEraseMemory, handleResetDefinitionField,
@@ -841,15 +840,14 @@ const AgentDetails = () => {
         backLabel={t('agentDetails.agents')}
         actions={(
           <div className="flex items-center gap-2">
-            {/* The definition chat opens beside the Config tab: from another
-                tab its toggle opens Config with the chat. */}
+            {/* Opens the floating page chat, the one the corner button opens:
+                from another tab it also shows Config, where the edits land. */}
             {!readOnly && (
               <ChatToggle
-                open={activeTab === 'config' && defChat.open}
+                open={pageChatPanel.open}
                 onToggle={() => {
-                  if (activeTab === 'config') { defChat.toggle(); return; }
-                  setActiveTab('config');
-                  defChat.setOpen(true);
+                  if (!pageChatPanel.open && activeTab !== 'config') setActiveTab('config');
+                  pageChatPanel.toggle();
                 }}
                 label={t('agentDetails.definitionChat')}
               />

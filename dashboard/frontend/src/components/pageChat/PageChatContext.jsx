@@ -29,8 +29,14 @@ export function PageChatProvider({ children }) {
   // so a page rebuilding its callbacks every render costs nothing.
   const [entitySig, setEntitySig] = useState('');
   const [subjectSig, setSubjectSig] = useState('');
+  const [hostSig, setHostSig] = useState('');
   const entityRef = useRef(null);
   const subjectRef = useRef(null);
+  const hostRef = useRef(null);
+  // The panel's DOM nodes a hosted chat portals into (see `usePageChatHost`).
+  // State, not refs: the page has to re-render once they exist.
+  const [hostSlot, setHostSlot] = useState(null);
+  const [toolsSlot, setToolsSlot] = useState(null);
   // How many chats the page is drawing itself (see `useInlineChatOpen`).
   const [inlineChats, setInlineChats] = useState(0);
 
@@ -63,6 +69,10 @@ export function PageChatProvider({ children }) {
     subjectRef.current = subject || null;
   }, []);
 
+  const publishHost = useCallback((host) => {
+    hostRef.current = host || null;
+  }, []);
+
   const countInlineChat = useCallback((delta) => {
     setInlineChats((n) => Math.max(0, n + delta));
   }, []);
@@ -81,6 +91,14 @@ export function PageChatProvider({ children }) {
     setSubjectSig,
     publishEntity,
     publishSubject,
+    hostRef,
+    hostSig,
+    setHostSig,
+    publishHost,
+    hostSlot,
+    setHostSlot,
+    toolsSlot,
+    setToolsSlot,
     countInlineChat,
     // The page's own chat is in the panel: whatever draws it inline should step
     // aside rather than run a second copy of the same conversation.
@@ -89,7 +107,8 @@ export function PageChatProvider({ children }) {
     // composer. It stands down until that chat is closed.
     inlineChatOpen: inlineChats > 0,
   }), [open, setOpen, toggle, wide, setWide, entitySig, subjectSig,
-       publishEntity, publishSubject, countInlineChat, inlineChats]);
+       publishEntity, publishSubject, hostSig, publishHost, hostSlot, toolsSlot,
+       countInlineChat, inlineChats]);
 
   return <PageChatContext.Provider value={value}>{children}</PageChatContext.Provider>;
 }

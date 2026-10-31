@@ -39,6 +39,16 @@ const PADDING = {
   full: '',
 };
 
+// A page that scrolls ends below the page-chat launcher (bottom-6, 56px tall,
+// PageChatPanel.jsx), so its last block, and a resize handle in that block's
+// corner, can be scrolled out from under the button. A `fill` page manages its
+// own height and keeps the ordinary padding.
+const SCROLL_END = {
+  default: 'pb-24 sm:pb-28',
+  narrow: 'pb-24 sm:pb-28',
+  full: '',
+};
+
 export const PageContainer = ({
   width = 'default',
   fill = false,
@@ -50,7 +60,7 @@ export const PageContainer = ({
       'mx-auto w-full',
       WIDTHS[width] ?? WIDTHS.default,
       PADDING[width] ?? PADDING.default,
-      fill ? 'h-full min-h-0 flex flex-col' : '',
+      fill ? 'h-full min-h-0 flex flex-col' : (SCROLL_END[width] ?? SCROLL_END.default),
       className,
     ].filter(Boolean).join(' ')}
   >

@@ -17,6 +17,10 @@ import { createContext, useContext, useEffect } from 'react';
  * * **What a page is showing** (`usePageChatSubject`) — the records and the
  *   state of a page that has no chat of its own. The panel feeds them to the
  *   one page-chat agent, which is the same agent everywhere.
+ * * **A chat the page draws itself, inside the panel** (`usePageChatHost`) —
+ *   for the page chats that are not an EntityChat (the task manager, the
+ *   architect): the panel hands the page a slot and the page portals its own
+ *   component into it, so its state stays with the page.
  *
  * Both registrations are tolerant of unmemoised arguments: only a small
  * signature of primitives drives re-renders, while the callbacks themselves are
@@ -54,7 +58,7 @@ export function usePageChatPanel() {
   const ctx = useContext(PageChatContext);
   return ctx || {
     open: false, setOpen: () => {}, toggle: () => {}, wide: false, setWide: () => {},
-    inlineSuppressed: false, inlineChatOpen: false,
+    inlineSuppressed: false, inlineChatOpen: false, hostSlot: null, toolsSlot: null,
   };
 }
 
@@ -154,4 +158,49 @@ export function usePageChatSubject(subject) {
     setSig(sig);
     return () => setSig((current) => (current === sig ? '' : current));
   }, [sig, setSig]);
+}
+
+/**
+ * Declare that this page draws its own chat inside the floating panel, for a
+ * chat that is not an EntityChat and so cannot be handed over as a descriptor.
+ *
+ * The panel keeps its frame (heading, widen, close) and gives the page two DOM
+ * nodes: `slot` for the chat itself and `tools` for its header controls (Clear,
+ * history, view mode). The page portals its component into `slot`, which keeps
+ * the conversation's state in the page's own tree: the header button and the
+ * corner launcher open one panel, and it shows this one chat.
+ *
+ * @param {object|null} host
+ * @param {string} host.title  panel heading.
+ * @returns {{open: boolean, setOpen: function, toggle: function,
+ *   slot: HTMLElement|null, tools: HTMLElement|null}} `slot` is null while the
+ *   panel is closed or still mounting; render the chat only when it is set.
+ */
+export function usePageChatHost(host) {
+  const ctx = useContext(PageChatContext);
+  const panel = usePageChatPanel();
+  const sig = host ? `host\u00a6${host.title || ''}` : '';
+  const publish = ctx?.publishHost;
+  const setSig = ctx?.setHostSig;
+
+  // Nothing written for a page that hosts nothing right now: on a page where
+  // a child registers (the architect inside a project tab), the parent's
+  // empty write would run after the child's and wipe it. A stale descriptor
+  // left behind is harmless, the panel reads it only under a live signature.
+  useEffect(() => { if (publish && host) publish(host); });
+
+  useEffect(() => {
+    if (!setSig || !sig) return undefined;
+    setSig(sig);
+    return () => setSig((current) => (current === sig ? '' : current));
+  }, [sig, setSig]);
+
+  const hosting = !!host && panel.open && ctx?.hostSig === sig;
+  return {
+    open: panel.open,
+    setOpen: panel.setOpen,
+    toggle: panel.toggle,
+    slot: hosting ? panel.hostSlot : null,
+    tools: hosting ? panel.toolsSlot : null,
+  };
 }

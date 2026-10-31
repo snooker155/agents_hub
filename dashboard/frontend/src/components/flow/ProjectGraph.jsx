@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { autoGrowTextarea } from '../../lib/autoGrow';
 import ReactFlow, {
   Background,
@@ -10,7 +11,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import {
   RefreshCw, Boxes, GitBranch, Sparkles, Save, Undo2,
-  MessageSquare, PanelRightClose, PanelRightOpen,
+  PanelRightClose, PanelRightOpen,
   Send, PlusCircle, Trash2, Network, X, Pencil, Square,
   FileText, Globe, MessageSquarePlus,
 } from 'lucide-react';
@@ -32,7 +33,7 @@ import ChatSessionList, { ChatSessionsToggle } from '../ChatSessionList';
 import { useChatSessions } from '../chatSessions';
 import { useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
-import { useInlineChatOpen } from '../pageChat/pageChat';
+import { usePageChatHost } from '../pageChat/pageChat';
 
 // `icon` (a lucide component), `borderStyle`, and `radius` are optional per-kind
 // tweaks; styleNode applies them. Most kinds are a plain rounded box.
@@ -220,11 +221,12 @@ function ProjectGraph({ projectId }) {
   // how close it is; Clear chat is the way back.
   const { usage: contextUsage, observe: observeContext, reset: resetContext } = useContextUsage();
   const [input, setInput] = useState('');
-  const [showChat, setShowChat] = useState(true);
   const abortRef = useRef(null);
-  // While this chat is open its composer owns the bottom-right corner, so the
-  // floating page-chat launcher stands down until it is folded away.
-  useInlineChatOpen(showChat);
+  // The architect is the page chat on this tab: the toolbar's toggle and the
+  // corner launcher open the same floating panel, and the chat below is drawn
+  // into it. Its state stays here, so closing the panel loses nothing.
+  const chatHost = usePageChatHost({ title: t('flowProjectGraph.architectChat') });
+  const openChat = chatHost.setOpen;
   // The thread store key the server reports for this view's chat, and the
   // history list it opens in place of the transcript.
   const [chatRef, setChatRef] = useState(null);
@@ -386,7 +388,7 @@ function ProjectGraph({ projectId }) {
     if (!message.trim() || busy) return;
     setBusy(true);
     setError('');
-    setShowChat(true);
+    openChat(true);
     const replyId = genId();
     setMessages((list) => [...list, { id: genId(), role: 'user', content: message }, agentMessage({ id: replyId })]);
     setStreamingId(replyId);
@@ -483,7 +485,7 @@ function ProjectGraph({ projectId }) {
       setSessionsKey((k) => k + 1);
     }
   }, [busy, projectId, view, applyLiveNode, applyLiveEdge, applyLiveDeleteNode,
-      applyLiveDeleteEdge, observeContext, t]);
+      applyLiveDeleteEdge, observeContext, openChat, t]);
 
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
 
@@ -694,10 +696,10 @@ function ProjectGraph({ projectId }) {
             title={t('flowProjectGraph.reload')}><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
           {/* One toggle for the chat, in the same place whether it opens or
               hides it. */}
-          <button onClick={() => setShowChat((v) => !v)} aria-pressed={showChat}
+          <button onClick={chatHost.toggle} aria-pressed={chatHost.open}
             className="px-3 py-1.5 rounded-md text-sm text-gray-500 hover:bg-gray-50"
-            title={showChat ? t('flowProjectGraph.hideChat') : t('flowProjectGraph.showChat')}>
-            {showChat ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+            title={chatHost.open ? t('flowProjectGraph.hideChat') : t('flowProjectGraph.showChat')}>
+            {chatHost.open ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
           </button>
         </div>
       </div>
@@ -746,28 +748,23 @@ function ProjectGraph({ projectId }) {
           </div>
         </div>
 
-        {showChat && (
-          <div className="w-[28rem] 2xl:w-[32rem] shrink-0 border-l border-gray-200 flex flex-col bg-white">
-            {/* A fixed height: the controls come and go with the conversation
-                and the history list, and the row must not move when they do. */}
-            <div className="flex items-center justify-between h-11 shrink-0 px-3 border-b border-gray-100 gap-2">
-              <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 min-w-0">
-                <MessageSquare className={`w-4 h-4 ${busy ? 'text-violet-500 animate-pulse' : 'text-gray-400'}`} /> {t('flowProjectGraph.architectChat')}
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {messages.length > 0 && !historyOpen && (
-                  <button onClick={clearChat} disabled={busy} title={t('entityChat.clearChat')}
-                    className="inline-flex items-center gap-1 text-[11px] font-normal text-gray-400 hover:text-indigo-600 disabled:opacity-40">
-                    <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
-                  </button>
-                )}
-                {sessionHistory.hasHistory && (
-                  <ChatSessionsToggle open={historyOpen} count={sessionHistory.count} disabled={busy} onToggle={toggleHistory} />
-                )}
-                {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
-              </div>
-            </div>
-
+        {chatHost.tools && createPortal(
+          <>
+            {messages.length > 0 && !historyOpen && (
+              <button onClick={clearChat} disabled={busy} title={t('entityChat.clearChat')}
+                className="inline-flex items-center gap-1 text-[11px] font-normal text-gray-400 hover:text-indigo-600 disabled:opacity-40">
+                <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
+              </button>
+            )}
+            {sessionHistory.hasHistory && (
+              <ChatSessionsToggle open={historyOpen} count={sessionHistory.count} disabled={busy} onToggle={toggleHistory} />
+            )}
+            {messages.length > 0 && !historyOpen && <ViewModeToggle viewMode={viewMode} onChange={setViewMode} small />}
+          </>,
+          chatHost.tools,
+        )}
+        {chatHost.slot && createPortal(
+          <div className="flex-1 min-h-0 flex flex-col bg-white">
             {historyOpen ? (
               <ChatSessionList
                 sessions={sessionHistory.sessions}
@@ -828,7 +825,8 @@ function ProjectGraph({ projectId }) {
               </ComposerBox>
             </div>
             </>)}
-          </div>
+          </div>,
+          chatHost.slot,
         )}
       </div>
     </div>

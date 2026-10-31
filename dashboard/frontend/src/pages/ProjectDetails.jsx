@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   getProject, updateProject, deleteProject, getProjectTasks,
@@ -29,6 +30,7 @@ import { StatusBadge } from '../components/task/TaskFields';
 import { ALL_STATUSES, entryAgent, statusCfg } from '../components/task/taskUtils';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { TabRow } from '../components/PageTabs';
+import { usePageChatHost } from '../components/pageChat/pageChat';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
 import PageLoader from '../components/PageLoader';
@@ -102,7 +104,10 @@ export default function ProjectDetails() {
   // with ?tab=Tasks (task/taskBack.js).
   const [activeTab, setActiveTab] = useState(linkedFile ? 'Files' : (searchParams.get('tab') || 'Overview'));
   const [taskToolbar, setTaskToolbar] = useState(null);
-  const [showPlanner, setShowPlanner] = useState(false);
+  // On the Tasks tab the task manager is the page chat: its button and the
+  // corner launcher open the same floating panel. The Architecture tab's
+  // architect registers the same way from inside ProjectGraph.
+  const planner = usePageChatHost(activeTab === 'Tasks' ? { title: t('flowPlannerChat.taskPlanner') } : null);
   // "Generate from architecture" opens the planner and asks it for a plan;
   // the panel clears this once the run starts (PlannerChat).
   const [generateRequested, setGenerateRequested] = useState(false);
@@ -685,25 +690,26 @@ export default function ProjectDetails() {
               toolbarTarget={taskToolbar}
               // After the board's search box, before its List/Kanban and New task.
               extraControls={<>
-                <button onClick={() => { setShowPlanner(true); setGenerateRequested(true); }}
+                <button onClick={() => { planner.setOpen(true); setGenerateRequested(true); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-emerald-600 hover:bg-emerald-50"
                   title={t('flowPlannerChat.createAFullTaskPlan')}>
                   <ListTodo className="w-4 h-4" /> {t('flowPlannerChat.generateFromArchitecture')}
                 </button>
-                <button onClick={() => setShowPlanner((v) => !v)} aria-pressed={showPlanner}
+                <button onClick={planner.toggle} aria-pressed={planner.open}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    showPlanner ? 'text-emerald-700 bg-emerald-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
-                  title={showPlanner ? t('flowPlannerChat.hidePlanner') : t('projectDetails.showTheTaskPlanner')}>
-                  {showPlanner ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />} {t('projectDetails.planner')}
+                    planner.open ? 'text-emerald-700 bg-emerald-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
+                  title={planner.open ? t('flowPlannerChat.hidePlanner') : t('projectDetails.showTheTaskPlanner')}>
+                  {planner.open ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />} {t('projectDetails.planner')}
                 </button>
               </>}
             />
           </div>
-          {showPlanner && (
+          {planner.slot && createPortal(
             <PlannerChat projectId={project.id} onGenerated={loadTasks}
-              onClose={() => setShowPlanner(false)}
+              tools={planner.tools}
               generateRequested={generateRequested}
-              onGenerateStarted={onGenerateStarted} />
+              onGenerateStarted={onGenerateStarted} />,
+            planner.slot,
           )}
         </div>
       )}

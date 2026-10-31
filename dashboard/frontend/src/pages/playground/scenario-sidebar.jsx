@@ -2,8 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Gauge, LayoutGrid, Loader, MessagesSquare, Repeat } from 'lucide-react';
 import { getScenarioRunViews, startReproducibilityEval } from '../../api/lab';
-import EntityChat from '../../components/EntityChat';
-import InPanelNote from '../../components/pageChat/InPanelNote';
 import { usePageChatPanel } from '../../components/pageChat/pageChat';
 import { useI18n } from '../../i18n';
 import WorldView from './renderers';
@@ -147,34 +145,28 @@ export function ReproducibilityButton({ scenarioId, disabled = false, onMessage 
 
 
 /**
- * The scenario page's right-hand column.
+ * The scenario page's right-hand column: what the scenario *is* (the world as
+ * it stands and how the run is doing).
  *
- * Two tabs over one column, not two columns: what the scenario *is* and a chat
- * that can change it are both read at the full height of the sidebar, and only
- * ever one at a time. The readouts stay the default — you open this page to
- * look at something, and the chat is what you turn to when looking is not
- * enough.
- *
- * The chat's callbacks are memoised on the scenario id on purpose: EntityChat
- * loads its transcript in an effect keyed on them, so fresh closures every
- * render would refetch the conversation on every keystroke.
+ * The build chat is the page chat: its tab here opens the floating panel, the
+ * same one the corner launcher opens, with the same conversation.
  */
 export function ScenarioSidebar({
-  tab, onTab, scenario, envSpec, currentTick, run, ticks, live, chat,
+  scenario, envSpec, currentTick, run, ticks, live,
 }) {
   const { t } = useI18n();
-  const { inlineSuppressed: panelHoldsChat } = usePageChatPanel();
+  const { open: chatOpen, setOpen: setChatOpen } = usePageChatPanel();
 
-  /* The header of whichever panel is open — one bar, two halves, the card's
-     full width, and the only place either panel is named. */
+  /* The column's header: the readouts, and the way to the chat. The readouts
+     never leave the column; the Chat tab is the panel being open. */
   const tabs = (
     <div className="shrink-0 grid grid-cols-2 border-b border-gray-200">
       <ColumnTab
-        active={tab === 'params'} onClick={() => onTab('params')}
+        active={!chatOpen} onClick={() => setChatOpen(false)}
         icon={Gauge} label={t('playground.parameters')}
       />
       <ColumnTab
-        active={tab === 'chat'} onClick={() => onTab('chat')}
+        active={chatOpen} onClick={() => setChatOpen(true)}
         icon={MessagesSquare} label={t('playground.scenarioChat')}
       />
     </div>
@@ -182,40 +174,9 @@ export function ScenarioSidebar({
 
   return (
     <div className="flex flex-col xl:min-h-0">
-      {tab === 'chat' ? (
-        /* The chat owns the whole column: a build conversation that has to be
-           scrolled in a 12-line box is not one you will use. The tab bar is
-           the card's header, so the card carries no padding of its own — the
-           body below it does. */
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col xl:flex-1 xl:min-h-0">
-          {tabs}
-          {/* The chat fills the body, so its composer lands on the card's
-              floor rather than under the last message, and the negative
-              margins take its rule out to the card's edges past the padding —
-              the same footing the transcript's trigger composer stands on. */}
-          <div className="p-5 flex flex-col flex-1 min-h-0">
-            {/* While the floating panel is holding this same conversation,
-                the tab says where it went instead of running a second copy. */}
-            {panelHoldsChat ? <InPanelNote /> : (
-              <EntityChat
-                {...chat}
-                header={false}
-                /* Below xl the page is an ordinary scroll, so the feed is a
-                   bounded box. In the column it takes exactly what is left —
-                   including nothing, on a short window with the transport bar
-                   up: it scrolls itself, so shrinking is right and growing past
-                   the column's floor is not. */
-                heightClass="max-h-[26rem] min-h-[14rem] xl:max-h-none xl:min-h-0"
-                className="flex-1 min-h-0"
-                composerClassName="mt-3 xl:mt-auto -mx-5 px-5"
-              />
-            )}
-          </div>
-        </div>
-      ) : (
-        /* Readouts: the world as it stands, and how the run is doing. The
-           column scrolls on its own so a long sidebar cannot stretch the row
-           past the bottom of the screen. */
+        {/* Readouts: the world as it stands, and how the run is doing. The
+            column scrolls on its own so a long sidebar cannot stretch the row
+            past the bottom of the screen. */}
         <div className="space-y-6 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             {tabs}
@@ -271,7 +232,6 @@ export function ScenarioSidebar({
               retuned. */}
           {run && <RunParams run={run} scenario={scenario} />}
         </div>
-      )}
     </div>
   );
 }

@@ -25,7 +25,12 @@ vi.mock('../../../api', async (importOriginal) => ({
 
 import PlannerChat from '../PlannerChat';
 
-const show = (props = {}) => render(<I18nProvider><PlannerChat projectId="p1" {...props} /></I18nProvider>);
+// The panel header's slot for the chat's controls (usePageChatHost).
+const show = (props = {}) => {
+  const tools = document.createElement('div');
+  document.body.appendChild(tools);
+  return render(<I18nProvider><PlannerChat projectId="p1" tools={tools} {...props} /></I18nProvider>);
+};
 
 beforeEach(() => {
   getProjectTasksChat.mockImplementation(() => ok({

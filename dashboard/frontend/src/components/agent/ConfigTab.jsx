@@ -1,5 +1,3 @@
-import { ChatColumn, FILL_COLUMN } from '../ChatColumn';
-import EntityChat from '../EntityChat';
 import SystemAgentWarning from './SystemAgentWarning';
 import { BookOpen, FileCode, GitBranch, Loader, Lock, RotateCcw, Save, Terminal, Zap } from 'lucide-react';
 import { useAgentPage } from './context';
@@ -8,16 +6,15 @@ import { useAgentPage } from './context';
  * experiments each have a tab of their own. */
 export default function ConfigTab() {
   const {
-    agent, agentDefinition, defChat, defDraft, defError, defSaving,
-    definitionChat, handleDefinitionDraftChange,
+    agent, agentDefinition, defDraft, defError, defSaving,
+    handleDefinitionDraftChange,
     handleResetDefinitionField, handleRestoreShippedDefinition, handleSaveDefinitionField,
     restoringShipped, setActiveTab, t,
   } = useAgentPage();
   const customizedParts = agentDefinition.customized_parts || [];
   return (
         <>
-        <div className={defChat.gridClass}>
-          <div className={`space-y-6 ${defChat.mainClass}`}>
+          <div className="space-y-6">
           {agent.system && <SystemAgentWarning scope="config" />}
           {agent.pinned_version != null && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
@@ -139,19 +136,14 @@ export default function ConfigTab() {
               <p className="text-xs text-gray-500 mb-3">
                 {t('agentDetails.whatTheAgentActuallyReceives')}
               </p>
-              <pre className="text-xs bg-gray-900 text-green-300 p-4 rounded-lg overflow-auto whitespace-pre-wrap max-h-96">
+              {/* Resizable like the editors above: the assembled prompt runs
+                  long, and a fixed box made it read through a keyhole. */}
+              <pre className="text-xs bg-gray-900 text-green-300 p-4 rounded-lg overflow-auto whitespace-pre-wrap h-96 min-h-[200px] resize-y">
                 {agentDefinition.system_prompt}
               </pre>
             </div>
           )}
           </div>
-
-          {defChat.open && definitionChat && (
-            <ChatColumn>
-              <EntityChat {...definitionChat} {...FILL_COLUMN} onHide={() => defChat.setOpen(false)} />
-            </ChatColumn>
-          )}
-        </div>
         </>
   );
 }

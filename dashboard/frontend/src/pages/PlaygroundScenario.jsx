@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { getSimEnvironments, getAgents, getModelsCatalog } from '../api';
 import { useWorkspace } from '../components/workspace';
-import { usePageChat } from '../components/pageChat/pageChat';
+import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { RunHistory } from './playground/history';
 import { eventLines } from './playground/events';
@@ -70,15 +70,12 @@ export default function PlaygroundScenario() {
   // once — the world's log next to the dialogue only pulled the eye off it.
   // 'transcript' | 'events' | 'story' | 'stage' | 'narrative'
   const [pane, setPane] = useState('transcript');
-  // The sidebar carries two things now: what the scenario *is* (the readouts)
-  // and a chat that can change it. Tabs rather than stacking, because both want
-  // the full height of the column and only one of them is ever being read.
-  const [sideTab, setSideTab] = useState('params');  // 'params' | 'chat'
   const [eventsSeen, setEventsSeen] = useState(0);
   const [message, setMessage] = useState('');
   const [caseDialogOpen, setCaseDialogOpen] = useState(false);
-  // The build chat's send(), handed over by whichever EntityChat is mounted —
-  // the sidebar tab or the floating panel. It is what lets a button on the page
+  const { setOpen: setChatOpen } = usePageChatPanel();
+  // The build chat's send(), handed over by the floating panel's EntityChat
+  // while it is open. It is what lets a button on the page
   // ask the builder for something instead of making the user type it.
   const chatSendRef = useRef(null);
   // A request made while no chat was on screen. Held until one mounts and
@@ -141,7 +138,8 @@ export default function PlaygroundScenario() {
   // relabel — or re-group — a transcript that was recorded under the old mode.
   const activation = run?.activation || scenario?.activation || 'synchronous';
   const envSpec = environments.find((e) => e.env_id === scenario?.environment);
-  // The build chat, offered to the floating panel as well as to the sidebar tab.
+  // The build chat is the page chat: the sidebar's Chat tab and the corner
+  // launcher open the same floating panel.
   const scenarioChat = useScenarioChatDescriptor(
     scenario?.scenario_id, envSpec, setScenario, registerChatSend,
   );
@@ -154,8 +152,8 @@ export default function PlaygroundScenario() {
       return;
     }
     pendingAskRef.current = text;
-    setSideTab('chat');
-  }, []);
+    setChatOpen(true);
+  }, [setChatOpen]);
   usePageChat(scenarioChat);
   const roleNames = (scenario?.roles || []).map((r) => r.display_name || r.name || r.agent_id);
   // Counted from the same reading of the ticks the feed renders, so the badge
@@ -413,10 +411,8 @@ export default function PlaygroundScenario() {
               onSaved={(s) => setScenario(s)}
             />
             <ScenarioSidebar
-              tab={sideTab} onTab={setSideTab}
               scenario={scenario} envSpec={envSpec} currentTick={currentTick}
               run={run} ticks={ticks} live={live}
-              chat={scenarioChat}
             />
           </div>
         ) : (
@@ -435,8 +431,7 @@ export default function PlaygroundScenario() {
             eventCount={eventCount} eventsSeen={eventsSeen}
             onAskAgent={askAgent} onScenarioSaved={(saved) => setScenario(saved)}
             activation={activation} currentTick={currentTick}
-            sideTab={sideTab} onSideTab={setSideTab}
-            envSpec={envSpec} chat={scenarioChat}
+            envSpec={envSpec}
           />
         )}
       </div>

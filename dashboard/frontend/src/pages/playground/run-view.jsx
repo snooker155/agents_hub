@@ -36,7 +36,7 @@ const PANE_HEIGHT = 'min-h-[30rem] xl:flex-1 xl:min-h-0';
 export function RunView({
   pane, setPane, ticks, cursor, scenario, activity, inFlight, following, run, roleNames,
   onTrigger, live, waitingForTrigger, eventCount, eventsSeen, onAskAgent, onScenarioSaved,
-  activation, currentTick, sideTab, onSideTab, envSpec, chat,
+  activation, currentTick, envSpec,
 }) {
   const { t } = useI18n();
   return (
@@ -176,10 +176,8 @@ export function RunView({
       </div>
 
       <ScenarioSidebar
-        tab={sideTab} onTab={onSideTab}
         scenario={scenario} envSpec={envSpec} currentTick={currentTick}
         run={run} ticks={ticks} live={live}
-        chat={chat}
       />
     </div>
   );

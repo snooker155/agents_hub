@@ -10,9 +10,8 @@ function renderTab(definition, over = {}) {
   const page = {
     agent: { id: 'researcher', system: true },
     agentDefinition: { instructions: 'x', capabilities: '', usage: '', system_prompt: '', ...definition },
-    defChat: { gridClass: '', mainClass: '', open: false },
     defDraft: { instructions: 'x', capabilities: '', usage: '' },
-    defError: {}, defSaving: {}, definitionChat: null,
+    defError: {}, defSaving: {},
     handleDefinitionDraftChange: vi.fn(), handleResetDefinitionField: vi.fn(),
     handleRestoreShippedDefinition: vi.fn(), handleSaveDefinitionField: vi.fn(),
     restoringShipped: false, setActiveTab: vi.fn(), t,
