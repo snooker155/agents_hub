@@ -611,8 +611,16 @@ def _spawn_carrier(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reas
     _describe_launch(instance, env_fields, mode=mode, reason=reason)
 
     if mode == "docker":
-        from managers.container_manager import start_instance_container
+        from managers.container_manager import container_status, remove_container, start_instance_container
         container_name = container_name_for_node(instance_id)
+        # A container left under the instance's name belongs to a carrier
+        # already written off (its token is retired): one whose worker was
+        # replaced cannot hear its stop, and would hold the name for good.
+        left = container_status(container_name)
+        if left is not None:
+            removed = remove_container(container_name)
+            append_log(instance, f"[container] {container_name} left over from the previous carrier "
+                                 f"({left}): " + ("removed" if removed else "could not be removed"))
         kwargs: Dict[str, Any] = {}
         if env_fields.get("docker"):
             kwargs["options"] = env_fields["docker"]
@@ -659,6 +667,75 @@ def _spawn_carrier(instance: Dict[str, Any], env_fields: Dict[str, Any], *, reas
                          f"pid={pid or container_name or '-'} agent={agent_id} "
                          f"workspace={workspace or '-'}")
     return store.get(instance_id) or instance
+
+
+# ── Left-over containers ─────────────────────────────────────────────────────
+
+#: How long a carrier container may outlive its carrier before the sweep
+#: removes it: a stopped carrier's own container is gone within seconds.
+ORPHAN_GRACE_SECONDS = 60.0
+#: What every carrier container is called (container_name_for_node).
+CARRIER_CONTAINER_PREFIX = "agents-hub-node-inst_"
+
+
+def _docker_created_age(created: str) -> Optional[float]:
+    """Seconds since ``docker ps``'s CreatedAt (``2026-10-31 05:08:05 +0000 UTC``)."""
+    try:
+        dt = datetime.strptime(str(created)[:25], "%Y-%m-%d %H:%M:%S %z")
+    except ValueError:
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
+
+
+def reap_orphan_containers(grace: float = ORPHAN_GRACE_SECONDS) -> List[str]:
+    """Remove the carrier containers on this host's daemon that no live
+    carrier owns, and return their names. Never raises.
+
+    A carrier container talks to the worker that started it; once that
+    worker is replaced it hears no stop, and runs on beside its instance
+    after the hub has written the carrier off. Removed: one whose carrier
+    has been over for ``grace`` seconds (and the container is as old). Its
+    owners are synced first, so a carrier nobody looked at since its worker
+    went is judged by its heartbeat here. A container no instance of this
+    hub names is left alone: it may be another hub's on the same daemon.
+    Off with ``AGENTS_HUB_CONTAINER_SWEEP=0``.
+    """
+    if os.environ.get("AGENTS_HUB_CONTAINER_SWEEP", "1").strip().lower() in ("0", "false", "no", "off"):
+        return []
+    from managers import container_manager as cm
+    try:
+        listed = [c for c in cm._list_local_containers()
+                  if str(c.get("name") or "").startswith(CARRIER_CONTAINER_PREFIX)]
+        if not listed:
+            return []
+        owners = store.by_container_names([str(c["name"]) for c in listed])
+    except Exception:  # noqa: BLE001 - no daemon or no database: nothing to sweep now
+        log.debug("carrier container sweep skipped", exc_info=True)
+        return []
+    removed: List[str] = []
+    for c in listed:
+        name = str(c["name"])
+        try:
+            rows = [sync(r) or r for r in owners.get(name, [])]
+            if not rows or any(r.get("carrier_status") in LIVE_CARRIER_STATUSES for r in rows):
+                continue
+            ages = [_docker_created_age(c.get("created") or "")]
+            ages += [_seconds_since(r.get("carrier_finished_at")) for r in rows]
+            known = [a for a in ages if a is not None]
+            if not known or min(known) < grace:
+                continue
+            if not cm.remove_container(name):
+                continue
+        except Exception:  # noqa: BLE001 - one container's trouble must not stop the sweep
+            log.debug("carrier container sweep failed for %s", name, exc_info=True)
+            continue
+        removed.append(name)
+        latest = max(rows, key=lambda r: str(r.get("carrier_started_at") or ""))
+        log.warning("removed carrier container %s on %s: its carrier ended (%s)",
+                    name, socket.gethostname(), latest.get("carrier_status"))
+        append_log(latest, f"[container] {name} was still there after its carrier ended: "
+                           f"removed by the sweep on {socket.gethostname()}")
+    return removed
 
 
 # ── Liveness ─────────────────────────────────────────────────────────────────

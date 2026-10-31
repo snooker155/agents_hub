@@ -61,6 +61,8 @@ LEASE_SECONDS = float(os.environ.get("AGENTS_HUB_WORKER_LEASE_SECONDS", "60"))
 DRAIN_SECONDS = float(os.environ.get("AGENTS_HUB_WORKER_DRAIN_SECONDS", "300"))
 #: The queue kind of an instance carrier (instances/carrier.QUEUE_KIND).
 CARRIER_KIND = "instance"
+#: How often a worker sweeps its daemon for carrier containers no carrier owns.
+CONTAINER_SWEEP_SECONDS = 60.0
 
 
 def _launch(spec: Dict[str, Any]) -> None:
@@ -150,6 +152,7 @@ class Worker:
         self.launched = 0
         self.failed = 0
         self.started_at = time.time()
+        self.swept_at = 0.0
 
     # ── one tick ─────────────────────────────────────────────────────────────
 
@@ -158,6 +161,7 @@ class Worker:
         from common import run_queue
 
         self._reap()
+        self._sweep_containers()
         if self.tracked:
             run_queue.renew(list(self.tracked), self.owner, ttl_seconds=LEASE_SECONDS)
         if self.stopping.is_set() or self.draining.is_set():
@@ -226,6 +230,16 @@ class Worker:
                 spawned += 1
                 log.info("worker %s started the carrier of instance %s", self.owner, run_id)
         return spawned
+
+    def _sweep_containers(self) -> None:
+        """Every :data:`CONTAINER_SWEEP_SECONDS`, remove the carrier
+        containers on this host's daemon that no live carrier owns
+        (instances/carrier.py reap_orphan_containers)."""
+        if "docker" not in self.modes or time.time() - self.swept_at < CONTAINER_SWEEP_SECONDS:
+            return
+        self.swept_at = time.time()
+        from instances import carrier
+        carrier.reap_orphan_containers()
 
     def _reap(self) -> None:
         from common import run_queue

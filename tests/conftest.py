@@ -50,6 +50,9 @@ os.environ["AGENTS_HUB_HOST_METRICS"] = "0"
 # Nor does a carrier follow the output of a container the suite only pretends
 # to start (instances/carrier.py _follow_container_start).
 os.environ["AGENTS_HUB_FOLLOW_CONTAINER_START"] = "0"
+# Nor sweep the daemon for left-over carrier containers: the developer's own
+# stack may run on it (instances/carrier.py reap_orphan_containers).
+os.environ["AGENTS_HUB_CONTAINER_SWEEP"] = "0"
 
 # The backend's route modules import their request models as a top level
 # ``models`` package (``from models import TaskCreate``), which only resolves

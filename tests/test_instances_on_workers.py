@@ -231,3 +231,72 @@ def test_a_respawn_clears_the_previous_carriers_heartbeat(fake_agent, popen, api
     after = store.get(inst["instance_id"])
     assert after.get("heartbeat_at") is None and after.get("spawn_beat_at")
     assert carrier.process_alive({**after, "carrier_host": "worker-b"})
+
+
+def test_a_container_left_by_a_written_off_carrier_is_removed_before_docker_run(
+        fake_agent, api_role, monkeypatch):
+    # Its worker was replaced: it never heard the stop and holds the name.
+    monkeypatch.setattr("common.config.agent_execution_mode", lambda workspace=None: "docker")
+    removed, started = [], []
+    monkeypatch.setattr("managers.container_manager.container_status", lambda name: "running")
+    monkeypatch.setattr("managers.container_manager.remove_container",
+                        lambda name: removed.append(name) or True)
+    monkeypatch.setattr("managers.container_manager.start_instance_container",
+                        lambda instance_id, agent_id, cmd, workspace=None, env=None, **kw:
+                        started.append(removed[:]) or {"success": True})
+    monkeypatch.setattr("common.code_version.container_stamp", lambda name: ("", ""))
+    monkeypatch.setattr(carrier, "_follow_container_start", lambda instance, name: None)
+    inst = carrier.start("swe_agent", workspace="default")
+    _as_worker(monkeypatch).tick()
+    name = store.get(inst["instance_id"])["container_name"]
+    assert removed == [name] and started == [[name]]
+    assert "left over from the previous carrier (running): removed" in open(
+        store.get(inst["instance_id"])["carrier_log_file"]).read()
+
+
+def _sweep_sees(monkeypatch, containers):
+    monkeypatch.setenv("AGENTS_HUB_CONTAINER_SWEEP", "1")
+    removed = []
+    monkeypatch.setattr("managers.container_manager._list_local_containers", lambda: containers)
+    monkeypatch.setattr("managers.container_manager.remove_container",
+                        lambda name: removed.append(name) or True)
+    return removed
+
+
+def test_the_sweep_removes_a_container_whose_carrier_ended(api_role, monkeypatch):
+    old = "2026-01-01 00:00:00 +0000 UTC"
+    ended = _carried_elsewhere(carrier_status="stopped", container_name="agents-hub-node-inst_ended",
+                               carrier_finished_at=_ago(300))
+    _carried_elsewhere(container_name="agents-hub-node-inst_alive")
+    just = _carried_elsewhere(carrier_status="stopped", container_name="agents-hub-node-inst_just",
+                              carrier_finished_at=_ago(5))
+    removed = _sweep_sees(monkeypatch, [
+        {"name": "agents-hub-node-inst_ended", "created": old},
+        {"name": "agents-hub-node-inst_alive", "created": old},
+        {"name": "agents-hub-node-inst_just", "created": old},
+        # Not this hub's: no instance names it.
+        {"name": "agents-hub-node-inst_other", "created": old},
+        {"name": "agents-hub-run-abc", "created": old},
+    ])
+    assert carrier.reap_orphan_containers() == ["agents-hub-node-inst_ended"]
+    assert removed == ["agents-hub-node-inst_ended"]
+    assert "removed by the sweep" in open(ended["carrier_log_file"]).read()
+    assert just["instance_id"]
+
+
+def test_the_sweep_writes_off_a_carrier_whose_worker_went_then_removes_it_later(api_role, monkeypatch):
+    inst = _carried_elsewhere(carrier_mode="docker", pid=None, container_name="agents-hub-node-inst_gone",
+                              heartbeat_at=_ago(600), carrier_started_at=_ago(900))
+    removed = _sweep_sees(monkeypatch, [{"name": "agents-hub-node-inst_gone",
+                                         "created": "2026-01-01 00:00:00 +0000 UTC"}])
+    # Written off now; its container still gets its grace.
+    assert carrier.reap_orphan_containers() == []
+    assert store.get(inst["instance_id"])["carrier_status"] == "stopped"
+    store.update(inst["instance_id"], carrier_finished_at=_ago(120))
+    assert carrier.reap_orphan_containers() == ["agents-hub-node-inst_gone"] == removed
+
+
+def test_the_sweep_is_off_by_switch(api_role, monkeypatch):
+    removed = _sweep_sees(monkeypatch, [{"name": "agents-hub-node-inst_x", "created": "2026-01-01 00:00:00 +0000 UTC"}])
+    monkeypatch.setenv("AGENTS_HUB_CONTAINER_SWEEP", "0")
+    assert carrier.reap_orphan_containers() == [] and removed == []

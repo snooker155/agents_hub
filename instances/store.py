@@ -109,6 +109,21 @@ def get(instance_id: str) -> Optional[Dict[str, Any]]:
     return _row_to_dict(row) if row is not None else None
 
 
+def by_container_names(names: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """``{container name: [instance rows that name it]}`` for ``names``."""
+    names = [str(n) for n in names if n]
+    if not names:
+        return {}
+    marks = ", ".join("?" for _ in names)
+    rows = db.get_conn().execute(
+        f"SELECT * FROM instances WHERE container_name IN ({marks})", names).fetchall()
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        inst = _row_to_dict(row)
+        out.setdefault(str(inst.get("container_name")), []).append(inst)
+    return out
+
+
 def get_by_session(session_id: str) -> Optional[Dict[str, Any]]:
     row = db.get_conn().execute(
         "SELECT * FROM instances WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",

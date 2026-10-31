@@ -264,6 +264,12 @@ def reconcile_once() -> Dict[str, int]:
         totals["orphans"] = _stop_orphans()
     except Exception:  # noqa: BLE001
         log.debug("orphan sweep failed", exc_info=True)
+    from common.config import hub_role
+    if hub_role() == "all":
+        # Without workers the carriers' containers are this host's: the sweep
+        # a worker makes of its own daemon (runtime/worker.py) is made here.
+        from instances import carrier
+        carrier.reap_orphan_containers()
     return totals
 
 

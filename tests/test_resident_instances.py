@@ -178,6 +178,7 @@ def test_a_docker_instance_restarts_in_a_new_container(fake_agent, fake_popen, m
     inst = store.update(inst["instance_id"], carrier_mode="docker", pid=None)
     monkeypatch.setattr(carrier, "_carried_here", lambda instance: True)
     monkeypatch.setattr("managers.container_manager.container_running", lambda name: True)
+    monkeypatch.setattr("managers.container_manager.container_status", lambda name: None)
 
     again = carrier.restart(inst["instance_id"])
 
