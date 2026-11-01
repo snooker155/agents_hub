@@ -154,7 +154,7 @@ export default function Users() {
   const limitText = (user) => {
     const status = limits?.users?.[user.id];
     if (!status) return '';
-    const spent = `$${Number(status.spend || 0).toFixed(2)}`;
+    const spent = `$${Number(status.spend || 0).toFixed(4)}`;
     if (!status.limit_usd) return t('auth.users.limitNone', { spent });
     return t('auth.users.limitOf', { spent, limit: `$${Number(status.limit_usd).toFixed(2)}` });
   };

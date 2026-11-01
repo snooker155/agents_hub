@@ -98,10 +98,10 @@ describe('Users page', () => {
     api.setDefaultSpendLimit.mockImplementation(() => ok({ default_limit_usd: 12 }));
     show();
     await screen.findByTestId('limit-alice');
-    expect(screen.getByTestId('limit-root').textContent).toContain('$2.00 of $10.00');
+    expect(screen.getByTestId('limit-root').textContent).toContain('$2.0000 of $10.00');
     expect(screen.getByTestId('limit-root').textContent).toContain('default');
-    expect(screen.getByTestId('limit-alice').textContent).toBe('$25.00 of $20.00');
-    expect(screen.getByTestId('limit-carl').textContent).toBe('$1.50, no limit');
+    expect(screen.getByTestId('limit-alice').textContent).toBe('$25.0000 of $20.00');
+    expect(screen.getByTestId('limit-carl').textContent).toBe('$1.5000, no limit');
 
     fireEvent.change(screen.getByLabelText(/Default limit per person/), { target: { value: '12' } });
     fireEvent.click(screen.getAllByRole('button', { name: 'Save' })[0]);

@@ -17,6 +17,8 @@ const inputCls = 'border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outl
 
 const fmtInt = (n) => (n || 0).toLocaleString();
 const fmtUsd = (n) => `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// The spend report shows cents' fractions: one person's chat turns cost well under a cent.
+const fmtUsd4 = (n) => `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
 
 // One breakdown table (by workspace / agent / model / project).
 function Breakdown({ title, rows }) {
@@ -153,7 +155,7 @@ function ReportSection({ t, workspace }) {
                   <td className="py-1.5 text-right text-gray-600">{fmtInt(r.runs)}</td>
                   <td className="py-1.5 text-right text-gray-600">{fmtInt(r.calls)}</td>
                   <td className="py-1.5 text-right text-gray-600">{fmtInt(r.total_tokens)}</td>
-                  <td className="py-1.5 text-right font-medium text-gray-800">{fmtUsd(r.cost)}</td>
+                  <td className="py-1.5 text-right font-medium text-gray-800">{fmtUsd4(r.cost)}</td>
                 </tr>
               ))}
             </tbody>
@@ -163,7 +165,7 @@ function ReportSection({ t, workspace }) {
                 <td className="py-1.5 text-right">{fmtInt(totals.runs)}</td>
                 <td className="py-1.5 text-right">{fmtInt(totals.calls)}</td>
                 <td className="py-1.5 text-right">{fmtInt(totals.total_tokens)}</td>
-                <td className="py-1.5 text-right">{fmtUsd(totals.cost)}</td>
+                <td className="py-1.5 text-right">{fmtUsd4(totals.cost)}</td>
               </tr>
             </tfoot>
           </table>

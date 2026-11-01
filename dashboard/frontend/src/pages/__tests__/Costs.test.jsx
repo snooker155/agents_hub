@@ -98,7 +98,7 @@ describe('Costs report section', () => {
     expect(getAccountingReport.mock.calls[0][0]).toMatchObject({ group_by: 'user' });
     await waitFor(() => expect(screen.getByText('Alice')).toBeInTheDocument());
     expect(screen.getByText('(unknown)')).toBeInTheDocument();
-    expect(screen.getByText('$4.60')).toBeInTheDocument(); // the report's own total row
+    expect(screen.getByText('$4.6000')).toBeInTheDocument(); // the report's own total row
   });
 
   it('re-fetches with the chosen group-by', async () => {
