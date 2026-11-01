@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Check, Copy, Github, KeyRound, Laptop, Link2, Loader, Lock, LogOut, Palette, Pencil, Plus,
-  RefreshCw, Trash2, User as UserIcon,
+  RefreshCw, Trash2, User as UserIcon, X,
 } from 'lucide-react';
 import {
   changeMyPassword, createMyApiKey, disconnectMyGitHub, getMyApiKeys, getMyGitHub,
@@ -70,10 +70,6 @@ export default function Account() {
 
 function ProfileSection({ user, t, onSaved }) {
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   if (!user) return null;
   const groups = Array.isArray(user.groups) ? user.groups : [];
@@ -81,82 +77,23 @@ function ProfileSection({ user, t, onSaved }) {
   // Which fields their sign-in leaves to them (identity.self_editable_fields).
   const editable = user.profile_editable || {};
   const canEdit = Boolean(editable.display_name || editable.email);
-
-  const start = () => {
-    setName(user.display_name === user.username ? '' : (user.display_name || ''));
-    setEmail(user.email || '');
-    setError('');
-    setSaved(false);
-    setEditing(true);
-  };
-  const submit = async (event) => {
-    event.preventDefault();
-    setBusy(true);
-    setError('');
-    try {
-      await updateMyProfile({
-        ...(editable.display_name ? { display_name: name } : {}),
-        ...(editable.email ? { email } : {}),
-      });
-      await onSaved?.();
-      setEditing(false);
-      setSaved(true);
-    } catch (err) {
-      setError(err?.response?.data?.detail || t('account.profile.saveFailed'));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const note = saved ? t('account.profile.saved') : (!canEdit ? t('account.profile.managedBySso') : '');
 
   return (
-    <SectionCard title={t('account.profile.title')}>
-      {editing ? (
-        <form onSubmit={submit} className="space-y-3 max-w-sm" data-testid="profile-form">
-          {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
-          )}
-          {editable.display_name && (
-            <div>
-              <label htmlFor="acct-display-name" className="block text-xs font-medium text-gray-500 mb-1">
-                {t('account.profile.displayName')}
-              </label>
-              <input id="acct-display-name" type="text" autoComplete="name" maxLength={120}
-                value={name} placeholder={user.username} onChange={(e) => setName(e.target.value)} className={inputCls} />
-              <p className="mt-1 text-xs text-gray-400">{t('account.profile.displayNameHint')}</p>
-            </div>
-          )}
-          {editable.email ? (
-            <div>
-              <label htmlFor="acct-email" className="block text-xs font-medium text-gray-500 mb-1">
-                {t('account.profile.email')}
-              </label>
-              <input id="acct-email" type="email" autoComplete="email" maxLength={254}
-                value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
-            </div>
-          ) : (
-            <p className="text-xs text-gray-500">{t('account.profile.emailLocked')}</p>
-          )}
-          <div className="flex items-center gap-2">
-            <button type="submit" disabled={busy} className={btnPrimary}>
-              {busy ? <Loader className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-              {t('account.profile.save')}
-            </button>
-            <button type="button" onClick={() => setEditing(false)} disabled={busy} className={btnGhost}>
-              {t('account.profile.cancel')}
-            </button>
-          </div>
-        </form>
-      ) : (
-        <div className="flex items-start justify-between gap-3">
-          <p className="text-xs text-gray-500">
-            {saved ? t('account.profile.saved') : (!canEdit && t('account.profile.managedBySso'))}
-          </p>
-          {canEdit && (
-            <button type="button" onClick={start} className={btnGhost} data-testid="profile-edit">
-              <Pencil className="w-4 h-4" />{t('account.profile.edit')}
-            </button>
-          )}
-        </div>
+    <SectionCard
+      title={t('account.profile.title')}
+      actions={canEdit ? (
+        <button type="button" onClick={() => { setSaved(false); setEditing(true); }} className={btnGhost}
+          data-testid="profile-edit">
+          <Pencil className="w-4 h-4" />{t('account.profile.edit')}
+        </button>
+      ) : null}
+    >
+      {note && <p className="text-xs text-gray-500">{note}</p>}
+      {editing && (
+        <ProfileDialog user={user} editable={editable} t={t}
+          onClose={() => setEditing(false)}
+          onSaved={async () => { await onSaved?.(); setEditing(false); setSaved(true); }} />
       )}
       <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
         <Field label={t('account.profile.username')} value={user.username} />
@@ -179,6 +116,83 @@ function ProfileSection({ user, t, onSaved }) {
         </div>
       </dl>
     </SectionCard>
+  );
+}
+
+/** The display name and email, in a dialog over the Account page. */
+function ProfileDialog({ user, editable, t, onClose, onSaved }) {
+  const [name, setName] = useState(user.display_name === user.username ? '' : (user.display_name || ''));
+  const [email, setEmail] = useState(user.email || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !busy) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy, onClose]);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      await updateMyProfile({
+        ...(editable.display_name ? { display_name: name } : {}),
+        ...(editable.email ? { email } : {}),
+      });
+      await onSaved();
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('account.profile.saveFailed'));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"
+      aria-labelledby="profile-dialog-title" data-testid="profile-dialog"
+      onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+      <form onSubmit={submit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 id="profile-dialog-title" className="text-base font-semibold text-gray-900">{t('account.profile.editTitle')}</h3>
+          <button type="button" onClick={onClose} disabled={busy} aria-label={t('account.profile.cancel')}
+            className="p-1 rounded hover:bg-gray-100 disabled:opacity-40"><X className="w-4 h-4" /></button>
+        </div>
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+        )}
+        {editable.display_name && (
+          <div>
+            <label htmlFor="acct-display-name" className="block text-xs font-medium text-gray-500 mb-1">
+              {t('account.profile.displayName')}
+            </label>
+            <input id="acct-display-name" type="text" autoComplete="name" maxLength={120} autoFocus
+              value={name} placeholder={user.username} onChange={(e) => setName(e.target.value)} className={inputCls} />
+            <p className="mt-1 text-xs text-gray-400">{t('account.profile.displayNameHint')}</p>
+          </div>
+        )}
+        {editable.email ? (
+          <div>
+            <label htmlFor="acct-email" className="block text-xs font-medium text-gray-500 mb-1">
+              {t('account.profile.email')}
+            </label>
+            <input id="acct-email" type="email" autoComplete="email" maxLength={254}
+              value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
+          </div>
+        ) : (
+          <p className="text-xs text-gray-500">{t('account.profile.emailLocked')}</p>
+        )}
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={busy} className={btnGhost}>
+            {t('account.profile.cancel')}
+          </button>
+          <button type="submit" disabled={busy} className={btnPrimary}>
+            {busy ? <Loader className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            {t('account.profile.save')}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

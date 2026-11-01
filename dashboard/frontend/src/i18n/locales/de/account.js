@@ -31,6 +31,7 @@ export default {
     workspaces: 'Arbeitsbereiche',
     noWorkspaces: 'Noch keine',
     edit: 'Bearbeiten',
+    editTitle: 'Profil bearbeiten',
     save: 'Speichern',
     cancel: 'Abbrechen',
     saved: 'Profil gespeichert.',

@@ -31,6 +31,7 @@ export default {
     workspaces: 'Рабочие пространства',
     noWorkspaces: 'Пока нет',
     edit: 'Изменить',
+    editTitle: 'Изменить профиль',
     save: 'Сохранить',
     cancel: 'Отмена',
     saved: 'Профиль сохранён.',

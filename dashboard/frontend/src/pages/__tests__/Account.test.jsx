@@ -269,6 +269,7 @@ describe('Account', () => {
     authUser = { ...USER, profile_editable: { display_name: true, email: true } };
     show();
     fireEvent.click(await screen.findByTestId('profile-edit'));
+    expect(screen.getByTestId('profile-dialog')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Alice Doe' } });
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'alice@new.example' } });
     fireEvent.click(screen.getByText('Save'));
@@ -276,6 +277,16 @@ describe('Account', () => {
       { display_name: 'Alice Doe', email: 'alice@new.example' }));
     await waitFor(() => expect(refreshUser).toHaveBeenCalled());
     expect(await screen.findByText('Profile saved.')).toBeInTheDocument();
+    expect(screen.queryByTestId('profile-dialog')).toBeNull();
+  });
+
+  it('closes the dialog on Escape without saving', async () => {
+    authUser = { ...USER, profile_editable: { display_name: true, email: true } };
+    show();
+    fireEvent.click(await screen.findByTestId('profile-edit'));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('profile-dialog')).toBeNull());
+    expect(updateMyProfile).not.toHaveBeenCalled();
   });
 
   it('sends only the name when single sign-on holds the email', async () => {
