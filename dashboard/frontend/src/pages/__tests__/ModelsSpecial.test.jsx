@@ -9,6 +9,11 @@ import { I18nProvider } from '../../i18n';
 
 const ok = (data) => Promise.resolve({ data });
 
+// The page reads models.changed off the live stream; no stream here.
+vi.mock('../../components/stream', async (importOriginal) => ({
+  ...(await importOriginal()), useLiveRefetch: () => {},
+}));
+
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ selectedWorkspace: 'studio' }),
 }));

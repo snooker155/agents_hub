@@ -10,7 +10,9 @@ import { getWorkspaces, updateWorkspaceModel, testProvider, getModelsCatalog, ge
 import { EffortSlider } from './EffortSelect';
 import { clampEffort, effortLabel } from './effort';
 import { policyAllows, policyModels } from './workspace/modelPolicy';
-import { loadWorkspaceSummary, patchWorkspaceSummary } from '../api/workspaceSummary';
+import {
+  loadWorkspaceSummary, patchWorkspaceSummary, subscribeWorkspaceSummary, invalidateAllWorkspaceSummaries,
+} from '../api/workspaceSummary';
 import { LogOut, Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
@@ -181,6 +183,24 @@ const Layout = ({ children }) => {
       .then((summary) => { if (summary?.model) setWorkspaceModel(summary.model); })
       .catch(() => setWorkspaceModel(prev => ({ ...prev, override: { provider: '', model: '' }, workspace_default: { provider: '', model: '' } })));
   }, [selectedWorkspace]);
+
+  // Any later answer or patch for this workspace (the Models page saving the
+  // global or the workspace default) reaches the picker at once.
+  useEffect(() => {
+    if (!selectedWorkspace) return undefined;
+    return subscribeWorkspaceSummary(selectedWorkspace, (summary) => {
+      if (summary?.model) setWorkspaceModel(summary.model);
+    });
+  }, [selectedWorkspace]);
+
+  // A model choice saved elsewhere (another tab, another administrator, the
+  // catalog) announces itself as models.changed: read the summary and the
+  // enabled models again. The global default is in every workspace's summary.
+  useLiveRefetch(() => {
+    invalidateAllWorkspaceSummaries();
+    if (selectedWorkspace) loadWorkspaceSummary(selectedWorkspace, { force: true }).catch(() => {});
+    loadAvailableModels();
+  }, { type: 'models.changed' });
 
   // Backend health is implied by the shared stream connection: if our single
   // EventSource is open, the backend is up. No separate polling needed.

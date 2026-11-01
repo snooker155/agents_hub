@@ -9,9 +9,11 @@ import { useWorkspace } from '../components/workspace';
 import { useAuth, canAdminister } from '../components/auth';
 import { policyAllows } from '../components/workspace/modelPolicy';
 import {
-  getModelsCatalog, saveModelsCatalog, discoverProviderModels, getModelsUsage,
+  getModelsCatalog, saveModelsCatalog, discoverProviderModels, getModelsUsage, setGlobalDefaultModel,
   getWorkspaceModel, updateWorkspaceDefaultModel, updateWorkspaceModel,
 } from '../api';
+import { loadWorkspaceSummary, invalidateAllWorkspaceSummaries } from '../api/workspaceSummary';
+import { useLiveRefetch } from '../components/stream';
 
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
@@ -121,8 +123,11 @@ function CatalogTab() {
   const [catalog, setCatalog] = useState(null);
   // Whether Ollama, LM Studio and the hub runtime answer, for a marker by their names.
   const servers = useLocalServers();
-  // Read-only global default (provider + model) sourced from .env.
+  // Global default (provider + model in .env): the fallback for workspaces set to inherit.
   const [globalDefault, setGlobalDefault] = useState({ provider: '', model: '' });
+  const [globalForm, setGlobalForm] = useState({ provider: '', model: '' });
+  const [globalSaving, setGlobalSaving] = useState(false);
+  const [globalError, setGlobalError] = useState('');
   // Global temperature (LLM_TEMPERATURE), shown where a model has none of its own.
   const [globalTemperature, setGlobalTemperature] = useState(0);
   // Per-workspace default model (model_override on the active workspace). '' provider = inherit global.
@@ -149,6 +154,14 @@ function CatalogTab() {
   useEffect(() => {
     try { localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(collapsed)); } catch { /* storage unavailable */ }
   }, [collapsed]);
+
+  // The header picker reads the workspace summary: after a save here it is
+  // read again, so the header shows the new model without waiting for the
+  // models.changed event. A global change makes every workspace's stale.
+  const refreshHeader = useCallback(() => {
+    invalidateAllWorkspaceSummaries();
+    if (selectedWorkspace) loadWorkspaceSummary(selectedWorkspace, { force: true }).catch(() => {});
+  }, [selectedWorkspace]);
 
   // Load the active workspace's default model whenever the workspace changes.
   const loadWsModel = useCallback(() => {
@@ -177,7 +190,7 @@ function CatalogTab() {
     const payload = wsForm.provider ? { provider: wsForm.provider, model: wsForm.model } : { provider: '', model: '' };
     // A policy sets the default itself, so the choice goes to the header's override.
     (policy ? updateWorkspaceModel : updateWorkspaceDefaultModel)(selectedWorkspace, payload)
-      .then(() => loadWsModel())
+      .then(() => { loadWsModel(); refreshHeader(); })
       .catch((e) => {
         console.error('Error saving workspace default model:', e);
         setWsError(e?.response?.data?.detail || e?.message || '');
@@ -185,12 +198,29 @@ function CatalogTab() {
       .finally(() => setWsSaving(false));
   };
 
+  const saveGlobalDefault = () => {
+    setGlobalSaving(true);
+    setGlobalError('');
+    setGlobalDefaultModel(globalForm)
+      .then(({ data }) => {
+        setGlobalDefault(data);
+        setGlobalForm(data);
+        // A workspace that inherits shows the new value in its card and the header.
+        loadWsModel();
+        refreshHeader();
+      })
+      .catch((e) => setGlobalError(e?.response?.data?.detail || e?.message || ''))
+      .finally(() => setGlobalSaving(false));
+  };
+
   const load = useCallback(() => {
     getModelsCatalog()
       .then(({ data }) => {
         const providers = data.providers || {};
         setCatalog(providers);
-        setGlobalDefault(data.global_default || { provider: '', model: '' });
+        const gd = data.global_default || { provider: '', model: '' };
+        setGlobalDefault(gd);
+        setGlobalForm(gd);
         setGlobalTemperature(data.global_temperature ?? 0);
         setDirty(false);
         // First time we see a provider, default long lists to collapsed. Providers
@@ -211,6 +241,14 @@ function CatalogTab() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // A model choice saved elsewhere (the header picker, another tab): read the
+  // workspace card again, and the catalog with the global default unless
+  // there are unsaved edits here, which a reload would throw away.
+  useLiveRefetch(() => {
+    loadWsModel();
+    if (!dirty) load();
+  }, { type: 'models.changed' });
 
   const updateModel = (provider, id, patch) => {
     setCatalog((c) => {
@@ -385,20 +423,66 @@ function CatalogTab() {
 
       {/* The catalog itself is the administrator's: members read it, disabled. */}
       <fieldset disabled={!admin} className="min-w-0 border-0 p-0 m-0 space-y-4">
-      {/* Global default — read-only, sourced from .env (the inherit fallback) */}
-      <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center flex-wrap gap-3">
-        <span className="text-sm font-medium text-gray-700">{t('models.globalDefault')}</span>
-        <span className="px-2 py-1 rounded-lg border bg-gray-50 border-gray-200 text-sm flex items-center gap-1.5">
-          <span className={`px-1.5 py-0.5 rounded border text-[10px] font-medium ${providerConfig(globalDefault.provider).color}`}>
-            {providerConfig(globalDefault.provider).label || globalDefault.provider || '—'}
-          </span>
-          <span className="font-mono text-gray-700">{globalDefault.model || '—'}</span>
-          <span className="text-[10px] uppercase tracking-wider text-gray-400 ml-1">{t('models.global')}</span>
-        </span>
-        <span className="text-xs text-gray-400">
-          {t('models.fromEnvBefore')} <code className="bg-gray-100 rounded px-1">.env</code> {t('models.fromEnvAfter')}
-        </span>
-      </div>
+      {/* Global default: DEFAULT_PROVIDER + its model in .env, the inherit fallback */}
+      {(() => {
+        const enabledProviders = orderProviders(catalog).filter((p) => (catalog[p]?.models || []).some((m) => m.enabled));
+        const models = globalForm.provider ? (catalog[globalForm.provider]?.models || []).filter((m) => m.enabled) : [];
+        const globalDirty = globalForm.provider !== globalDefault.provider || globalForm.model !== globalDefault.model;
+        // The server checks the saved catalog, so unsaved edits come first.
+        const canApply = globalDirty && !!globalForm.model && !dirty && !globalSaving;
+        return (
+          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3" data-testid="global-default">
+            <div className="flex items-center flex-wrap gap-3">
+              <span className="text-sm font-medium text-gray-700">{t('models.globalDefault')}</span>
+              <select
+                value={globalForm.provider}
+                onChange={(e) => {
+                  const p = e.target.value;
+                  const enabled = (catalog[p]?.models || []).filter((m) => m.enabled);
+                  const def = catalog[p]?.default;
+                  const pick = enabled.find((m) => m.id === def)?.id || enabled[0]?.id || '';
+                  setGlobalForm({ provider: p, model: pick });
+                }}
+                className={`${inputCls} py-1.5`}
+                aria-label={t('models.globalDefault')}
+              >
+                {!enabledProviders.includes(globalForm.provider) && (
+                  <option value={globalForm.provider}>{providerConfig(globalForm.provider).label || globalForm.provider || '—'}</option>
+                )}
+                {enabledProviders.map((p) => (
+                  <option key={p} value={p}>{providerConfig(p).label}</option>
+                ))}
+              </select>
+              <select
+                value={globalForm.model}
+                onChange={(e) => setGlobalForm((f) => ({ ...f, model: e.target.value }))}
+                className={`${inputCls} py-1.5 max-w-xs font-mono`}
+                aria-label={t('models.model')}
+              >
+                {!models.some((m) => m.id === globalForm.model) && (
+                  <option value={globalForm.model}>{globalForm.model || t('models.noEnabledModels')}</option>
+                )}
+                {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+              </select>
+              <button
+                onClick={saveGlobalDefault}
+                disabled={!canApply}
+                title={globalDirty && dirty ? t('models.saveCatalogFirst') : undefined}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  canApply ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                {globalSaving ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                {t('models.apply')}
+              </button>
+            </div>
+            {globalError && <p className="text-xs text-red-600 mt-2" data-testid="global-default-error">{globalError}</p>}
+            <p className="text-xs text-gray-500 mt-2">
+              {globalDirty && dirty ? t('models.saveCatalogFirst') : t('models.globalDefaultHint')}
+            </p>
+          </div>
+        );
+      })()}
 
       {orderProviders(catalog).map((provider) => {
         const entry = catalog[provider] || { default: '', models: [] };
@@ -531,7 +615,7 @@ function CatalogTab() {
                               <td className="px-3 py-1.5 font-mono text-gray-700 break-all">
                                 {m.id}
                                 {provider === globalDefault.provider && m.id === globalDefault.model && (
-                                  <span className="ml-2 align-middle px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50 text-gray-500 text-[10px] font-sans uppercase tracking-wider" title={t('models.systemWideDefaultFromEnv')}>{t('models.global')}</span>
+                                  <span className="ml-2 align-middle px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50 text-gray-500 text-[10px] font-sans uppercase tracking-wider" title={t('models.systemWideDefault')}>{t('models.global')}</span>
                                 )}
                               </td>
                               <td className="px-3 py-1.5">

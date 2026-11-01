@@ -11,6 +11,11 @@ import Models from '../Models';
 
 const ok = (data) => Promise.resolve({ data });
 
+// The page reads models.changed off the live stream; no stream here.
+vi.mock('../../components/stream', async (importOriginal) => ({
+  ...(await importOriginal()), useLiveRefetch: () => {},
+}));
+
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ selectedWorkspace: 'default' }),
 }));
@@ -79,7 +84,7 @@ async function renderCatalog() {
       </MemoryRouter>
     </I18nProvider>,
   );
-  await screen.findByText('gpt-4o');
+  await screen.findByRole('cell', { name: /gpt-4o/ });
 }
 
 describe('Models catalog: temperature and reasoning', () => {
@@ -119,5 +124,30 @@ describe('Models catalog: temperature and reasoning', () => {
     const saved = put.mock.calls[0][1].providers.openai.models;
     expect(saved.find((m) => m.id === 'gpt-4o').temperature).toBe(0.9);
     expect(saved.find((m) => m.id === 'gpt-5.4').temperature).toBeNull();
+  });
+});
+
+describe('Models catalog: global default', () => {
+  it('sets the global default from the enabled models, after unsaved catalog edits are saved', async () => {
+    put.mockImplementation((url, body) => (url === '/models/global-default'
+      ? ok(body) : ok({ ...CATALOG, providers: body.providers })));
+    await renderCatalog();
+    const card = screen.getByTestId('global-default');
+    const pick = within(card).getByRole('combobox', { name: 'Model' });
+    const apply = within(card).getByRole('button', { name: /Apply/ });
+    expect(pick).toHaveValue('gpt-5');
+    expect(apply).toBeDisabled();
+
+    fireEvent.change(pick, { target: { value: 'gpt-4o' } });
+    // An unsaved catalog edit comes first: the server checks the saved catalog.
+    fireEvent.change(within(row('gpt-4o')).getByRole('spinbutton', { name: 'Temp.' }), { target: { value: '0.5' } });
+    expect(apply).toBeDisabled();
+    expect(within(card).getByText('Save the catalog changes first.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+    await waitFor(() => expect(apply).toBeEnabled());
+
+    fireEvent.click(apply);
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/models/global-default', { provider: 'openai', model: 'gpt-4o' }));
+    await waitFor(() => expect(apply).toBeDisabled());
   });
 });

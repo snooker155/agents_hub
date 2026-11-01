@@ -627,30 +627,10 @@ def _data_class(settings: dict) -> str:
 
 
 def _model_state(name: str, metadata: dict) -> dict:
-    from pathlib import Path as _Path
-    from common.config import settings as _cfg
-
-    # Read .env directly so we always get the current on-disk value
-    # parents[3] = agents_hub/ (service root): routes/ → backend/ → dashboard/ → agents_hub/
-    env_file = _Path(__file__).resolve().parents[3] / ".env"
-    env: dict = {}
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            env[k.strip()] = v.strip().strip("\"'")
-
-    global_provider = env.get("DEFAULT_PROVIDER") or "openai"
-    provider_model_map = {
-        "openai":    env.get("OPENAI_MODEL") or _cfg.model,
-        "anthropic": env.get("ANTHROPIC_MODEL") or "",
-        "google":    env.get("GOOGLE_MODEL") or "",
-        "ollama":    env.get("OLLAMA_MODEL") or "",
-        "lmstudio":  env.get("LMSTUDIO_MODEL") or "",
-    }
-    global_model = provider_model_map.get(global_provider) or ""
+    # The same global default the Models page shows and sets (routes/models.py).
+    from routes.models import _global_default
+    glob = _global_default()
+    global_provider, global_model = glob["provider"], glob["model"]
 
     override = metadata.get("model_override") or {}
     ws_default = get_workspace_default_model_config(metadata)
@@ -814,6 +794,7 @@ async def set_workspace_model(name: str, payload: dict, request: Request = cast(
                                 detail=f"The effort is fixed at '{policy.effort}' by the workspace's model policy")
         update_workspace_metadata(name, {"model_effort": effort})
         if "provider" not in payload and "model" not in payload:
+            notify_change("models", workspace=name)
             return {"effort": effort}
     provider = payload.get("provider", "")
     model = payload.get("model", "")
@@ -825,6 +806,7 @@ async def set_workspace_model(name: str, payload: dict, request: Request = cast(
     else:
         _policy_refusal(name, provider, model)
         update_workspace_metadata(name, {"model_override": {"provider": provider, "model": model}})
+    notify_change("models", workspace=name)
     return {"provider": provider, "model": model}
 
 
@@ -845,8 +827,11 @@ async def set_workspace_default_model(name: str, payload: dict):
     model = (payload.get("model") or "").strip()
     if not provider or provider in ("global", "workspace_default"):
         update_workspace_metadata(name, {"model_default": {}, "model_override": {}})
+        notify_change("models", workspace=name)
         return {"provider": "", "model": ""}
     update_workspace_metadata(name, {"model_default": {"provider": provider, "model": model}, "model_override": {}})
+    # The header picker of every tab on this workspace shows it.
+    notify_change("models", workspace=name)
     return {"provider": provider, "model": model}
 
 

@@ -9,6 +9,8 @@ export const saveModelsCatalog = (providers) => api.put('/models', { providers }
 // The efforts a model accepts and the one it runs at (routes/models.py).
 export const getModelReasoning = (params) => api.get('/models/reasoning', { params });
 export const discoverProviderModels = (provider) => api.post(`/models/discover/${encodeURIComponent(provider)}`);
+// The hub-wide fallback model (DEFAULT_PROVIDER + its model in .env).
+export const setGlobalDefaultModel = (data) => api.put('/models/global-default', data);
 export const getModelsUsage = (params) => api.get('/models/usage', { params });
 
 // Global Settings API

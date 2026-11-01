@@ -100,6 +100,12 @@ export function invalidateWorkspaceSummary(workspace) {
   cache.delete(workspace);
 }
 
+/** Forget every stored answer: a change every workspace shows (the global
+ *  default model) makes them all stale. */
+export function invalidateAllWorkspaceSummaries() {
+  cache.clear();
+}
+
 /** Called with the new summary whenever one arrives or is patched. */
 export function subscribeWorkspaceSummary(workspace, fn) {
   const set = listeners.get(workspace) || new Set();

@@ -18,11 +18,12 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from common.config import settings
 from common.pricing import default_cached_price
+from common.session_broker import notify_change
 from managers import run_manager
 
 # Reuse the Settings env reader/writer + provider probe so discovery stays in
@@ -371,16 +372,64 @@ def _save_catalog(catalog: dict) -> None:
 
 
 def _global_default() -> dict:
-    """The system-wide default model, read-only from .env.
+    """The system-wide default model: the fallback for workspaces set to
+    inherit and the lowest tier build_chat_model resolves.
 
-    Provider is ``DEFAULT_PROVIDER``; model is that provider's ``*_MODEL`` key.
-    This is the lowest-priority fallback the runtime uses (build_chat_model) and
-    is NOT editable from the UI — change it by editing .env directly.
+    Provider is ``DEFAULT_PROVIDER``; model is that provider's ``*_MODEL`` key,
+    or a custom backend's own ``default_model``. Read from the settings in force
+    (``.env`` over the process environment), as a model call reads them. The
+    Models page changes it through ``PUT /api/models/global-default``.
     """
-    env = _read_env()
-    provider = env.get("DEFAULT_PROVIDER") or "openai"
-    model = (env.get(_PROVIDER_ENV_MODEL.get(provider, "")) or "").strip()
+    from common import provider_env
+    env = provider_env.live()
+    provider = (env.get("DEFAULT_PROVIDER") or "openai").strip().lower()
+    env_key = _PROVIDER_ENV_MODEL.get(provider)
+    if env_key:
+        # Unset in the settings: the model build_chat_model runs for it.
+        from agents.agent_utils import default_model_for
+        model = (env.get(env_key) or "").strip() or (default_model_for(provider) or "")
+    else:
+        from providers import get_backend
+        model = str((get_backend(provider) or {}).get("default_model") or "").strip()
     return {"provider": provider, "model": model}
+
+
+class GlobalDefaultUpdate(BaseModel):
+    provider: str
+    model: str
+
+
+@router.put("/global-default")
+async def set_global_default(data: GlobalDefaultUpdate):
+    """Set the system-wide default model. It must be a model switched on in the
+    catalog. A built-in provider's choice goes to ``.env`` (``DEFAULT_PROVIDER``
+    and its ``*_MODEL``) and applies to the next model call here and in the
+    runner replicas (common/provider_env.py); a custom backend's model becomes
+    that backend's ``default_model``."""
+    provider = (data.provider or "").strip().lower()
+    model = (data.model or "").strip()
+    if provider not in set(_providers()):
+        raise HTTPException(status_code=400, detail=f"unknown provider: {provider or '(empty)'}")
+    entry = _load_catalog().get(provider) or {}
+    if not any(m.get("id") == model and m.get("enabled") for m in entry.get("models", [])):
+        raise HTTPException(status_code=400, detail=f"{model or '(empty)'} is not an enabled {provider} model")
+    from common import provider_env
+    updates = {"DEFAULT_PROVIDER": provider}
+    env_key = _PROVIDER_ENV_MODEL.get(provider)
+    if env_key:
+        updates[env_key] = model
+    else:
+        from providers import get_backend
+        from providers.registry import upsert_backend
+        backend = get_backend(provider)
+        if backend is None:
+            raise HTTPException(status_code=400, detail=f"unknown provider: {provider}")
+        if backend.get("default_model") != model:
+            upsert_backend({**backend, "default_model": model})
+    provider_env.save(updates)
+    # Every open header shows the global default (for workspaces that inherit).
+    notify_change("models")
+    return _global_default()
 
 
 # ── Catalog endpoints ─────────────────────────────────────────────────────────
@@ -404,12 +453,12 @@ async def get_model_reasoning(provider: str = "", model: str = "", workspace: st
 
 @router.get("")
 async def get_catalog():
-    """Return the curated model catalog plus the read-only global default (.env).
+    """Return the curated model catalog plus the global default.
 
-    ``global_default`` (provider + model) is sourced from .env and is not editable
-    here — the UI uses it only to badge the matching model and as the inherit
-    target for workspaces. The per-provider ``default`` (starred) is catalog
-    metadata used to pre-select a provider's model; it no longer touches .env.
+    ``global_default`` (provider + model) is the inherit target for workspaces;
+    the page badges the matching model and changes it through
+    ``PUT /global-default``. The per-provider ``default`` (starred) is catalog
+    metadata used to pre-select a provider's model; it does not touch .env.
     """
     try:
         stored = _load_catalog_raw()
@@ -492,8 +541,8 @@ def _prune_workspace_models(catalog: dict) -> None:
 @router.put("")
 async def save_catalog(data: CatalogUpdate):
     """Persist the curated catalog (available models, per-provider default star,
-    pricing). Does NOT write .env — the global default is read-only and managed
-    in the .env file; per-workspace selection lives in workspaces.json."""
+    pricing). Does NOT write .env: the global default has its own endpoint
+    (``PUT /global-default``); per-workspace selection lives in workspaces.json."""
     catalog = _empty_catalog()
     _valid_providers = set(_providers())
     # Previous state, used to tell an edited price from an untouched one: the UI
@@ -524,6 +573,8 @@ async def save_catalog(data: CatalogUpdate):
         catalog[provider] = {"default": default, "models": models}
     _save_catalog(catalog)
     _prune_workspace_models(catalog)
+    # The header picker lists the enabled models, and a pruned workspace falls back.
+    notify_change("models")
     return _catalog_response(catalog)
 
 
