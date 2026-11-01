@@ -76,3 +76,22 @@ describe('InstanceList state chips', () => {
     expect(screen.queryByText('Group by agent')).toBeNull();
   });
 });
+
+describe('InstanceList reloadKey', () => {
+  beforeEach(() => {
+    getInstances.mockReset();
+    getInstances.mockResolvedValue({ data: { items: ROWS, total: 2, counts: { total: 2 } } });
+  });
+
+  // A service page's Refresh button: the rows are read again on a new key,
+  // and only then (the first load is the list's own).
+  it('reads the rows again when the key changes', async () => {
+    const { rerender } = show({ reloadKey: 0 });
+    await screen.findByText('coder #1');
+    expect(getInstances).toHaveBeenCalledTimes(1);
+    rerender(<MemoryRouter><I18nProvider><InstanceList reloadKey={0} /></I18nProvider></MemoryRouter>);
+    expect(getInstances).toHaveBeenCalledTimes(1);
+    rerender(<MemoryRouter><I18nProvider><InstanceList reloadKey={1} /></I18nProvider></MemoryRouter>);
+    await vi.waitFor(() => expect(getInstances).toHaveBeenCalledTimes(2));
+  });
+});

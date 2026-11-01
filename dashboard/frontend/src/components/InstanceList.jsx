@@ -178,6 +178,8 @@ export default function InstanceList({
   showAgentColumn = true,
   defaultLiveOnly = false,
   onTerminal = null,
+  // A change asks for the rows again (a Refresh button on the page around it).
+  reloadKey = 0,
 }) {
   const { t } = useI18n();
   const [items, setItems] = useState([]);
@@ -286,6 +288,14 @@ export default function InstanceList({
   useLiveRefetch(() => fetchPage(), {
     type: 'instances.changed', enabled: liveUpdates,
   });
+
+  // The first load is the search effect's; only a later change refetches.
+  const shownReloadKey = useRef(reloadKey);
+  useEffect(() => {
+    if (shownReloadKey.current === reloadKey) return;
+    shownReloadKey.current = reloadKey;
+    fetchPageRef.current();
+  }, [reloadKey]);
 
   const handleStop = async (instance) => {
     setBusyIds((b) => ({ ...b, [instance.instance_id]: true }));

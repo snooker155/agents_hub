@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  Activity, Box, Cpu, History, Loader, Pause, Play, Plus, Save, Settings2, Trash2, Info } from 'lucide-react';
+  Activity, Box, Cpu, History, Loader, Pause, Play, Plus, RefreshCw, Save, Settings2, Trash2, Info } from 'lucide-react';
 
 import {
   addServiceReplica, clearServiceInboundSecret, deleteService, getService, getServiceConnections,
@@ -178,18 +178,30 @@ export default function ServiceDetail() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  // Bumped by the Refresh button: the replica list reads its rows itself.
+  const [reloadKey, setReloadKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Promise chain rather than try/await: the lint rule cannot tell that no
   // state is set before the first await of an async function with a catch.
-  const load = useCallback(() => {
+  const load = useCallback(() => (
     getService(serviceId)
       .then(({ data }) => {
         setService(data);
         setError('');
       })
       .catch(() => setService(null))
-      .finally(() => setLoading(false));
-  }, [serviceId]);
+      .finally(() => setLoading(false))
+  ), [serviceId]);
+
+  // The live events can miss a change (a replica that died without saying
+  // so), so the page can also be read again by hand. The events tab follows
+  // `service`, so it reloads with it.
+  const refresh = () => {
+    setRefreshing(true);
+    setReloadKey((k) => k + 1);
+    load().finally(() => setRefreshing(false));
+  };
 
   useEffect(() => { load(); }, [load]);
   useLiveRefetch(load, { type: 'services.changed', enabled: liveUpdates });
@@ -265,6 +277,11 @@ export default function ServiceDetail() {
         actions={(
           <div className="flex items-center gap-2">
             <StatusPill status={service.status} reason={service.paused_reason} t={t} />
+            <button type="button" onClick={refresh} disabled={refreshing}
+                    data-testid="service-refresh"
+                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />{t('services.refresh')}
+            </button>
             {isActive ? (
               <>
                 <button type="button" onClick={() => act('replica', addServiceReplica)}
@@ -331,7 +348,7 @@ export default function ServiceDetail() {
       </div>
 
       {activeTab === 'replicas' && (
-        <InstanceList serviceId={serviceId} liveUpdates={liveUpdates} defaultLiveOnly
+        <InstanceList serviceId={serviceId} liveUpdates={liveUpdates} defaultLiveOnly reloadKey={reloadKey}
                       showAgentColumn={false} onTerminal={setTerminalFor} />
       )}
       {terminalFor && (
