@@ -39,12 +39,9 @@ export default {
     resume: 'Live-Updates fortsetzen',
   },
   modelPicker: {
-    global: 'Global',
-    globalSuffix: '(global)',
     defaultSuffix: '(Standard)',
     inheritedSuffix: '(aus {{workspace}})',
     defaultBadge: 'Standard',
-    globalBadge: 'global',
     legend: 'Punkte:',
     legendAvailable: 'verfügbar',
     legendUnreachable: 'nicht erreichbar',

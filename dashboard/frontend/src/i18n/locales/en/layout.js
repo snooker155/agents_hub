@@ -39,12 +39,9 @@ export default {
     resume: 'Resume live updates',
   },
   modelPicker: {
-    global: 'Global',
-    globalSuffix: '(global)',
     defaultSuffix: '(default)',
     inheritedSuffix: '(from {{workspace}})',
     defaultBadge: 'default',
-    globalBadge: 'global',
     legend: 'Dots:',
     legendAvailable: 'available',
     legendUnreachable: 'unreachable',

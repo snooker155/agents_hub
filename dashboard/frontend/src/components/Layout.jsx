@@ -237,14 +237,10 @@ const Layout = ({ children }) => {
   const policy = workspaceModel.policy?.models?.length ? workspaceModel.policy : null;
   const pickerModels = policy ? policyModels(policy) : availableModels;
   // A member (multi mode, not an administrator) changes the model for the
-  // whole workspace from here, so only within what the hub offers: the
-  // global model only when it is one of the listed models, and the reasoning
-  // effort not at all (PUT /api/workspaces/{name}/model refuses the same).
+  // whole workspace from here, so only within what the hub offers (the
+  // listed models), and the reasoning effort not at all (PUT
+  // /api/workspaces/{name}/model refuses the same).
   const member = !canAdminister(auth);
-  const globalListed = availableModels.some(
-    (m) => m.provider === globalDefault.provider && m.model === globalDefault.model,
-  );
-  const offerGlobal = !policy && (!member || globalListed);
   const workspaceDefaultIsGlobal = !policy && Boolean(
     wsDefault.provider &&
     wsDefault.provider === globalDefault.provider &&
@@ -259,6 +255,16 @@ const Layout = ({ children }) => {
     return ws.name;
   };
 
+  // The model the workspace runs without a choice in the header: its own
+  // default (the policy's under a policy), else the global one.
+  const inheritedModel = (() => {
+    const dp = workspaceModel.workspace_default?.provider || '';
+    if (dp && (dp !== 'global' || policy) && !workspaceDefaultIsGlobal) {
+      return { provider: dp, model: workspaceModel.workspace_default.model, source: 'workspace_default' };
+    }
+    return { ...globalDefault, source: 'global' };
+  })();
+
   const displayModel = (() => {
     const op = workspaceModel.override?.provider || '';
     const overrideAllowed = !policy
@@ -267,11 +273,7 @@ const Layout = ({ children }) => {
       if (op === 'global') return { ...globalDefault, source: 'global' };
       return { provider: op, model: workspaceModel.override.model, source: 'override' };
     }
-    const dp = workspaceModel.workspace_default?.provider || '';
-    if (dp && (dp !== 'global' || policy) && !workspaceDefaultIsGlobal) {
-      return { provider: dp, model: workspaceModel.workspace_default.model, source: 'workspace_default' };
-    }
-    return { ...globalDefault, source: 'global' };
+    return inheritedModel;
   })();
 
   // The header's reasoning effort, for agents that inherit the model: kept
@@ -584,48 +586,30 @@ const Layout = ({ children }) => {
                   <span>{PROVIDER_CONFIG[displayModel.provider]?.label || displayModel.provider}</span>
                   {displayModel.model && <><span className="opacity-50">·</span><span className="max-w-32 truncate">{displayModel.model}</span></>}
                   {effortShown && <><span className="opacity-50">·</span><span>{effortLabel(t, effortShown)}</span></>}
-                  {displayModel.source === 'global' && <span className="opacity-40 italic text-[10px]">{t('layout.modelPicker.globalSuffix')}</span>}
                   {displayModel.source === 'workspace_default' && <span className="opacity-40 italic text-[10px]">{workspaceModel?.workspace_default?.inherited_from ? t('layout.modelPicker.inheritedSuffix', { workspace: workspaceModel.workspace_default.inherited_from }) : t('layout.modelPicker.defaultSuffix')}</span>}
                 </span>
                 <ChevronDown className="w-3 h-3 opacity-60" />
               </button>
               {showModelPicker && (
                 <div className="header-sheet absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 min-w-64 py-1">
-                  {/* Global — DEFAULT_PROVIDER from .env, lowest priority fallback.
-                      Not offered under a model policy: the policy's default replaces it. */}
-                  {offerGlobal && <button
-                    onClick={() => handleModelSwitch('global', '')}
-                    className={`w-full text-left flex items-center gap-2 px-4 py-2 text-xs hover:bg-gray-50 transition-colors ${
-                      displayModel.source === 'global' ? 'bg-indigo-50' : ''
-                    }`}
-                  >
-                    {statusDot(globalDefault.provider)}
-                    <span className="px-1.5 py-0.5 rounded border text-[10px] font-medium shrink-0 bg-gray-50 border-gray-200 text-gray-600">
-                      {t('layout.modelPicker.global')}
-                    </span>
-                    <span className="text-gray-500 italic truncate">
-                      {PROVIDER_CONFIG[globalDefault.provider]?.label || globalDefault.provider}
-                      {globalDefault.model ? ` · ${globalDefault.model}` : ''}
-                    </span>
-                    {displayModel.source === 'global' && (
-                      <span className="ml-auto text-indigo-500 font-bold shrink-0">✓</span>
-                    )}
-                  </button>}
                   {policy && (
                     <p className="px-4 pt-1.5 pb-0.5 text-[10px] text-gray-400">
                       {policy.models.length === 1 ? t('modelPolicy.picker.onlyModel') : t('modelPolicy.models.policyNote')}
                     </p>
                   )}
-                  {!policy && pickerModels.length > 0 && <div className="border-t border-gray-100 my-1" />}
-                  {/* Every enabled catalog model (grouped by provider), with marks
-                      for the global model and this workspace's default model. */}
+                  {/* The models every member may pick (the enabled catalog
+                      models, or the policy's), grouped by provider, with a mark
+                      for this workspace's default. No row of its own for the
+                      global default: it is one of these models. */}
                   {pickerModels.map(({ provider, model }, idx) => {
                     const showHeader = idx === 0 || pickerModels[idx - 1].provider !== provider;
                     const wd = workspaceModel.workspace_default || {};
-                    const isGlobal = !policy && provider === globalDefault.provider && model === globalDefault.model;
                     const isDefault = wd.provider === provider && wd.model === model;
-                    const isActive = displayModel.source !== 'global'
-                      && displayModel.provider === provider && displayModel.model === model;
+                    const isActive = displayModel.provider === provider && displayModel.model === model;
+                    // The model the workspace gets anyway clears the header's
+                    // choice rather than pinning it, so the workspace keeps
+                    // following its default and the global one.
+                    const inherited = inheritedModel.provider === provider && inheritedModel.model === model;
                     return (
                       <div key={`${provider}:${model}`}>
                         {showHeader && (
@@ -634,16 +618,13 @@ const Layout = ({ children }) => {
                           </p>
                         )}
                         <button
-                          onClick={() => handleModelSwitch(provider, model)}
+                          onClick={() => (inherited ? handleModelSwitch('', '') : handleModelSwitch(provider, model))}
                           className={`w-full text-left flex items-center gap-2 px-4 py-2 text-xs hover:bg-gray-50 transition-colors ${isActive ? 'bg-indigo-50' : ''}`}
                         >
                           {statusDot(provider)}
                           <span className="truncate text-gray-700 font-mono">{model}</span>
                           {isDefault && (
                             <span className="px-1.5 py-0.5 rounded border text-[9px] font-medium shrink-0 bg-indigo-50 border-indigo-200 text-indigo-600 uppercase tracking-wider">{t('layout.modelPicker.defaultBadge')}</span>
-                          )}
-                          {isGlobal && (
-                            <span className="px-1.5 py-0.5 rounded border text-[9px] font-medium shrink-0 bg-gray-50 border-gray-300 text-gray-500 uppercase tracking-wider">{t('layout.modelPicker.globalBadge')}</span>
                           )}
                           {isActive && (
                             <span className="ml-auto text-indigo-500 font-bold shrink-0">✓</span>

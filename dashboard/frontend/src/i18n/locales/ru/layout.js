@@ -41,12 +41,9 @@ export default {
     resume: 'Возобновить живые обновления',
   },
   modelPicker: {
-    global: 'Глобально',
-    globalSuffix: '(глобально)',
     defaultSuffix: '(по умолчанию)',
     inheritedSuffix: '(из {{workspace}})',
     defaultBadge: 'по умолчанию',
-    globalBadge: 'глобально',
     legend: 'Индикаторы:',
     legendAvailable: 'доступен',
     legendUnreachable: 'недоступен',
