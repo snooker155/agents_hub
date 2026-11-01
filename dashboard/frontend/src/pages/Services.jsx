@@ -46,6 +46,23 @@ export function ReplicasCell({ service, t }) {
   );
 }
 
+// The workspace of a service, with whose it is when it is someone's personal
+// one (the same badge as the Workspaces page), since its name is a generated id.
+export function WorkspaceCell({ service, t }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+      <span>{service.workspace}</span>
+      {service.workspace_personal && (
+        <span className="text-[11px] font-medium text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+          {service.workspace_own_personal
+            ? t('workspaceManager.personal')
+            : t('workspaceManager.personalOf', { name: service.workspace_personal_label || service.workspace_personal_of })}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function Services() {
   const { t } = useI18n();
   const { workspaceFilter, selectedWorkspace, liveUpdates } = useWorkspace();
@@ -201,7 +218,7 @@ export default function Services() {
                         <Link to={`/agents/${s.agent_id}`} onClick={(e) => e.stopPropagation()} className="text-gray-700 hover:text-indigo-600">{s.agent_id}</Link>
                       ) : <span className="text-gray-400">{t('services.anyAgent')}</span>}
                     </td>
-                    <td className="px-3 py-2 text-xs text-gray-600">{s.workspace}</td>
+                    <td className="px-3 py-2 text-xs text-gray-600"><WorkspaceCell service={s} t={t} /></td>
                     <td className="px-3 py-2 text-xs text-gray-600">{s.environment_name || <span className="text-gray-300">—</span>}</td>
                     <td className="px-3 py-2"><StatusPill status={s.status} reason={s.paused_reason} t={t} /></td>
                     <td className="px-3 py-2"><ReplicasCell service={s} t={t} /></td>

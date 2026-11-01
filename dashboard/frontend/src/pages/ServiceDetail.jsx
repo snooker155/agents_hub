@@ -14,7 +14,7 @@ import { LazyTerminalPanel } from '../components/terminal';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useLiveRefetch } from '../components/stream';
 import { useWorkspace } from '../components/workspace';
-import { ReplicasCell, StatusPill } from './Services';
+import { ReplicasCell, StatusPill, WorkspaceCell } from './Services';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 
@@ -330,7 +330,7 @@ export default function ServiceDetail() {
         <Stat label={t('services.columns.agent')} value={service.agent_id
           ? <Link to={`/agents/${service.agent_id}`} className="hover:text-indigo-600">{service.agent_id}</Link>
           : t('services.anyAgent')} />
-        <Stat label={t('services.columns.workspace')} value={service.workspace} />
+        <Stat label={t('services.columns.workspace')} value={<WorkspaceCell service={service} t={t} />} />
         <Stat label={t('services.columns.environment')} value={service.environment_name || '—'} />
         <Stat label={t('services.columns.replicas')} value={<ReplicasCell service={service} t={t} />} />
         <Stat label={t('services.columns.concurrency')} value={service.concurrency} />

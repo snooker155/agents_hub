@@ -75,6 +75,28 @@ def owner_of(workspace: Optional[str]) -> Optional[str]:
     return str(owner) if owner else None
 
 
+def owner_label(user_id: str) -> str:
+    """Whose personal workspace this is, in words: the person's display name,
+    else their username, else the id."""
+    from common import identity
+    user = identity.get_user(user_id) if identity.current_mode() == "multi" else None
+    return (user or {}).get("display_name") or (user or {}).get("username") or user_id
+
+
+def owner_fields(workspace: Optional[str], principal: Any = None) -> Dict[str, Any]:
+    """The ``personal``, ``personal_of``, ``personal_label`` and
+    ``own_personal`` fields a listing gives a workspace, so a page shows whose
+    it is instead of its generated name."""
+    owner = owner_of(workspace)
+    return {
+        "personal": bool(owner),
+        "personal_of": owner,
+        "personal_label": owner_label(owner) if owner else None,
+        "own_personal": bool(owner) and getattr(principal, "kind", "") == "user"
+        and str(getattr(principal, "id", "")) == owner,
+    }
+
+
 def is_personal(workspace: Optional[str]) -> bool:
     return owner_of(workspace) is not None
 

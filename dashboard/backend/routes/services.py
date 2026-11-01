@@ -93,8 +93,15 @@ def _external_url(request: Optional[Request], service: Dict[str, Any]) -> Option
 
 
 def _enrich(service: Dict[str, Any], request: Optional[Request] = None) -> Dict[str, Any]:
+    from common import personal_workspace
+    principal = identity.request_principal(request) if request is not None else None
+    # Whose a personal workspace is, so the pages name the person rather than
+    # the generated personal-<id>.
+    owner = {f"workspace_{k}": v for k, v in
+             personal_workspace.owner_fields(service.get("workspace"), principal).items()}
     return {
         **store.public_view(service),
+        **owner,
         "replicas": replicas.summary(str(service["service_id"])),
         "external_url": _external_url(request, service),
     }

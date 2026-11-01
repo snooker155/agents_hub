@@ -132,6 +132,21 @@ def test_an_admin_sees_their_own_personal_first_and_others_last(multi, client):
     assert listed[-1]["personal_of"] == bob_id and not listed[-1]["own_personal"]
 
 
+def test_services_say_whose_personal_workspace_they_run_in(multi, client):
+    root_id, admin = _admin(client)
+    bob_id, _ = _member(client, admin)
+    from services import store
+    store.ensure_runner(personal_workspace.name_for(bob_id))
+    store.ensure_runner(personal_workspace.name_for(root_id))
+
+    listed = client.get("/api/services", headers=admin, params={"kind": "runner"}).json()["items"]
+    by_ws = {s["workspace"]: s for s in listed}
+    bobs = by_ws[personal_workspace.name_for(bob_id)]
+    assert bobs["workspace_personal"] and bobs["workspace_personal_of"] == bob_id
+    assert bobs["workspace_personal_label"] == "bob" and not bobs["workspace_own_personal"]
+    assert by_ws[personal_workspace.name_for(root_id)]["workspace_own_personal"]
+
+
 def test_a_personal_workspace_cannot_be_deleted_or_shared(multi, client):
     root_id, admin = _admin(client)
     bob_id, bob = _member(client, admin)

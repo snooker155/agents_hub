@@ -149,12 +149,6 @@ def _calc_task_progress(task, all_tasks):
     return int(round((done / len(subs)) * 100)) if subs else 0
 
 
-def _person_label(user_id: str) -> str:
-    """Whose personal workspace this is, for the picker."""
-    user = identity.get_user(user_id) if identity.current_mode() == "multi" else None
-    return (user or {}).get("display_name") or (user or {}).get("username") or user_id
-
-
 @router.get("", response_model=List[WorkspaceListItem])
 async def list_workspaces(request: Request):
     roots = list_workspace_folders()
@@ -217,7 +211,7 @@ async def list_workspaces(request: Request):
             "target": str(p.resolve()) if attached else None,
             "personal": bool(personal_of),
             "personal_of": personal_of,
-            "personal_label": _person_label(personal_of) if personal_of else None,
+            "personal_label": personal_workspace.owner_label(personal_of) if personal_of else None,
             "own_personal": bool(own_personal) and name == own_personal,
         })
 
