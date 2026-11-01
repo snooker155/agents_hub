@@ -68,7 +68,7 @@ def _visible_tasks(request: Request, tasks: List) -> List:
     return [t for t in tasks if access.can_see_workspace(principal, t.workspace)]
 
 
-def _visible_task(task_id: UUID, request: Request):
+def _visible_task(task_id: UUID, request: Optional[Request]):
     """The task, 404 when there is none, 403 when the caller may not see its
     workspace (one that names none is default's,
     common/access.py)."""
