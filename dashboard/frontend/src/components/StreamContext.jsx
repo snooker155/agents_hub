@@ -23,6 +23,15 @@ import { API_ORIGIN, getAuthToken, mintAuthTicket } from '../api';
  * The hooks that read this provider live in ./stream.js.
  */
 
+// The backend sends something at least every 20 s (a heartbeat when it has
+// nothing else: common/session_broker.py HEARTBEAT_INTERVAL). A connection
+// silent for longer is dead without having said so: a proxy in between (Docker
+// Desktop's port forward, a load balancer) can keep the browser's side open
+// after the server behind it went away in an update, and then neither events
+// nor an error ever arrive. It is dropped and opened again, as on an error.
+export const STALE_MS = 45000;
+const STALE_CHECK_MS = 5000;
+
 // Resolves once the backend has the change (or failed to take it); null
 // when there is no connection yet to change.
 function postChannels(clientId, add, remove) {
@@ -100,6 +109,13 @@ export function StreamProvider({ children }) {
     let closed = false;
     let retry = null;
     let es = null;
+    // When the open connection last said anything, or the attempt to open
+    // one began (a ticket mint that never answers counts as silence too); 0
+    // while waiting out the error path's retry delay.
+    let heardAt = 0;
+    // Only the newest attempt opens: one the watchdog gave up on may still
+    // get its ticket later.
+    let attempt = 0;
 
     // EventSource cannot set request headers, so the credential has to
     // travel in the query string. What goes there is a one-time ticket
@@ -121,9 +137,11 @@ export function StreamProvider({ children }) {
     // to mint and the connection opens at once.
     const connect = () => {
       if (closed) return;
+      const mine = ++attempt;
+      heardAt = Date.now();
       const token = getAuthToken();
       if (!token) { open(null); return; }
-      credentialParam(token).then((credential) => { if (!closed) open(credential); });
+      credentialParam(token).then((credential) => { if (!closed && mine === attempt) open(credential); });
     };
 
     const open = (credential) => {
@@ -145,7 +163,9 @@ export function StreamProvider({ children }) {
       if (dynamicChannels.length) params.push(`channels=${encodeURIComponent(dynamicChannels.join(','))}`);
       const url = `${API_ORIGIN}/api/stream${params.length ? `?${params.join('&')}` : ''}`;
       es = new EventSource(url);
+      heardAt = Date.now();
       es.onmessage = (e) => {
+        heardAt = Date.now();
         let ev;
         try { ev = JSON.parse(e.data); } catch { return; }
         // The id is a plain counter with the bridge off, or a Redis stream id
@@ -189,16 +209,37 @@ export function StreamProvider({ children }) {
       es.onerror = () => {
         setConnected(false);
         reconnectingRef.current = true;
+        heardAt = 0;
         es?.close();
         retry = setTimeout(connect, 3000);
       };
     };
     connect();
 
+    const reopenIfSilent = () => {
+      if (closed || !heardAt || Date.now() - heardAt < STALE_MS) return;
+      // Reopened at once rather than after the error path's 3 s: a page that
+      // was asleep (a laptop lid, a hidden tab) should catch up as it wakes.
+      setConnected(false);
+      reconnectingRef.current = true;
+      heardAt = 0;
+      es?.close();
+      if (retry) clearTimeout(retry);
+      retry = null;
+      connect();
+    };
+    const watchdog = setInterval(reopenIfSilent, STALE_CHECK_MS);
+    const onVisible = () => { if (document.visibilityState === 'visible') reopenIfSilent(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', reopenIfSilent);
+
     return () => {
       closed = true;
       es?.close();
       if (retry) clearTimeout(retry);
+      clearInterval(watchdog);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', reopenIfSilent);
     };
   }, [dispatch, refetchAll]);
 

@@ -1,6 +1,6 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { StreamProvider } from '../StreamContext';
+import { STALE_MS, StreamProvider } from '../StreamContext';
 import { useStream } from '../stream';
 
 /*
@@ -137,5 +137,55 @@ describe('StreamContext reconnects', () => {
     });
 
     expect(onTick).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('StreamContext watchdog', () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal('EventSource', FakeEventSource);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // A proxy can keep the browser's side of the stream open after the backend
+  // behind it went away in an update: no events, no error, and a chat turn
+  // sent then never streams until the page is reloaded.
+  it('reopens a connection that went silent, as the same client', () => {
+    const getStream = show();
+    act(() => { getStream().acquireChannel('chat:conv-1'); });
+    act(() => {
+      latest().emit({ channel: '_meta', type: 'ready', client_id: 'c1', resumed: false, replayed: 0 });
+      latest().emit({ channel: 'chat:conv-1', type: 'token', token: 'hi' }, '7');
+    });
+    const first = latest();
+    const close = vi.spyOn(first, 'close');
+
+    act(() => { vi.advanceTimersByTime(STALE_MS + 5000); });
+
+    expect(close).toHaveBeenCalled();
+    expect(latest()).not.toBe(first);
+    const params = urlParams(latest());
+    expect(params.get('client')).toBe('c1');
+    expect(params.get('since')).toBe('7');
+    expect(params.get('channels')).toBe('chat:conv-1');
+    expect(getStream().connected).toBe(false);
+  });
+
+  it('keeps a connection that sends heartbeats', () => {
+    show();
+    act(() => {
+      latest().emit({ channel: '_meta', type: 'ready', client_id: 'c1', resumed: false, replayed: 0 });
+    });
+    const first = latest();
+    for (let i = 0; i < 6; i += 1) {
+      act(() => { vi.advanceTimersByTime(20000); });
+      act(() => { first.emit({ channel: '_meta', type: 'heartbeat' }); });
+    }
+    expect(latest()).toBe(first);
   });
 });
