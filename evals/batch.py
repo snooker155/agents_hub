@@ -225,7 +225,7 @@ def prepare_agent_cell(case: Case, cfg: RunConfig, workspace: Optional[str], *,
         overrides["model"] = cfg.model
     try:
         from agents.agent_factory import create_agent
-        agent = create_agent(cfg.target_id, work_dir or workspace, **overrides)
+        agent = create_agent(cfg.target_id, workspace or None, workdir=work_dir or None, **overrides)
         agent.executor  # noqa: B018 - builds the model and loads the loop extensions
     except Exception as e:  # noqa: BLE001 - the live path reports the build error on the cell
         return None, f"could not build the agent ({type(e).__name__})"

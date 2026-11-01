@@ -543,10 +543,8 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
             open_run,
             update_run,
         )
-        from workspace import resolve_workspace_arg
         from common.agent_context import current_session_id as _sess_ctx
 
-        ws_path, _ws_name = resolve_workspace_arg(ws)
         # Reuse the orchestrator's chat session so the worker run is grouped with
         # this conversation rather than spawning an orphan session.
         session_id = _sess_ctx.get() or os.environ.get("AGENT_SESSION_ID") or None
@@ -604,7 +602,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
                                    _parent_scope[2] if _parent_scope else None)
         _scope.__enter__()
         try:
-            worker = create_agent(agent_id, workspace=ws_path, **model_params)
+            worker = create_agent(agent_id, workspace=ws or None, **model_params)
         except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
             _scope.__exit__(None, None, None)
             # Close the record here, or a build failure leaves it "running" forever.

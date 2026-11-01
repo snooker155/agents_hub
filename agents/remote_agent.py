@@ -459,6 +459,7 @@ class RemoteAgent(AgentBase):
         *,
         description: str = "",
         workspace: Optional[str] = None,
+        workdir: Optional[str] = None,
         verbose: bool = False,
     ):
         # No prompt, no tools, no model: all three live in the remote service.
@@ -473,7 +474,11 @@ class RemoteAgent(AgentBase):
         )
         self.remote = dict(remote or {})
         self.description = description
+        # The run's workspace by name (which container serves it in Docker
+        # mode), and the folder the run works in, which the wire's
+        # ``workspace`` field carries (container paths equal the hub's).
         self.workspace = workspace
+        self.workdir = workdir
         # Docker mode resolves the endpoint once per agent instance: the
         # container of the run's workspace, started on first use.
         self._docker_url: Optional[str] = None
@@ -790,13 +795,13 @@ class RemoteAgent(AgentBase):
                 instruction,
                 stream=stream,
                 run_id=kwargs.get("run_id"),
-                workspace=kwargs.get("workspace", self.workspace),
+                workspace=kwargs.get("workspace", self.workdir),
             )
             return body, headers
         body: Dict[str, Any] = {
             "prompt": instruction,
             "run_id": kwargs.get("run_id"),
-            "workspace": kwargs.get("workspace", self.workspace),
+            "workspace": kwargs.get("workspace", self.workdir),
         }
         return body, headers
 
@@ -1046,7 +1051,7 @@ class RemoteAgent(AgentBase):
         sinks = self._usage_sinks(callbacks)
         headers = {"Content-Type": "application/json", **resolve_auth_header(self.remote)}
         body = {"run_id": run_id, "value": value, "key": key,
-                "workspace": kwargs.get("workspace", self.workspace)}
+                "workspace": kwargs.get("workspace", self.workdir)}
 
         state = _StreamState(emitter, sinks, run_id=run_id)
         try:
@@ -1108,7 +1113,7 @@ class RemoteAgent(AgentBase):
             stream=streaming,
             task_id=task_id,
             run_id=run_id,
-            workspace=kwargs.get("workspace", self.workspace),
+            workspace=kwargs.get("workspace", self.workdir),
         )
 
         if not streaming:

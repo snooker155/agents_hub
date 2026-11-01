@@ -35,6 +35,7 @@ def run_agent_lifecycle(
     workspace: Optional[str],
     prompt: str,
     *,
+    workdir: Optional[str] = None,
     overrides: Optional[dict] = None,
     stats: Any = None,
     extra_callbacks: Sequence[Any] = (),
@@ -72,7 +73,7 @@ def run_agent_lifecycle(
     knows whether there is a task at all — see ``runtime/agent_run.py``.
     """
     try:
-        agent = create_agent(agent_id, workspace=workspace, **(overrides or {}))
+        agent = create_agent(agent_id, workspace=workspace, workdir=workdir, **(overrides or {}))
     except Exception as exc:  # noqa: BLE001 - a build failure is a failed run, not a crash
         return on_build_error(f"{type(exc).__name__}: {exc}")
 

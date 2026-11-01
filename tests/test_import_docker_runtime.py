@@ -118,14 +118,13 @@ def test_a_custom_eval_root_is_mounted_too_for_that_workspace(monkeypatch, tmp_p
     assert str((tmp_path / "evalroot").resolve()) not in [m[0] for m in mounts]
 
 
-# ── the eval root and the workspace a path belongs to ───────────────────────
+# ── the eval root ───────────────────────────────────────────────────────────
 
 def test_isolation_dir_under_a_custom_root_is_always_made(monkeypatch, tmp_path):
     monkeypatch.setenv(snapshot.EVAL_ROOT_ENV, str(tmp_path / "er"))
     target = snapshot.isolation_dir("gamma", "run1", "case1", attempt=2)
     assert target == (tmp_path / "er" / "gamma" / "run1" / "case1-2").resolve()
     assert target.is_dir()
-    assert snapshot.workspace_of_eval_dir(str(target)) == "gamma"
     assert snapshot.eval_root("gamma") == (tmp_path / "er" / "gamma").resolve()
 
 
@@ -134,17 +133,6 @@ def test_default_eval_root_is_inside_the_workspace(monkeypatch):
     from workspace import WORKSPACES_ROOT
     assert snapshot.eval_root("delta") == (Path(WORKSPACES_ROOT) / "delta").resolve() / ".eval"
     assert snapshot.eval_root("") is None
-    assert snapshot.workspace_of_eval_dir("/anywhere") is None
-
-
-def test_workspace_for_path_reads_workspace_project_and_eval_folders(monkeypatch, tmp_path):
-    monkeypatch.setenv(snapshot.EVAL_ROOT_ENV, str(tmp_path / "er"))
-    from workspace import WORKSPACES_ROOT
-    root = Path(WORKSPACES_ROOT).resolve()
-    assert docker_runtime.workspace_for_path(None) == "default"
-    assert docker_runtime.workspace_for_path(str(root / "eps")) == "eps"
-    assert docker_runtime.workspace_for_path(str(root / "eps" / "proj" / "src")) == "eps"
-    assert docker_runtime.workspace_for_path(str(tmp_path / "er" / "eps" / "run" / "case")) == "eps"
 
 
 # ── starting a container ────────────────────────────────────────────────────
@@ -251,21 +239,26 @@ def test_capability_questions_never_start_a_container(monkeypatch, descriptor):
 def test_the_run_url_is_the_workspace_container(monkeypatch, descriptor):
     seen: Dict[str, Any] = {}
 
-    def url_for(agent_id, remote, workspace_path):
-        seen["args"] = (agent_id, workspace_path)
+    def url_for(agent_id, remote, workspace):
+        seen["args"] = (agent_id, workspace)
         return "http://127.0.0.1:50000"
     monkeypatch.setattr(docker_runtime, "url_for", url_for)
-    agent = RemoteAgent("claude-code", "Claude Code", descriptor, workspace="/ws/alpha")
+    # The container is the workspace's, picked by its name; the folder the
+    # run works in only travels in the request.
+    agent = RemoteAgent("claude-code", "Claude Code", descriptor, workspace="alpha",
+                        workdir="/ws/alpha/proj")
     assert agent.run_url == "http://127.0.0.1:50000/run"
     assert agent.stream_url == "http://127.0.0.1:50000/run/stream"
-    assert seen["args"] == ("claude-code", "/ws/alpha")
+    assert seen["args"] == ("claude-code", "alpha")
+    body, _ = agent._request("hello", {})
+    assert body["workspace"] == "/ws/alpha/proj"
 
 
 def test_a_container_that_cannot_start_is_a_failed_result_not_an_exception(monkeypatch, descriptor):
     def url_for(*a, **k):
         raise docker_runtime.DockerRuntimeError("the image for 'claude-code' is not built")
     monkeypatch.setattr(docker_runtime, "url_for", url_for)
-    agent = RemoteAgent("claude-code", "Claude Code", descriptor, workspace="/ws/alpha")
+    agent = RemoteAgent("claude-code", "Claude Code", descriptor, workspace="alpha")
     result = agent.run("hello")
     assert result.ok is False and "not built" in (result.error or "")
     health = agent.check_health()

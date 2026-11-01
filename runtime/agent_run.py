@@ -578,7 +578,8 @@ def main():
 
     try:
         run_agent_lifecycle(
-            agent_id, ws, instruction,
+            agent_id, os.environ.get("AGENT_WORKSPACE") or None, instruction,
+            workdir=ws,
             resume=resume,
             history=_history,
             overrides=agent_overrides,

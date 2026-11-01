@@ -137,7 +137,7 @@ def _build(agent_id, tools, workspace, monkeypatch):
     from agents.agent_factory import AgentFactory
     from agents.registry import add_agent
     from common import workspace_scope as scope
-    from workspace import create_workspace_folder, get_workspace_folder
+    from workspace import create_workspace_folder
     create_workspace_folder(workspace)
     monkeypatch.setattr(scope, "check_agent_tools", lambda agent_id, tools: None)
     add_agent(_spec(agent_id, tools), user_edit=False)
@@ -145,7 +145,7 @@ def _build(agent_id, tools, workspace, monkeypatch):
                         lambda self, aid: {"id": aid, "name": aid, "system_prompt": "You help.",
                                            "tools": list(tools), "provider": "openai",
                                            "model": "gpt-4o-mini"}, raising=False)
-    return AgentFactory()._build_agent(agent_id, workspace=str(get_workspace_folder(workspace)))
+    return AgentFactory()._build_agent(agent_id, workspace=workspace)
 
 
 ADMIN = sorted(t.name for t in wm.WORKSPACE_MANAGEMENT_TOOLS)

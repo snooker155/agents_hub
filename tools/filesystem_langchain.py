@@ -25,7 +25,7 @@ from tools.filesystem import (
 from common.config import SweAgentConfig, DEFAULT_IGNORE
 from common.artifact_sink import record_artifact as _record_artifact
 from common.entity_sink import record_entity
-from common.workspace_context import workspace_name_from_path
+from common.workspace_context import normalize_workspace_name, run_workspace
 
 log = logging.getLogger(__name__)
 
@@ -49,31 +49,32 @@ def _snapshot_text(path: str, ws_path: Optional[Path]) -> Optional[str]:
         return None
 
 
-def _registry_target(workspace: Optional[str]) -> Optional[Tuple[str, str]]:
-    """``(workspace name, path prefix)`` when the operating dir is inside a
-    workspace folder under ``WORKSPACES_ROOT``, else None.
+def _registry_target(workdir: Optional[str], ws_name: Optional[str]) -> Optional[Tuple[str, str]]:
+    """``(workspace name, path prefix)`` when the operating dir is inside the
+    folder of the workspace named ``ws_name`` under ``WORKSPACES_ROOT``, else
+    None.
 
     The workspace file registry (files/service.py) addresses a file as
-    ``workspaces/<ws>/<path>``, so only a dir under that root has files it
-    can name. Checked on the path as given before resolving symlinks, so an
-    attached workspace (a link under the root to a folder elsewhere) counts.
+    ``workspaces/<ws>/<path>``, so only a dir inside the workspace's own
+    folder has files it can name. Checked on the path as given before
+    resolving symlinks, so an attached workspace (a link under the root to a
+    folder elsewhere) counts.
     """
-    if not workspace:
+    if not workdir or not ws_name:
         return None
     try:
         from workspace import WORKSPACES_ROOT
     except Exception:  # noqa: BLE001 - no workspace layout, nothing to register into
         return None
     root = Path(WORKSPACES_ROOT)
-    for candidate in (Path(os.path.abspath(str(workspace))), Path(workspace).resolve()):
-        for base in (root, root.resolve()):
+    for candidate in (Path(os.path.abspath(str(workdir))), Path(workdir).resolve()):
+        for base in (root / ws_name, root.resolve() / ws_name):
             try:
                 rel = candidate.relative_to(base)
             except ValueError:
                 continue
-            if rel.parts:
-                inner = "/".join(rel.parts[1:])
-                return rel.parts[0], (inner + "/" if inner else "")
+            inner = "/".join(rel.parts)
+            return ws_name, (inner + "/" if inner else "")
     return None
 
 
@@ -183,20 +184,23 @@ class CreateFileOutput(BaseModel):
 
 # -------------------- Tool factory --------------------
 
-def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Dict[str, Any]] = None) -> List[Any]:
+def create_filesystem_tools(workspace: Optional[str] = None, config: Optional[Dict[str, Any]] = None,
+                            workspace_name: Optional[str] = None) -> List[Any]:
     """Create filesystem tools bound to a workspace.
     
     Args:
-        workspace: Filesystem workspace root path
+        workspace: Filesystem workspace root path (the folder the tools work in)
         config: Optional config dict with max_read_bytes, ignore_globs, etc.
+        workspace_name: The workspace by name, for file links and the file
+            registry; the run's when not given (a folder never names it)
     
     Returns:
         List of LangChain tool objects
     """
     ws_path = Path(workspace).resolve() if workspace else None
-    ws_name = workspace_name_from_path(str(ws_path)) if ws_path else None
+    ws_name = normalize_workspace_name(workspace_name) or run_workspace()
     ws_prefix = _workspace_rel_prefix(ws_path)
-    registry = _registry_target(workspace)
+    registry = _registry_target(workspace, ws_name)
 
     def _register(op: str, rel: str) -> None:
         """Keep the workspace file registry in step with the folder: a file

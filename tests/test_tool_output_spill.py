@@ -59,7 +59,7 @@ def test_a_long_result_goes_to_a_registered_file(operating_dir):
     ws, project = operating_dir
     state = LoopState(run_id="run-spill-1")
     out = _with_state(state, tool_spill.spill_output, "web_fetch", {"url": "x"}, BIG,
-                      workspace=str(project), threshold=20000)
+                      workspace=str(project), threshold=20000, workspace_name=ws)
 
     assert len(out) < 12000
     assert BIG[:200] in out and BIG[-200:] in out
@@ -110,7 +110,7 @@ def test_read_file_reads_the_saved_output_by_range_and_never_spills_it_again(ope
                 workspace=str(project), threshold=20000)
     path = state.tool_spills[0]["path"]
 
-    tools = tool_spill.wrap_tools(create_filesystem_tools(str(project)), workspace=str(project))
+    tools = tool_spill.wrap_tools(create_filesystem_tools(str(project)), workspace=_ws, workdir=str(project))
     read = next(t for t in tools if t.name == "read_file")
     assert isinstance(read, tool_spill.SpillingTool)
 
@@ -138,16 +138,16 @@ def test_wrapping_follows_the_workspace_setting(operating_dir, monkeypatch):
     from tools.filesystem_langchain import create_filesystem_tools
     read = next(t for t in create_filesystem_tools(str(project)) if t.name == "read_file")
 
-    wrapped = tool_spill.wrap_tools([big, ask_user, read], workspace=str(project))
+    wrapped = tool_spill.wrap_tools([big, ask_user, read], workspace=_ws, workdir=str(project))
     assert isinstance(wrapped[0], tool_spill.SpillingTool) and wrapped[0].name == "big"
     assert wrapped[1] is ask_user
     # No folder to write into, or no read_file to read a saved output back: unchanged.
-    assert tool_spill.wrap_tools([big, read], workspace=None) == [big, read]
-    assert tool_spill.wrap_tools([big], workspace=str(project)) == [big]
+    assert tool_spill.wrap_tools([big, read], workspace=_ws, workdir=None) == [big, read]
+    assert tool_spill.wrap_tools([big], workspace=_ws, workdir=str(project)) == [big]
     monkeypatch.setenv("AGENTS_HUB_LOOP_TOOL_OUTPUT_SPILL_CHARS", "0")
-    assert tool_spill.wrap_tools([big, read], workspace=str(project)) == [big, read]
+    assert tool_spill.wrap_tools([big, read], workspace=_ws, workdir=str(project)) == [big, read]
     monkeypatch.setenv("AGENTS_HUB_LOOP_TOOL_OUTPUT_SPILL_CHARS", "5")
-    assert tool_spill.threshold_for(str(project)) == tool_spill.MIN_THRESHOLD
+    assert tool_spill.threshold_for(_ws) == tool_spill.MIN_THRESHOLD
 
 
 class _Model(GenericFakeChatModel):
@@ -173,7 +173,7 @@ def test_in_a_run_the_model_and_the_tool_record_see_the_preview(operating_dir):
 
     from tools.filesystem_langchain import create_filesystem_tools
     read = next(t for t in create_filesystem_tools(str(project)) if t.name == "read_file")
-    tools = tool_spill.wrap_tools([dump_log, read], workspace=str(project))
+    tools = tool_spill.wrap_tools([dump_log, read], workspace=_ws, workdir=str(project))
     _Model.seen = []
     model = _Model(disable_streaming=True, messages=iter([
         AIMessage(content="", tool_calls=[{"name": "dump_log", "args": {"service": "api"}, "id": "c1"}]),

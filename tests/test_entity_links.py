@@ -73,7 +73,7 @@ def test_scheduling_a_job_records_it(sink):
 def test_file_tools_record_the_path_and_workspace(tmp_path, sink):
     from tools.filesystem_langchain import create_filesystem_tools
 
-    tools = {t.name: t for t in create_filesystem_tools(workspace=str(tmp_path))}
+    tools = {t.name: t for t in create_filesystem_tools(workspace=str(tmp_path), workspace_name="acme")}
     tools["write_file"].invoke({"path": "src/api.py", "content": "print(1)\n"})
     tools["delete_file"].invoke({"path": "src/api.py"})
 
@@ -81,7 +81,8 @@ def test_file_tools_record_the_path_and_workspace(tmp_path, sink):
     # recorded (the change still shows as a diff artifact).
     records = sink.records()
     assert [(r["kind"], r["id"], r["action"]) for r in records] == [("file", "src/api.py", "created")]
-    assert records[0]["meta"]["workspace"] == tmp_path.name
+    # The workspace is the one named, never the folder's own name.
+    assert records[0]["meta"]["workspace"] == "acme"
 
 
 def test_recording_without_a_sink_is_a_no_op():

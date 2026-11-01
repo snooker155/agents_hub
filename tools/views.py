@@ -26,7 +26,7 @@ from common.agent_context import (
     current_session_id, current_task_id, current_view_binding, current_view_id,
 )
 from common.entity_sink import record_entity
-from common.workspace_context import workspace_name_from_path
+from common.workspace_context import normalize_workspace_name, run_workspace
 from views import focus as _focus
 from views.models import ViewValidationError, SUPPORTED_KINDS
 from views.owner import current_owner
@@ -173,9 +173,12 @@ class CreateViewInput(JsonArgsModel):
         "Default display tier: 'inline', 'expanded', or 'fullscreen'."))
 
 
-def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
-    """Build the view tools bound to ``workspace`` (the agent's operating path)."""
-    ws_name = workspace_name_from_path(workspace)
+def create_view_tools(workspace: Optional[str] = None,
+                      workspace_name: Optional[str] = None) -> List[Any]:
+    """Build the view tools bound to ``workspace`` (the agent's operating
+    path); ``workspace_name`` names the workspace (the run's when not given:
+    a folder never names it)."""
+    ws_name = normalize_workspace_name(workspace_name) or run_workspace()
     ws_abs = Path(workspace).resolve() if workspace else None
 
     @tool("create_view", args_schema=CreateViewInput)
@@ -319,7 +322,7 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
             return json.dumps({"ok": False, "error": f"could not build the .pptx: {exc}"}, ensure_ascii=False)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
-        _register_workspace_file(workspace, rel)
+        _register_workspace_file(workspace, ws_name, rel)
         record_entity("file", rel, "created")
         out = {"ok": True, "view_id": vid, "path": rel, "bytes": len(data),
                "slides": len((view.get("spec") or {}).get("slides") or {})}
@@ -330,12 +333,13 @@ def create_view_tools(workspace: Optional[str] = None) -> List[Any]:
     return [create_view, view_add_asset, slides_export]
 
 
-def _register_workspace_file(workspace: Optional[str], rel: str) -> None:
-    """Make an exported file a workspace file, the way the filesystem tools do.
+def _register_workspace_file(workspace: Optional[str], ws_name: Optional[str], rel: str) -> None:
+    """Make a file exported into the folder ``workspace`` a file of the
+    workspace named ``ws_name``, the way the filesystem tools do.
     Best-effort: the file is written either way."""
     try:
         from tools.filesystem_langchain import _registry_target
-        target = _registry_target(workspace)
+        target = _registry_target(workspace, ws_name)
         if target is None:
             return
         from files import service as files_service

@@ -366,11 +366,11 @@ def test_an_approval_card_reaches_the_threads_stream(multi, client, seeded, fake
 def test_a_real_build_holds_the_service_tools_only_in_the_service_thread(
         single, seeded, monkeypatch, service_mode, workspace, has_service_tools):
     from agents.agent_factory import AgentFactory
-    from workspace import create_workspace_folder, get_workspace_folder
+    from workspace import create_workspace_folder
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     create_workspace_folder(workspace)
     agent = AgentFactory()._build_agent(
-        "assistant", workspace=str(get_workspace_folder(workspace)),
+        "assistant", workspace=workspace,
         service_mode=service_mode, personal_pool=None)
     names = {t.name for t in agent._tools}
     assert "list_tasks" in names and "propose_connection" in names

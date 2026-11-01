@@ -266,21 +266,6 @@ def eval_root(workspace: Optional[str]) -> Optional[Path]:
     return (Path(WORKSPACES_ROOT) / name).resolve() / ".eval"
 
 
-def workspace_of_eval_dir(path: Optional[str]) -> Optional[str]:
-    """The workspace an eval case folder under a custom ``AGENTS_HUB_EVAL_ROOT``
-    belongs to (its first path component under that root), or None when the
-    folder is not under a custom root. The default location is under the
-    workspace itself, which ``workspace_name_from_path`` already reads."""
-    custom = _custom_eval_root()
-    if custom is None or not path:
-        return None
-    try:
-        rel = Path(str(path)).resolve().relative_to(custom)
-    except (ValueError, OSError):
-        return None
-    return rel.parts[0] if rel.parts else None
-
-
 def isolation_dir(workspace: Optional[str], eval_run_id: str, case_id: str,
                   attempt: int = 1) -> Path:
     """Where a case with an artifact runs: ``<eval_root(workspace)>/<run>/<case>``
@@ -343,6 +328,6 @@ def materialize_artifact(artifact: Dict[str, Any], directory: Path) -> Path:
 
 __all__ = [
     "snapshot_task", "collect_files", "materialize_artifact", "isolation_dir",
-    "eval_root", "workspace_of_eval_dir", "locate_isolation_dir", "EVAL_ROOT_ENV",
+    "eval_root", "locate_isolation_dir", "EVAL_ROOT_ENV",
     "is_secret_name", "SECRET_PATTERNS", "SKIP_DIRS",
 ]

@@ -96,7 +96,7 @@ async def send_chat_message(request: ChatRequest) -> Dict[str, Any]:
 
     # Propagate workspace to agent tools (e.g. list_tasks) via a context var
     # that is thread-safe and copied into asyncio.to_thread's execution context.
-    ws_name = apply_workspace_ctx(request, workspace_abs)
+    ws_name = apply_workspace_ctx(request)
 
     # The launcher, evals and loops all refuse to start a run once a workspace's
     # hard budget cap is met (common.budget.check_budget); chat was the one
@@ -196,7 +196,8 @@ async def _run_one(request: ChatRequest, *, prompt: str, history: list,
         # per-run overrides (chat/runs.py request_overrides), as the
         # streaming pipeline builds it.
         overrides = {**agent_overrides(request.agent_id), **request_overrides(request)}
-        agent = create_agent(request.agent_id, workspace=workspace_abs, **overrides)
+        agent = create_agent(request.agent_id, workspace=request.workspace or None,
+                             workdir=workspace_abs, **overrides)
         # Persist the model/provider actually used for this run so the message
         # record reflects what ran, not the current default at view time.
         update_run(run_id, {"provider": agent.provider or "", "model": agent.model or ""})

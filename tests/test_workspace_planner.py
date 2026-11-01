@@ -48,7 +48,7 @@ def test_a_turn_plans_in_the_workspace_and_keeps_its_chat(client, monkeypatch):
     from projects import planner_service
     fake = FakePlanner()
     monkeypatch.setattr(planner_service, "ensure_planner_agent", lambda: True)
-    monkeypatch.setattr(planner_service, "build_agent", lambda path: fake)
+    monkeypatch.setattr(planner_service, "build_agent", lambda workspace, path: fake)
 
     resp = client.post("/api/task-planner/generate", params={"workspace": "plan-ws"},
                        json={"message": "Plan the menu page"})

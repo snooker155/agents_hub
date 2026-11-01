@@ -210,17 +210,16 @@ def _mcp_needs_approval(tool_id: str) -> bool:
 
 
 def workspace_name(value: Optional[str] = None) -> Optional[str]:
-    """The bare workspace name for a value that may be an operating path.
+    """The workspace name ``value`` gives, else the run's.
 
-    An agent is built with its *operating* path, which for a task is
-    ``<workspace>/<project>`` — so the basename is the project, not the
-    workspace, and a settings lookup keyed on it would read the wrong record (or
-    none). ``workspace_name_from_path`` recovers the workspace for both shapes;
-    with nothing passed, the active workspace of the run is used.
+    A folder path names no workspace (a task's ``<workspace>/<project>``,
+    /workspace in a container), so for one the run's own name is used, the
+    same as with nothing passed.
     """
-    from common.workspace_context import resolve_active_workspace, workspace_name_from_path
-    if value:
-        name = workspace_name_from_path(value)
+    from pathlib import Path
+    from common.workspace_context import normalize_workspace_name, resolve_active_workspace
+    if value and not Path(str(value)).is_absolute():
+        name = normalize_workspace_name(value)
         if name:
             return name
     return resolve_active_workspace()

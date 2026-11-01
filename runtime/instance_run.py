@@ -240,7 +240,10 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
                                      {"msg_id": msg_id, "conversation_id": public_cid})
         stop_cb = RunStopCallback(run_id)
         with _secrets_scope(instance, agent_id):
-            agent = create_agent(agent_id, workspace=workspace,
+            # The instance's workspace by name; ``workspace`` is the carrier's
+            # --workspace, a folder (or a bare name from the CLI).
+            folder = workspace if workspace and Path(workspace).is_absolute() else None
+            agent = create_agent(agent_id, workspace=instance.get("workspace") or None, workdir=folder,
                                  **({"definition_version": pin} if pin is not None else {}))
             with open(log_file, "w", encoding="utf-8", buffering=1) as lf:
                 lf.write(f"[{_now()}] Instance message run\n")
@@ -444,7 +447,8 @@ def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str]
             # the live definition because a resident worker took it.
             _build_kwargs.update(_task_build_pin(task, run_id, agent_id))
             with _secrets_scope(instance, agent_id, _task_secrets):
-                agent = create_agent(agent_id, workspace=abs_ws, **_build_kwargs)
+                agent = create_agent(agent_id, workspace=task.workspace or scope, workdir=abs_ws,
+                                     **_build_kwargs)
                 seed_run_input_context(run_id, getattr(agent, "system_prompt", "") or "", prompt)
                 with open(log_file, "w", encoding="utf-8", buffering=1) as lf:
                     lf.write(f"[{_now()}] Worker run started\n")
@@ -640,7 +644,7 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
             from managers.run_manager import seed_run_input_context
             stop_cb = RunStopCallback(run_id)
             pub_cbs = _channel_publisher(instance_id, run_id, "orchestrator", {"task_id": str(task.id)})
-            agent = create_agent("orchestrator", workspace=abs_ws)
+            agent = create_agent("orchestrator", workspace=task.workspace or scope, workdir=abs_ws)
             seed_run_input_context(run_id, getattr(agent, "system_prompt", "") or "", prompt)
             # A tracked-task run: the orchestrator must use the assign/start
             # task flow here, not taskless run_agent_tool.
@@ -739,10 +743,11 @@ class InstanceLoop:
         # turns (each naming its own agent) and never tasks.
         self.agent_id = (agent_id or "").strip()
         self.workspace = workspace
-        # The workspace's name as the carrier was given it: in a container the
-        # folder is mounted at /workspace, whose own name says nothing.
+        # The workspace's name as the carrier was given it (AGENT_WORKSPACE, or
+        # a bare name for --workspace); a folder path names no workspace.
+        given = None if workspace and Path(workspace).is_absolute() else workspace
         self.scope = (normalize_workspace_name(os.environ.get("AGENT_WORKSPACE"))
-                      or normalize_workspace_name(workspace) or "default")
+                      or normalize_workspace_name(given) or "default")
         self.pool = ThreadPoolExecutor(max_workers=carrier.MAX_CONCURRENCY,
                                        thread_name_prefix="instance-run")
         self.busy: Dict[Future, Optional[str]] = {}

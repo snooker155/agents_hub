@@ -219,7 +219,8 @@ def main() -> None:
     # provider/model resolution.
     # Publish the workspace name for call-time os.getenv consumers (task scoping,
     # filesystem tools). Workspaces always live under .agents_hub/workspaces/.
-    os.environ.setdefault("AGENT_WORKSPACE", Path(args.workspace).name)
+    from workspace import resolve_workspace_arg
+    os.environ.setdefault("AGENT_WORKSPACE", resolve_workspace_arg(args.workspace)[1])
 
     flow_id = args.flow_id
     run_id = args.run_id or str(uuid4())
@@ -341,9 +342,9 @@ def main() -> None:
         except ValueError as e:
             log.info(f"[flow_seed] failed to parse --seed JSON: {e}")
 
-    # The workspace the run works in, for the agents it may run: the one the
-    # --workspace folder belongs to, else the flow's own.
-    run_workspace = run_workspace_name(args.workspace, flow)
+    # The workspace the run works in, for the agents it may run: the one its
+    # launcher named, else the flow's own.
+    run_workspace = run_workspace_name(flow)
 
     async def _drive() -> dict:
         final: dict = {}

@@ -280,7 +280,7 @@ async def _run_plan(scope: "_PlanScope", user_message: str, queue: asyncio.Queue
             callback = ChatStreamCallback(loop, queue, log_lines, log_file, session_id=session_id)
 
             agent = await asyncio.to_thread(
-                planner_service.build_agent, scope.agent_path)
+                planner_service.build_agent, scope.workspace, scope.agent_path)
             provider, model = agent.provider or "", agent.model or ""
             _update_run(run_id, {"provider": provider, "model": model})
             callback.bind_model(provider, model)

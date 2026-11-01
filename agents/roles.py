@@ -113,13 +113,8 @@ def role_ids() -> List[str]:
 # ── bindings ─────────────────────────────────────────────────────────────────
 
 def _ws_name(workspace: Optional[str]) -> Optional[str]:
-    if not workspace:
-        return None
-    try:
-        from common.workspace_context import workspace_name_from_path
-        return workspace_name_from_path(workspace) or None
-    except Exception:  # noqa: BLE001 - a bare name is still a name
-        return str(workspace)
+    from common.workspace_context import name_of
+    return name_of(workspace)
 
 
 def bindings(workspace: Optional[str]) -> Dict[str, str]:

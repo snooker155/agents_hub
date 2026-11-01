@@ -397,6 +397,9 @@ def remote_container_env(env: Dict[str, str]) -> Dict[str, str]:
     address as the container sees it."""
     out = {k: v for k, v in container_env(env).items()
            if k not in _REMOTE_DROP_EXACT and not k.startswith(_REMOTE_DROP_PREFIXES)}
+    # The run's workspace by name, always: docker drops an empty variable, and
+    # the folder mounted at /workspace names no workspace.
+    out["AGENT_WORKSPACE"] = (out.get("AGENT_WORKSPACE") or "").strip() or "default"
     # Provider keys become the model gateway's reference (common/llm_gateway.py).
     from common import llm_gateway
     out = llm_gateway.container_env(out, workspace=out.get("AGENT_WORKSPACE"))

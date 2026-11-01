@@ -223,7 +223,8 @@ def _run_pass(task, kind: str, prompt: str, *, root: Path, channel: Optional[str
     # Built before the run record, so the record names the model it ran on.
     agent, build_error = None, None
     try:
-        agent = create_agent("decomposer", workspace=str(root), **overrides)
+        agent = create_agent("decomposer", workspace=task.workspace or None, workdir=str(root),
+                             **overrides)
     except Exception as e:  # noqa: BLE001 - recorded on the run below
         build_error = e
     rm.open_run(run_id, "decomposer", task_id=str(task.id), workspace=task.workspace,
@@ -338,7 +339,7 @@ def start(task, *, root: Path, channel: Optional[str] = None, overrides: Optiona
 
     def worker():
         try:
-            with _secrets.activate(task.workspace or root.name, "decomposer", launched_by):
+            with _secrets.activate(task.workspace or "default", "decomposer", launched_by):
                 body()
         except Exception as e:  # noqa: BLE001 - the status must not stay "running"
             log.warning("decompose of %s failed: %s", task_id, e, exc_info=True)

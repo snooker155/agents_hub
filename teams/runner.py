@@ -115,7 +115,7 @@ def _run_member(
     session_id: Optional[str], team_run_id: str, is_leader: bool = False,
     provider: Optional[str] = None, model: Optional[str] = None,
     run_id: Optional[str] = None, in_process: bool = True,
-    quote_tool_copies: bool = False,
+    quote_tool_copies: bool = False, workspace_name: Optional[str] = None,
 ) -> Turn:
     """Build the agent with its team seat and run one turn. Never raises: a
     member that fails posts an error to the board and the team continues, the
@@ -137,12 +137,12 @@ def _run_member(
         turn.stopped = True
         return turn
     # A pool thread starts with a fresh context, so the workspace the tools scope
-    # to has to be set here rather than inherited from the run.
-    try:
-        from common.workspace_context import _workspace_ctx, workspace_name_from_path
-        _workspace_ctx.set(workspace_name_from_path(workspace))
-    except Exception:  # noqa: BLE001 - without the workspace scope the turn still runs on the default
-        log.debug("setting turn workspace context failed", exc_info=True)
+    # to is set here from the name the round passed (``workspace`` is the
+    # folder); a turn in the run's own thread has it already.
+    from common.workspace_context import _workspace_ctx, run_workspace
+    if workspace_name is None:
+        workspace_name = run_workspace()
+    _workspace_ctx.set(workspace_name)
     try:
         # The team block is *appended* to the agent's own assembled prompt, not
         # substituted for it: the member keeps its expertise and gains a roster.
@@ -154,7 +154,7 @@ def _run_member(
             overrides["provider"] = provider
         if model:
             overrides["model"] = model
-        agent = create_agent(agent_id, workspace=workspace, **overrides)
+        agent = create_agent(agent_id, workspace=workspace_name, workdir=workspace, **overrides)
     except Exception as e:  # noqa: BLE001
         turn.error = f"{type(e).__name__}: {e}"
         return turn
@@ -171,7 +171,7 @@ def _run_member(
                 agent_id,
                 instance_id=instance_registry.deterministic_id(team_run_id, speaker),
                 kind="team_member",
-                workspace=workspace,
+                workspace=workspace_name or "default",
                 session_id=session_id,
                 task_id=task_id,
                 label=f"{team.name} · {speaker}",
@@ -186,7 +186,7 @@ def _run_member(
         open_run(
             run_id, agent_id, pid=os.getpid(), task_id=task_id,
             session_id=session_id, session_type="task", channel="team",
-            log_file=str(log_path), workspace=workspace or "default",
+            log_file=str(log_path), workspace=workspace_name or "default",
             title=f"{team.name}: {speaker}",
             team_id=team.team_id, team_member=speaker, link_to_session=True,
             parent_run_id=team_run_id,
@@ -447,6 +447,8 @@ def _run_turns(
         return reused
 
     workers = max(1, min(int(team.max_concurrent or 1), len(jobs)))
+    from common.workspace_context import run_workspace
+    ws_name = run_workspace()  # the run's, set on this thread; the pool's start empty
     pool = ThreadPoolExecutor(max_workers=workers)
     futures: Dict[Future, TeamMember] = {
         pool.submit(
@@ -456,7 +458,7 @@ def _run_turns(
             provider=member.provider or team.default_provider,
             model=member.model or team.default_model,
             run_id=_turn_run_id(team_run_id, round_no, member.display_name()),
-            in_process=member_in_process, quote_tool_copies=True,
+            in_process=member_in_process, quote_tool_copies=True, workspace_name=ws_name,
         ): member
         for member, prompt in jobs
     }

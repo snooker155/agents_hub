@@ -121,16 +121,13 @@ def _resolve_agent_id(node: Dict[str, Any]) -> Optional[str]:
     return resolve_agent_id(raw) or None
 
 
-def run_workspace_name(path: Optional[str], flow: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    """The workspace a flow run works in: the one the ``--workspace`` folder
-    belongs to, else the flow's own. ``None`` when neither names one (the
-    records written for the run then fall back to ``default``)."""
-    from common.workspace_context import workspace_name_from_path
-    from workspace import get_workspace_folder
-    name = workspace_name_from_path(path)
-    if name and get_workspace_folder(name):
-        return name
-    return (flow or {}).get("workspace") or None
+def run_workspace_name(flow: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """The workspace a flow run works in: the one its launcher named
+    (``AGENT_WORKSPACE``, from the run record), else the flow's own. ``None``
+    when neither names one (the records written for the run then fall back to
+    ``default``)."""
+    from common.workspace_context import run_workspace
+    return run_workspace() or (flow or {}).get("workspace") or None
 
 
 def _close_node_run(
@@ -383,7 +380,7 @@ def _run_agent_node(
                 entity_name=flow_name, seat_id=node_id, seat_label=label,
                 emitter=relay, should_stop=_stop_wanted, link=approval_link):
             return run_agent_lifecycle(
-                agent_id, args.workspace, prompt,
+                agent_id, workspace, prompt, workdir=args.workspace,
                 overrides=agent_overrides,
                 extra_callbacks=extra_callbacks, catch_invoke_exceptions=True,
                 after_build=lambda agent: callback.bind_model(getattr(agent, "provider", "") or "",
@@ -460,7 +457,7 @@ def build_task_driver(
             port=port, outcome=outcome, stream_channels=channels,
             should_stop=lambda: bool(driver_box) and driver_box[0].should_stop(),
             flow_name=str(flow.get("name") or ""), approval_link=approval_link,
-            workspace=run_workspace_name(args.workspace, flow),
+            workspace=run_workspace_name(flow),
         )
         if dr.extras:
             node_extras[node_id] = dr.extras
@@ -540,7 +537,8 @@ def build_task_driver(
     def _make_run_context(node_id: str) -> RunContext:
         return RunContext(
             flow_id=args.flow_id, run_id=args.run_id, task_id=args.task_id,
-            session_id=args.session_id, workspace=args.workspace, node_id=node_id,
+            session_id=args.session_id, workspace=args.workspace,
+            workspace_name=run_workspace_name(flow) or "", node_id=node_id,
         )
 
     def _should_stop() -> bool:

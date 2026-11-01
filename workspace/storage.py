@@ -633,18 +633,17 @@ def resolve_workspace_arg(arg: Optional[str]) -> tuple[str, str]:
     (``.agents_hub/workspaces/<ws>/<project>/``, as launchers pass it) — in
     which case it is used verbatim and is NOT re-resolved into a project
     subfolder — or a bare workspace name from the CLI, which resolves to
-    ``WORKSPACES_ROOT/<name>``. With no argument, both fall back to the
-    workspaces root. ``ws_name`` is always the argument's basename so a project
-    path does not leak the project folder into the workspace name.
+    ``WORKSPACES_ROOT/<name>``. With no argument the path falls back to the
+    workspaces root. A folder never names its workspace (a project folder,
+    /workspace in a container): for a path ``ws_name`` is the run's own name,
+    the one its launcher set (empty for the default workspace).
     """
     if arg and Path(arg).is_absolute():
-        ws_path = arg
-    elif arg:
-        ws_path = str((WORKSPACES_ROOT / Path(arg).name).resolve())
-    else:
-        ws_path = str(WORKSPACES_ROOT.resolve())
-    ws_name = Path(arg).name if arg else WORKSPACES_ROOT.name
-    return ws_path, ws_name
+        from common.workspace_context import run_workspace
+        return arg, run_workspace() or ""
+    if arg:
+        return str((WORKSPACES_ROOT / Path(arg).name).resolve()), Path(arg).name
+    return str(WORKSPACES_ROOT.resolve()), ""
 
 
 def as_param_dict(params: Any) -> Dict[str, Any]:

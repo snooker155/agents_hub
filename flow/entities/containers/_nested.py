@@ -100,9 +100,8 @@ def seed_from(state: Any, keys: Iterable[str], params: Any = None) -> Dict[str, 
 
 
 def workspace_name(ctx: Any) -> Optional[str]:
-    """The workspace name of the parent run (``ctx.workspace`` is a path)."""
-    from common.workspace_context import workspace_name_from_path
-    return workspace_name_from_path(getattr(ctx, "workspace", "") or None)
+    """The workspace name of the parent run (``ctx.workspace`` is its folder)."""
+    return getattr(ctx, "workspace_name", "") or None
 
 
 # ── Depth ───────────────────────────────────────────────────────────────────

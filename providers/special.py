@@ -412,9 +412,9 @@ def stored(workspace: Optional[str]) -> Dict[str, Any]:
     if not workspace:
         return {}
     try:
-        from common.workspace_context import workspace_name_from_path
+        from common.workspace_context import name_of
         from workspace import get_workspace_metadata
-        ws = workspace_name_from_path(workspace) or workspace
+        ws = name_of(workspace)
         raw = (get_workspace_metadata(ws) or {}).get(META_KEY)
     except Exception:  # noqa: BLE001 - unreadable metadata configures nothing
         log.debug("special models: could not read %s", workspace, exc_info=True)
@@ -480,8 +480,8 @@ def effective(workspace: Optional[str]) -> Dict[str, Any]:
     empty has no model, whatever another workspace has, except in a personal
     workspace, where ``default``'s model for that purpose fills the gap (marked
     with :data:`INHERITED_KEY`)."""
-    from common.workspace_context import workspace_name_from_path
-    ws = (workspace_name_from_path(workspace) or workspace) if workspace else None
+    from common.workspace_context import name_of
+    ws = name_of(workspace)
     own = stored(ws)
     from common import personal_workspace
     if not ws or not personal_workspace.is_personal(ws):

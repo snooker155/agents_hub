@@ -753,7 +753,7 @@ async def generate_world(data: WorldGenerateIn):
                 "agent_id": WORLD_AGENT_ID, "workspace": ws_path, "workspace_name": ws_name,
                 "overrides": overrides, "prompt": instruction}))
         else:
-            agent = create_agent(WORLD_AGENT_ID, workspace=ws_path, **overrides)
+            agent = create_agent(WORLD_AGENT_ID, workspace=ws_name or None, workdir=ws_path, **overrides)
             result = await asyncio.to_thread(agent.run, instruction)
     except Exception as e:  # noqa: BLE001
         raise _refuse(500, "generation_failed", f"World generation failed: {e}")
@@ -1510,7 +1510,8 @@ def _scenario_generate_agent(data: ScenarioGenerateIn, ws_path: Optional[str], *
     """Build the Scenario Creator with the caller's model overrides applied."""
     from agents.agent_factory import create_agent
 
-    return create_agent(SCENARIO_AGENT_ID, workspace=ws_path, **_scenario_overrides(data), **extra)
+    return create_agent(SCENARIO_AGENT_ID, workspace=data.workspace or None, workdir=ws_path,
+                        **_scenario_overrides(data), **extra)
 
 
 def _scenario_generate_preflight(data: ScenarioGenerateIn) -> Optional[Dict[str, Any]]:

@@ -45,7 +45,7 @@ def stub_pipeline(monkeypatch):
     )
     monkeypatch.setattr(
         chat_send, "apply_workspace_ctx",
-        lambda request, workspace_abs: "ws-budget-test",
+        lambda request: "ws-budget-test",
     )
     monkeypatch.setattr(chat_send, "_write_log", lambda *a, **k: None)
     monkeypatch.setattr(chat_send, "update_run", lambda *a, **k: None)

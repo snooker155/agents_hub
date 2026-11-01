@@ -265,10 +265,9 @@ def test_the_tool_keeps_another_agent_in_its_workspace(single, hub):
 def test_the_assistant_holds_hub_lookup_and_the_guard_allows_it(single, hub, monkeypatch):
     from agents.agent_factory import AgentFactory
     from agents.registry import get_agent
-    from workspace import get_workspace_folder
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     assert "hub_lookup" in get_agent("assistant").tools
-    agent = AgentFactory()._build_agent("assistant", workspace=str(get_workspace_folder("team")),
+    agent = AgentFactory()._build_agent("assistant", workspace="team",
                                         service_mode=False, personal_pool=None)
     assert "hub_lookup" in {t.name for t in agent._tools}
     # Its reach is checked by the lookup itself, not by the workspace pin.

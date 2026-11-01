@@ -366,15 +366,9 @@ class AgentFactory:
         resolved_base_url = config.get("base_url") or None
         ws_api_key: Optional[str] = None
 
-        # workspace is the operating path (possibly an absolute project path);
-        # the bare workspace name is what the metadata/settings lookups key on.
-        # Use workspace_name_from_path (not normalize_workspace_name) so a project
-        # subfolder path (WORKSPACES_ROOT/<ws>/<project>) still resolves to <ws> —
-        # otherwise the basename is the project, the metadata lookup misses, and
-        # the model_override/settings cascade is silently skipped in favour of the
-        # global .env provider (e.g. ollama → Connection refused for task runs).
-        from common.workspace_context import workspace_name_from_path
-        ws_name = workspace_name_from_path(workspace)
+        # workspace is the run's workspace by name, which the metadata and
+        # settings lookups key on.
+        ws_name = workspace
 
         if not resolved_provider and ws_name:
             from workspace import get_workspace_metadata, get_workspace_default_model_config
@@ -483,8 +477,7 @@ class AgentFactory:
         if own:
             return own
         if (config.get("provider") or "inherit") == "inherit":
-            from common.workspace_context import workspace_name_from_path
-            ws_name = workspace_name_from_path(workspace)
+            ws_name = workspace
             if ws_name:
                 try:
                     from workspace import get_workspace_metadata, get_workspace_model_effort
@@ -495,8 +488,10 @@ class AgentFactory:
                     log.debug("_resolve_effort: ignored error", exc_info=True)
         return "inherit"
 
-    def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None, agent_id: Optional[str] = None, episodic_write: bool = True, pool_override: Optional[str] = None, personal_pool: Optional[str] = None) -> List[Any]:
-        """Create tool instances based on tool ids.
+    def _create_tools(self, tool_list: List[str], workspace: Optional[str] = None, agent_id: Optional[str] = None, episodic_write: bool = True, pool_override: Optional[str] = None, personal_pool: Optional[str] = None,
+                      workdir: Optional[str] = None) -> List[Any]:
+        """Create tool instances based on tool ids. ``workspace`` is the run's
+        workspace by name, ``workdir`` the folder the file tools work in.
 
         Also supports legacy group aliases:
         - filesystem
@@ -504,12 +499,12 @@ class AgentFactory:
         - agent_coordination
         """
         requested = list(tool_list or [])
-        fs_tools = create_filesystem_tools(workspace=workspace)
+        fs_tools = create_filesystem_tools(workspace=workdir, workspace_name=workspace)
 
         from tools.views import create_view_tools, VIEW_MUTATION_TOOLS
         from tools.geometry import create_geometry_tools, GEOMETRY_TOOLS
-        view_tools = [*create_view_tools(workspace=workspace), *VIEW_MUTATION_TOOLS,
-                      *create_geometry_tools(workspace=workspace), *GEOMETRY_TOOLS]
+        view_tools = [*create_view_tools(workspace=workdir, workspace_name=workspace), *VIEW_MUTATION_TOOLS,
+                      *create_geometry_tools(workspace=workdir), *GEOMETRY_TOOLS]
 
         task_tools = [
             create_task,
@@ -624,7 +619,7 @@ class AgentFactory:
             "service_ops": [getattr(t, "name", getattr(t, "__name__", "")) for t in service_ops_tools],
             "docs": [getattr(t, "name", getattr(t, "__name__", "")) for t in docs_tools],
             "geometry": [getattr(t, "name", getattr(t, "__name__", ""))
-                         for t in [*GEOMETRY_TOOLS, *create_geometry_tools(workspace=workspace)]],
+                         for t in [*GEOMETRY_TOOLS, *create_geometry_tools(workspace=workdir)]],
             "evals": [getattr(t, "name", getattr(t, "__name__", "")) for t in eval_tools],
         }
 
@@ -776,8 +771,15 @@ class AgentFactory:
         if rest:
             log.debug("agent %s: tools not offered in this build: %s", agent_id or "?", ", ".join(rest))
     
-    def create_agent(self, agent_id: str, workspace: Optional[str] = None, **override_params) -> AgentBase:
+    def create_agent(self, agent_id: str, workspace: Optional[str] = None,
+                     workdir: Optional[str] = None, **override_params) -> AgentBase:
         """Return a runnable agent, reusing a cached build when possible.
+
+        ``workspace`` is the run's workspace by name (None is the default
+        one): every settings, model, memory and scope lookup keys on it.
+        ``workdir`` is the folder the agent's file tools work in, a project's
+        when the run has one; without it, the workspace's own folder. A folder
+        never names its workspace, so a path given as ``workspace`` is refused.
 
         The heavy build (prompt assembly, tool instantiation, LangChain executor
         construction) is delegated to :meth:`_build_agent` and memoised by
@@ -786,6 +788,8 @@ class AgentFactory:
         """
         from agents import agent_cache
         from agents.registry import resolve_agent_id
+
+        workspace, workdir = _name_and_workdir(workspace, workdir)
 
         # A renamed agent's old id (a stored team, scenario or chat that still
         # names it) builds the agent under its current id, and a role reference
@@ -850,7 +854,8 @@ class AgentFactory:
             workspace,
             override_params,
             definitions_dir=self.definitions_dir,
-            builder=lambda: self._build_agent(agent_id, workspace, **override_params),
+            builder=lambda: self._build_agent(agent_id, workspace, workdir=workdir, **override_params),
+            workdir=workdir,
         )
 
     def _definition_from_snapshot(self, spec: Any, parts: Dict[str, Any]) -> Dict[str, Any]:
@@ -905,12 +910,15 @@ class AgentFactory:
                         version, agent_id, exc_info=True)
             return None
 
-    def _build_agent(self, agent_id: str, workspace: Optional[str] = None, **override_params) -> AgentBase:
+    def _build_agent(self, agent_id: str, workspace: Optional[str] = None,
+                     workdir: Optional[str] = None, **override_params) -> AgentBase:
         """Build an agent from its definition (uncached).
 
         Args:
             agent_id: The agent identifier (matches YAML filename without extension)
-            workspace: Optional workspace path for filesystem tools
+            workspace: The run's workspace by name (None is the default one)
+            workdir: The folder the file tools work in (the workspace's own
+                when not given)
             override_params: Override any definition parameters. ``memory_pool``
                 is special: it pins the shared memory pool for this build
                 instead of resolving it from the record and the workspace.
@@ -919,6 +927,7 @@ class AgentFactory:
             Configured agent instance
         """
         from agents.registry import get_agent as _reg_get
+        workspace, workdir = _name_and_workdir(workspace, workdir)
         _spec = _reg_get(agent_id)
 
         # A stored version to build from instead of the live definition (an
@@ -994,11 +1003,10 @@ class AgentFactory:
             # the conversation sent to its own endpoint: a way out of an
             # isolated workspace (common/isolation.py), so it does not run there.
             from common import isolation as _iso
-            from common.workspace_context import workspace_name_from_path as _ws_of
-            if workspace and _iso.is_isolated(_ws_of(workspace)):
+            if workspace and _iso.is_isolated(workspace):
                 raise _iso.IsolationError(
                     f"'{_spec.id}' is an imported agent that runs outside the hub; workspace "
-                    f"'{_ws_of(workspace)}' is isolated, so it cannot run there.")
+                    f"'{workspace}' is isolated, so it cannot run there.")
             from agents.remote_agent import RemoteAgent
             return RemoteAgent(
                 agent_id=_spec.id,
@@ -1006,6 +1014,7 @@ class AgentFactory:
                 remote=dict(_spec.remote or {}),
                 description=_spec.description,
                 workspace=workspace,
+                workdir=workdir,
                 verbose=_spec.verbose,
             )
 
@@ -1134,7 +1143,7 @@ class AgentFactory:
         # Create tools
         tool_list = config.get("tools", [])
         _runtime_tool_names.update(str(t) for t in tool_list if str(t) not in _picked_tool_ids)
-        tools = self._create_tools(tool_list, workspace=workspace, agent_id=agent_id,
+        tools = self._create_tools(tool_list, workspace=workspace, workdir=workdir, agent_id=agent_id,
                                    episodic_write=_episodic_write,
                                    pool_override=_pool_override,
                                    personal_pool=_personal_pool)
@@ -1306,8 +1315,7 @@ class AgentFactory:
         # approval gate. A server that will not connect is skipped with its
         # error recorded on its own entry, never failing the build.
         from common import isolation as _isolation
-        from common.workspace_context import workspace_name_from_path as _ws_name_of
-        _isolated_ws = _isolation.is_isolated(_ws_name_of(workspace)) if workspace else False
+        _isolated_ws = _isolation.is_isolated(workspace) if workspace else False
         if not _isolated_ws:
             # An isolated workspace never connects an MCP server: a stdio one
             # runs a command on the hub's host, a remote one is a way out.
@@ -1319,7 +1327,7 @@ class AgentFactory:
         # (agents/tool_spill.py). Innermost, so the hooks, the gate and the
         # run's tool-call record all see the preview. Unchanged when off.
         from agents.tool_spill import wrap_tools as _spill_wrap
-        tools = _spill_wrap(tools, workspace=workspace)
+        tools = _spill_wrap(tools, workspace=workspace, workdir=workdir)
 
         # Human in the loop at the level of a single tool call: every action tool
         # is wrapped so the workspace's PreToolUse/PostToolUse hooks run around it
@@ -1366,8 +1374,7 @@ class AgentFactory:
         # routing decision the operator already made by listing the target.
         if _spec is not None and _spec.handoffs:
             from tools.handoff import HANDOFF_PROMPT, create_handoff_tools
-            from common.workspace_context import workspace_name_from_path as _ws_from_path
-            _handoff_tools = create_handoff_tools(_spec, _ws_from_path(workspace))
+            _handoff_tools = create_handoff_tools(_spec, workspace)
             if _handoff_tools:
                 tools = [*tools, *_handoff_tools]
                 _runtime_tool_names.update(getattr(t, "name", "") for t in _handoff_tools)
@@ -1384,8 +1391,7 @@ class AgentFactory:
         if _spec is not None:
             from agents.main_links import refusal_prompt
             from agents.registry import get_agent as _reg_live
-            from common.workspace_context import workspace_name_from_path as _ws_name
-            _refusal_text = refusal_prompt(_reg_live(_spec.id) or _spec, _ws_name(workspace))
+            _refusal_text = refusal_prompt(_reg_live(_spec.id) or _spec, workspace)
             if _refusal_text:
                 config["system_prompt"] = (
                     config.get("system_prompt", "") + "\n\n---\n\n" + _refusal_text
@@ -1432,7 +1438,7 @@ class AgentFactory:
         from providers.special import SPECIAL_MODEL_TOOLS, prompt_section as _special_prompt
         _tool_names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
         if any(n in SPECIAL_MODEL_TOOLS for n in _tool_names):
-            _special_text = _special_prompt(_tool_names, _ws_name_of(workspace) if workspace else None)
+            _special_text = _special_prompt(_tool_names, workspace)
             if _special_text:
                 config["system_prompt"] = (
                     config.get("system_prompt", "") + "\n\n---\n\n" + _special_text
@@ -1443,7 +1449,7 @@ class AgentFactory:
         if _spec is not None:
             from agents.roles import prompt_section as _roles_prompt
             _roles_text = _roles_prompt(
-                _spec, _ws_name_of(workspace) if workspace else None,
+                _spec, workspace,
                 [getattr(t, "name", getattr(t, "__name__", "")) for t in tools],
             )
             if _roles_text:
@@ -1496,7 +1502,7 @@ class AgentFactory:
         # own agents, workspace management with the main agent in "default",
         # and a tool that takes a workspace may name only the run's own.
         from common import workspace_scope as _scope
-        _run_ws = _ws_name_of(workspace) if workspace else None
+        _run_ws = workspace
         _names = [getattr(t, "name", getattr(t, "__name__", "")) for t in tools]
         _out_of_scope = set(_scope.offenders(agent_id, _names, _run_ws or "",
                                              service_mode=_service_mode))
@@ -1546,6 +1552,7 @@ class AgentFactory:
             base_url=resolved_base_url,
             verbose=config.get("verbose", False),
             workspace=workspace,
+            workdir=workdir,
             streaming=resolve_streaming(config.get("streaming"), override_params),
             max_tool_repeats=int(config.get("max_tool_repeats", 10)),
             max_iterations=int(config.get("max_iterations", 60)),
@@ -1587,6 +1594,21 @@ class AgentFactory:
         return agents
 
 
+def _name_and_workdir(workspace: Optional[str], workdir: Optional[str]) -> tuple:
+    """``(name, folder)`` an agent is built with: the workspace's name as
+    given, and the folder given, else the workspace's own. A path is not a
+    workspace's name (a project folder, /workspace in a container), so one
+    passed as ``workspace`` is a caller's mistake."""
+    from common.workspace_context import normalize_workspace_name, workspace_operating_path
+    raw = str(workspace or "").strip()
+    if raw and Path(raw).is_absolute():
+        raise ValueError(f"create_agent: workspace is a workspace's name, not a folder ({raw!r}); "
+                         "pass the folder as workdir")
+    name = normalize_workspace_name(raw) if raw else None
+    folder = str(workdir) if workdir else workspace_operating_path(name)
+    return name, folder
+
+
 def _experiment_pin(agent_id: str) -> Optional[Dict[str, Any]]:
     try:
         from evals.experiments import take_pin
@@ -1613,14 +1635,16 @@ def get_factory() -> AgentFactory:
     return _factory
 
 
-def create_agent(agent_id: str, workspace: Optional[str] = None, **params) -> AgentBase:
+def create_agent(agent_id: str, workspace: Optional[str] = None,
+                 workdir: Optional[str] = None, **params) -> AgentBase:
     """Convenience function to create an agent."""
-    return _factory.create_agent(agent_id, workspace=workspace, **params)
+    return _factory.create_agent(agent_id, workspace=workspace, workdir=workdir, **params)
 
 
-def build_agent_executor(agent_id: str, workspace: Optional[str] = None, **params) -> Any:
+def build_agent_executor(agent_id: str, workspace: Optional[str] = None,
+                         workdir: Optional[str] = None, **params) -> Any:
     """Entrypoint for orchestrator registry that returns the agent's loop executor."""
-    agent = create_agent(agent_id, workspace=workspace, **params)
+    agent = create_agent(agent_id, workspace=workspace, workdir=workdir, **params)
     return agent.executor
 
 

@@ -77,8 +77,9 @@ def _stat_sig(path: Path) -> str:
         return "-"
 
 
-def _key(agent_id: str, workspace: Optional[str], override_params: Dict[str, Any]) -> str:
-    return f"{agent_id}\x1f{workspace or ''}\x1f{_overrides_repr(override_params)}"
+def _key(agent_id: str, workspace: Optional[str], override_params: Dict[str, Any],
+         workdir: Optional[str] = None) -> str:
+    return f"{agent_id}\x1f{workspace or ''}\x1f{workdir or ''}\x1f{_overrides_repr(override_params)}"
 
 
 def _overrides_repr(override_params: Dict[str, Any]) -> str:
@@ -106,8 +107,10 @@ def compute_fingerprint(
     override_params: Dict[str, Any],
     *,
     definitions_dir: Path,
+    workdir: Optional[str] = None,
 ) -> str:
-    """Hash the definition inputs that determine the built agent."""
+    """Hash the definition inputs that determine the built agent: ``workspace``
+    is its name, ``workdir`` the folder its file tools work in."""
     from common.docstore import DocStore
     from common.paths import PROJECT_ROOT
     from common.workspace_context import resolve_active_project
@@ -118,6 +121,7 @@ def compute_fingerprint(
         "v1",
         agent_id,
         str(workspace or ""),
+        str(workdir or ""),
         _overrides_repr(override_params),
         "proj:" + ("1" if resolve_active_project() else "0"),
     ]
@@ -153,6 +157,7 @@ def get_or_build(
     *,
     definitions_dir: Path,
     builder: Callable[[], Any],
+    workdir: Optional[str] = None,
 ) -> Any:
     """Return a cached agent when its fingerprint (and TTL) still hold, else build.
 
@@ -166,8 +171,9 @@ def get_or_build(
         return builder()
 
     ttl = int(getattr(settings, "agent_cache_ttl", 0) or 0)
-    fp = compute_fingerprint(agent_id, workspace, override_params, definitions_dir=definitions_dir)
-    key = _key(agent_id, workspace, override_params)
+    fp = compute_fingerprint(agent_id, workspace, override_params,
+                             definitions_dir=definitions_dir, workdir=workdir)
+    key = _key(agent_id, workspace, override_params, workdir)
 
     with _lock:
         entry = _cache.get(key)

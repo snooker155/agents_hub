@@ -33,16 +33,9 @@ def normalize_workspace_name(value: Optional[str]) -> Optional[str]:
 
 
 def workspace_operating_path(workspace: Optional[str], path: Optional[str] = None) -> Optional[str]:
-    """What ``create_agent`` gets as ``workspace``: the operating path when
-    the caller has one (a project folder), else the workspace's own folder.
-
-    The factory resolves the model from that path (``workspace_name_from_path``
-    on the way to the workspace's model choice, then the workspace settings,
-    then the global default) and roots the filesystem tools there. A chat that
-    knows only the workspace's name (an agent's definition chat, the page
-    chat) used to pass nothing, so the workspace's model was skipped for the
-    global one; the folder path gives it the same cascade a task run has.
-    """
+    """The folder an agent works in (``create_agent``'s ``workdir``): the
+    operating path when the caller has one (a project folder), else the
+    workspace's own folder under WORKSPACES_ROOT."""
     if path:
         return str(path)
     name = normalize_workspace_name(workspace)
@@ -52,32 +45,25 @@ def workspace_operating_path(workspace: Optional[str], path: Optional[str] = Non
     return str(Path(WORKSPACES_ROOT) / name)
 
 
-def workspace_name_from_path(value: Optional[str]) -> Optional[str]:
-    """Extract the bare workspace name from an agent's operating path.
+def run_workspace() -> Optional[str]:
+    """This run's workspace name, as its launch gave it: the context variable
+    the request or the run set, else ``AGENT_WORKSPACE`` (every launcher sets
+    it from the run record, an agent container included). None when neither
+    names one, which is the default workspace.
 
-    Unlike ``normalize_workspace_name`` (which just takes the basename), this
-    handles a project operating path: agents for tasks run in
-    ``WORKSPACES_ROOT/<ws>/<project>``, whose basename is ``<project>``, not the
-    workspace. Taking the first path component *under* WORKSPACES_ROOT recovers
-    ``<ws>`` for both a bare workspace root and a project subfolder, so
-    workspace-scoped lookups (model override, settings) resolve correctly. Falls
-    back to the basename for inputs that are not absolute paths under the root.
-    """
-    if value is None:
-        return None
-    raw = str(value).strip()
-    if not raw:
-        return None
-    p = Path(raw)
-    if p.is_absolute():
-        try:
-            from workspace import WORKSPACES_ROOT
-            rel = p.resolve().relative_to(Path(WORKSPACES_ROOT).resolve())
-            if rel.parts:
-                return rel.parts[0]
-        except ValueError:
-            pass
-    return p.name
+    A workspace's name is never read off a folder: an operating path may be a
+    project folder inside the workspace, or /workspace in a container."""
+    return (normalize_workspace_name(_workspace_ctx.get())
+            or normalize_workspace_name(os.getenv("AGENT_WORKSPACE")))
+
+
+def name_of(value: Optional[str]) -> Optional[str]:
+    """The workspace name ``value`` gives: a name as it is. A folder path
+    names no workspace, so for one this is the run's own (:func:`run_workspace`)."""
+    raw = str(value or "").strip()
+    if raw and not Path(raw).is_absolute():
+        return normalize_workspace_name(raw)
+    return run_workspace() if raw else None
 
 
 def resolve_active_workspace(preferred: Optional[str] = None) -> Optional[str]:

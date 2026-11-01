@@ -528,11 +528,12 @@ def update_task(
         if created_by is not None:
             fields["created_by"] = created_by
         if workspace is not None:
+            from pathlib import Path as _Path
+            if _Path(str(workspace)).is_absolute():
+                return _json_err(f"workspace is a workspace's name, not a folder: '{workspace}'")
             try:
-                # Accept path or name; keep only the name and ensure it exists
-                from pathlib import Path as _Path
-                name = _Path(workspace).name
-                p = ws_create_workspace_folder(name)
+                # A name; make sure its folder exists
+                p = ws_create_workspace_folder(str(workspace).strip())
                 fields["workspace"] = p.name
             except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
                 return _json_err(f"Failed to set workspace '{workspace}': {e}")

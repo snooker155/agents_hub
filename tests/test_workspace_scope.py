@@ -54,14 +54,14 @@ def test_the_bootstrap_agents_already_follow_the_rules():
 def _build(agent_id, tools, workspace, monkeypatch):
     from agents.agent_factory import AgentFactory
     from agents.registry import add_agent
-    from workspace import create_workspace_folder, get_workspace_folder
+    from workspace import create_workspace_folder
     create_workspace_folder(workspace)
     add_agent(_spec(agent_id, tools), user_edit=False)
     monkeypatch.setattr("agents.agent_factory.AgentFactory.load_definition",
                         lambda self, aid: {"id": aid, "name": aid, "system_prompt": "You help.",
                                            "tools": list(tools), "provider": "openai",
                                            "model": "gpt-4o-mini"}, raising=False)
-    return AgentFactory()._build_agent(agent_id, workspace=str(get_workspace_folder(workspace)))
+    return AgentFactory()._build_agent(agent_id, workspace=workspace)
 
 
 def test_every_workspace_pins_the_workspace_argument(monkeypatch):

@@ -67,7 +67,6 @@ def run(state: Any, config: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
     """Read ``data`` from state, build a view, return ``{"view_ref": {...}}``."""
     from views.store import create_view, view_ref
     from views.models import ViewValidationError
-    from common.workspace_context import workspace_name_from_path
 
     data = state.get("data") if hasattr(state, "get") else None
     cfg = config or {}
@@ -75,7 +74,7 @@ def run(state: Any, config: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
     if kind == "auto":
         kind = _infer_kind(data)
     title = str(cfg.get("title") or "Flow view")
-    workspace = workspace_name_from_path(getattr(ctx, "workspace", "") or None)
+    workspace = getattr(ctx, "workspace_name", "") or None
 
     try:
         env = create_view(

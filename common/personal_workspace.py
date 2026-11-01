@@ -59,9 +59,9 @@ def _metadata(workspace: Optional[str]) -> Dict[str, Any]:
     if not workspace:
         return {}
     try:
-        from common.workspace_context import workspace_name_from_path
+        from common.workspace_context import name_of
         from workspace import get_workspace_metadata
-        ws = workspace_name_from_path(workspace) or workspace
+        ws = name_of(workspace)
         meta = get_workspace_metadata(ws)
     except Exception:  # noqa: BLE001 - unreadable metadata reads as an ordinary workspace
         log.debug("personal workspace: could not read %s", workspace, exc_info=True)

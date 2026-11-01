@@ -96,6 +96,7 @@ class StandardAgent(AgentBase):
         base_url: Optional[str] = None,
         verbose: bool = False,
         workspace: Optional[str] = None,
+        workdir: Optional[str] = None,
         streaming: bool = False,
         max_tool_repeats: int = 10,
         think_gate: Optional[Any] = None,
@@ -123,7 +124,9 @@ class StandardAgent(AgentBase):
             max_iterations=max_iterations,
             spec=spec,
         )
+        # The run's workspace by name, and the folder its file tools work in.
         self.workspace = workspace
+        self.workdir = workdir
         # When native model reasoning is on (a positive thinking_level), the
         # reasoning (LM Studio/Ollama reasoning models, inline <think> tags) is
         # shown in the chat bubble by ChatStreamCallback; this flag strips it
@@ -351,14 +354,14 @@ class StandardAgent(AgentBase):
             tripped = self._guardrail_trip(state, "input", instruction)
             if tripped is not None:
                 return tripped
-            workspace = kwargs.get("workspace", self.workspace)
             callbacks = [guard, AskUserGuard()]
             ctx_guard = self._context_window_guard()
             if ctx_guard:
                 callbacks.append(ctx_guard)
-            if workspace:
+            workdir = getattr(self, "workdir", None)
+            if workdir:
                 callbacks.append(SharedProgressCallback(
-                    workspace=Path(workspace),
+                    workspace=Path(workdir),
                     model_name=self.model
                 ))
             # Auto-attach stop callback when running inside a managed run subprocess.

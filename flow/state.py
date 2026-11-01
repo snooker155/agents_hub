@@ -214,6 +214,7 @@ class RunContext:
     run_id: str = ""
     task_id: str = ""
     session_id: str = ""
-    workspace: str = ""
+    workspace: str = ""          # the folder the run works in
+    workspace_name: str = ""     # the run's workspace, by name ("" is default)
     node_id: str = ""
     overrides: Dict[str, Any] = field(default_factory=dict)

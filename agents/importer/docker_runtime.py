@@ -106,33 +106,6 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-# ── the workspace a run belongs to ───────────────────────────────────────────
-
-def workspace_for_path(path: Optional[str]) -> str:
-    """The workspace name a run's operating path belongs to.
-
-    The path is what ``create_agent`` was given: a workspace folder, a project
-    folder under it, or an eval case folder. An eval folder under a custom
-    ``AGENTS_HUB_EVAL_ROOT`` is outside the workspaces root, so it is asked
-    first. Nothing recognisable means the default workspace.
-    """
-    if not path:
-        return "default"
-    try:
-        from evals.snapshot import workspace_of_eval_dir
-        found = workspace_of_eval_dir(path)
-        if found:
-            return found
-    except Exception:  # noqa: BLE001 - evals are optional at this layer
-        log.debug("workspace_for_path: eval root lookup failed", exc_info=True)
-    try:
-        from common.workspace_context import workspace_name_from_path
-        return workspace_name_from_path(path) or "default"
-    except Exception:  # noqa: BLE001 - a bare name is better than a crash
-        log.debug("workspace_for_path: fallback", exc_info=True)
-        return Path(str(path)).name or "default"
-
-
 def mounts_for(workspace: str) -> List[Tuple[str, str]]:
     """``(path, container_path)`` pairs for one workspace: its folder, as
     this process sees it. Container paths equal these paths, which is what
@@ -414,11 +387,10 @@ def status(agent_id: str, descriptor: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def url_for(agent_id: str, descriptor: Dict[str, Any], workspace_path: Optional[str]) -> str:
-    """The base URL a run from ``workspace_path`` talks to, starting the
-    workspace's container when needed."""
-    workspace = workspace_for_path(workspace_path)
-    record = ensure_container(agent_id, descriptor, workspace)
+def url_for(agent_id: str, descriptor: Dict[str, Any], workspace: Optional[str]) -> str:
+    """The base URL a run of the workspace named ``workspace`` talks to,
+    starting the workspace's container when needed."""
+    record = ensure_container(agent_id, descriptor, workspace or "default")
     url = record.get("url")
     if not url:
         raise DockerRuntimeError(f"container {record.get('name')} publishes no port")
@@ -427,7 +399,7 @@ def url_for(agent_id: str, descriptor: Dict[str, Any], workspace_path: Optional[
 
 __all__ = [
     "DockerRuntimeError", "MODE_KEY", "MODE_URL", "MODE_DOCKER", "MODES",
-    "is_docker_mode", "image_tag", "container_name", "workspace_for_path",
+    "is_docker_mode", "image_tag", "container_name",
     "mounts_for", "container_env", "build_image", "ensure_container",
     "stop_containers", "list_containers", "container_record", "status", "url_for",
 ]

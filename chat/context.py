@@ -22,7 +22,6 @@ from common.workspace_context import (
     _workspace_ctx,
     _project_ctx,
     normalize_project_id,
-    workspace_name_from_path,
 )
 
 log = logging.getLogger(__name__)
@@ -299,15 +298,14 @@ def resolve_workspace_abs(request: ChatRequest) -> str | None:
         return None
 
 
-def apply_workspace_ctx(request: ChatRequest, workspace_abs: str | None) -> str | None:
-    """Derive the workspace name and publish it (plus the selected project id) on
-    the thread/async-safe context vars so agent tools (e.g. list_tasks) scope to
-    them during the run. Returns the resolved workspace name.
+def apply_workspace_ctx(request: ChatRequest) -> str | None:
+    """Publish the request's workspace (plus the selected project id) on the
+    thread/async-safe context vars so agent tools (e.g. list_tasks) scope to
+    them during the run. Returns the workspace name.
 
-    ``workspace_abs`` may now point at a project subfolder, so the name is
-    recovered with ``workspace_name_from_path`` (which walks back to the
-    workspace component) rather than a bare basename."""
-    ws_name = request.workspace or workspace_name_from_path(workspace_abs)
+    The name is the request's: the folder the agent works in (maybe a
+    project's) never names it."""
+    ws_name = request.workspace or None
     _workspace_ctx.set(ws_name)
     _project_ctx.set(normalize_project_id(getattr(request, "project_id", None)))
     return ws_name

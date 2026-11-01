@@ -47,18 +47,10 @@ def _now_iso() -> str:
 
 
 def _workspace_of(agent: Any, state: Any) -> Optional[str]:
-    """The workspace *name* guardrails are scoped by. A chat run's agent holds
-    its operating path (``WORKSPACES_ROOT/<ws>``, or a project folder under
-    it), which matches no guardrail's ``workspace``: only the global ones
-    would apply."""
-    raw = str(getattr(state, "workspace", "") or getattr(agent, "workspace", "") or "")
-    if not raw:
-        return None
-    try:
-        from common.workspace_context import workspace_name_from_path
-        return workspace_name_from_path(raw) or None
-    except Exception:  # noqa: BLE001 - a bare name is still a name
-        return raw
+    """The workspace *name* guardrails are scoped by: the run's (its loop
+    state's), else the one the agent was built for."""
+    from common.workspace_context import name_of
+    return name_of(str(getattr(state, "workspace", "") or getattr(agent, "workspace", "") or ""))
 
 
 def _agent_guardrail_ids(agent: Any) -> List[str]:

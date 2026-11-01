@@ -1032,7 +1032,8 @@ def generate_graph_via_llm(project, view: str, root: Optional[Path]) -> Dict[str
             # tool name, so any ceiling just truncates a large project.
             agent = create_agent(
                 _ARCHITECT_AGENT_ID,
-                workspace=agent_workspace_path(project, root),
+                workspace=getattr(project, "workspace", None) or None,
+                workdir=agent_workspace_path(project, root),
                 max_tool_repeats=0,
             )
             res = invoke_agent(agent, prompt, catch_exceptions=True).result

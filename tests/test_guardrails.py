@@ -304,16 +304,22 @@ def test_runtime_block_trips_and_warn_does_not():
     assert "message" in trip2
 
 
-def test_runtime_workspace_guardrail_applies_to_a_run_given_the_workspace_path():
-    # A chat run's agent holds its operating path, not the workspace name.
+def test_runtime_workspace_guardrail_applies_to_a_run_of_its_workspace(monkeypatch):
+    # The agent holds its workspace's name; a folder never names one, so a
+    # run that only has a folder is scoped by the run's own name.
     from workspace import WORKSPACES_ROOT
     g = service.create_guardrail({"name": "no-cards", "workspace": "zerno", "kind": "pii",
                                   "config": {"detectors": ["credit_card"]}, "action": "block"})
-    agent = _Agent(workspace=str(Path(WORKSPACES_ROOT) / "zerno"))
+    agent = _Agent(workspace="zerno")
     trip = runtime.check_input(agent, _state(agent.workspace), "card 4111 1111 1111 1111")
     assert trip is not None and trip["guardrail_id"] == g.id
     events = store.list_events(run_id="r1")
     assert events and all(e.get("workspace") == "zerno" for e in events)
+    folder = str(Path(WORKSPACES_ROOT) / "zerno")
+    monkeypatch.delenv("AGENT_WORKSPACE", raising=False)
+    assert runtime.check_input(_Agent(workspace=folder), _state(folder), "card 4111 1111 1111 1111") is None
+    monkeypatch.setenv("AGENT_WORKSPACE", "zerno")
+    assert runtime.check_input(_Agent(workspace=folder), _state(folder), "card 4111 1111 1111 1111") is not None
 
 
 def test_runtime_rules_run_before_judges_and_a_block_skips_the_judge(monkeypatch):

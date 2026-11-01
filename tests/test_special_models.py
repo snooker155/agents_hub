@@ -603,20 +603,18 @@ def test_the_check_route(ws, http, client):
 def test_the_build_keeps_the_tools_and_says_which_have_no_model(ws):
     from agents.agent_factory import AgentFactory
     from common.bootstrap import seed_registry_from_bootstrap
-    from workspace import get_workspace_folder
     seed_registry_from_bootstrap()
     factory = AgentFactory()
-    path = str(get_workspace_folder(WS))
     tools = set(special.SPECIAL_MODEL_TOOLS)
 
-    bare = factory._build_agent("main-agent", workspace=path)
+    bare = factory._build_agent("main-agent", workspace=WS)
     assert tools <= {t.name for t in bare._tools}
     assert "No model is added in this workspace for: `generate_image` (image)" in bare.system_prompt
     # main-agent delegates code by role, so it is told who holds the roles here.
     assert "## Roles in this workspace" in bare.system_prompt and "`@coder`" in bare.system_prompt
 
     special.save(WS, {"image": {"provider": "openai", "model": "gpt-image-1"}})
-    built = factory._build_agent("main-agent", workspace=path)
+    built = factory._build_agent("main-agent", workspace=WS)
     assert tools <= {t.name for t in built._tools}
     assert "- `generate_image`:" in built.system_prompt and "openai/gpt-image-1" in built.system_prompt
     missing = built.system_prompt.split("No model is added in this workspace for:")[1]

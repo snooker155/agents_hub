@@ -1154,9 +1154,9 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
         try:
             with log_file.open("w", encoding="utf-8") as fh:
                 fh.write("[decomposer] start\n")
-            _jobs.submit(t.workspace or root.name, "invoke", {
+            _jobs.submit(t.workspace or "default", "invoke", {
                 "agent_id": "decomposer", "workspace": str(root),
-                "workspace_name": t.workspace or root.name, "overrides": build_overrides,
+                "workspace_name": t.workspace or "default", "overrides": build_overrides,
                 "prompt": task_decompose.split_prompt(t), "run_id": run_id, "log_file": str(log_file),
             }, label=f"decompose {task_id}")
         except _jobs.JobError as e:

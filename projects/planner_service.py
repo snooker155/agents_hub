@@ -77,8 +77,9 @@ def build_prompt(history: List[dict], user_message: str, *, project: bool = True
     )
 
 
-def build_agent(workspace_path: Optional[str]):
-    """Create the Task Manager agent for one planner turn.
+def build_agent(workspace: Optional[str], workspace_path: Optional[str]):
+    """Create the Task Manager agent for one planner turn, in the workspace
+    named ``workspace``, working in the folder ``workspace_path``.
 
     No repetition ceiling (``max_tool_repeats=0``): planning a project is task
     after task through the same tool, which is the work the agent exists to
@@ -87,7 +88,7 @@ def build_agent(workspace_path: Optional[str]):
     """
     from agents.agent_factory import create_agent
     return create_agent(
-        PLANNER_AGENT_ID, workspace=workspace_path, streaming=True,
+        PLANNER_AGENT_ID, workspace=workspace or None, workdir=workspace_path, streaming=True,
         max_tool_repeats=0, max_iterations=400,
     )
 

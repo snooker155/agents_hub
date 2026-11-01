@@ -306,9 +306,11 @@ def _evaluate_with_agent(
     pass's run group and the accounting."""
     from agents.agent_factory import create_agent
     from agents.agent_invoke import invoke_agent
+    from common.workspace_context import run_workspace
 
     try:
-        agent = create_agent(agent_id, workspace=workspace)
+        # ``workspace`` is the loop's folder; the name is the run's.
+        agent = create_agent(agent_id, workspace=run_workspace(), workdir=workspace)
     except Exception as e:  # noqa: BLE001
         v = Verdict(verdict="continue", error=f"{type(e).__name__}: {e}")
         v.reason = "the evaluator could not be run"
@@ -467,14 +469,10 @@ def rubric_grader(loop: Any, workspace: Optional[str]) -> Dict[str, str]:
     if not grader and getattr(loop, "evaluator_model", None):
         grader = {"provider": getattr(loop, "evaluator_provider", None) or "",
                   "model": loop.evaluator_model}
-    # The runner passes the workspace's folder; the model lookup wants its name.
-    name = getattr(loop, "workspace", None)
-    if not name and workspace:
-        try:
-            from common.workspace_context import workspace_name_from_path
-            name = workspace_name_from_path(workspace) or workspace
-        except Exception:  # noqa: BLE001 - an unresolvable path means no workspace opinion on the model
-            name = None
+    # The runner passes the workspace's folder; the model lookup wants its
+    # name, which is the loop's own or the run's.
+    from common.workspace_context import run_workspace
+    name = getattr(loop, "workspace", None) or run_workspace()
     return resolve_grader(grader, name)
 
 

@@ -212,7 +212,8 @@ def build_chat_driver(
             # polling) stalls and shows as "pending" while a flow chat runs. Build
             # it in a worker thread to keep the loop responsive.
             agent = await asyncio.to_thread(
-                create_agent, yaml_agent_id, workspace=workspace_abs, streaming=True,
+                create_agent, yaml_agent_id, workspace=request.workspace or None,
+                workdir=workspace_abs, streaming=True,
                 flow_step=True,
             )
             callback.bind_model(agent.provider or "", agent.model or "")
@@ -353,7 +354,8 @@ def build_chat_driver(
     def _make_run_context(node_id: str) -> RunContext:
         return RunContext(
             flow_id=request.flow_id, run_id=conv_id, task_id=conv_id,
-            session_id=session_id or "", workspace=workspace_abs or "", node_id=node_id,
+            session_id=session_id or "", workspace=workspace_abs or "",
+            workspace_name=request.workspace or "", node_id=node_id,
         )
 
     def _on_node_start(ev: dict) -> None:

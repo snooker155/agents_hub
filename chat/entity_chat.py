@@ -499,12 +499,9 @@ async def run_entity_chat_turn(
             from common import secrets as _secrets
             from common.identity import current_user_id
             with _secrets.activate(spec.workspace or "", spec.agent_id, current_user_id()):
-                # The workspace's model choice (the header's pick) applies
-                # through the path, so a chat with only a name gets its folder.
-                from common.workspace_context import workspace_operating_path
                 agent = await asyncio.to_thread(
                     create_agent, spec.agent_id,
-                    workspace=workspace_operating_path(spec.workspace, spec.workspace_path),
+                    workspace=spec.workspace or None, workdir=spec.workspace_path or None,
                     streaming=True,
                     max_tool_repeats=spec.max_tool_repeats,
                     max_iterations=spec.max_iterations,

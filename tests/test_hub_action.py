@@ -240,7 +240,6 @@ def test_service_wide_kinds_need_service_lookup_and_an_administrator(multi, hub,
 def test_only_a_service_thread_holds_service_lookup(single, hub, monkeypatch):
     from agents.agent_factory import AgentFactory
     from common.workspace_scope import tool_allowed
-    from workspace import get_workspace_folder
     assert tool_allowed("assistant", "service_lookup", "default", service_mode=True)
     assert not tool_allowed("assistant", "service_lookup", "default", service_mode=False)
     assert not tool_allowed("main-agent", "service_lookup", "default")
@@ -250,7 +249,7 @@ def test_only_a_service_thread_holds_service_lookup(single, hub, monkeypatch):
     factory = AgentFactory()
 
     def build(ws, service_mode):
-        return factory._build_agent("assistant", workspace=str(get_workspace_folder(ws)),
+        return factory._build_agent("assistant", workspace=ws,
                                     personal_pool=None, service_mode=service_mode)
 
     personal = build("team", False)

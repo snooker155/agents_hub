@@ -115,7 +115,12 @@ def _invoke(instance_id: str, instance: Dict[str, Any], args: Dict[str, Any],
     prompt = str(args.get("prompt") or "")
     build = dict(args.get("build") or {})
     overrides = dict(args.get("overrides") or {})
-    agent = create_agent(agent_id, args.get("workspace"), **overrides, **build)
+    # "workspace_name" names the workspace; "workspace" is the folder the
+    # sender resolved (a bare name from an older sender is no folder).
+    folder = str(args.get("workspace") or "")
+    agent = create_agent(agent_id, args.get("workspace_name") or None,
+                         workdir=folder if folder and Path(folder).is_absolute() else None,
+                         **overrides, **build)
     provider = getattr(agent, "provider", "") or ""
     model = getattr(agent, "model", "") or ""
 
@@ -216,10 +221,9 @@ def _entity_turn(instance_id: str, instance: Dict[str, Any], args: Dict[str, Any
         callback = ChatStreamCallback(loop, queue, log_lines, log_file,
                                       session_id=args.get("session_id"), run_id=run_id)
         state["callback"] = callback
-        from common.workspace_context import workspace_operating_path
         agent = await asyncio.to_thread(
             create_agent, agent_id,
-            workspace=workspace_operating_path(args.get("workspace_name"), args.get("workspace_path")),
+            workspace=args.get("workspace_name") or None, workdir=args.get("workspace_path") or None,
             **build)
         provider, model = getattr(agent, "provider", "") or "", getattr(agent, "model", "") or ""
         callback.bind_model(provider, model)

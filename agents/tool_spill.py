@@ -82,8 +82,8 @@ def _threshold(value: Any) -> int:
 
 
 def threshold_for(workspace: Optional[str]) -> int:
-    """The spill threshold for an agent working in ``workspace`` (its
-    operating path), 0 when spilling is off."""
+    """The spill threshold for an agent of the workspace named ``workspace``,
+    0 when spilling is off."""
     from agents.loop_ext.settings import workspace_loop_setting
     return _threshold(workspace_loop_setting(workspace, "tool_output_spill_chars", DEFAULT_THRESHOLD))
 
@@ -110,10 +110,12 @@ def _next_index(state: Any, folder: Path) -> int:
         return 1
 
 
-def _register(workspace: str, rel: str, tool: str, run_id: str) -> Optional[str]:
-    """Register the written file as a workspace file; its id, or None when
-    the operating folder is not under the workspaces root or the registry
-    cannot be reached (a container without the database)."""
+def _register(workspace: str, ws_name: Optional[str], rel: str, tool: str,
+              run_id: str) -> Optional[str]:
+    """Register the written file as a file of the workspace named
+    ``ws_name``; its id, or None when the operating folder ``workspace`` is
+    not inside that workspace's folder or the registry cannot be reached (a
+    container without the database)."""
     try:
         from common import db
         from common.config import run_state_transport
@@ -126,7 +128,7 @@ def _register(workspace: str, rel: str, tool: str, run_id: str) -> Optional[str]
             # holds it registers here; one handed no URL reads as SQLite.
             return None
         from tools.filesystem_langchain import _registry_target
-        target = _registry_target(workspace)
+        target = _registry_target(workspace, ws_name)
         if target is None:
             return None
         reg_ws, prefix = target
@@ -141,7 +143,7 @@ def _register(workspace: str, rel: str, tool: str, run_id: str) -> Optional[str]
         return None
 
 
-def _sweep_old(root: Path, *, keep: str) -> int:
+def _sweep_old(root: Path, *, keep: str, ws_name: Optional[str] = None) -> int:
     """Delete the saved outputs of runs older than ``run_retention_days``
     (the age the run records themselves are kept, common/maintenance.py)
     under ``root``, and tombstone their file records. Runs on every spill, so
@@ -174,7 +176,7 @@ def _sweep_old(root: Path, *, keep: str) -> int:
         gone += 1
         try:
             from tools.filesystem_langchain import _registry_target
-            target = _registry_target(str(root))
+            target = _registry_target(str(root), ws_name)
             if target is not None:
                 from files import service as files_service
                 reg_ws, prefix = target
@@ -282,9 +284,12 @@ def _clip_spill_read(output: str, tool_input: Any, threshold: int) -> str:
 
 
 def spill_output(tool: str, tool_input: Any, output: Any, *, workspace: Optional[str],
-                 threshold: int, has_reader: bool = True) -> Any:
+                 threshold: int, has_reader: bool = True,
+                 workspace_name: Optional[str] = None) -> Any:
     """``output`` as the model should see it: unchanged when short (or not
-    text), else written to a file and replaced by :func:`preview`."""
+    text), else written to a file under the folder ``workspace`` and replaced
+    by :func:`preview`. The file is registered in the workspace named
+    ``workspace_name`` (the run's when not given)."""
     if not threshold or not workspace or not isinstance(output, str) or len(output) <= threshold:
         return output
     if tool == "read_file":
@@ -293,8 +298,10 @@ def spill_output(tool: str, tool_input: Any, output: Any, *, workspace: Optional
         return output
     from agents.agent_loop import current_state
 
+    from common.workspace_context import normalize_workspace_name, run_workspace
     state = current_state()
     run_id = _run_id(state)
+    ws_name = normalize_workspace_name(workspace_name) or run_workspace()
     root = Path(workspace).resolve()
     folder = root / SPILL_DIR / run_id
     try:
@@ -304,7 +311,7 @@ def spill_output(tool: str, tool_input: Any, output: Any, *, workspace: Optional
         ignore = root / SPILL_DIR / ".gitignore"
         if not ignore.exists():
             ignore.write_text("*\n", encoding="utf-8")
-        _sweep_old(root, keep=run_id)
+        _sweep_old(root, keep=run_id, ws_name=ws_name)
         name = f"{_next_index(state, folder):03d}-{_safe(tool)}.txt"
         (folder / name).write_text(output, encoding="utf-8")
     except OSError:
@@ -312,7 +319,7 @@ def spill_output(tool: str, tool_input: Any, output: Any, *, workspace: Optional
                     exc_info=True)
         return output
     rel = f"{SPILL_DIR}/{run_id}/{name}"
-    file_id = _register(str(workspace), rel, tool, run_id)
+    file_id = _register(str(workspace), ws_name, rel, tool, run_id)
     if state is not None:
         state.tool_spills.append({"tool": tool, "path": rel, "file_id": file_id,
                                   "chars": len(output)})
@@ -331,7 +338,8 @@ class SpillingTool(BaseTool):
     """Wraps a tool so a result past the threshold goes to a file."""
 
     inner: BaseTool
-    workspace: str = ""
+    workspace: str = ""          # the folder spills are written under
+    workspace_name: str = ""     # the workspace their file records belong to
     threshold: int = DEFAULT_THRESHOLD
     has_reader: bool = True
 
@@ -341,9 +349,10 @@ class SpillingTool(BaseTool):
     args_schema: Any = None
 
     def __init__(self, inner: BaseTool, *, workspace: str, threshold: int,
-                 has_reader: bool = True, **kwargs: Any) -> None:
+                 has_reader: bool = True, workspace_name: str = "", **kwargs: Any) -> None:
         super().__init__(
-            inner=inner, workspace=workspace, threshold=threshold, has_reader=has_reader,
+            inner=inner, workspace=workspace, workspace_name=workspace_name or "",
+            threshold=threshold, has_reader=has_reader,
             name=inner.name, description=inner.description, args_schema=inner.args_schema,
             return_direct=bool(getattr(inner, "return_direct", False)), **kwargs,
         )
@@ -353,23 +362,25 @@ class SpillingTool(BaseTool):
         tool_input = _merge_tool_input(args, kwargs)
         return spill_output(self.name, tool_input, self.inner.run(tool_input),
                             workspace=self.workspace, threshold=self.threshold,
-                            has_reader=self.has_reader)
+                            has_reader=self.has_reader, workspace_name=self.workspace_name)
 
     async def _arun(self, *args: Any, **kwargs: Any) -> Any:
         kwargs.pop("run_manager", None)
         tool_input = _merge_tool_input(args, kwargs)
         output = await self.inner.arun(tool_input)
         return spill_output(self.name, tool_input, output, workspace=self.workspace,
-                            threshold=self.threshold, has_reader=self.has_reader)
+                            threshold=self.threshold, has_reader=self.has_reader,
+                            workspace_name=self.workspace_name)
 
 
-def wrap_tools(tools: List[Any], *, workspace: Optional[str]) -> List[Any]:
+def wrap_tools(tools: List[Any], *, workspace: Optional[str],
+               workdir: Optional[str]) -> List[Any]:
     """Every tool of an agent wrapped by :class:`SpillingTool`, or the list
-    unchanged when spilling is off for the workspace, the agent has no
-    operating folder to write into, or it has no ``read_file`` to read a
-    saved output back with (it would only lose the middle of the result; its
-    long results are left to compaction, as before)."""
-    if not workspace:
+    unchanged when spilling is off for the workspace (by name), the agent has
+    no folder (``workdir``) to write into, or it has no ``read_file`` to read
+    a saved output back with (it would only lose the middle of the result;
+    its long results are left to compaction, as before)."""
+    if not workdir:
         return tools
     names = {getattr(t, "name", "") for t in tools}
     has_reader = "read_file" in names
@@ -388,7 +399,8 @@ def wrap_tools(tools: List[Any], *, workspace: Optional[str]) -> List[Any]:
                 or (name in NEVER_SPILLED and name != "read_file")):
             out.append(t)
         else:
-            out.append(SpillingTool(t, workspace=str(workspace), threshold=threshold,
+            out.append(SpillingTool(t, workspace=str(workdir), workspace_name=workspace or "",
+                                    threshold=threshold,
                                     has_reader=has_reader))
     return out
 

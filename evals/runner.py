@@ -220,7 +220,7 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
     """One agent run on the case, recorded as a real run tagged ``eval``.
 
     ``work_dir``, when set, is the agent's working directory
-    (``create_agent(..., workspace=<path>)``).
+    (``create_agent(..., workdir=<path>)``).
     """
     from managers import run_manager as rm
 
@@ -244,7 +244,7 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
 
     try:
         from agents.agent_factory import create_agent
-        agent = create_agent(agent_id, work_dir or workspace, **overrides)
+        agent = create_agent(agent_id, workspace or None, workdir=work_dir or None, **overrides)
     except Exception as e:  # noqa: BLE001 - a build failure is reported on the outcome
         return Outcome(ok=False,
                        error=f"could not build agent {agent_id!r}: {type(e).__name__}: {e}")

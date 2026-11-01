@@ -353,7 +353,8 @@ async def generate_project_graph_stream(project_id: str, view: str = Query("arch
                 # counts by tool name).
                 agent = await asyncio.to_thread(
                     create_agent, _ARCHITECT_AGENT_ID,
-                    workspace=agent_workspace_path(project, root), streaming=True,
+                    workspace=project.workspace or None,
+                    workdir=agent_workspace_path(project, root), streaming=True,
                     max_tool_repeats=0,
                 )
                 callback.bind_model(agent.provider or "", agent.model or "")
@@ -551,7 +552,8 @@ async def chat_project_graph(project_id: str, payload: ProjectGraphChat,
                 # is the default ceiling).
                 agent = await asyncio.to_thread(
                     create_agent, _ARCHITECT_AGENT_ID,
-                    workspace=agent_workspace_path(project, root), streaming=True,
+                    workspace=project.workspace or None,
+                    workdir=agent_workspace_path(project, root), streaming=True,
                     max_tool_repeats=0, max_iterations=400,
                 )
                 provider, model = agent.provider or "", agent.model or ""

@@ -204,13 +204,13 @@ def own_from_metadata(metadata: Any) -> Optional[ModelPolicy]:
 
 
 def for_workspace(workspace: Optional[str]) -> Optional[ModelPolicy]:
-    """The policy of ``workspace`` (a name or an operating path), or None."""
+    """The policy of the workspace named ``workspace``, or None."""
     if not workspace:
         return None
     try:
-        from common.workspace_context import workspace_name_from_path
+        from common.workspace_context import name_of
         from workspace import get_workspace_metadata
-        name = workspace_name_from_path(workspace) or workspace
+        name = name_of(workspace)
         return from_metadata(get_workspace_metadata(name))
     except Exception:  # noqa: BLE001 - an unreadable workspace has no policy to apply
         return None

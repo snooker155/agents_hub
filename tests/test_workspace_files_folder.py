@@ -133,7 +133,7 @@ def test_the_filesystem_tools_register_what_they_write(monkeypatch):
 
     root = _folder("toolsws")
     (root / "proj").mkdir()
-    tools = {t.name: t for t in create_filesystem_tools(str(root / "proj"))}
+    tools = {t.name: t for t in create_filesystem_tools(str(root / "proj"), workspace_name="toolsws")}
     token = current_agent_id.set("writer")
     try:
         tools["write_file"].invoke({"path": "docs/plan.md", "content": "# Plan"})

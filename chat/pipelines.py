@@ -221,7 +221,8 @@ async def _run_agent_step(step: _AgentStep, outcome: _StepOutcome):
         # (see chat.flow_driver), so running it inline blocks every concurrent
         # request until the agent is ready.
         agent = await asyncio.to_thread(
-            create_agent, request.agent_id, workspace=workspace_abs, streaming=True, **overrides
+            create_agent, request.agent_id, workspace=request.workspace or None,
+            workdir=workspace_abs, streaming=True, **overrides
         )
         # The model is only known here; the callback needs it to report how full
         # the context is with each usage event.
@@ -591,7 +592,7 @@ async def _run_chat_pipeline(request: ChatRequest):
     history_messages = build_history_messages(request.history, budget_chars=float("inf"))
     first_run = create_chat_run(request)
 
-    ws_name = apply_workspace_ctx(request, workspace_abs)
+    ws_name = apply_workspace_ctx(request)
     full_prompt = _with_view_note(request, full_prompt)
 
     step = _AgentStep(
@@ -706,7 +707,7 @@ async def _run_chat_flow_pipeline(request: ChatRequest):
 
     # Resolve workspace and publish it to agent tools via the context var.
     workspace_abs = resolve_workspace_abs(request)
-    apply_workspace_ctx(request, workspace_abs)
+    apply_workspace_ctx(request)
 
     # One session per conversation, same as agent chat.
     conv_id = request.conversation_id or str(uuid4())
@@ -1000,8 +1001,8 @@ async def _run_chat_team_pipeline(request: ChatRequest):
 
     materialize_attachments(request)
     resolve_references(request)
-    workspace_abs = resolve_workspace_abs(request)
-    apply_workspace_ctx(request, workspace_abs)
+    resolve_workspace_abs(request)  # makes the workspace's folder, as before
+    apply_workspace_ctx(request)
 
     conv_id = request.conversation_id or str(uuid4())
     msg_title = (request.message or "").strip().replace("\n", " ")

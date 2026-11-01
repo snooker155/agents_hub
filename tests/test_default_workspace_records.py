@@ -72,14 +72,15 @@ def test_a_flow_node_instance_and_run_carry_the_run_workspace(monkeypatch, tmp_p
     assert inst["kind"] == "flow_node" and inst["workspace"] == expected
 
 
-def test_the_run_workspace_is_the_folder_workspace_else_the_flows_own(tmp_path):
+def test_the_run_workspace_is_the_launchers_else_the_flows_own(monkeypatch):
     from flow.task_driver import run_workspace_name
-    from workspace import create_workspace_folder
 
-    folder = create_workspace_folder("flowws")
-    assert run_workspace_name(str(folder), {"workspace": "other"}) == "flowws"
-    assert run_workspace_name(str(tmp_path / "nowhere"), {"workspace": "other"}) == "other"
-    assert run_workspace_name(str(tmp_path / "nowhere"), {}) is None
+    monkeypatch.delenv("AGENT_WORKSPACE", raising=False)
+    assert run_workspace_name({"workspace": "other"}) == "other"
+    assert run_workspace_name({}) is None
+    # The launcher names the run's workspace; the --workspace folder never does.
+    monkeypatch.setenv("AGENT_WORKSPACE", "flowws")
+    assert run_workspace_name({"workspace": "other"}) == "flowws"
 
 
 def test_the_driver_hands_its_nodes_the_run_workspace(monkeypatch):
@@ -87,6 +88,7 @@ def test_the_driver_hands_its_nodes_the_run_workspace(monkeypatch):
     from workspace import create_workspace_folder
 
     folder = create_workspace_folder("driverws")
+    monkeypatch.setenv("AGENT_WORKSPACE", "driverws")
     seen: dict = {}
 
     def fake_node(node, node_id, prompt, **kw):

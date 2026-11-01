@@ -134,9 +134,9 @@ def _workspace_model(workspace: Optional[str]) -> Tuple[str, str]:
     if not workspace:
         return "", ""
     try:
-        from common.workspace_context import workspace_name_from_path
+        from common.workspace_context import name_of
         from workspace import get_workspace_metadata, get_workspace_default_model_config
-        name = workspace_name_from_path(workspace) or workspace
+        name = name_of(workspace)
         meta = get_workspace_metadata(name) or {}
         override = meta.get("model_override") or {}
         provider = (override.get("provider") or "").strip()

@@ -118,9 +118,7 @@ async def get_agent_tool_visibility(agent_id: str, workspace: Optional[str] = No
         from agents.agent_factory import create_agent
         from agents.loop_ext.tool_search import visibility
         from chat.runs import agent_overrides
-        from workspace import create_workspace_folder
-        path = str(create_workspace_folder(ws)) if ws else None
-        return visibility(create_agent(agent_id, workspace=path, **agent_overrides(agent_id)))
+        return visibility(create_agent(agent_id, workspace=ws, **agent_overrides(agent_id)))
 
     try:
         seen = await asyncio.to_thread(_build)

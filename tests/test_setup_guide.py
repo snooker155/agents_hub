@@ -379,11 +379,11 @@ def test_the_assistant_holds_the_setup_tools_among_its_core(single, monkeypatch)
     from agents.agent_factory import AgentFactory
     from agents.loop_ext.tool_search import core_names
     from common.bootstrap import seed_registry_from_bootstrap
-    from workspace import create_workspace_folder, get_workspace_folder
+    from workspace import create_workspace_folder
     seed_registry_from_bootstrap()
     create_workspace_folder("default")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    agent = AgentFactory()._build_agent("assistant", workspace=str(get_workspace_folder("default")),
+    agent = AgentFactory()._build_agent("assistant", workspace="default",
                                         personal_pool=None, service_mode=True)
     names = [t.name for t in agent._tools]
     assert {"setup_guide", "setup_step", "show_on_screen"} <= set(names)
