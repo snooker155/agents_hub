@@ -26,7 +26,7 @@ from typing import Any, Dict, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request
 
-from common import access, audit, identity, record_access
+from common import access, audit, identity
 from common.auth import WS_EDITOR, WS_VIEWER
 from proactive import service as proactive
 

@@ -321,7 +321,6 @@ def test_a_local_model_not_loaded_yet_warms_in_the_background(monkeypatch):
 
 def test_the_search_route_answers_unavailable_with_rag_off(monkeypatch):
     import asyncio
-    import uuid
     monkeypatch.setenv("RAG_VECTOR_DB", "none")
     monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "none")
     from types import SimpleNamespace
