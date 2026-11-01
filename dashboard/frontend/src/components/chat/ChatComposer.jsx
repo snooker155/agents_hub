@@ -341,7 +341,7 @@ export default function ChatComposer() {
                       onClick={autoMode.toggle}
                       disabled={!autoMode.allowed}
                       data-testid="auto-mode-toggle"
-                      title={autoMode.allowed ? t('chat.autoMode.toggleHint') : t('chat.autoMode.disabledByAdmin')}
+                      title={autoMode.allowed ? undefined : t('chat.autoMode.disabledByAdmin')}
                       className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 font-medium transition-colors
                         disabled:opacity-40 disabled:cursor-not-allowed ${autoMode.on
                           ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
@@ -349,7 +349,6 @@ export default function ChatComposer() {
                     >
                       <Zap className="w-3.5 h-3.5" />
                       {autoMode.on ? t('chat.autoMode.on') : t('chat.autoMode.off')}
-                      <span className="hidden sm:inline text-[10px] font-normal opacity-70">Shift+Tab</span>
                     </button>
               ) : null}
               // What the agent set going in the background stands in for the

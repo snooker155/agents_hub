@@ -485,7 +485,7 @@ export default function EntityChat({
               <Send className="w-3.5 h-3.5" />
             </button>
           )}
-          hint={stopping ? t('entityChat.stopping') : t('entityChat.enterToSend')}
+          hint={stopping ? t('entityChat.stopping') : null}
           footerRight={<ContextMeter usage={contextUsage} onClear={busy ? null : onClear} compact />}
         >
           <textarea

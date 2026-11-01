@@ -809,7 +809,7 @@ function ProjectGraph({ projectId }) {
                     <Send className="w-3.5 h-3.5" />
                   </button>
                 )}
-                hint={busy ? (stopping ? 'Stopping…' : 'Press ■ to stop the run') : 'Enter to send · Shift+Enter for new line'}
+                hint={busy ? (stopping ? 'Stopping…' : 'Press ■ to stop the run') : null}
                 footerRight={<ContextMeter usage={contextUsage} onClear={busy ? null : clearChat} compact />}
               >
                 <textarea

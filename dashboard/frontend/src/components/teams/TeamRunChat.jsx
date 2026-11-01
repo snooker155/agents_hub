@@ -201,7 +201,7 @@ export default function TeamRunChat({
               />
             )}
             <ComposerBox
-              hint={`${t('teamDetails.enterToRun')} · ${t('teamDetails.mention.composerHint')}`}
+              hint={t('teamDetails.mention.composerHint')}
               leading={(
                 <AttachButton
                   open={attachMenuOpen}

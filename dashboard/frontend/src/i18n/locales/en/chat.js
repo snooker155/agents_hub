@@ -181,11 +181,10 @@ export default {
   autoMode: {
     off: 'Auto: off',
     on: 'Auto: on',
-    toggleHint: 'Auto mode: every confirmation in this chat is accepted without asking you (Shift+Tab)',
     disabledByAdmin: 'An administrator turned auto mode off in this workspace',
     approvedAutomatically: 'Approved automatically (auto mode)',
   },
-  composerHint: 'Enter to send · Shift+Enter for new line · Type',
+  composerHint: 'Type',
   stop: 'Stop',
   stoppedByYou: 'stopped by you',
   sendEnter: 'Send (Enter)',

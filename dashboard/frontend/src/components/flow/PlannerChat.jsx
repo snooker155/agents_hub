@@ -299,7 +299,7 @@ function PlannerChat({ projectId, workspace, tools, onGenerated, generateRequest
               <Send className="w-3.5 h-3.5" />
             </button>
           )}
-          hint={busy ? (stopping ? t('flowPlannerChat.stopping') : t('flowPlannerChat.pressStop')) : t('flowPlannerChat.enterToSend')}
+          hint={busy ? (stopping ? t('flowPlannerChat.stopping') : t('flowPlannerChat.pressStop')) : null}
           footerRight={<ContextMeter usage={contextUsage} onClear={busy ? null : newChat} compact />}
         >
           <textarea

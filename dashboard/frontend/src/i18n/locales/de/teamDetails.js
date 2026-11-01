@@ -59,7 +59,6 @@ export default {
   rosterOrderHelp: 'Hier zählt die Reihenfolge: Das erste Mitglied nimmt die Anfrage an, sofern oben kein anderes gewählt ist.',
   allowDirectMessages: 'Mitglieder dürfen einem Teammitglied privat schreiben',
   briefingTitle: 'Team-Block im System-Prompt von {{agent}}',
-  enterToRun: 'Enter startet den Lauf, Shift+Enter macht eine neue Zeile',
   resumeHint: 'Diesen Lauf dort fortsetzen, wo er aufgehört hat',
   newRun: 'Neuer Lauf',
   runHistory: 'Laufverlauf',

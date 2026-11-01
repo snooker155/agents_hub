@@ -185,11 +185,10 @@ export default {
   autoMode: {
     off: 'Авто: выкл',
     on: 'Авто: вкл',
-    toggleHint: 'Авторежим: все подтверждения в этом чате принимаются без вопроса (Shift+Tab)',
     disabledByAdmin: 'Администратор выключил авторежим в этом рабочем пространстве',
     approvedAutomatically: 'Одобрено автоматически (авторежим)',
   },
-  composerHint: 'Enter — отправить · Shift+Enter — новая строка · Введите',
+  composerHint: 'Введите',
   stop: 'Остановить',
   stoppedByYou: 'остановлено вами',
   sendEnter: 'Отправить (Enter)',

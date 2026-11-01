@@ -129,7 +129,6 @@ export default {
   lastRun: 'Последний запуск',
   openLoop: 'Открыть цикл',
   runChatTitle: 'Запуск цикла',
-  enterToRun: 'Enter запускает, Shift+Enter переносит строку',
   loopIsWorking: 'Цикл работает',
   showAll: 'Показать всё',
   closeEstimate: 'Закрыть оценку',

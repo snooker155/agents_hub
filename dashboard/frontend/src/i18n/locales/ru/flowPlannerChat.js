@@ -15,7 +15,6 @@ export default {
   thinking: 'Размышляет',
   stopping: 'Остановка…',
   pressStop: 'Нажмите ■, чтобы остановить запуск',
-  enterToSend: 'Enter — отправить · Shift+Enter — новая строка',
   loadFailed: 'Не удалось загрузить чат менеджера задач',
   stoppedByYou: 'остановлено вами',
   generationFailed: 'не удалось сгенерировать задачи',

@@ -181,11 +181,10 @@ export default {
   autoMode: {
     off: 'Auto: aus',
     on: 'Auto: an',
-    toggleHint: 'Automodus: jede Bestätigung in diesem Chat wird ohne Rückfrage angenommen (Shift+Tab)',
     disabledByAdmin: 'Ein Administrator hat den Automodus in diesem Arbeitsbereich ausgeschaltet',
     approvedAutomatically: 'Automatisch freigegeben (Automodus)',
   },
-  composerHint: 'Enter zum Senden · Shift+Enter für neue Zeile · Tippen Sie',
+  composerHint: 'Tippen Sie',
   stop: 'Stoppen',
   stoppedByYou: 'von Ihnen gestoppt',
   sendEnter: 'Senden (Enter)',

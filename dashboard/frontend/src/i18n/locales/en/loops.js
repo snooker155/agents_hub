@@ -129,7 +129,6 @@ export default {
   lastRun: 'Last run',
   openLoop: 'Open the loop',
   runChatTitle: 'Loop run',
-  enterToRun: 'Enter starts the run, Shift+Enter makes a new line',
   loopIsWorking: 'The loop is working',
   showAll: 'Show all',
   closeEstimate: 'Close the estimate',

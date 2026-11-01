@@ -15,7 +15,6 @@ export default {
   thinking: 'Denkt nach',
   stopping: 'Wird gestoppt…',
   pressStop: 'Drücken Sie ■, um den Lauf zu stoppen',
-  enterToSend: 'Enter zum Senden · Shift+Enter für neue Zeile',
   loadFailed: 'Chat des Aufgabenmanagers konnte nicht geladen werden',
   stoppedByYou: 'von Ihnen gestoppt',
   generationFailed: 'Aufgabengenerierung fehlgeschlagen',

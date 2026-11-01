@@ -129,7 +129,6 @@ export default {
   lastRun: 'Letzter Lauf',
   openLoop: 'Schleife öffnen',
   runChatTitle: 'Schleifenlauf',
-  enterToRun: 'Enter startet den Lauf, Shift+Enter macht eine neue Zeile',
   loopIsWorking: 'Die Schleife arbeitet',
   showAll: 'Alles anzeigen',
   closeEstimate: 'Schätzung schließen',

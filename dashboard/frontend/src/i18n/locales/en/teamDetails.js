@@ -59,7 +59,6 @@ export default {
   rosterOrderHelp: 'Order matters here: the first member takes the request unless you name another above.',
   allowDirectMessages: 'Members may address one teammate privately',
   briefingTitle: "Team block added to {{agent}}'s system prompt",
-  enterToRun: 'Enter starts the run, Shift+Enter makes a new line',
   resumeHint: 'Continue this run from where it left off',
   newRun: 'New run',
   runHistory: 'Run history',

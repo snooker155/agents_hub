@@ -258,7 +258,6 @@ export default function LoopRunChat({
               disabled={live}
             />
             <ComposerBox
-              hint={t('loops.enterToRun')}
               leading={(
                 <AttachButton
                   open={attachMenuOpen}

@@ -15,7 +15,6 @@ export default {
   thinking: 'Thinking',
   stopping: 'Stopping…',
   pressStop: 'Press ■ to stop the run',
-  enterToSend: 'Enter to send · Shift+Enter for new line',
   loadFailed: 'Failed to load the task manager chat',
   stoppedByYou: 'stopped by you',
   generationFailed: 'task generation failed',

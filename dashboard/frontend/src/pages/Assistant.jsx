@@ -887,7 +887,7 @@ export default function Assistant() {
           )}
           <button type="button" role="switch" aria-checked={autoOn} disabled={!autoAllowed}
             onClick={() => setPrefs({ autoApprove: !prefs.autoApprove })}
-            title={autoAllowed ? t('chat.autoMode.toggleHint') : t('chat.autoMode.disabledByAdmin')}
+            title={autoAllowed ? undefined : t('chat.autoMode.disabledByAdmin')}
             data-testid="assistant-auto-mode"
             className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium disabled:opacity-40 ${autoOn
               ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'text-gray-500 hover:bg-gray-100'}`}>

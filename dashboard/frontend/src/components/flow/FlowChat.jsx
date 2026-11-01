@@ -597,7 +597,7 @@ export default function FlowChat({
               </button>
             </div>
           ) : null}
-          <ComposerBox hint={t('flowFlowChat.enterToSendShiftEnter')}
+          <ComposerBox
             leading={(
               <AttachButton
                 open={attachMenuOpen}
