@@ -240,12 +240,16 @@ export default function InstanceDetail() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Bumped by the Refresh button, so the open tab is read again too.
+  const [tabReload, setTabReload] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+
   useEffect(() => {
     if (activeTab === 'runs') getInstanceRuns(instanceId, { limit: 100 })
       .then((r) => setRuns(r.data)).catch(() => setRuns({ items: [], total: 0 }));
     if (activeTab === 'context') getInstanceContext(instanceId, resident ? { conversation_id: selectedConversation } : undefined)
       .then((r) => setContext(r.data)).catch(() => setContext(null));
-  }, [activeTab, instanceId, resident, selectedConversation]);
+  }, [activeTab, instanceId, resident, selectedConversation, tabReload]);
 
   // The first fetch on opening the tab shows as `logsLoadedFor` lagging; the
   // Refresh button raises `logsRefreshing` itself.
@@ -263,6 +267,15 @@ export default function InstanceDetail() {
   useEffect(() => {
     if (activeTab === 'logs') fetchLogs();
   }, [activeTab, fetchLogs]);
+
+  // The live events can miss a change (a carrier that died without saying
+  // so), so the page can also be read again by hand.
+  const refresh = () => {
+    setRefreshing(true);
+    setTabReload((n) => n + 1);
+    if (activeTab === 'logs') refreshLogs();
+    load().finally(() => setRefreshing(false));
+  };
 
   // Carrier log tail while the tab is open and the instance is live.
   const isLive = resident && ['starting', 'active', 'standby'].includes(instance?.state);
@@ -470,6 +483,11 @@ export default function InstanceDetail() {
         actions={(
           <div className="flex items-center gap-2">
             <StateBadge state={displayState(instance)} t={t} />
+            <button type="button" onClick={refresh} disabled={refreshing}
+                    data-testid="instance-refresh"
+                    className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />{t('instances.actions.refresh')}
+            </button>
             {resident ? (
               <>
                 {isLive ? (
