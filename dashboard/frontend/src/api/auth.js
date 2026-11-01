@@ -36,6 +36,7 @@ export const oidcStartUrl = (next = '') =>
 export const getMySessions = () => api.get('/auth/sessions');
 export const revokeMySession = (id) => api.delete(`/auth/sessions/${id}`);
 export const revokeOtherSessions = () => api.post('/auth/sessions/revoke-others');
+export const updateMyProfile = (data) => api.patch('/auth/profile', data);
 export const changeMyPassword = (current_password, password) =>
   api.post('/auth/password', { current_password, password });
 export const getMyApiKeys = () => api.get('/auth/keys');

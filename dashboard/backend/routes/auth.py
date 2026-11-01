@@ -276,6 +276,8 @@ async def me(request: Request):
         payload["language"] = user.get("language") or identity.DEFAULT_LANGUAGE
         payload["source"] = user.get("source") or "local"
         payload["has_password"] = bool(user.get("has_password"))
+        # What the Account page lets them change themselves.
+        payload["profile_editable"] = identity.self_editable_fields(user) if user else {}
         from common import groups
         payload["groups"] = groups.group_names_of_user(principal.id)
         # The sidebar rows this member does not see (common/member_menu.py).

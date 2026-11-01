@@ -555,6 +555,62 @@ def upsert_external_user(issuer: str, subject: str, *, username: str = "",
     return user
 
 
+#: How long a display name a person may give themselves.
+MAX_DISPLAY_NAME = 120
+
+
+def self_editable_fields(user: Dict[str, Any]) -> Dict[str, bool]:
+    """Which of their own profile fields a person may change on the Account
+    page. An account single sign-on or SCIM provisioned has both from the
+    identity provider, which writes them again at the next sign-in or sync.
+    The email of a local account is locked too while single sign-on links
+    accounts by email (``upsert_external_user``): a person who could give
+    their account a colleague's address would get that colleague's first
+    sign-in. An administrator can still change either (``update_user``)."""
+    from common.config import settings
+    local = (user.get("source") or SOURCE_LOCAL) == SOURCE_LOCAL
+    links_by_email = (bool(mode_features().get("oidc"))
+                      and bool(getattr(settings, "auth_oidc_link_by_email", True)))
+    return {"display_name": local, "email": local and not links_by_email}
+
+
+def update_own_profile(user_id: str, *, display_name: Optional[str] = None,
+                       email: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """A person changing their own display name or email. Raises
+    PermissionError for a field :func:`self_editable_fields` locks and
+    ValueError for a value that will not do; None for an unknown user."""
+    user = get_user(user_id)
+    if user is None:
+        return None
+    editable = self_editable_fields(user)
+    changes: Dict[str, Any] = {}
+    if display_name is not None:
+        if not editable["display_name"]:
+            raise PermissionError("the display name comes from your organization's sign-in")
+        name = display_name.strip()
+        if len(name) > MAX_DISPLAY_NAME:
+            raise ValueError(f"a display name is at most {MAX_DISPLAY_NAME} characters")
+        # Cleared, the username stands in for it, as everywhere it is shown.
+        changes["display_name"] = name or user["username"]
+    if email is not None:
+        address = email.strip().lower()
+        if address != (user.get("email") or ""):
+            if not editable["email"]:
+                raise PermissionError("the email is set by your organization's sign-in")
+            if address:
+                local_part, at, domain = address.partition("@")
+                if not at or not local_part or "." not in domain or any(c.isspace() for c in address) \
+                        or len(address) > 254:
+                    raise ValueError("that is not an email address")
+                taken = get_user_by_email(address)
+                if taken is not None and taken["id"] != user["id"]:
+                    raise ValueError("another account already uses that email")
+            changes["email"] = address
+    if not changes:
+        return user
+    return update_user(user_id, **changes)
+
+
 def set_spend_limit(user_id: str, limit_usd: Optional[float]) -> Optional[Dict[str, Any]]:
     """Set a person's own monthly spend limit (``None`` = follow the hub
     default, ``0`` = unlimited). Returns the updated user, None when unknown."""

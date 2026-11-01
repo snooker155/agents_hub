@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Check, Copy, Github, KeyRound, Laptop, Link2, Loader, Lock, LogOut, Palette, Plus,
+  AlertTriangle, Check, Copy, Github, KeyRound, Laptop, Link2, Loader, Lock, LogOut, Palette, Pencil, Plus,
   RefreshCw, Trash2, User as UserIcon,
 } from 'lucide-react';
 import {
   changeMyPassword, createMyApiKey, disconnectMyGitHub, getMyApiKeys, getMyGitHub,
   getMySessions, getOwnSpend, getWorkspaces, connectGitHub, revokeMyApiKey, revokeMySession,
-  revokeOtherSessions,
+  revokeOtherSessions, updateMyProfile,
 } from '../api';
 import { getMyPreferences, putMyPreferences } from '../api/palette';
 import { updateMyApiKeyLimits } from '../api/accounting';
@@ -37,7 +37,7 @@ const btnDanger = 'inline-flex items-center gap-1 text-xs text-red-600 hover:tex
  */
 export default function Account() {
   const { t } = useI18n();
-  const { user, features, logout } = useAuth();
+  const { user, features, logout, refreshUser } = useAuth();
   const navigate = useNavigate();
 
   const onPasswordChanged = useCallback(async () => {
@@ -52,7 +52,7 @@ export default function Account() {
     <PageContainer width="narrow">
       <PageHeader icon={UserIcon} title={t('account.title')} description={t('account.description')} />
       <div className="space-y-6">
-        <ProfileSection user={user} t={t} />
+        <ProfileSection user={user} t={t} onSaved={refreshUser} />
         <SpendSection t={t} />
         <PaletteSection t={t} />
         <SessionsSection t={t} />
@@ -68,12 +68,96 @@ export default function Account() {
 
 // ── profile ──────────────────────────────────────────────────────────────────
 
-function ProfileSection({ user, t }) {
+function ProfileSection({ user, t, onSaved }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
   if (!user) return null;
   const groups = Array.isArray(user.groups) ? user.groups : [];
   const workspaces = Array.isArray(user.workspaces) ? user.workspaces : [];
+  // Which fields their sign-in leaves to them (identity.self_editable_fields).
+  const editable = user.profile_editable || {};
+  const canEdit = Boolean(editable.display_name || editable.email);
+
+  const start = () => {
+    setName(user.display_name === user.username ? '' : (user.display_name || ''));
+    setEmail(user.email || '');
+    setError('');
+    setSaved(false);
+    setEditing(true);
+  };
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      await updateMyProfile({
+        ...(editable.display_name ? { display_name: name } : {}),
+        ...(editable.email ? { email } : {}),
+      });
+      await onSaved?.();
+      setEditing(false);
+      setSaved(true);
+    } catch (err) {
+      setError(err?.response?.data?.detail || t('account.profile.saveFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <SectionCard title={t('account.profile.title')}>
+      {editing ? (
+        <form onSubmit={submit} className="space-y-3 max-w-sm" data-testid="profile-form">
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+          )}
+          {editable.display_name && (
+            <div>
+              <label htmlFor="acct-display-name" className="block text-xs font-medium text-gray-500 mb-1">
+                {t('account.profile.displayName')}
+              </label>
+              <input id="acct-display-name" type="text" autoComplete="name" maxLength={120}
+                value={name} placeholder={user.username} onChange={(e) => setName(e.target.value)} className={inputCls} />
+              <p className="mt-1 text-xs text-gray-400">{t('account.profile.displayNameHint')}</p>
+            </div>
+          )}
+          {editable.email ? (
+            <div>
+              <label htmlFor="acct-email" className="block text-xs font-medium text-gray-500 mb-1">
+                {t('account.profile.email')}
+              </label>
+              <input id="acct-email" type="email" autoComplete="email" maxLength={254}
+                value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500">{t('account.profile.emailLocked')}</p>
+          )}
+          <div className="flex items-center gap-2">
+            <button type="submit" disabled={busy} className={btnPrimary}>
+              {busy ? <Loader className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+              {t('account.profile.save')}
+            </button>
+            <button type="button" onClick={() => setEditing(false)} disabled={busy} className={btnGhost}>
+              {t('account.profile.cancel')}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-xs text-gray-500">
+            {saved ? t('account.profile.saved') : (!canEdit && t('account.profile.managedBySso'))}
+          </p>
+          {canEdit && (
+            <button type="button" onClick={start} className={btnGhost} data-testid="profile-edit">
+              <Pencil className="w-4 h-4" />{t('account.profile.edit')}
+            </button>
+          )}
+        </div>
+      )}
       <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
         <Field label={t('account.profile.username')} value={user.username} />
         <Field label={t('account.profile.displayName')} value={user.display_name} />

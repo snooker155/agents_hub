@@ -260,3 +260,50 @@ def test_a_member_cannot_list_another_users_keys(multi, client):
     _, olivia = _member(client, admin, username="olivia")
     denied = client.get(f"/api/auth/users/{bob_id}/keys", headers=olivia)
     assert denied.status_code == 403
+
+
+# ── own profile ──────────────────────────────────────────────────────────────
+
+def test_a_member_changes_their_own_name_and_email(multi, client):
+    admin = _admin(client)
+    _, bob = _member(client, admin)
+    me = client.get("/api/auth/me", headers=bob).json()
+    assert me["profile_editable"] == {"display_name": True, "email": True}
+
+    saved = client.patch("/api/auth/profile", headers=bob,
+                         json={"display_name": "  Bob Builder ", "email": "Bob@Example.org"})
+    assert saved.status_code == 200, saved.text
+    me = client.get("/api/auth/me", headers=bob).json()
+    assert (me["display_name"], me["email"]) == ("Bob Builder", "bob@example.org")
+
+    # Cleared, the name falls back to the username.
+    assert client.patch("/api/auth/profile", headers=bob, json={"display_name": ""}).status_code == 200
+    assert client.get("/api/auth/me", headers=bob).json()["display_name"] == "bob"
+
+
+def test_a_profile_email_must_be_an_address_nobody_else_uses(multi, client):
+    admin = _admin(client)
+    _, bob = _member(client, admin)
+    _, carol = _member(client, admin, "carol")
+    assert client.patch("/api/auth/profile", headers=bob, json={"email": "bob@example.org"}).status_code == 200
+    assert client.patch("/api/auth/profile", headers=carol, json={"email": "BOB@example.org"}).status_code == 400
+    assert client.patch("/api/auth/profile", headers=carol, json={"email": "not an address"}).status_code == 400
+    assert client.patch("/api/auth/profile", headers=carol, json={"display_name": "x" * 121}).status_code == 400
+
+
+def test_an_sso_account_and_an_email_sso_links_by_are_locked(multi, client, monkeypatch):
+    from common import identity
+    admin = _admin(client)
+    bob_id, bob = _member(client, admin)
+
+    # While single sign-on links accounts by email, a local account's email
+    # stays put: setting a colleague's would hand over their first sign-in.
+    monkeypatch.setattr(identity, "mode_features", lambda: {"oidc": True})
+    assert client.get("/api/auth/me", headers=bob).json()["profile_editable"] == {
+        "display_name": True, "email": False}
+    assert client.patch("/api/auth/profile", headers=bob, json={"email": "boss@example.org"}).status_code == 403
+    assert client.patch("/api/auth/profile", headers=bob, json={"display_name": "Bob"}).status_code == 200
+
+    # An account the identity provider owns: neither field.
+    identity.update_user(bob_id, source=identity.SOURCE_OIDC)
+    assert client.patch("/api/auth/profile", headers=bob, json={"display_name": "Robert"}).status_code == 403

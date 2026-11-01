@@ -41,6 +41,12 @@ class PasswordChange(BaseModel):
     password: str
 
 
+class ProfileChange(BaseModel):
+    # Either may be left out; an empty display name falls back to the username.
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+
+
 class KeyCreate(BaseModel):
     name: str = ""
     # None: the owner's full reach. A list, even a single-item one, narrows
@@ -185,6 +191,30 @@ async def change_password(request: Request, payload: PasswordChange):
     audit.record("auth.password", principal=principal, object_type="user",
                  object_id=principal.id, ip=identity.client_ip(request))
     return {"ok": True, "relogin": True}
+
+
+# ── profile ──────────────────────────────────────────────────────────────────
+
+@router.patch("/api/auth/profile")
+async def change_profile(request: Request, payload: ProfileChange):
+    """Change the caller's own display name or email. A field their sign-in
+    owns (``identity.self_editable_fields``) is refused with 403."""
+    principal = _require_account(request)
+    try:
+        user = identity.update_own_profile(principal.id, display_name=payload.display_name,
+                                           email=payload.email)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if user is None:
+        raise HTTPException(status_code=404, detail="No such user")
+    changed = {k: v for k, v in payload.model_dump().items() if v is not None}
+    audit.record("user.profile", principal=principal, object_type="user",
+                 object_id=principal.id, ip=identity.client_ip(request), details=changed)
+    return {"display_name": user.get("display_name") or user["username"],
+            "email": user.get("email") or "",
+            "profile_editable": identity.self_editable_fields(user)}
 
 
 # ── personal preferences ─────────────────────────────────────────────────────

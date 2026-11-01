@@ -30,6 +30,14 @@ export default {
     noGroups: 'Keine',
     workspaces: 'Arbeitsbereiche',
     noWorkspaces: 'Noch keine',
+    edit: 'Bearbeiten',
+    save: 'Speichern',
+    cancel: 'Abbrechen',
+    saved: 'Profil gespeichert.',
+    saveFailed: 'Profil konnte nicht gespeichert werden.',
+    displayNameHint: 'Leer gelassen, wird Ihr Benutzername angezeigt.',
+    managedBySso: 'Name und E-Mail kommen aus der Anmeldung Ihrer Organisation.',
+    emailLocked: 'Ihre E-Mail ist an Single Sign-on gebunden; ein Administrator kann sie ändern.',
   },
 
   palette: {

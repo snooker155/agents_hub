@@ -30,6 +30,14 @@ export default {
     noGroups: 'None',
     workspaces: 'Workspaces',
     noWorkspaces: 'None yet',
+    edit: 'Edit',
+    save: 'Save',
+    cancel: 'Cancel',
+    saved: 'Profile saved.',
+    saveFailed: 'Could not save your profile.',
+    displayNameHint: 'Left empty, your user name is shown.',
+    managedBySso: 'Your name and email come from your organization\'s sign-in.',
+    emailLocked: 'Your email is tied to single sign-on; an administrator can change it.',
   },
 
   palette: {

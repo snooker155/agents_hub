@@ -123,9 +123,16 @@ export function AuthProvider({ children }) {
     return () => window.clearInterval(timer);
   }, [state.mode, oidcOn, signedIn]);
 
+  // Read who the viewer is again, after they changed their own profile.
+  const refreshUser = useCallback(async () => {
+    const user = await loadUser();
+    if (user) setState((prev) => ({ ...prev, user }));
+    return user;
+  }, [loadUser]);
+
   const value = useMemo(() => ({
-    ...DEFAULT_AUTH, ...state, login, bootstrap, logout, adoptSession,
-  }), [state, login, bootstrap, logout, adoptSession]);
+    ...DEFAULT_AUTH, ...state, login, bootstrap, logout, adoptSession, refreshUser,
+  }), [state, login, bootstrap, logout, adoptSession, refreshUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

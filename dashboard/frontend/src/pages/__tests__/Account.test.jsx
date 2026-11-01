@@ -24,6 +24,7 @@ const getWorkspaces = vi.fn(() => ok([{ name: 'default' }, { name: 'acme' }]));
 const getMyGitHub = vi.fn();
 const disconnectMyGitHub = vi.fn(() => ok({ deleted: true }));
 const connectGitHub = vi.fn(() => Promise.resolve());
+const updateMyProfile = vi.fn(() => ok({}));
 
 vi.mock('../../api', () => ({
   getMyGitHub: (...a) => getMyGitHub(...a),
@@ -37,6 +38,7 @@ vi.mock('../../api', () => ({
   createMyApiKey: (...a) => createMyApiKey(...a),
   revokeMyApiKey: (...a) => revokeMyApiKey(...a),
   getWorkspaces: (...a) => getWorkspaces(...a),
+  updateMyProfile: (...a) => updateMyProfile(...a),
   getOwnSpend: () => Promise.resolve({ data: { limit_usd: 0, spend: 0, source: 'default', exceeded: false } }),
 }));
 
@@ -48,6 +50,7 @@ vi.mock('../../api/accounting', () => ({
 }));
 
 const logout = vi.fn(() => Promise.resolve());
+const refreshUser = vi.fn(() => Promise.resolve());
 let authUser;
 
 vi.mock('../../components/auth', () => ({
@@ -55,6 +58,7 @@ vi.mock('../../components/auth', () => ({
     user: authUser,
     features: { local_passwords: true },
     logout,
+    refreshUser,
   }),
 }));
 
@@ -259,5 +263,35 @@ describe('Account', () => {
     show();
     await waitFor(() => expect(screen.getByText(/connecting github failed: bad_state/i)).toBeInTheDocument());
     expect(window.location.hash).toBe('');
+  });
+
+  it('lets the viewer change their own name and email', async () => {
+    authUser = { ...USER, profile_editable: { display_name: true, email: true } };
+    show();
+    fireEvent.click(await screen.findByTestId('profile-edit'));
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Alice Doe' } });
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'alice@new.example' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateMyProfile).toHaveBeenCalledWith(
+      { display_name: 'Alice Doe', email: 'alice@new.example' }));
+    await waitFor(() => expect(refreshUser).toHaveBeenCalled());
+    expect(await screen.findByText('Profile saved.')).toBeInTheDocument();
+  });
+
+  it('sends only the name when single sign-on holds the email', async () => {
+    authUser = { ...USER, profile_editable: { display_name: true, email: false } };
+    show();
+    fireEvent.click(await screen.findByTestId('profile-edit'));
+    expect(screen.queryByLabelText('Email')).toBeNull();
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(updateMyProfile).toHaveBeenCalledWith({ display_name: 'Alice' }));
+  });
+
+  it('offers no edit for an account its sign-in owns', async () => {
+    authUser = { ...USER, source: 'oidc', profile_editable: { display_name: false, email: false } };
+    show();
+    await screen.findByText('alice');
+    expect(screen.queryByTestId('profile-edit')).toBeNull();
+    expect(screen.getByText(/come from your organization/)).toBeInTheDocument();
   });
 });
