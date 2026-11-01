@@ -462,6 +462,14 @@ class AgentFactory:
                 resolved_model = resolved_model or _os.environ.get("LMSTUDIO_MODEL") or _file_env.get("LMSTUDIO_MODEL") or _cfg.lmstudio_model or None
                 resolved_base_url = resolved_base_url or _os.environ.get("LMSTUDIO_BASE_URL") or _file_env.get("LMSTUDIO_BASE_URL") or _cfg.lmstudio_base_url or None
 
+        # A provider with no model named runs on that provider's global default
+        # (build_chat_model picks it the same way). Named here, so the run's
+        # record says which model ran and its tokens are priced, instead of an
+        # empty model costing $0 on the person's spend and the cost reports.
+        if resolved_provider and not resolved_model:
+            from agents.agent_utils import default_model_for
+            resolved_model = default_model_for(resolved_provider)
+
         return resolved_provider, resolved_model, resolved_base_url, ws_api_key
 
     @staticmethod
