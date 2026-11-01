@@ -135,10 +135,26 @@ def _persist_turn(conversation_id: str, request, event: Dict[str, Any]) -> bool:
             log.debug("stopped turn record failed", exc_info=True)
             return False
     response = str(event.get("response") or "")
-    if not run_id or not response.strip() or not event.get("ok"):
-        return False
     notice = getattr(request, "notice", None)
     user_message = "" if notice else str(getattr(request, "message", "") or "")
+    if run_id and not event.get("ok"):
+        # A failed turn only finishes the bubble a page left unfinished (one
+        # that never heard the turn's end), so a reload shows the error
+        # instead of an empty reply.
+        failure = response.strip() or str(event.get("error") or "").strip()
+        if not failure:
+            return False
+        try:
+            return chat_store.append_turn(
+                conversation_id, run_id=run_id, user_message=user_message,
+                agent_message=failure, agent_id=event.get("agent_id") or getattr(request, "agent_id", None),
+                usage=event.get("usage"), duration_ms=event.get("duration_ms"), notice=notice, error=True,
+            )
+        except Exception:  # noqa: BLE001 - the safety net must never fail the turn it records
+            log.debug("failed turn record failed", exc_info=True)
+            return False
+    if not run_id or not response.strip():
+        return False
     # A turn that changed hands (chat/handoff.py) is one bubble per agent: each
     # handing agent's reply, then the answer, which carries the handoff that
     # brought it (the chat draws the divider from it). The user's message goes

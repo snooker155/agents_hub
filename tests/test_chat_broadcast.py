@@ -344,6 +344,31 @@ async def _body_test_a_failed_turn_is_not_written():
     assert chat_store.get_chat("conv-1")["messages"] == []
 
 
+async def _body_test_a_page_that_heard_nothing_gets_its_bubble_filled_not_a_second_question():
+    """A page whose stream had gone quiet saved the question and an empty
+    bubble with no run id. The turn's record fills that bubble, a failed turn
+    with its error, instead of asking the question a second time."""
+    from chat.broadcast import broadcast_turn
+    from common import chat_store
+
+    for ok, conv in ((True, "conv-ok"), (False, "conv-err")):
+        chat_store.save_chat({"id": conv, "messages": [
+            {"id": "u1", "role": "user", "content": "how do I ship this?"},
+            {"id": "a1", "role": "agent", "content": "", "agent_id": "assistant"},
+        ]})
+        done = ({"type": "done", "ok": True, "response": "Like this.", "run_id": f"run-{conv}",
+                 "duration_ms": 900} if ok else
+                {"type": "done", "ok": False, "response": "Error: model died", "error": "model died",
+                 "run_id": f"run-{conv}"})
+        async for _ in broadcast_turn(FakeRequest(conversation_id=conv), _pipeline([done])):
+            pass
+        messages = chat_store.get_chat(conv)["messages"]
+        assert [m["id"] for m in messages] == ["u1", "a1"], messages
+        assert messages[1]["run_id"] == f"run-{conv}"
+        assert messages[1]["content"] == ("Like this." if ok else "Error: model died")
+        assert messages[1]["error"] is (not ok)
+
+
 # ── the endpoints ────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -487,6 +512,10 @@ def test_a_telegram_turn_does_not_append_to_its_mirror_row():
 
 def test_a_failed_turn_is_not_written():
     asyncio.run(_body_test_a_failed_turn_is_not_written())
+
+
+def test_a_page_that_heard_nothing_gets_its_bubble_filled_not_a_second_question():
+    asyncio.run(_body_test_a_page_that_heard_nothing_gets_its_bubble_filled_not_a_second_question())
 
 
 def test_the_tabs_name_for_a_turn_is_on_every_event(broker):

@@ -273,13 +273,34 @@ def _notice_text(notice: Dict[str, Any]) -> str:
     return str(notice.get("text") or "")
 
 
+def _page_bubble(messages: List[Dict[str, Any]], user_message: str) -> Optional[int]:
+    """The reply bubble a page saved for ``user_message`` before it learnt the
+    run's id: an agent message with no run id after the last user message, when
+    that is this one. A page that got none of the turn's events (its stream had
+    gone quiet) saves exactly that, an empty bubble under the question."""
+    asked = (user_message or "").strip()
+    users = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+    if not asked or not users or str(messages[users[-1]].get("content") or "").strip() != asked:
+        return None
+    after = [i for i in range(users[-1] + 1, len(messages))
+             if messages[i].get("role") == "agent" and not messages[i].get("run_id")]
+    return after[-1] if after else None
+
+
+def _unfinished(message: Dict[str, Any]) -> bool:
+    """A reply bubble the page saved while the turn was still being written."""
+    return (message.get("role") == "agent" and message.get("duration_ms") is None
+            and message.get("total_tokens") is None)
+
+
 @remote_state.hub_call(("chat:chat_id", "run:run_id"))
 def append_turn(chat_id: str, *, run_id: str, user_message: str,
                 agent_message: str, agent_id: Optional[str] = None,
                 usage: Optional[Dict[str, Any]] = None,
                 duration_ms: Optional[int] = None,
                 extra: Optional[Dict[str, Any]] = None,
-                notice: Optional[Dict[str, Any]] = None) -> bool:
+                notice: Optional[Dict[str, Any]] = None,
+                error: bool = False) -> bool:
     """Add one completed exchange to a stored chat. Returns whether it was added.
 
     This is the safety net under the browser, not the normal path: the page that
@@ -305,6 +326,11 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
 
     ``notice`` is what started a turn the hub began by itself (a background
     run that ended, chat/background_runs.py): a system line above the reply.
+
+    A bubble the page saved before it knew the run's id (:func:`_page_bubble`)
+    is that unfinished bubble too, so the question is not asked twice. A failed
+    turn (``error``) only finishes such a bubble, with the error in it; it never
+    adds a turn of its own.
     """
     if not chat_id or not run_id:
         return False
@@ -318,16 +344,22 @@ def append_turn(chat_id: str, *, run_id: str, user_message: str,
         same_run = [i for i, m in enumerate(messages)
                     if str(m.get("run_id") or "") == str(run_id)]
         if same_run:
-            i = same_run[-1]
-            partial = messages[i]
-            unfinished = (partial.get("role") == "agent" and partial.get("duration_ms") is None
-                          and partial.get("total_tokens") is None)
-            if not unfinished:
+            i: Optional[int] = same_run[-1]
+            if not _unfinished(messages[i]):
                 return False
+        else:
+            i = None if notice else _page_bubble(messages, user_message)
+            if i is not None and not _unfinished(messages[i]):
+                i = None
+        if i is None and error:
+            return False
+        if i is not None:
+            partial = messages[i]
             messages = list(messages)
             messages[i] = {
                 **partial, **(extra or {}),
-                "content": agent_message, "error": False,
+                "content": agent_message, "error": bool(error), "run_id": str(run_id),
+                "agent_id": agent_id or partial.get("agent_id"),
                 "inbound_tokens": (usage or {}).get("inbound_tokens", partial.get("inbound_tokens")),
                 "outbound_tokens": (usage or {}).get("outbound_tokens", partial.get("outbound_tokens")),
                 "total_tokens": (usage or {}).get("total_tokens", partial.get("total_tokens")),
@@ -412,12 +444,10 @@ def mark_stopped(chat_id: str, *, run_id: str, user_message: str,
             users = [i for i, m in enumerate(messages) if m.get("role") == "user"]
             asked = (user_message or "").strip()
             if asked and users and str(messages[users[-1]].get("content") or "").strip() == asked:
-                after = [i for i in range(users[-1] + 1, len(messages))
-                         if messages[i].get("role") == "agent" and not messages[i].get("run_id")]
-                if after:
-                    i = after[-1]
-                    messages[i] = {**messages[i], "stopped": True, "run_id": str(run_id),
-                                   "thinking_live": "", "running_tool": None}
+                page = _page_bubble(messages, user_message)
+                if page is not None:
+                    messages[page] = {**messages[page], "stopped": True, "run_id": str(run_id),
+                                      "thinking_live": "", "running_tool": None}
                 else:
                     messages.insert(users[-1] + 1, reply)
             else:
