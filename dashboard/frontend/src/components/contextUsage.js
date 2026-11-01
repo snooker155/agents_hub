@@ -37,6 +37,13 @@ function isOverflow(ev) {
   return ev?.code === 'context_overflow' || ev?.error_code === 'context_overflow';
 }
 
+/** Whether ContextMeter has anything to show for `usage`: a reading, or the
+ *  overflow. A box leaves its footer out rather than hold an empty meter. */
+export function hasContextReading(usage) {
+  const { used = 0, window: limit = 0, overflow = false } = usage || {};
+  return Boolean(overflow || (limit && used));
+}
+
 /**
  * Track context fill across a chat's stream.
  *

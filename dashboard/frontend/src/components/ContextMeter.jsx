@@ -1,7 +1,7 @@
 import React from 'react';
 import { AlertTriangle, MessageSquarePlus } from 'lucide-react';
 import { useI18n } from '../i18n';
-import { CONTEXT_HIGH, CONTEXT_WARN } from './contextUsage';
+import { CONTEXT_HIGH, CONTEXT_WARN, hasContextReading } from './contextUsage';
 
 /**
  * How full the model's context window is, for the chats that keep their own
@@ -39,7 +39,7 @@ export default function ContextMeter({ usage, onClear = null, className = '', co
 
   // Nothing measured and nothing failed: the chat has not run yet, or the
   // model's window is unknown.
-  if (!overflow && (!limit || !used)) return null;
+  if (!hasContextReading(usage)) return null;
 
   const clearButton = onClear ? (
     <button

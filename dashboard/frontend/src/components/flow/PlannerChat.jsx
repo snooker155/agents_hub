@@ -13,7 +13,7 @@ import { useChatSessions } from '../chatSessions';
 import ContextMeter from '../ContextMeter';
 import ComposerBox from '../chat/ComposerBox';
 import { COMPOSER_SEND_CLS, COMPOSER_SIDE_TEXTAREA_CLS, COMPOSER_STOP_CLS } from '../chat/composerStyles';
-import { useContextUsage } from '../contextUsage';
+import { hasContextReading, useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
 import {
   getProjectTasksChat, clearProjectTasksChat,
@@ -300,7 +300,8 @@ function PlannerChat({ projectId, workspace, tools, onGenerated, generateRequest
             </button>
           )}
           hint={busy ? (stopping ? t('flowPlannerChat.stopping') : t('flowPlannerChat.pressStop')) : null}
-          footerRight={<ContextMeter usage={contextUsage} onClear={busy ? null : newChat} compact />}
+          footerRight={hasContextReading(contextUsage)
+            ? <ContextMeter usage={contextUsage} onClear={busy ? null : newChat} compact /> : null}
         >
           <textarea
             ref={textareaRef}

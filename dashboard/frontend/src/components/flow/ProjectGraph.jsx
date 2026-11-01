@@ -31,7 +31,7 @@ import ComposerBox from '../chat/ComposerBox';
 import { COMPOSER_SEND_CLS, COMPOSER_SIDE_TEXTAREA_CLS, COMPOSER_STOP_CLS } from '../chat/composerStyles';
 import ChatSessionList, { ChatSessionsToggle } from '../ChatSessionList';
 import { useChatSessions } from '../chatSessions';
-import { useContextUsage } from '../contextUsage';
+import { hasContextReading, useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
 import { usePageChatHost } from '../pageChat/pageChat';
 
@@ -810,7 +810,8 @@ function ProjectGraph({ projectId }) {
                   </button>
                 )}
                 hint={busy ? (stopping ? 'Stopping…' : 'Press ■ to stop the run') : null}
-                footerRight={<ContextMeter usage={contextUsage} onClear={busy ? null : clearChat} compact />}
+                footerRight={hasContextReading(contextUsage)
+            ? <ContextMeter usage={contextUsage} onClear={busy ? null : clearChat} compact /> : null}
               >
                 <textarea
                   ref={textareaRef}

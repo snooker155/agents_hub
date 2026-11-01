@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { useContextUsage } from '../contextUsage';
+import { hasContextReading, useContextUsage } from '../contextUsage';
 
 /**
  * Context fill, as the build chats learn it from their own event stream.
@@ -84,5 +84,17 @@ describe('useContextUsage', () => {
     });
     act(() => result.current.reset());
     expect(result.current.usage).toEqual({ used: 0, window: 0, overflow: false });
+  });
+});
+
+// A box drops its footer when the meter has nothing to show, rather than keep
+// an empty line under a rule.
+describe('hasContextReading', () => {
+  it('is true for a reading or an overflow only', () => {
+    expect(hasContextReading(null)).toBe(false);
+    expect(hasContextReading({ used: 0, window: 0, overflow: false })).toBe(false);
+    expect(hasContextReading({ used: 1200, window: 0, overflow: false })).toBe(false);
+    expect(hasContextReading({ used: 1200, window: 200000, overflow: false })).toBe(true);
+    expect(hasContextReading({ used: 0, window: 0, overflow: true })).toBe(true);
   });
 });

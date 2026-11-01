@@ -13,7 +13,7 @@ import { genId } from './chat/turnState';
 import ContextMeter from './ContextMeter';
 import ComposerBox from './chat/ComposerBox';
 import { COMPOSER_SEND_CLS, COMPOSER_SIDE_TEXTAREA_CLS, COMPOSER_STOP_CLS } from './chat/composerStyles';
-import { useContextUsage } from './contextUsage';
+import { hasContextReading, useContextUsage } from './contextUsage';
 import { useI18n } from '../i18n';
 import { useInlineChatOpen } from './pageChat/pageChat';
 import { autoGrowTextarea } from '../lib/autoGrow';
@@ -486,7 +486,8 @@ export default function EntityChat({
             </button>
           )}
           hint={stopping ? t('entityChat.stopping') : null}
-          footerRight={<ContextMeter usage={contextUsage} onClear={busy ? null : onClear} compact />}
+          footerRight={hasContextReading(contextUsage)
+            ? <ContextMeter usage={contextUsage} onClear={busy ? null : onClear} compact /> : null}
         >
           <textarea
             ref={textareaRef}
