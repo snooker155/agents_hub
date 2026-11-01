@@ -186,7 +186,7 @@ def _run_member(
         open_run(
             run_id, agent_id, pid=os.getpid(), task_id=task_id,
             session_id=session_id, session_type="task", channel="team",
-            log_file=str(log_path), workspace=workspace,
+            log_file=str(log_path), workspace=workspace or "default",
             title=f"{team.name}: {speaker}",
             team_id=team.team_id, team_member=speaker, link_to_session=True,
             parent_run_id=team_run_id,
@@ -1246,7 +1246,7 @@ def _claim_task(team: Team, run: TeamRun) -> None:
         run_manager.open_run(
             run.team_run_id, f"team:{team.team_id}", task_id=str(run.task_id),
             session_id=run.session_id, session_type="task", channel="team",
-            workspace=run.workspace, title=assignee, pid=os.getpid(),
+            workspace=run.workspace or "default", title=assignee, pid=os.getpid(),
             team_id=team.team_id, is_team=True, link_to_session=True,
             input=run.goal,
         )

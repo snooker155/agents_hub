@@ -72,6 +72,8 @@ from views.code import (
     diff_versions as _diff_code_versions, diff_version_list, runner_language, resolve_project_save_path,
 )
 from tools import run_code as run_code_tool
+from common import access, identity, record_access
+from common.auth import SAFE_METHODS
 
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
@@ -208,7 +210,7 @@ class SnippetVersionCreate(BaseModel):
 
 
 @router.get("")
-async def get_views(workspace: Optional[str] = None, run_id: Optional[str] = None,
+async def get_views(request: Request, workspace: Optional[str] = None, run_id: Optional[str] = None,
                     owner_kind: Optional[str] = None, owner_id: Optional[str] = None,
                     limit: int = 200):
     """List view index rows, newest first, optionally filtered.
@@ -217,27 +219,36 @@ async def get_views(workspace: Optional[str] = None, run_id: Optional[str] = Non
     ``owner_kind=run&owner_id=<run_id>``, see views.store.list_views);
     ``owner_kind``/``owner_id`` filter directly, e.g. every view a team run
     produced.
+
+    Narrowed to the views whose own workspace the caller can see: a request
+    naming no workspace, or filtering by owner only, would otherwise list
+    every workspace's, and a view that names none is the default workspace's
+    (common/access.py). A no-op outside ``multi`` mode.
     """
     rows = list_views(workspace=workspace, run_id=run_id,
                       owner_kind=owner_kind, owner_id=owner_id, limit=limit)
+    rows = access.filter_by_workspace(identity.request_principal(request), rows)
     for row in rows:
         row["owner_entity_id"] = _owner_entity_id(row.get("owner_kind"), row.get("owner_id"))
     return {"views": rows}
 
 
 @router.post("/studio")
-async def create_studio_session(payload: StudioSessionCreate):
+async def create_studio_session(payload: StudioSessionCreate, request: Request):
     """Create a new empty live view for a Studio session and return its envelope.
 
     The Studio then binds its chat to ``view_id`` and subscribes to ``view:<id>``.
+    The workspace comes in the body, which the middleware never reads, so the
+    caller's ``editor`` role there is checked here (none named = default).
     """
+    record_access.require_in_workspace(request, payload.workspace)
     if payload.kind not in SUPPORTED_KINDS:
         raise HTTPException(status_code=400, detail=f"Unsupported view kind '{payload.kind}'")
     return create_studio_view(payload.kind, payload.title, workspace=payload.workspace)
 
 
 @router.post("/code")
-async def create_code_from_reply(payload: CodeFromReply):
+async def create_code_from_reply(payload: CodeFromReply, request: Request):
     """Turn a fenced block of a chat reply into a code view.
 
     The Code panel lists the code views owned by the conversation's runs, and
@@ -245,8 +256,12 @@ async def create_code_from_reply(payload: CodeFromReply):
     that arrived as plain markdown could not be run, versioned or saved. The
     view is owned by the reply's run so the panel finds it, and asking again
     for the same body under the same run returns the view made the first time
-    instead of a copy.
+    instead of a copy. The workspace comes in the body, so the caller's
+    ``editor`` role there is checked here, and a view made earlier is handed
+    back only when the caller may see its workspace.
     """
+    record_access.require_in_workspace(request, payload.workspace)
+    principal = identity.request_principal(request)
     body = payload.body or ""
     if not body.strip():
         raise HTTPException(status_code=400, detail="body must not be empty")
@@ -257,6 +272,8 @@ async def create_code_from_reply(payload: CodeFromReply):
             if row.get("kind") != "code":
                 continue
             existing = get_view(row["view_id"]) or {}
+            if not access.can_see_workspace(principal, existing.get("workspace")):
+                continue
             if (existing.get("spec") or {}).get("body") == body:
                 return existing
     # Unnamed blocks all defaulting to main.py would be folded by the panel
@@ -276,16 +293,18 @@ async def create_code_from_reply(payload: CodeFromReply):
 
 
 @router.post("/code/save")
-async def save_code_body(payload: CodeBodySaveRequest):
+async def save_code_body(payload: CodeBodySaveRequest, request: Request):
     """Write a snippet's text into a project's own folder, no view involved.
 
     The Code panel's "Save to project" on a fenced block of a reply: the block
     is just a file's worth of code, so it lands in the project as that file
     without first becoming a code view. Same path rules and overwrite guard
-    as ``/{view_id}/code/save``.
+    as ``/{view_id}/code/save``, and the same ``editor`` check in the
+    project's workspace.
     """
     if not (payload.body or "").strip():
         raise HTTPException(status_code=400, detail="body must not be empty")
+    _require_project_writable(request, payload.project_id)
     try:
         target = resolve_project_save_path(payload.project_id, payload.path)
     except ValueError as exc:
@@ -323,7 +342,7 @@ def _run_result_payload(result: dict, run_lang: str) -> dict:
 
 
 @router.post("/code/run")
-async def run_code_body(payload: SnippetRunRequest):
+async def run_code_body(payload: SnippetRunRequest, request: Request):
     """Run a snippet's text in the run_code sandbox, no view involved.
 
     The Code panel's Run on a fenced block of a reply. Same sandbox, language
@@ -337,6 +356,10 @@ async def run_code_body(payload: SnippetRunRequest):
             "node/javascript and bash can be executed)"))
     if not (payload.body or "").strip():
         raise HTTPException(status_code=400, detail="body must not be empty")
+    if payload.mount_workspace:
+        # The mounted folder is writable from the snippet, and the workspace
+        # comes in the body, which the middleware never reads.
+        record_access.require_in_workspace(request, payload.workspace)
     workspace_path = _workspace_mount_path(payload.workspace) if payload.mount_workspace else None
     result = run_code_tool.run_snippet(
         run_lang, payload.body, mount_workspace=payload.mount_workspace, workspace=workspace_path,
@@ -351,12 +374,14 @@ async def get_snippet_versions(key: str, workspace: Optional[str] = None):
 
 
 @router.post("/code/snippet/versions")
-async def post_snippet_version(payload: SnippetVersionCreate):
+async def post_snippet_version(payload: SnippetVersionCreate, request: Request):
     """Record an edit of a keyed snippet as its next version; returns the history.
 
     ``base`` is the reply's own text: recorded as version 1 the first time,
-    so the history opens with what was answered.
+    so the history opens with what was answered. ``editor`` in the body's
+    workspace (none named = default), which the middleware never reads.
     """
+    record_access.require_in_workspace(request, payload.workspace)
     if not (payload.key or "").strip():
         raise HTTPException(status_code=400, detail="key must not be empty")
     if not (payload.body or "").strip():
@@ -376,12 +401,45 @@ async def get_snippet_diff(key: str, a: int, b: int, workspace: Optional[str] = 
     return {"diff": diff}
 
 
-@router.get("/{view_id}")
-async def get_one_view(view_id: str):
-    """Return the full view envelope merged with its saved per-user state."""
+def _visible_view(view_id: str, request: Request) -> dict:
+    """The view, 404 when there is none, 403 when the caller may not see its
+    workspace (one that names none is the default workspace's,
+    common/access.py)."""
     view = get_view(view_id)
     if view is None:
         raise HTTPException(status_code=404, detail="View not found")
+    access.require_visible(identity.request_principal(request), view.get("workspace"))
+    return view
+
+
+def _writable_view(view_id: str, request: Request) -> dict:
+    """The view, 404 when there is none, 403 unless the caller is an
+    ``editor`` in the view's own workspace (one that names none is the
+    default's). These routes name a view, not a workspace, so the middleware
+    has nothing to check; without this a member of one workspace could change
+    or delete another's view by its id."""
+    view = get_view(view_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="View not found")
+    record_access.require_in_workspace(request, view.get("workspace"))
+    return view
+
+
+def _require_project_writable(request: Request, project_id: str) -> None:
+    """403 unless the caller is an ``editor`` in the workspace of the project
+    a save writes into. The project is named in the body, which the middleware
+    never reads. A project that does not exist is left to the save path's own
+    400."""
+    from projects.storage import ProjectStore
+    project = ProjectStore().get(str(project_id or ""))
+    if project is not None:
+        record_access.require_in_workspace(request, project.workspace)
+
+
+@router.get("/{view_id}")
+async def get_one_view(view_id: str, request: Request):
+    """Return the full view envelope merged with its saved per-user state."""
+    view = _visible_view(view_id, request)
     owner = view.get("owner")
     if owner:
         entity_id = _owner_entity_id(owner.get("kind"), owner.get("id"))
@@ -391,7 +449,7 @@ async def get_one_view(view_id: str):
 
 
 @router.get("/{view_id}/export/pptx")
-async def export_view_pptx(view_id: str):
+async def export_view_pptx(view_id: str, request: Request):
     """A slides view as a PowerPoint file, drawn with the same layouts and theme
     as the browser renderer (views/slides_pptx.py). Remote images are not
     fetched; ``X-Export-Warnings`` counts what the file could not carry."""
@@ -401,9 +459,7 @@ async def export_view_pptx(view_id: str):
 
     from views.slides_pptx import build_pptx, pptx_filename
 
-    view = get_view(view_id)
-    if view is None:
-        raise HTTPException(status_code=404, detail="View not found")
+    view = _visible_view(view_id, request)
     if view.get("kind") != "slides":
         raise HTTPException(status_code=400, detail="Only a slides view exports to .pptx")
     try:
@@ -422,20 +478,22 @@ async def export_view_pptx(view_id: str):
 
 
 @router.patch("/{view_id}/state")
-async def patch_view_state(view_id: str, payload: ViewStateUpdate):
+async def patch_view_state(view_id: str, payload: ViewStateUpdate, request: Request):
     """Persist per-user view state (control values, selection, camera pose)."""
+    _writable_view(view_id, request)
     if not set_view_state(view_id, payload.state or {}):
         raise HTTPException(status_code=404, detail="View not found")
     return {"ok": True}
 
 
 @router.post("/{view_id}/ops")
-async def apply_user_ops(view_id: str, payload: ApplyOpsRequest):
+async def apply_user_ops(view_id: str, payload: ApplyOpsRequest, request: Request):
     """Apply ops from the user (e.g. a control drag) to a live view.
 
     Recorded with ``source="user"`` and broadcast on the view channel, so the
     agent and the user co-edit one op history and the change is durable.
     """
+    _writable_view(view_id, request)
     try:
         stored = append_ops(view_id, payload.ops, source="user")
     except KeyError:
@@ -446,12 +504,13 @@ async def apply_user_ops(view_id: str, payload: ApplyOpsRequest):
 
 
 @router.post("/{view_id}/snapshot")
-async def save_snapshot(view_id: str, payload: SnapshotRequest):
+async def save_snapshot(view_id: str, payload: SnapshotRequest, request: Request):
     """Store a client-captured PNG snapshot as the view's fallback image.
 
     Feeds a static preview to non-visual surfaces (Telegram photo, gallery
     thumbnail). Body is a ``data:image/png;base64,…`` data URL.
     """
+    _writable_view(view_id, request)
     raw = payload.data_url or ""
     if "," in raw:
         raw = raw.split(",", 1)[1]
@@ -468,25 +527,24 @@ async def save_snapshot(view_id: str, payload: SnapshotRequest):
 
 
 @router.get("/{view_id}/ops")
-async def get_view_ops(view_id: str, after_seq: int = 0):
+async def get_view_ops(view_id: str, request: Request, after_seq: int = 0):
     """Return this view's ops after ``after_seq`` — the build log a late-joining
     Studio replays to catch up before subscribing to new ops live."""
-    if get_view(view_id) is None:
-        raise HTTPException(status_code=404, detail="View not found")
+    _visible_view(view_id, request)
     return {"view_id": view_id, "ops": get_ops(view_id, after_seq=after_seq)}
 
 
 @router.get("/{view_id}/clips")
-async def get_view_clips(view_id: str):
+async def get_view_clips(view_id: str, request: Request):
     """List recorded compute clips for a view."""
-    if get_view(view_id) is None:
-        raise HTTPException(status_code=404, detail="View not found")
+    _visible_view(view_id, request)
     return {"view_id": view_id, "clips": list_clips(view_id)}
 
 
 @router.get("/{view_id}/clips/{name}")
-async def get_view_clip(view_id: str, name: str):
+async def get_view_clip(view_id: str, name: str, request: Request):
     """Fetch a recorded compute clip (runtime + params + frames) to replay."""
+    _visible_view(view_id, request)
     clip = get_clip(view_id, name)
     if clip is None:
         raise HTTPException(status_code=404, detail="Clip not found")
@@ -503,9 +561,12 @@ async def get_view_clip(view_id: str, name: str):
                   methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
                   include_in_schema=False)
 async def view_proxy(view_id: str, path: str, request: Request):
-    view = get_view(view_id)
-    if view is None:
-        raise HTTPException(status_code=404, detail="View not found")
+    # A write through the proxy changes the view's service, so it needs what
+    # any other write on the view needs; a read needs the view visible.
+    if request.method.upper() in SAFE_METHODS:
+        view = _visible_view(view_id, request)
+    else:
+        view = _writable_view(view_id, request)
     upstream = ((view.get("serve") or {}).get("upstream") or "").rstrip("/")
     if not upstream:
         raise HTTPException(status_code=404, detail="No service configured for this view (view_serve)")
@@ -537,8 +598,9 @@ async def view_proxy(view_id: str, path: str, request: Request):
 
 
 @router.post("/{view_id}/revert")
-async def revert_view(view_id: str, payload: RevertRequest):
+async def revert_view(view_id: str, payload: RevertRequest, request: Request):
     """Undo a live view back to an op seq (0 = empty) or a named checkpoint."""
+    _writable_view(view_id, request)
     seq = payload.seq
     if payload.checkpoint.strip():
         cp = checkpoint_seq(view_id, payload.checkpoint.strip())
@@ -553,16 +615,16 @@ async def revert_view(view_id: str, payload: RevertRequest):
 
 
 @router.get("/{view_id}/checkpoints")
-async def get_view_checkpoints(view_id: str):
+async def get_view_checkpoints(view_id: str, request: Request):
     """Named checkpoints for a view: {name: seq}."""
-    if get_view(view_id) is None:
-        raise HTTPException(status_code=404, detail="View not found")
+    _visible_view(view_id, request)
     return {"view_id": view_id, "checkpoints": list_checkpoints(view_id)}
 
 
 @router.post("/{view_id}/checkpoints")
-async def create_view_checkpoint(view_id: str, payload: CheckpointRequest):
+async def create_view_checkpoint(view_id: str, payload: CheckpointRequest, request: Request):
     """Save a named checkpoint at the view's current op seq."""
+    _writable_view(view_id, request)
     seq = save_checkpoint(view_id, payload.name)
     if seq is None:
         raise HTTPException(status_code=404, detail="View not found")
@@ -570,8 +632,9 @@ async def create_view_checkpoint(view_id: str, payload: CheckpointRequest):
 
 
 @router.delete("/{view_id}")
-async def delete_one_view(view_id: str):
+async def delete_one_view(view_id: str, request: Request):
     """Delete a view (its dir and index row)."""
+    _writable_view(view_id, request)
     if not delete_view(view_id):
         raise HTTPException(status_code=404, detail="View not found")
     return {"deleted": True, "view_id": view_id}
@@ -584,27 +647,27 @@ async def delete_one_view(view_id: str):
 # but the run route honours the view's own workspace scoping, same as every
 # other view route here.
 
-def _require_code_view(view_id: str) -> dict:
-    view = get_view(view_id)
-    if view is None:
-        raise HTTPException(status_code=404, detail="View not found")
+def _require_code_view(view_id: str, request: Request, *, write: bool = False) -> dict:
+    """The code view, checked as :func:`_visible_view` for a read and as
+    :func:`_writable_view` for a ``write``; 400 when it is not a code view."""
+    view = _writable_view(view_id, request) if write else _visible_view(view_id, request)
     if view.get("kind") != "code":
         raise HTTPException(status_code=400, detail="Not a code view")
     return view
 
 
 @router.get("/{view_id}/code/versions")
-async def get_code_versions(view_id: str):
+async def get_code_versions(view_id: str, request: Request):
     """Every recorded version of a code view's body, oldest first."""
-    _require_code_view(view_id)
+    _require_code_view(view_id, request)
     return {"versions": list_code_versions(view_id)}
 
 
 @router.put("/{view_id}/code/body")
-async def save_code_body_in_place(view_id: str, payload: CodeVersionCreate):
+async def save_code_body_in_place(view_id: str, payload: CodeVersionCreate, request: Request):
     """Overwrite the current version's body in place (the panel's plain Save);
     return the updated view envelope. "Save version" is the POST below."""
-    _require_code_view(view_id)
+    _require_code_view(view_id, request, write=True)
     body = payload.body or ""
     if not body.strip():
         raise HTTPException(status_code=400, detail="body must not be empty")
@@ -615,9 +678,9 @@ async def save_code_body_in_place(view_id: str, payload: CodeVersionCreate):
 
 
 @router.post("/{view_id}/code/versions")
-async def create_code_version(view_id: str, payload: CodeVersionCreate):
+async def create_code_version(view_id: str, payload: CodeVersionCreate, request: Request):
     """Record a user edit as a new version; return the updated view envelope."""
-    _require_code_view(view_id)
+    _require_code_view(view_id, request, write=True)
     body = payload.body or ""
     if not body.strip():
         raise HTTPException(status_code=400, detail="body must not be empty")
@@ -628,9 +691,9 @@ async def create_code_version(view_id: str, payload: CodeVersionCreate):
 
 
 @router.get("/{view_id}/code/diff")
-async def get_code_diff(view_id: str, a: int, b: int):
+async def get_code_diff(view_id: str, a: int, b: int, request: Request):
     """A unified diff between two recorded versions of a code view's body."""
-    _require_code_view(view_id)
+    _require_code_view(view_id, request)
     try:
         diff = _diff_code_versions(view_id, a, b)
     except ValueError as exc:
@@ -639,14 +702,14 @@ async def get_code_diff(view_id: str, a: int, b: int):
 
 
 @router.post("/{view_id}/code/run")
-async def run_code_view(view_id: str, payload: CodeRunRequest):
+async def run_code_view(view_id: str, payload: CodeRunRequest, request: Request):
     """Run a code view's snippet in the same sandbox the run_code tool uses.
 
     Runs the view's current body, or ``payload.body`` when given (recorded as
     a new user version first, like any other edit). Refuses a non-runnable
     language with 400. Appends the result to the view's run history (last 10).
     """
-    view = _require_code_view(view_id)
+    view = _require_code_view(view_id, request, write=True)
     spec = view.get("spec") or {}
     language = str(spec.get("language") or "")
     run_lang = runner_language(language)
@@ -679,25 +742,26 @@ async def run_code_view(view_id: str, payload: CodeRunRequest):
 
 
 @router.get("/{view_id}/code/runs")
-async def get_code_runs(view_id: str):
+async def get_code_runs(view_id: str, request: Request):
     """A code view's recorded run history (last 10), newest first.
 
     ``views.store.list_code_runs`` itself keeps insertion order (oldest first,
     the natural order to cap the last N in); this route reverses it for
     display, matching the code panel's expectation (see api/code.js).
     """
-    _require_code_view(view_id)
+    _require_code_view(view_id, request)
     return {"runs": list(reversed(list_code_runs(view_id)))}
 
 
 @router.post("/{view_id}/code/save")
-async def save_code_view(view_id: str, payload: CodeSaveRequest):
+async def save_code_view(view_id: str, payload: CodeSaveRequest, request: Request):
     """Write a code view's body into a project's own folder.
 
     ``path`` must stay inside the project folder (no ``..``/absolute paths);
     refuses to overwrite an existing file unless ``overwrite`` is set.
     """
-    view = _require_code_view(view_id)
+    view = _require_code_view(view_id, request, write=True)
+    _require_project_writable(request, payload.project_id)
     spec = view.get("spec") or {}
     try:
         target = resolve_project_save_path(payload.project_id, payload.path)
@@ -783,19 +847,27 @@ def _load_view_chat(request):
     from types import SimpleNamespace
 
     view_id = request.path_params["view_id"]
-    doc = get_view(view_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail="View not found")
+    # A turn edits the view, so posting one needs what any other write on it
+    # needs; reading the conversation needs the view visible.
+    if request.method.upper() in SAFE_METHODS:
+        doc = _visible_view(view_id, request)
+    else:
+        doc = _writable_view(view_id, request)
     workspace = doc.get("workspace") or None
     return SimpleNamespace(entity_id=view_id, workspace=workspace, doc=doc)
 
 
 def _load_view_stop(request):
     """Stopping never checks existence: a deleted view still has an id worth
-    cancelling a run for, and there is nothing else this route needs."""
+    cancelling a run for. A view that still exists is checked as any other
+    write on it, so nobody stops a turn in a workspace they cannot edit."""
     from types import SimpleNamespace
 
-    return SimpleNamespace(entity_id=request.path_params["view_id"])
+    view_id = request.path_params["view_id"]
+    view = get_view(view_id)
+    if view is not None:
+        record_access.require_in_workspace(request, view.get("workspace"))
+    return SimpleNamespace(entity_id=view_id)
 
 
 def _view_context_setup(ctx):
@@ -828,6 +900,7 @@ router.include_router(build_entity_chat_router(EntityChatRoute(
 @router.get("/{view_id}/assets/{asset_path:path}")
 async def get_view_asset(view_id: str, asset_path: str, request: Request):
     """Serve a file from a view's asset dir, path-contained, with a strict CSP."""
+    _visible_view(view_id, request)
     target = view_asset_path(view_id, asset_path)
     if target is None:
         raise HTTPException(status_code=404, detail="Asset not found")

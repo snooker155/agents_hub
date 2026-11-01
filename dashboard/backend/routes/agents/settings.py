@@ -12,7 +12,7 @@ from models import AgentMemoryUpdate, AgentMemoryWriteUpdate, AgentSkillsConfigU
 
 
 
-from common import record_access
+from common import access, identity, record_access
 from ._common import (package, get_factory, _workspace_memory_overrides)
 from .listing import _workspace_capacity_overrides
 import logging
@@ -28,17 +28,23 @@ async def get_agent_workspace_capacities(agent_id: str):
 
 
 @router.get("/{agent_id}/history")
-async def get_agent_history(agent_id: str, workspace: Optional[str] = None, limit: int = 200):
-    """This agent's newest runs, paged in SQL like /api/messages."""
+async def get_agent_history(agent_id: str, workspace: Optional[str] = None, limit: int = 200,
+                            request: Request = cast(Request, None)):
+    """This agent's newest runs, paged in SQL like /api/messages.
+
+    Narrowed after the page is read to the runs whose workspace the caller
+    can see (a no-op outside ``multi`` mode): the default workspace's view
+    spans every workspace, and a run that names none is default's
+    (common/access.py)."""
     # Scope to the active workspace; the default workspace sees every workspace.
     ws = workspace if workspace and workspace != "default" else None
     page = run_manager.query_runs(agent_id=agent_id, workspace=ws, limit=max(1, min(int(limit), 500)))
-    return page["items"]
+    return access.filter_by_workspace(identity.request_principal(request), page["items"])
 
 
 @router.get("/{agent_id}/logs")
 async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: int = 100,
-                         workspace: Optional[str] = None):
+                         workspace: Optional[str] = None, request: Request = cast(Request, None)):
     spec = registry.get_agent(agent_id)
     if not spec:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -56,6 +62,10 @@ async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: in
         node_id=node_id or None,
         limit=max(1, min(int(limit), 500)) if limit > 0 else 500,
     )["items"]
+    # The default workspace's view spans every workspace: keep to what the
+    # caller can see, a run or instance naming none being default's.
+    principal = identity.request_principal(request)
+    agent_runs = access.filter_by_workspace(principal, agent_runs)
 
     for r in agent_runs:
         lp = r.get("log_file")
@@ -67,6 +77,7 @@ async def get_agent_logs(agent_id: str, node_id: Optional[str] = None, limit: in
     instances = [i for i in list_resident() if i.get("agent_id") == agent_id]
     if ws_scoped:
         instances = [i for i in instances if i.get("workspace") == workspace]
+    instances = access.filter_by_workspace(principal, instances)
     if node_id:
         instances = [i for i in instances if str(i.get("instance_id") or "") == str(node_id)]
     instances.sort(key=lambda i: i.get("started_at") or "", reverse=True)

@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional, cast
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from common import access, identity
+from common import access, identity, record_access
 from common.auth import WS_EDITOR, WS_VIEWER
 from evals import store
 from evals.models import Case, EvalSet, GraderSpec, RunConfig
@@ -187,11 +187,64 @@ def _require(request: Optional[Request], workspace: Optional[str], role: str) ->
     identity.require_role(identity.request_principal(request), workspace=workspace or "default", role=role)
 
 
+def _require_record(request: Optional[Request], workspace: Optional[str], role: str) -> None:
+    """:func:`_require` for a record's own workspace, never the one the request
+    names: a set, run or suggestion is reached by id, so the middleware has
+    nothing to check it against. A record that names none is the default
+    workspace's (common/access.py)."""
+    access.require_visible(identity.request_principal(request), workspace)
+    _require(request, workspace, role)
+
+
+#: Target kinds whose record names a workspace (common/record_access.py); a
+#: scenario has no resolver there and is left to the runner.
+_RESOLVED_TARGETS = ("agent", "flow", "team", "loop")
+
+
+def _require_targets(request: Optional[Request], workspace: Optional[str],
+                     configs: List[RunConfig]) -> None:
+    """403 unless every agent, flow, team or loop these configs run lives in
+    ``workspace`` (none = default) or everywhere (a system or shared agent).
+
+    The targets are named by id in the body, which the middleware never reads:
+    without this a member of one workspace could run another's agent on their
+    own cases and read its answers back in the matrix.
+    """
+    if not record_access.restricted(identity.request_principal(request)):
+        return
+    ws = (workspace or "").strip() or "default"
+    for cfg in configs:
+        kind, target_id = cfg.target_kind, cfg.target_id
+        if not target_id or kind not in _RESOLVED_TARGETS:
+            continue
+        found = record_access.resolve(kind, str(target_id))
+        if found is None or found.everywhere or found.workspace == ws:
+            continue
+        raise HTTPException(status_code=403, detail=f"this {kind} is not in workspace '{ws}'")
+
+
+def _require_agent_definition_writable(request: Optional[Request], agent_id: Optional[str]) -> None:
+    """403 unless the caller may rewrite this agent's instructions.md: the rule
+    the middleware applies to ``PUT /api/agents/{id}/definition``
+    (common/record_access.py: ``editor`` in the agent's workspace, and only an
+    administrator for a system agent or a copy sharing one's prompt). Applying
+    a suggestion writes through that route's function, not its path, so the
+    middleware never sees it."""
+    principal = identity.request_principal(request)
+    if not agent_id or principal is None or not record_access.restricted(principal):
+        return
+    why = record_access.check(
+        method="PUT", path=f"/api/agents/{agent_id}/definition", named_workspace=None,
+        role_in=lambda ws: identity.membership_role(ws, principal.id))
+    if why:
+        raise HTTPException(status_code=403, detail=why)
+
+
 def _set_or_404(eval_set_id: str, request: Optional[Request], role: str) -> EvalSet:
     evalset = store.get_eval_set(eval_set_id)
     if not evalset:
         raise HTTPException(status_code=404, detail="Eval set not found")
-    _require(request, evalset.workspace, role)
+    _require_record(request, evalset.workspace, role)
     return evalset
 
 
@@ -199,31 +252,45 @@ def _run_or_404(eval_run_id: str, request: Optional[Request], role: str):
     run = store.get_eval_run(eval_run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Eval run not found")
-    workspace = run.workspace
-    if not workspace:
-        evalset = store.get_eval_set(run.eval_set_id)
-        workspace = evalset.workspace if evalset else None
-    _require(request, workspace, role)
+    _require_record(request, _run_workspace(run), role)
     return run
 
 
-def _suggestion_or_404(suggestion_id: str, request: Optional[Request]) -> None:
+def _run_workspace(run, sets: Optional[Dict[str, Optional[str]]] = None) -> Optional[str]:
+    """The workspace an eval run belongs to: its own, else its set's (an older
+    run did not record one). None when neither names one. ``sets`` maps set
+    ids to workspaces already read, to spare a lookup per run."""
+    if run.workspace:
+        return run.workspace
+    if sets is not None and run.eval_set_id in sets:
+        return sets[run.eval_set_id]
+    evalset = store.get_eval_set(run.eval_set_id)
+    return evalset.workspace if evalset else None
+
+
+def _suggestion_or_404(suggestion_id: str, request: Optional[Request]):
     suggestion = store.get_prompt_suggestion(suggestion_id)
     if suggestion is None:
         raise HTTPException(status_code=404, detail="Prompt suggestion not found")
-    _require(request, suggestion.workspace, WS_EDITOR)
+    _require_record(request, suggestion.workspace, WS_EDITOR)
+    return suggestion
 
 
 # ── Eval sets ─────────────────────────────────────────────────────────────────
 
 @router.get("/evals")
 async def list_evals(workspace: Optional[str] = None, request: Request = _NO_REQUEST):
+    """The eval sets of ``workspace`` (every workspace's when none is named).
+
+    A set that names no workspace is listed under default only, and only for
+    a caller who sees every workspace: a member of default does not see it
+    (common/access.py).
+    """
     if workspace:
         _require(request, workspace, WS_VIEWER)
-    sets = [e.to_dict() for e in store.list_eval_sets(workspace)]
+    sets = [e.to_dict() for e in store.list_eval_sets(workspace, strict=True)]
     principal = identity.request_principal(request)
-    return {"eval_sets": [e for e in sets
-                          if access.can_see_workspace(principal, e.get("workspace") or "default")]}
+    return {"eval_sets": access.filter_by_workspace(principal, sets)}
 
 
 @router.post("/evals")
@@ -248,6 +315,8 @@ async def create_eval(data: EvalSetIn, request: Request = _NO_REQUEST):
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    baseline = evalset.default_config()
+    _require_targets(request, data.workspace, [baseline] if baseline else [])
     return store.save_eval_set(evalset).to_dict()
 
 
@@ -267,10 +336,19 @@ def _eval_chat_id(workspace: Optional[str]) -> str:
     return (workspace or "default").strip() or "default"
 
 
-def _eval_state(workspace: str) -> Dict[str, Any]:
-    """The sets in this workspace and their most recent runs."""
+def _eval_state(workspace: str, names: Optional[set] = None) -> Dict[str, Any]:
+    """The sets in this workspace and their most recent runs.
+
+    ``names`` is what the person on the page may see
+    (``record_access.visible_names``, None for everything): this goes into the
+    turn's prompt and back to the page, so a set or run that names no
+    workspace stays out unless they see every workspace.
+    """
     sets = []
-    for e in store.list_eval_sets(workspace):
+    found = [e for e in store.list_eval_sets(workspace, strict=True)
+             if record_access.visible(names, e.workspace)]
+    owners = {e.eval_set_id: e.workspace for e in found}
+    for e in found:
         d = e.to_dict()
         sets.append({
             "eval_set_id": d.get("eval_set_id"),
@@ -281,15 +359,22 @@ def _eval_state(workspace: str) -> Dict[str, Any]:
             "cases": len(d.get("cases") or []),
             "graders": [g.get("kind") for g in (d.get("graders") or [])],
         })
-    runs = [r.to_dict() for r in store.list_eval_runs(None, 10)]
+    runs = []
+    for r in store.list_eval_runs(None, 50):
+        own = _run_workspace(r, owners)
+        if ((own or "").strip() or "default") == workspace and record_access.visible(names, own):
+            runs.append(r.to_dict())
+        if len(runs) >= 10:
+            break
     return {"workspace": workspace, "eval_sets": sets, "recent_runs": runs}
 
 
-def _eval_chat_prompt(workspace: str, history: List[dict], user_message: str) -> str:
+def _eval_chat_prompt(workspace: str, history: List[dict], user_message: str,
+                      names: Optional[set] = None) -> str:
     """One turn's prompt: what exists here, then the talk."""
     from chat.entity_chat import transcript_block
 
-    state = _eval_state(workspace)
+    state = _eval_state(workspace, names)
     parts = [
         "You are on the Evals page of this platform. The user is looking at the "
         "sets and runs in this workspace: everything you build or run appears "
@@ -331,7 +416,8 @@ def _load_eval_chat(request):
     # Reading the history is a viewer's; sending or clearing it acts on the
     # workspace's sets, an editor's.
     _require(request, ws, WS_VIEWER if request.method == "GET" else WS_EDITOR)
-    return SimpleNamespace(entity_id=ws, workspace=ws)
+    return SimpleNamespace(entity_id=ws, workspace=ws,
+                           names=record_access.visible_names(request))
 
 
 def _load_eval_send(request, body):
@@ -341,13 +427,13 @@ def _load_eval_send(request, body):
         raise HTTPException(status_code=503,
                             detail=f"The '{EVAL_AGENT_ID}' agent is not registered")
     ctx = _load_eval_chat(request)
-    ctx.before = _eval_state(ctx.workspace)
+    ctx.before = _eval_state(ctx.workspace, ctx.names)
     return ctx
 
 
 def _eval_summarize(ctx):
     def _summarize() -> str:
-        after = _eval_state(ctx.workspace)
+        after = _eval_state(ctx.workspace, ctx.names)
         before = ctx.before
         if after == before:
             return ""
@@ -373,7 +459,7 @@ def _eval_context_setup(ctx):
 
 
 async def _eval_post_turn(queue, ctx):
-    await queue.put({"type": "evals", **_eval_state(ctx.workspace)})
+    await queue.put({"type": "evals", **_eval_state(ctx.workspace, getattr(ctx, "names", None))})
 
 
 # Declared before the ``/evals/{eval_set_id}`` routes below — "chat" is a
@@ -383,7 +469,8 @@ router.include_router(build_entity_chat_router(EntityChatRoute(
     path="/evals/chat",
     load=_load_eval_chat,
     load_for_send=_load_eval_send,
-    prompt=lambda ctx, history, msg: _eval_chat_prompt(ctx.workspace, history, msg),
+    prompt=lambda ctx, history, msg: _eval_chat_prompt(ctx.workspace, history, msg,
+                                                       getattr(ctx, "names", None)),
     spec=lambda ctx: EntityChatSpec(
         kind=EVAL_CHAT_KIND, agent_id=EVAL_AGENT_ID,
         title=f"{ctx.workspace} · evals", workspace=ctx.workspace,
@@ -427,6 +514,8 @@ async def update_eval(eval_set_id: str, data: EvalSetIn, request: Request = _NO_
             evalset.cases = [_case_from_in(c, evalset.workspace) for c in data.cases]
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+    baseline = evalset.default_config()
+    _require_targets(request, evalset.workspace, [baseline] if baseline else [])
     return store.save_eval_set(evalset).to_dict()
 
 
@@ -479,12 +568,12 @@ async def eval_sets_for_run(run_id: str, request: Request = _NO_REQUEST):
     info = _run_target_info(run_id)
     if info is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    _require(request, info["workspace"], WS_VIEWER)
+    _require_record(request, info["workspace"], WS_VIEWER)
     from common.run_status import is_terminal
-    fitting = [
-        e.to_dict() for e in store.list_eval_sets(info["workspace"])
+    fitting = access.filter_by_workspace(identity.request_principal(request), [
+        e.to_dict() for e in store.list_eval_sets(info["workspace"] or "default", strict=True)
         if e.target_kind == info["target_kind"]
-    ]
+    ])
     preview, preview_error = None, None
     try:
         case = case_from_run(run_id)
@@ -529,9 +618,16 @@ def start_eval_run(eval_set_id: str, data: Optional[RunEvalIn] = None, request: 
     if data.workspace and data.workspace != (evalset.workspace or "default"):
         _require(request, data.workspace, WS_EDITOR)
     try:
+        configs = _configs_from_in(data.configs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    baseline = evalset.default_config()
+    _require_targets(request, data.workspace or evalset.workspace,
+                     configs or ([baseline] if baseline else []))
+    try:
         run = run_eval(
             eval_set_id,
-            _configs_from_in(data.configs),
+            configs,
             workspace=data.workspace,
             cost_ceiling=data.cost_ceiling,
             mode=data.mode,
@@ -652,7 +748,8 @@ def apply_suggestion_route(suggestion_id: str, data: Optional[ApplySuggestionIn]
     """Write the suggestion's instructions.md (through the definition editor's
     own path, so it is snapshotted), and optionally re-run the eval set — a
     plain ``def`` since a rerun is a real sweep, not free."""
-    _suggestion_or_404(suggestion_id, request)
+    suggestion = _suggestion_or_404(suggestion_id, request)
+    _require_agent_definition_writable(request, suggestion.agent_id)
     from evals.prompt_suggest import SuggestionError, apply_suggestion
     try:
         return apply_suggestion(suggestion_id, rerun=bool(data and data.rerun))

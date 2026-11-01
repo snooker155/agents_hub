@@ -68,6 +68,17 @@ def _visible_tasks(request: Request, tasks: List) -> List:
     return [t for t in tasks if access.can_see_workspace(principal, t.workspace)]
 
 
+def _visible_task(task_id: UUID, request: Request):
+    """The task, 404 when there is none, 403 when the caller may not see its
+    workspace (one that names none is default's,
+    common/access.py)."""
+    t = tasks_service.get_task(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+    access.require_visible(identity.request_principal(request), t.workspace)
+    return t
+
+
 @router.get("", response_model=Union[List[TaskListItem], TaskPage])
 async def list_tasks(request: Request, workspace: Optional[str] = None,
                      limit: Optional[int] = None, offset: Optional[int] = None):
@@ -240,7 +251,8 @@ async def get_task(task_id: UUID, request: Request):
 
     # Also fetch subtasks
     all_tasks = tasks_service.list_tasks()
-    subtasks = [task_to_dict(st) for st in all_tasks if st.parent_id == task_id]
+    subtasks = [task_to_dict(st) for st in _visible_tasks(request, all_tasks)
+                if st.parent_id == task_id]
 
     result = task_to_dict(t)
     result["subtasks"] = subtasks
@@ -379,11 +391,9 @@ async def set_task_workspace(task_id: UUID, payload: TaskWorkspaceUpdate):
 _INTERNAL_PREFIXES = (".logs/", ".progress.json", ".task_result")
 
 @router.get("/{task_id}/workspace-files")
-async def list_workspace_files(task_id: UUID):
+async def list_workspace_files(task_id: UUID, request: Request):
     from datetime import datetime, timezone
-    t = tasks_service.get_task(task_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Task not found")
+    t = _visible_task(task_id, request)
     name = (t.workspace or '').strip()
     if not name:
         return {"files": []}
@@ -438,16 +448,14 @@ async def list_workspace_files(task_id: UUID):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _resolve_task_file(task_id: UUID, path: str) -> Path:
+def _resolve_task_file(task_id: UUID, path: str, request: Optional[Request] = None) -> Path:
     """Resolve a workspace-relative file path within a task's project root.
 
     Task workspace files are listed relative to ``resolve_project_root`` (the
     workspace root, or its ``{project}`` subfolder when the task has a project),
     so file preview/raw access must resolve against the same root.
     """
-    t = tasks_service.get_task(task_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Task not found")
+    t = _visible_task(task_id, request)
     name = (t.workspace or "").strip()
     if not name:
         raise HTTPException(status_code=404, detail="Task has no workspace")
@@ -470,11 +478,11 @@ def _resolve_task_file(task_id: UUID, path: str) -> Path:
 
 
 @router.get("/{task_id}/file-content")
-async def get_task_file_content(task_id: UUID, path: str):
+async def get_task_file_content(task_id: UUID, path: str, request: Request):
     """Return a preview of a file produced/modified by a task."""
     from routes.workspaces import _extract_pdf_preview
 
-    candidate = _resolve_task_file(task_id, path)
+    candidate = _resolve_task_file(task_id, path, request)
     is_pdf = candidate.suffix.lower() == ".pdf"
     max_bytes = 5_000_000 if is_pdf else 256_000
     try:
@@ -501,9 +509,9 @@ async def get_task_file_content(task_id: UUID, path: str):
 
 
 @router.get("/{task_id}/file-raw")
-async def get_task_file_raw(task_id: UUID, path: str):
+async def get_task_file_raw(task_id: UUID, path: str, request: Request):
     """Serve a task file's raw bytes (e.g. for in-browser PDF rendering)."""
-    candidate = _resolve_task_file(task_id, path)
+    candidate = _resolve_task_file(task_id, path, request)
     media_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
     return FileResponse(
         str(candidate),
@@ -974,8 +982,10 @@ def _answer_budget_pause(request: Request, task_id: UUID, t: Any, pending: Dict[
 
 
 @router.get("/{task_id}/agent-status")
-async def get_agent_status(task_id: UUID):
+async def get_agent_status(task_id: UUID, request: Request):
     task = tasks_service.get_task(task_id)
+    if task:
+        access.require_visible(identity.request_principal(request), task.workspace)
     run_id = str(getattr(task, "assigned_agent_run_id", None) or "") if task else ""
     status = run_manager.get_status(str(task_id), run_id=run_id or None)
     # print(f"Fetched status for task {task_id}: {status}, current agent state: {task.agent_state if task else 'N/A'}")
@@ -996,10 +1006,8 @@ async def get_agent_status(task_id: UUID):
 
 
 @router.get("/{task_id}/execution-log")
-async def get_task_execution_log(task_id: UUID):
-    t = tasks_service.get_task(task_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Task not found")
+async def get_task_execution_log(task_id: UUID, request: Request):
+    _visible_task(task_id, request)
     # Every run of the task and of its subtasks (tasks.service.get_task_runs),
     # oldest first: the decomposer, the work, the grader, and for a parent
     # whose agent works through its subtasks, the work done there.
@@ -1025,19 +1033,15 @@ async def get_task_execution_log(task_id: UUID):
 
 
 @router.get("/{task_id}/activity-log")
-async def get_task_activity_log(task_id: UUID):
-    t = tasks_service.get_task(task_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Task not found")
+async def get_task_activity_log(task_id: UUID, request: Request):
+    _visible_task(task_id, request)
     log = tasks_service.get_task_activity_log(task_id)
     return {"activity_log": log}
 
 
 @router.get("/{task_id}/result")
-async def get_task_result(task_id: UUID):
-    t = tasks_service.get_task(task_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Task not found")
+async def get_task_result(task_id: UUID, request: Request):
+    _visible_task(task_id, request)
     results = tasks_service.get_task_results(task_id)
     # Backward-compat: expose the latest result at top level
     latest = results[-1] if results else {}
@@ -1167,11 +1171,10 @@ async def decompose_task(task_id: UUID, payload: DecomposeRequest | None = None)
 
 
 @router.get("/{task_id}/decompose")
-async def decompose_status(task_id: UUID):
+async def decompose_status(task_id: UUID, request: Request):
     """Where the task's latest decomposition stands and the tree under it
     (key and title of each task, depth first)."""
-    if not tasks_service.get_task(task_id):
-        raise HTTPException(status_code=404, detail="Task not found")
+    _visible_task(task_id, request)
     return {"status": task_decompose.status(task_id),
             "tree": [{k: n[k] for k in ("id", "key", "title", "status", "parent_id", "depth")}
                      for n in task_decompose.subtree(task_id)]}

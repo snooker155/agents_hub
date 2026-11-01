@@ -21,12 +21,31 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from connections import store as connection_store
 
-router = APIRouter(prefix="/api/connections", tags=["connections"])
+def _require_connection_visible(request: Request) -> None:
+    """Router dependency: a route naming ``{connection_id}`` answers 404 when
+    the caller may not see that connection's workspace, the same answer
+    :func:`_visible_or_404` gives a connection filed elsewhere. Filing is not
+    access control, but in ``multi`` mode membership is: a connection that
+    names no workspace is default's (common/access.py)."""
+    connection_id = (getattr(request, "path_params", None) or {}).get("connection_id")
+    if not connection_id:
+        return
+    from common import access, identity
+    principal = identity.request_principal(request)
+    if access.visible_workspaces(principal) is None:
+        return
+    record = connection_store.get_connection(str(connection_id))
+    if record is not None and not access.can_see_workspace(principal, record.get("workspace")):
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+
+router = APIRouter(prefix="/api/connections", tags=["connections"],
+                   dependencies=[Depends(_require_connection_visible)])
 
 
 class CreateConnection(BaseModel):
@@ -102,9 +121,13 @@ def _retention(connection: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.get("")
-async def list_connections(workspace: Optional[str] = None):
-    """Every connection, with how much each has reported lately."""
-    records = connection_store.list_connections(workspace)
+async def list_connections(request: Request, workspace: Optional[str] = None):
+    """Every connection, with how much each has reported lately: the ones the
+    caller may see (the store reads a connection that names no workspace as
+    default's, seen by its members)."""
+    from common import access, identity
+    records = access.filter_by_workspace(identity.request_principal(request),
+                                         connection_store.list_connections(workspace))
     return {"connections": [{**r, "stats": _stats(r["id"]), "retention": _retention(r)}
                             for r in records],
             "kinds": list(connection_store.KINDS)}

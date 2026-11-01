@@ -9,6 +9,8 @@ if str(_project_root) not in sys.path:
 from projects.models import Project
 from typing import Optional
 
+from fastapi import Request
+
 from projects.graph_store import ProjectGraphStore
 from projects.storage import ProjectStore  # noqa: F401
 from workspace import get_workspace_folder, project_folder_name
@@ -53,3 +55,21 @@ def _project_root_path(project) -> Optional[Path]:
     folder = project_folder_name(project.name)
     root = (ws / folder).resolve()
     return root if root.exists() else None
+
+
+def require_project_visible(request: Request) -> None:
+    """Router dependency: a route naming ``{project_id}`` answers 403 when the
+    caller may not see that project's workspace, one that names none being
+    default's (common/access.py). The middleware checks only a
+    workspace the request names, and these routes name a project instead. A
+    project that does not exist is left to the route's own 404."""
+    project_id = (getattr(request, "path_params", None) or {}).get("project_id")
+    if not project_id:
+        return
+    from common import access, identity
+    principal = identity.request_principal(request)
+    if access.visible_workspaces(principal) is None:
+        return
+    project = store().get(str(project_id))
+    if project is not None:
+        access.require_visible(principal, project.workspace)

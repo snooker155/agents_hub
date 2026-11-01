@@ -166,7 +166,8 @@ def launch_delegation(parent_task_id: str, request: Mapping[str, Any]) -> Dict[s
     extra_env = request.get("env")
     extra_env = {str(k): str(v) for k, v in extra_env.items()} if isinstance(extra_env, Mapping) else {}
 
-    run_id = preregister_run(str(child.id), agent_id, session_id=session_id)
+    run_id = preregister_run(str(child.id), agent_id, session_id=session_id,
+                             workspace=child.workspace or "default")
     try:
         with child_env(extra_env):
             run_id, _ = start_run(str(child.id), agent_id, params, run_id=run_id)

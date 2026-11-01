@@ -35,12 +35,13 @@ import asyncio
 import json
 from typing import Any, Dict, List, Optional, cast
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from chat.entity_chat import EntityChatSpec
 from chat.entity_chat_router import EntityChatRoute, build_entity_chat_router
+from common import access, identity
 from common.config import playground_enabled
 import logging
 
@@ -63,6 +64,22 @@ if playground_enabled():
         ScenarioResumeError, resume_scenario_run, start_scenario_run,
         stop_scenario_run, trigger_scenario_run,
     )
+
+
+def _require_seen(request: Optional[Request], workspace: Optional[str]) -> None:
+    """403 unless the caller may see a record filed under ``workspace``. One
+    that names none (an older world, scenario or run) is the default
+    workspace's (common/access.py)."""
+    access.require_visible(identity.request_principal(request), workspace)
+
+
+def _sim_run_workspace(run) -> Optional[str]:
+    """A run's own workspace, else its scenario's (a run started before runs
+    recorded one)."""
+    if run.workspace:
+        return run.workspace
+    scenario = store.get_scenario(run.scenario_id)
+    return scenario.workspace if scenario else None
 
 
 class RoleIn(BaseModel):
@@ -173,15 +190,21 @@ def _scenario_from_in(data: ScenarioIn, existing: Optional[Scenario] = None) -> 
 # ── Environments ──────────────────────────────────────────────────────────────
 
 @router.get("/environments")
-async def get_environments(workspace: Optional[str] = None):
+async def get_environments(request: Request, workspace: Optional[str] = None):
     """The environment catalog. Each entry declares its own parameter schema,
     action API and renderer, so adding an environment touches no frontend code.
 
     Authored worlds are in here too, in the same shape and marked ``custom``:
     "which worlds can I run in" has one answer, and a picker split in two would
-    make a world you built yourself feel like a second-class one.
+    make a world you built yourself feel like a second-class one. Only the
+    worlds the caller can see: a shipped environment belongs to no workspace
+    and is everyone's.
     """
-    return {"environments": list_environments(workspace)}
+    principal = identity.request_principal(request)
+    return {"environments": [
+        e for e in list_environments(workspace, strict=True)
+        if not e.get("custom") or access.can_see_workspace(principal, e.get("workspace"))
+    ]}
 
 
 # ── Worlds ────────────────────────────────────────────────────────────────────
@@ -356,13 +379,16 @@ def _live_change_tap(read_state, payload_event, **diff_kwargs):
 
 
 @router.get("/worlds")
-async def get_worlds(workspace: Optional[str] = None):
+async def get_worlds(request: Request, workspace: Optional[str] = None):
     """Every world this workspace can cast a scenario in, plus its usage count.
 
     A world's scenarios are what makes deleting it consequential, so the count
-    is on the card rather than a click away.
+    is on the card rather than a click away. Only the worlds the caller can
+    see; one that names no workspace is listed under default.
     """
-    worlds = store.list_worlds(workspace)
+    principal = identity.request_principal(request)
+    worlds = [w for w in store.list_worlds(workspace, strict=True)
+              if access.can_see_workspace(principal, w.workspace)]
     return {"worlds": [
         {**_world_payload(spec),
          "scenarios": store.scenarios_using_world(spec.world_id)}
@@ -421,10 +447,11 @@ async def validate_world_draft(data: Dict[str, Any] = Body(default_factory=dict)
 
 
 @router.get("/worlds/{world_id}")
-async def get_world(world_id: str):
+async def get_world(world_id: str, request: Request):
     spec = store.get_world(world_id)
     if not spec:
         raise _refuse(404, "world_not_found", "World not found")
+    _require_seen(request, spec.workspace)
     return {**_world_payload(spec),
             "scenarios": store.scenarios_using_world(world_id)}
 
@@ -587,6 +614,7 @@ def _load_world_chat(request):
     world = store.get_world(world_id)
     if not world:
         raise _refuse(404, "world_not_found", "World not found")
+    _require_seen(request, world.workspace)
     return SimpleNamespace(entity_id=world_id, world=world)
 
 
@@ -770,14 +798,18 @@ async def generate_world(data: WorldGenerateIn):
 # ── Scenarios ─────────────────────────────────────────────────────────────────
 
 @router.get("/scenarios")
-async def get_scenarios(workspace: Optional[str] = None):
+async def get_scenarios(request: Request, workspace: Optional[str] = None):
     """The catalogue, each scenario carrying its most recent run.
 
     A scenario has no status of its own — what the catalogue is asked is "is
     this one running, and how did it end last time", and that is a property of
-    its last run. One windowed query answers it for the whole page.
+    its last run. One windowed query answers it for the whole page. Only the
+    scenarios the caller can see; one that names no workspace is listed under
+    default.
     """
-    scenarios = store.list_scenarios(workspace)
+    principal = identity.request_principal(request)
+    scenarios = [s for s in store.list_scenarios(workspace, strict=True)
+                 if access.can_see_workspace(principal, s.workspace)]
     latest = store.latest_runs_by_scenario([s.scenario_id for s in scenarios])
     return {"scenarios": [
         {**s.to_dict(),
@@ -843,10 +875,11 @@ async def create_scenario(data: ScenarioIn):
 
 
 @router.get("/scenarios/{scenario_id}")
-async def get_scenario(scenario_id: str):
+async def get_scenario(scenario_id: str, request: Request):
     scenario = store.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
+    _require_seen(request, scenario.workspace)
     return scenario.to_dict()
 
 
@@ -1015,7 +1048,7 @@ async def start_run(scenario_id: str, workspace: Optional[str] = None):
 
 
 @router.get("/runs")
-async def get_runs(scenario_id: Optional[str] = None, limit: int = 50,
+async def get_runs(request: Request, scenario_id: Optional[str] = None, limit: int = 50,
                    workspace: Optional[str] = None):
     """Run history, newest first.
 
@@ -1023,8 +1056,15 @@ async def get_runs(scenario_id: Optional[str] = None, limit: int = 50,
     offers to switch between. Without it, it is every scenario's, which is the
     history page: there each row has to say which scenario it belongs to, so
     the names are resolved in one query and carried on the runs.
+
+    Only the runs the caller can see, by the run's own workspace or, for a run
+    that recorded none, its scenario's; filtered after the query, so a page
+    can come back short of ``limit``.
     """
-    runs = store.list_sim_runs(scenario_id, limit, workspace=workspace)
+    principal = identity.request_principal(request)
+    runs = store.list_sim_runs(scenario_id, limit, workspace=workspace, strict=True)
+    if access.visible_workspaces(principal) is not None:
+        runs = [r for r in runs if access.can_see_workspace(principal, _sim_run_workspace(r))]
     if scenario_id:
         return {"runs": [r.to_dict() for r in runs]}
     names = store.scenario_names([r.scenario_id for r in runs])
@@ -1035,10 +1075,11 @@ async def get_runs(scenario_id: Optional[str] = None, limit: int = 50,
 
 
 @router.get("/runs/{sim_run_id}")
-async def get_run(sim_run_id: str):
+async def get_run(sim_run_id: str, request: Request):
     run = store.get_sim_run(sim_run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Simulation run not found")
+    _require_seen(request, _sim_run_workspace(run))
     scenario = store.get_scenario(run.scenario_id)
     return {
         **run.to_dict(),
@@ -1047,12 +1088,13 @@ async def get_run(sim_run_id: str):
 
 
 @router.get("/runs/{sim_run_id}/ticks")
-async def get_ticks(sim_run_id: str, since: int = -1):
+async def get_ticks(sim_run_id: str, request: Request, since: int = -1):
     """The tick log. ``since`` returns only ticks after that number, so the UI
     can poll cheaply while a sim is still running."""
     run = store.get_sim_run(sim_run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Simulation run not found")
+    _require_seen(request, _sim_run_workspace(run))
     return {
         "sim_run_id": sim_run_id,
         "status": run.status,
@@ -1066,17 +1108,18 @@ async def get_ticks(sim_run_id: str, since: int = -1):
     }
 
 
-def _story_sources(sim_run_id: str):
+def _story_sources(sim_run_id: str, request: Optional[Request] = None):
     """The run, its scenario and its ticks — everything a chronicle is made of."""
     run = store.get_sim_run(sim_run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Simulation run not found")
     scenario = store.get_scenario(run.scenario_id)
+    _require_seen(request, run.workspace or (scenario.workspace if scenario else None))
     return run, scenario, store.list_ticks(sim_run_id)
 
 
 @router.get("/runs/{sim_run_id}/story")
-async def get_story(sim_run_id: str, lang: str = "en"):
+async def get_story(sim_run_id: str, request: Request, lang: str = "en"):
     """The run as continuous prose.
 
     The chronicle is composed on every request rather than stored: it is a
@@ -1085,7 +1128,7 @@ async def get_story(sim_run_id: str, lang: str = "en"):
     up to its newest tick. The model's retelling, which costs a call, is the
     one part that is kept.
     """
-    run, scenario, ticks = _story_sources(sim_run_id)
+    run, scenario, ticks = _story_sources(sim_run_id, request)
     chronicle = story_lib.compose(
         run.to_dict(), ticks,
         scenario=scenario.to_dict() if scenario else None, lang=lang,
@@ -1100,7 +1143,7 @@ async def get_story(sim_run_id: str, lang: str = "en"):
 
 
 @router.post("/runs/{sim_run_id}/story/narrate")
-async def narrate_story(sim_run_id: str, lang: str = "en"):
+async def narrate_story(sim_run_id: str, request: Request, lang: str = "en"):
     """Ask a model to retell the run as a story, and keep what it wrote.
 
     One call, made only when the button is pressed: the chronicle above is
@@ -1108,7 +1151,7 @@ async def narrate_story(sim_run_id: str, lang: str = "en"):
     is reported but deliberately not folded into the run's own total — what a
     simulation cost and what it cost to describe it are different questions.
     """
-    run, scenario, ticks = _story_sources(sim_run_id)
+    run, scenario, ticks = _story_sources(sim_run_id, request)
     if not ticks:
         raise HTTPException(status_code=400, detail="This run has nothing to tell yet")
     chronicle = story_lib.compose(
@@ -1339,6 +1382,7 @@ def _load_scenario_chat(request):
     scenario = store.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
+    _require_seen(request, scenario.workspace)
     return SimpleNamespace(entity_id=scenario_id, scenario=scenario)
 
 

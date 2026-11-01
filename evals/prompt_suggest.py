@@ -143,7 +143,7 @@ def _record_suggestion_run(evalset: EvalSet, run: EvalRun, ref: Dict[str, str],
         when = utc_iso()
         rm.upsert_run({
             "run_id": run_id, "agent_id": AGENT_ID, "channel": EVAL_CHANNEL,
-            "workspace": evalset.workspace, "status": "completed", "exit_code": 0,
+            "workspace": evalset.workspace or "default", "status": "completed", "exit_code": 0,
             "title": f"Prompt suggestion for {evalset.name or evalset.eval_set_id}",
             "provider": ref.get("provider") or "", "model": ref.get("model") or "",
             "created_at": when, "started_at": when, "finished_at": when,

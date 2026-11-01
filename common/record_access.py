@@ -63,8 +63,14 @@ class Record:
     """Where a record lives, as far as access is concerned."""
     #: The workspace it belongs to; one that names none is the default one's.
     workspace: str
-    #: Readable from every workspace: a system agent, a shared one, or an
-    #: agent that predates workspace ownership.
+    #: It names no workspace at all (an old record, or one a bug left
+    #: unbound): the default one's, reached by whoever reaches default.
+    unbound: bool = False
+    #: The hub's own, in no workspace (a shell or gateway container): only an
+    #: administrator reaches it.
+    admin_only: bool = False
+    #: Readable from every workspace: a system agent or a shared one. An
+    #: agent that names no owner workspace is the default one's, not everyone's.
     everywhere: bool = False
     #: A system agent: only an administrator changes it.
     system: bool = False
@@ -105,6 +111,10 @@ def _workspace(value) -> str:
     return text or DEFAULT_WORKSPACE
 
 
+def _unbound(value) -> bool:
+    return not str(value or "").strip()
+
+
 def _agent(agent_id: str) -> Optional[Record]:
     from agents.registry import get_agent
     from workspace import system_agent_ids
@@ -115,8 +125,10 @@ def _agent(agent_id: str) -> Optional[Record]:
     system = bool(spec.system) or spec.id in system_ids
     owner = (spec.owner_workspace or "").strip()
     folder = spec.definition_id or spec.id
+    everywhere = system or bool(spec.shared)
     return Record(workspace=_workspace(owner),
-                  everywhere=system or bool(spec.shared) or not owner,
+                  unbound=not owner and not everywhere,
+                  everywhere=everywhere,
                   system=system,
                   system_definition=folder != spec.id and folder in system_ids)
 
@@ -129,20 +141,35 @@ def _flow(flow_id: str) -> Optional[Record]:
         return None
     if not flow:
         return None
+    shared = bool(flow.get("shared"))
     return Record(workspace=_workspace(flow.get("workspace")),
-                  everywhere=bool(flow.get("shared")))
+                  unbound=not shared and _unbound(flow.get("workspace")),
+                  everywhere=shared)
+
+
+#: What a run resolves to when it names no workspace and its flow, team or
+#: loop is gone: nothing else binds it, so it is the default workspace's.
+_ORPHAN = Record(workspace=DEFAULT_WORKSPACE, unbound=True)
 
 
 def _flow_run(run_id: str) -> Optional[Record]:
     from flow import run_store
     rec = run_store.get_flow_run(run_id)
-    return _flow(str(rec.get("flow_id") or "")) if rec else None
+    if not rec:
+        return None
+    found = _flow(str(rec.get("flow_id") or ""))
+    if found is not None:
+        return found
+    if not _unbound(rec.get("workspace")):
+        return Record(workspace=_workspace(rec.get("workspace")))
+    return _ORPHAN
 
 
 def _team(team_id: str) -> Optional[Record]:
     from teams import store
     team = store.get_team(team_id)
-    return Record(workspace=_workspace(team.workspace)) if team else None
+    return Record(workspace=_workspace(team.workspace),
+                  unbound=_unbound(team.workspace)) if team else None
 
 
 def _team_run(run_id: str) -> Optional[Record]:
@@ -152,13 +179,14 @@ def _team_run(run_id: str) -> Optional[Record]:
         return None
     if run.workspace:
         return Record(workspace=_workspace(run.workspace))
-    return _team(run.team_id)
+    return _team(run.team_id) or _ORPHAN
 
 
 def _loop(loop_id: str) -> Optional[Record]:
     from loops import store
     loop = store.get_loop(loop_id)
-    return Record(workspace=_workspace(loop.workspace)) if loop else None
+    return Record(workspace=_workspace(loop.workspace),
+                  unbound=_unbound(loop.workspace)) if loop else None
 
 
 def _loop_run(run_id: str) -> Optional[Record]:
@@ -168,7 +196,7 @@ def _loop_run(run_id: str) -> Optional[Record]:
         return None
     if run.workspace:
         return Record(workspace=_workspace(run.workspace))
-    return _loop(run.loop_id)
+    return _loop(run.loop_id) or _ORPHAN
 
 
 _RESOLVERS: dict = {
@@ -205,8 +233,10 @@ def decide(*, method: str, kind: str, rest: List[str], record: Optional[Record],
         return f"'{need}' access to workspace '{workspace}' is required"
     if record is None:
         return None
+    if record.admin_only:
+        return "Only an administrator can reach this"
     if write and record.system:
-        return "Only an administrator can change a system agent"
+        return f"Only an administrator can change a system {kind.replace('_', ' ')}"
     if write and record.system_definition and rest and rest[0] in AGENT_DEFINITION_SEGMENTS:
         return "This agent shares a system agent's prompt; only an administrator can change it"
     if not write and record.everywhere:
@@ -274,6 +304,93 @@ def require_chat_target(request, *, workspace: Optional[str], agent_id: Optional
                             detail=f"this {kind} is not in workspace '{ws}'")
 
 
+# ── Every collection, by route ───────────────────────────────────────────────
+# ``check`` above reads the path of the four collections it was written for.
+# Every other route that names a record by id is checked here: the middleware
+# finds the route the request matches, takes the first parameter of its
+# template (``/api/views/{view_id}``), and a table in common/record_kinds/
+# says what kind of record that parameter names. The record's own workspace
+# then decides, the same way ``decide`` does for an agent: a read needs
+# viewer there, a write editor, whatever workspace the request names. A route
+# whose first parameter is not a record (a workspace name, a provider, a
+# token) is listed as exempt with the reason; tests/test_record_routes.py
+# fails on any route that is in neither table.
+
+#: The collections ``check`` reads from the path itself.
+PATH_CHECKED = frozenset(_NOT_AN_ID)
+
+
+def route_key(template: str) -> Optional[Tuple[str, str]]:
+    """``(prefix, parameter)`` of a route template's first parameter:
+    ``("/api/views/", "view_id")`` for ``/api/views/{view_id}/state``. None
+    when the template has no parameter."""
+    start = template.find("{")
+    if start < 0:
+        return None
+    end = template.find("}", start)
+    name = template[start + 1:end].split(":", 1)[0]
+    return template[:start], name
+
+
+def matched_route(request) -> Optional[Tuple[str, dict]]:
+    """The template and path parameters of the route ``request`` matches, or
+    None. The middleware runs before routing, so it asks the router itself."""
+    from starlette.routing import Match
+    app = request.scope.get("app")
+    router = getattr(app, "router", None)
+    if router is None:
+        return None
+    partial = None
+    for route in router.routes:
+        try:
+            match, child = route.matches(request.scope)
+        except Exception:  # noqa: BLE001 - a route that cannot match this scope is not it
+            continue
+        if match == Match.FULL:
+            return getattr(route, "path", ""), dict(child.get("path_params") or {})
+        if match == Match.PARTIAL and partial is None:
+            partial = (getattr(route, "path", ""), dict(child.get("path_params") or {}))
+    return partial
+
+
+def check_route(*, method: str, template: str, params: dict,
+                named_workspace: Optional[str],
+                role_in: Callable[[str], Optional[str]],
+                query_workspace: Optional[str] = None) -> Optional[str]:
+    """:func:`decide` for a route of any collection other than the four
+    ``check`` reads, with the record its first parameter names looked up.
+    None when the route names no record or the caller may proceed.
+
+    A ``SCOPED`` route acts in the workspace ``query_workspace`` names (its
+    ``?workspace=``, which is what the route reads, not a header), so the
+    caller's role is checked there."""
+    from common import record_kinds
+    key = route_key(template)
+    if key is None:
+        return None
+    fallback = record_kinds.scope_of(key)
+    if fallback is not None:
+        ws = str(query_workspace or "").strip()
+        if not ws:
+            if fallback == "required":
+                return "name the workspace this is about with ?workspace="
+            ws = DEFAULT_WORKSPACE
+        write = (method or "").upper() not in SAFE_METHODS and not record_kinds.is_read(template)
+        need = WS_EDITOR if write else WS_VIEWER
+        if role_satisfies(role_in(ws), need):
+            return None
+        return f"'{need}' access to workspace '{ws}' is required"
+    named = record_kinds.record_of(key, params)
+    if named is None:
+        return None
+    kind, record_id = named
+    record = record_kinds.resolve(kind, record_id)
+    if record_kinds.is_read(template):
+        method = "GET"
+    return decide(method=method, kind=kind, rest=[], record=record,
+                  named_workspace=named_workspace, role_in=role_in)
+
+
 def visible_names(request) -> Optional[set]:
     """The workspaces the caller may list records from; None for all."""
     from common import access, identity
@@ -289,6 +406,7 @@ def visible(names: Optional[set], workspace) -> bool:
     return names is None or _workspace(workspace) in names
 
 
-__all__ = ["AGENT_READ_SEGMENTS", "AGENT_SELF_CHECKED_SEGMENTS", "AGENT_WORKSPACE_SEGMENTS", "Record", "check", "decide", "require_chat_target",
+__all__ = ["AGENT_READ_SEGMENTS", "AGENT_SELF_CHECKED_SEGMENTS", "AGENT_WORKSPACE_SEGMENTS", "PATH_CHECKED", "Record", "check",
+           "check_route", "decide", "matched_route", "require_chat_target", "route_key",
            "require_in_workspace", "resolve", "restricted", "target", "visible",
            "visible_names"]

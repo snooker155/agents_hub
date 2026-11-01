@@ -64,7 +64,9 @@ def _eval_cases(file_id: str, workspace: str) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     try:
         from evals import store as eval_store
-        for evalset in eval_store.list_eval_sets(workspace):
+        # Strict: a set that names no workspace is the default's alone, and
+        # not shown on another workspace's file (evals/store.py).
+        for evalset in eval_store.list_eval_sets(workspace, strict=True):
             for case in evalset.cases:
                 if file_id in (getattr(case, "file_ids", None) or []):
                     out.append({"eval_set_id": evalset.eval_set_id, "name": evalset.name,

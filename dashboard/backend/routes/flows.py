@@ -215,23 +215,31 @@ async def list_flows(workspace: Optional[str] = None, limit: Optional[int] = Non
       parses only those files.
     """
     allowed = get_workspace_metadata(workspace).get("allowed_flows") if workspace else None
+    names = record_access.visible_names(request)
 
     if allowed is not None:
         flow_ids = sorted(str(fid) for fid in allowed)
         total = len(flow_ids)
         page_ids = _paginate(flow_ids, limit, offset)
+        # The allowlist may name another workspace's flow on purpose, but a
+        # flow that names no workspace is default's: only a member of default
+        # is handed it.
         flows = [f for f in (flow_store.get_flow(fid) for fid in page_ids)
-                 if f and not flow_store.is_ephemeral(f)]
+                 if f and not flow_store.is_ephemeral(f)
+                 and (f.get("shared") or str(f.get("workspace") or "").strip()
+                      or record_access.visible(names, None))]
     elif workspace:
         # Keeps the flow picker in sync with the run_flow authorization check.
+        # same_workspace reads a flow that names no workspace as default's:
+        # listed in default for its members, in no other workspace.
         visible = [f for f in flow_store.list_flows()
-                   if same_workspace(f.get("workspace"), workspace)]
+                   if same_workspace(f.get("workspace"), workspace)
+                   and (f.get("shared") or record_access.visible(names, f.get("workspace")))]
         total = len(visible)
         flows = _paginate(visible, limit, offset)
-    elif record_access.visible_names(request) is not None:
+    elif names is not None:
         # A member asking for no workspace in particular sees the flows of
         # the workspaces they belong to (and shared ones), not every flow.
-        names = record_access.visible_names(request)
         mine = [f for f in flow_store.list_flows()
                 if f.get("shared") or record_access.visible(names, f.get("workspace"))]
         total = len(mine)

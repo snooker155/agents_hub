@@ -180,15 +180,21 @@ def _enrich(instance: dict, tasks_by_id: dict | None = None,
     }
 
 
-def _get_or_404(instance_id: str) -> dict:
+def _get_or_404(instance_id: str, request: Optional[Request] = None) -> dict:
+    """The instance, 404 when there is none, 403 when the caller may not see
+    its workspace (one that names none is default's,
+    common/access.py). ``request`` is left out only by the carrier's own
+    event post, which is not a person reading the record."""
     instance = store.get(instance_id)
     if not instance:
         raise HTTPException(status_code=404, detail="Instance not found")
+    if request is not None:
+        access.require_visible(identity.request_principal(request), instance.get("workspace"))
     return carrier.sync(instance) or instance
 
 
-def _resident_or_400(instance_id: str) -> dict:
-    instance = _get_or_404(instance_id)
+def _resident_or_400(instance_id: str, request: Optional[Request] = None) -> dict:
+    instance = _get_or_404(instance_id, request)
     if not carrier.is_resident(instance):
         raise HTTPException(status_code=400,
                             detail="Only an instance started with Run has a process of its own")
@@ -341,7 +347,7 @@ async def instances_summary(workspace: Optional[str] = None):
 
 @router.get("/{instance_id}")
 async def get_instance(instance_id: str, request: Request):
-    instance = _get_or_404(instance_id)
+    instance = _get_or_404(instance_id, request)
     task_id = instance.get("task_id")
     tasks_by_id = tasks_service.get_tasks([task_id]) if task_id else {}
     enriched = _enrich(instance, tasks_by_id, request)
@@ -350,21 +356,21 @@ async def get_instance(instance_id: str, request: Request):
 
 
 @router.get("/{instance_id}/runs")
-async def get_instance_runs(instance_id: str, limit: int = 50, offset: int = 0,
+async def get_instance_runs(instance_id: str, request: Request, limit: int = 50, offset: int = 0,
                             ascending: bool = False):
     """The instance's journal — the runs it performed, newest first by default."""
-    _get_or_404(instance_id)
+    _get_or_404(instance_id, request)
     return store.runs_for(instance_id, limit=max(1, min(int(limit), 500)),
                           offset=max(0, int(offset)), ascending=ascending)
 
 
 @router.get("/{instance_id}/timeline")
-async def get_instance_timeline(instance_id: str, max_turns: int = 40,
+async def get_instance_timeline(instance_id: str, request: Request, max_turns: int = 40,
                                 conversation_id: Optional[str] = None):
     """One conversation as an exchange: what was asked, what it answered, what
     it used to get there, plus anything still queued in it. The main
     conversation when ``conversation_id`` is left out."""
-    instance = _get_or_404(instance_id)
+    instance = _get_or_404(instance_id, request)
     context = instance_history.describe_context(
         instance_id, max_turns=max_turns, conversation_id=conversation_id,
         service_id=instance.get("service_id") or None)
@@ -383,27 +389,27 @@ async def get_instance_timeline(instance_id: str, max_turns: int = 40,
 
 
 @router.get("/{instance_id}/context")
-async def get_instance_context(instance_id: str, max_turns: int = 20,
+async def get_instance_context(instance_id: str, request: Request, max_turns: int = 20,
                                conversation_id: Optional[str] = None):
     """Exactly what the next message of a conversation will carry into the prompt."""
-    instance = _get_or_404(instance_id)
+    instance = _get_or_404(instance_id, request)
     return instance_history.describe_context(
         instance_id, max_turns=max_turns, conversation_id=conversation_id,
         service_id=instance.get("service_id") or None)
 
 
 @router.get("/{instance_id}/conversations")
-async def get_instance_conversations(instance_id: str, limit: int = 100):
+async def get_instance_conversations(instance_id: str, request: Request, limit: int = 100):
     """The instance's conversations: the main one first, then the rest by
     their latest activity."""
-    _get_or_404(instance_id)
+    _get_or_404(instance_id, request)
     return {"items": inbox.conversations(instance_id, limit=max(1, min(int(limit), 500)))}
 
 
 @router.get("/{instance_id}/messages/{msg_id}")
-async def get_instance_message(instance_id: str, msg_id: str):
+async def get_instance_message(instance_id: str, request: Request, msg_id: str):
     """Where one message stands: queued, running, or its answer."""
-    _get_or_404(instance_id)
+    _get_or_404(instance_id, request)
     reply = replies.reply_for(msg_id)
     if reply is None or reply.get("instance_id") != instance_id:
         raise HTTPException(status_code=404, detail="Message not found")
@@ -411,16 +417,16 @@ async def get_instance_message(instance_id: str, msg_id: str):
 
 
 @router.get("/{instance_id}/inbox")
-async def get_instance_inbox(instance_id: str, limit: int = 50):
-    _get_or_404(instance_id)
+async def get_instance_inbox(instance_id: str, request: Request, limit: int = 50):
+    _get_or_404(instance_id, request)
     return {"items": inbox.history(instance_id, limit=limit)}
 
 
 @router.get("/{instance_id}/logs")
-async def get_instance_logs(instance_id: str):
+async def get_instance_logs(instance_id: str, request: Request):
     """The carrier's own log for a resident instance, the latest run's log
     otherwise. Falls back to the blob store for a carrier on another host."""
-    instance = _get_or_404(instance_id)
+    instance = _get_or_404(instance_id, request)
 
     log_file = instance.get("carrier_log_file")
     if log_file and not Path(log_file).exists():
@@ -498,7 +504,7 @@ async def message_instance(instance_id: str, body: InstanceMessage, request: Req
     other copy is revived here and answers with its previous work rebuilt into
     its context.
     """
-    instance = _get_or_404(instance_id)
+    instance = _get_or_404(instance_id, request)
     text = (body.message or "").strip()
     if not text and not body.attachments and not body.references:
         raise HTTPException(status_code=400, detail="Message is empty")
@@ -546,7 +552,7 @@ async def message_instance(instance_id: str, body: InstanceMessage, request: Req
 
 
 @router.post("/{instance_id}/stop")
-async def stop_instance(instance_id: str):
+async def stop_instance(instance_id: str, request: Request):
     """Stop the instance.
 
     A resident instance's process is stopped (it keeps its conversations and
@@ -554,7 +560,7 @@ async def stop_instance(instance_id: str):
     """
     import asyncio
 
-    instance = _get_or_404(instance_id)
+    instance = _get_or_404(instance_id, request)
     if carrier.is_resident(instance):
         stopped = await asyncio.to_thread(carrier.stop, instance_id)
         return {"ok": stopped, "stopped_run": False, "instance": store.get(instance_id)}
@@ -571,10 +577,10 @@ async def stop_instance(instance_id: str):
 
 
 @router.post("/{instance_id}/interrupt")
-async def interrupt_instance(instance_id: str):
+async def interrupt_instance(instance_id: str, request: Request):
     """Stop the runs a resident instance is working on; the process stays up
     and goes on with its mailbox."""
-    _resident_or_400(instance_id)
+    _resident_or_400(instance_id, request)
     stopped = []
     for run in run_manager.get_in_progress_runs_for_instance(instance_id):
         run_id = str(run.get("run_id") or "")
@@ -593,7 +599,7 @@ async def restart_instance(instance_id: str, request: Request):
     instance again). Conversations and runs stay."""
     import asyncio
 
-    _resident_or_400(instance_id)
+    _resident_or_400(instance_id, request)
     try:
         instance = await asyncio.to_thread(carrier.restart, instance_id)
     except Exception as e:
@@ -608,7 +614,7 @@ async def restart_instance(instance_id: str, request: Request):
 async def update_instance_inputs(instance_id: str, body: InstanceInputs, request: Request):
     """Switch what the running instance listens to (take tasks, how many runs
     at once). Applies without a restart."""
-    _resident_or_400(instance_id)
+    _resident_or_400(instance_id, request)
     instance = carrier.set_inputs(instance_id, take_tasks=body.take_tasks,
                                   concurrency=body.concurrency)
     row = instance or store.get(instance_id)
@@ -618,9 +624,9 @@ async def update_instance_inputs(instance_id: str, body: InstanceInputs, request
 
 
 @router.get("/{instance_id}/carriers")
-async def get_instance_carriers(instance_id: str, limit: int = 50):
+async def get_instance_carriers(instance_id: str, request: Request, limit: int = 50):
     """Every process the instance has had, newest first."""
-    _get_or_404(instance_id)
+    _get_or_404(instance_id, request)
     return {"items": carrier.carriers(instance_id, limit=max(1, min(int(limit), 500)))}
 
 
@@ -628,7 +634,7 @@ async def get_instance_carriers(instance_id: str, limit: int = 50):
 async def publish_instance(instance_id: str, request: Request):
     """Give the instance a public address through the hub (a fresh token;
     publishing again rotates it)."""
-    _resident_or_400(instance_id)
+    _resident_or_400(instance_id, request)
     updated = carrier.publish_instance(instance_id)
     if not updated:
         raise HTTPException(status_code=500, detail="Failed to publish the instance")
@@ -638,7 +644,7 @@ async def publish_instance(instance_id: str, request: Request):
 @router.delete("/{instance_id}/publish")
 async def unpublish_instance(instance_id: str, request: Request):
     """Withdraw the public address; the token stops working at once."""
-    _resident_or_400(instance_id)
+    _resident_or_400(instance_id, request)
     carrier.unpublish_instance(instance_id)
     return _enrich(store.get(instance_id) or {}, request=request)
 
@@ -651,7 +657,7 @@ async def set_instance_inbound_secret(instance_id: str, data: InboundSecret, req
     routes/external.py and docs/notifications.md). Write-only: it is never
     returned, the record only says whether one is set.
     """
-    _resident_or_400(instance_id)
+    _resident_or_400(instance_id, request)
     secret = (data.secret or "").strip()
     if not secret:
         raise HTTPException(status_code=400, detail="secret must not be empty")
@@ -664,30 +670,30 @@ async def set_instance_inbound_secret(instance_id: str, data: InboundSecret, req
 @router.delete("/{instance_id}/inbound-secret")
 async def clear_instance_inbound_secret(instance_id: str, request: Request):
     """Drop the inbound secret: public calls go back to token only."""
-    _resident_or_400(instance_id)
+    _resident_or_400(instance_id, request)
     updated = carrier.set_inbound_secret(instance_id, None)
     return _enrich(updated or store.get(instance_id) or {}, request=request)
 
 
 @router.get("/{instance_id}/connections")
-async def get_instance_connections(instance_id: str):
+async def get_instance_connections(instance_id: str, request: Request):
     """The public calls this instance received, newest first."""
-    _get_or_404(instance_id)
+    _get_or_404(instance_id, request)
     return carrier.get_connections(instance_id)
 
 
 @router.patch("/{instance_id}")
-async def rename_instance(instance_id: str, body: InstanceLabel):
+async def rename_instance(instance_id: str, body: InstanceLabel, request: Request):
     """Rename a copy — with a thousand of them, the label is the only handle."""
-    _get_or_404(instance_id)
+    _get_or_404(instance_id, request)
     updated = store.update(instance_id, label=(body.label or "").strip()[:200])
     return updated
 
 
 @router.delete("/{instance_id}")
-async def delete_instance(instance_id: str):
+async def delete_instance(instance_id: str, request: Request):
     """Forget the instance. Its runs survive as Messages — they are the record."""
-    instance = _get_or_404(instance_id)
+    instance = _get_or_404(instance_id, request)
     if carrier.is_resident(instance):
         if instance.get("state") in store.LIVE_STATES:
             raise HTTPException(status_code=400, detail="Stop the instance before deleting it")

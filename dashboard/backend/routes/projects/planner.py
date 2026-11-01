@@ -1,12 +1,12 @@
 """Planner chat: generating project tasks from the graph views."""
-from ._common import (_graph_store, _project_root_path, store)
+from ._common import (require_project_visible, _graph_store, _project_root_path, store)
 from .graph import (_RecordingQueue, _SSE_HEADERS, _clean_agent_reply, _project_tasks_for,
     _register_run, _relay_queue, _run_turn_guarded, _spawn_detached, _sse, _trace_item_for)
 import asyncio
 from dataclasses import dataclass
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from models import ProjectTasksChat
@@ -15,7 +15,9 @@ from chat.entity_chat import settle_tool_step
 from projects import planner_service
 
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+# Every route naming {project_id} keeps to the projects the caller can see.
+router = APIRouter(prefix="/api/projects", tags=["projects"],
+                   dependencies=[Depends(require_project_visible)])
 
 # ─────────────────────────── PLANNER (tasks from views) ────────────────────────────
 #

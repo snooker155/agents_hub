@@ -88,12 +88,20 @@ def _require_write(principal, workspace: Optional[str]) -> None:
         identity.require_role(principal, admin=True)
 
 
+def _visible(principal, row: dict) -> bool:
+    """An environment in the global scope (no workspace, chosen as such on
+    the Environments page) is everyone's by design, not an unbound record;
+    any other is as visible as its workspace (common/access.py)."""
+    return not row.get("workspace") or access.can_see_workspace(principal, row.get("workspace"))
+
+
 def _load_visible(request: Request, env_id: str) -> Environment:
     try:
         env = service.require_environment(env_id)
     except service.EnvironmentServiceError as exc:
         _raise(exc)
-    access.require_visible(_principal(request), env.workspace)
+    if env.workspace:
+        access.require_visible(_principal(request), env.workspace)
     return env
 
 
@@ -115,7 +123,8 @@ async def list_environments(request: Request, workspace: Optional[str] = None,
     envs = service.list_environments(workspace, include_archived=include_archived,
                                      all_scopes=not workspace)
     rows = [service.to_dict(e, with_usage=True) for e in envs]
-    return access.filter_by_workspace(_principal(request), rows)
+    principal = _principal(request)
+    return [r for r in rows if _visible(principal, r)]
 
 
 @router.get("/resolve")

@@ -116,6 +116,15 @@ def _memory_annotator(workspace: str):
     return annotate
 
 
+def _unbound_agent(item: Any, system_ids) -> bool:
+    """Whether a listed agent (an AgentSpec or a factory dict) belongs to no
+    workspace and is not readable everywhere by design."""
+    light = item if isinstance(item, dict) else _light_registry_dict(item)
+    if light.get("system") or light.get("id") in system_ids or light.get("shared"):
+        return False
+    return not str(light.get("owner_workspace") or "").strip()
+
+
 @router.get("", response_model=Union[List[AgentListItem], AgentPage])
 async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = None,
                       offset: Optional[int] = None, request: Request = cast(Request, None)):
@@ -134,11 +143,18 @@ async def list_agents(workspace: Optional[str] = None, limit: Optional[int] = No
     agents in the requested page.
     """
     visible = visible_agents(workspace)
-    if not workspace and not record_access.visible(record_access.visible_names(request), None):
+    names = record_access.visible_names(request)
+    if not workspace and not record_access.visible(names, "default"):
         # No workspace named lists the default one's agents; a member who is
         # not in it gets none of them (the middleware checks a named one).
         visible = []
     _SYS_IDS = system_agent_ids()
+    if names is not None and (workspace or "default") != "default":
+        # An agent that names no owner workspace and is neither a system nor
+        # a shared one is unbound: the default workspace's, so another
+        # workspace's listing leaves it out for a member (default lists it),
+        # the same reading the by-id routes give it (common/record_access.py).
+        visible = [item for item in visible if not _unbound_agent(item, _SYS_IDS)]
 
     total = len(visible)
     if limit is None and offset is None:

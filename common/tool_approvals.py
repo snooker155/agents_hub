@@ -215,7 +215,12 @@ def list_for_tool(tool: str, *, status: Optional[str] = None,
         sql += " AND status = ?"
         params.append(str(status))
     if workspace:
-        sql += " AND (workspace = ? OR workspace IS NULL)"
+        # A call that names no workspace is the default one's, not every
+        # workspace's (common/access.py: seen by default's members).
+        if str(workspace) == "default":
+            sql += " AND (workspace = ? OR workspace IS NULL OR workspace = '')"
+        else:
+            sql += " AND workspace = ?"
         params.append(str(workspace))
     sql += " ORDER BY created_at DESC LIMIT ?"
     params.append(max(1, min(int(limit or 100), 500)))

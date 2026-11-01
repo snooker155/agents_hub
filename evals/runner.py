@@ -256,7 +256,7 @@ def _run_agent_target(case: Case, cfg: RunConfig, evalset: EvalSet, eval_run_id:
     rm.open_run(
         run_id,
         agent_id,
-        workspace=workspace,
+        workspace=workspace or "default",
         title=title,
         channel=EVAL_CHANNEL,
         execution_mode=EVAL_CHANNEL,

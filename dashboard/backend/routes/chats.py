@@ -150,10 +150,15 @@ def _refuse_assistant_write(chat_id: str) -> None:
 
 
 @router.get("/search")
-async def search_chats(q: str = "", workspace: Optional[str] = None, limit: int = 50):
+async def search_chats(request: Request, q: str = "", workspace: Optional[str] = None,
+                       limit: int = 50):
     """The conversations whose title or messages hold ``q``, newest first,
-    without transcripts; a message hit carries the text around it (``match``)."""
-    return await asyncio.to_thread(chat_store.search_chats, q, workspace=workspace, limit=limit)
+    without transcripts; a message hit carries the text around it (``match``).
+    Only the chats the caller may see (:func:`_chat_visible`), the same as
+    the list."""
+    principal = identity.request_principal(request)
+    return await asyncio.to_thread(chat_store.search_chats, q, workspace=workspace, limit=limit,
+                                   keep=lambda chat: _chat_visible(principal, chat))
 
 
 @router.get("/running")
@@ -175,15 +180,19 @@ async def list_running_chats(request: Request):
 
 
 @router.get("/{chat_id}/background")
-async def get_background_runs(chat_id: str):
+async def get_background_runs(chat_id: str, request: Request):
     """The flows, loops and teams the agent started from this chat that are
     still going: what each is, how far it has got (a flow's nodes passed of
     its longest way to the end, a loop's iteration and score, a team's members
     at work) and the channels it streams on. The composer lists them; the
     chat reloads this on ``flow_runs`` / ``loop_runs`` / ``team_runs``
-    changes (chat/background_runs.py)."""
+    changes (chat/background_runs.py). A stored chat the caller may not see
+    answers 403, like reading it."""
     import asyncio
     from chat.background_runs import for_conversation
+    chat = chat_store.get_chat(chat_id)
+    if chat is not None:
+        _require_chat_visible(request, chat)
     return {"runs": await asyncio.to_thread(for_conversation, chat_id)}
 
 

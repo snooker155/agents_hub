@@ -88,7 +88,7 @@ def test_route_404(monkeypatch):
     monkeypatch.setattr(messages.run_manager, "get_run_by_id", lambda rid: None)
     assert messages.build_run_trail("zz") is None
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(messages.get_message_trail("zz"))
+        asyncio.run(messages.get_message_trail("zz", None))
     assert exc.value.status_code == 404
 
 

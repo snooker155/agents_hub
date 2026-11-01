@@ -555,7 +555,9 @@ def _scenario_group(sim_run_id: str) -> Optional[RunGroup]:
 
 def _scenario_list(workspace: Optional[str], limit: int) -> List[RunGroup]:
     from playground import store as playground_store
-    runs = playground_store.list_sim_runs(limit=limit, workspace=workspace)
+    # Strict: a scenario run that names no workspace is the default
+    # workspace's, not listed under every one (playground/store.py).
+    runs = playground_store.list_sim_runs(limit=limit, workspace=workspace, strict=True)
     return [_scenario_group_from_record(r.to_dict()) for r in runs]
 
 

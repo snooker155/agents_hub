@@ -195,6 +195,7 @@ def assign_agent_to_task(
             "pid": None,
             "exit_code": None,
             "error": None,
+            "workspace": ws_name,
         })
         tasks_service.assign_agent(task_id, agent_id, assign_params, run_id=run_id)
         new_status = TaskStatus.reviewing if agent_id == "code_reviewer" else TaskStatus.ready

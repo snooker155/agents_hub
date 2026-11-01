@@ -342,7 +342,7 @@ def assign_agent_tool(task_id: str, agent_id: str, params_json: Optional[str] = 
 
         # Live mode: pre-register with "pending" so the task shows as pending (not awaiting_approval).
         # Manual mode: pre-register with "awaiting_approval" for the approval gate.
-        run_id = rm_preregister_run(str(task.id), agent_id, session_id=session_id)
+        run_id = rm_preregister_run(str(task.id), agent_id, session_id=session_id, workspace=ws_name)
         # The run that made the assignment cannot approve it: start_agent_tool
         # refuses it (see _approval_pending_for_caller).
         assigned_by = _calling_run_id()

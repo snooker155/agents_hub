@@ -26,13 +26,14 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 _project_root = Path(__file__).resolve().parents[3]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
+from common import access, identity, record_access
 from common.paths import PROJECTS_FILE
 from connectors.trackers.providers import TrackerError, get_provider
 from connectors.trackers.sync import sync_tracker_issues
@@ -52,22 +53,31 @@ class TrackerConfigUpdate(BaseModel):
     url: Optional[str] = None
 
 
-def _get_project(project_id: str):
+def _get_project(project_id: str, request: Optional[Request] = None, *, write: bool = False):
+    """The project, 404 when there is none, 403 when the caller may not see
+    its workspace or, for a ``write``, is not an ``editor`` there (one that
+    names none is the default's). These paths name a project, not a
+    workspace, so the middleware has nothing to check them against; the same
+    rule ``routes/projects/_common.require_project_visible`` applies to the
+    project's own routes."""
     project = _store.get(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    access.require_visible(identity.request_principal(request), project.workspace)
+    if write:
+        record_access.require_in_workspace(request, project.workspace)
     return project
 
 
 @router.get("/projects/{project_id}")
-async def get_project_tracker(project_id: str):
-    project = _get_project(project_id)
+async def get_project_tracker(project_id: str, request: Request):
+    project = _get_project(project_id, request)
     return project.tracker.model_dump()
 
 
 @router.put("/projects/{project_id}")
-async def update_project_tracker(project_id: str, payload: TrackerConfigUpdate):
-    _get_project(project_id)
+async def update_project_tracker(project_id: str, payload: TrackerConfigUpdate, request: Request):
+    _get_project(project_id, request, write=True)
     provider = (payload.provider or "none").strip().lower()
     if provider not in _PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unknown tracker provider: {payload.provider!r}")
@@ -79,8 +89,8 @@ async def update_project_tracker(project_id: str, payload: TrackerConfigUpdate):
 
 
 @router.post("/projects/{project_id}/sync")
-async def sync_project_tracker(project_id: str):
-    project = _get_project(project_id)
+async def sync_project_tracker(project_id: str, request: Request):
+    project = _get_project(project_id, request, write=True)
     provider = str(project.tracker.provider or "none")
     if provider not in ("jira", "linear"):
         raise HTTPException(status_code=400, detail="Project has no tracker configured")

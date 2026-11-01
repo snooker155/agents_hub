@@ -24,13 +24,34 @@ from __future__ import annotations
 import asyncio
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from common.session_broker import notify_change
 from connectors.databases import drivers, store
 
-router = APIRouter(prefix="/api/databases", tags=["databases"])
+def _require_connection_visible(request: Request) -> None:
+    """Router dependency: a route naming ``{connection_id}`` answers 403 when
+    the caller may not see the connection's workspace. The default
+    workspace's connections live everywhere (``store.usable_connections``),
+    so they stay readable; one that names no workspace is default's
+    too (common/access.py). A connection that does not exist is left to the
+    route's own 404."""
+    connection_id = (getattr(request, "path_params", None) or {}).get("connection_id")
+    if not connection_id:
+        return
+    from common import access, identity
+    principal = identity.request_principal(request)
+    if access.visible_workspaces(principal) is None:
+        return
+    connection = store.get_connection(str(connection_id))
+    if connection is None or connection.get("workspace") == "default":
+        return
+    access.require_visible(principal, connection.get("workspace"))
+
+
+router = APIRouter(prefix="/api/databases", tags=["databases"],
+                   dependencies=[Depends(_require_connection_visible)])
 
 
 class ConnectionCreate(BaseModel):

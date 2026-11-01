@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from common import access, identity
@@ -22,7 +22,24 @@ from instances import history as instance_history
 from services import replicas, store
 from services import routing as service_routing
 
-router = APIRouter(prefix="/api/services", tags=["services"])
+def _require_service_visible(request: Request) -> None:
+    """Router dependency: a route naming ``{service_id}`` answers 403 when the
+    caller may not see that service's workspace, one that names none being
+    default's (common/access.py). A service that does not exist is
+    left to the route's own 404."""
+    service_id = (getattr(request, "path_params", None) or {}).get("service_id")
+    if not service_id:
+        return
+    principal = identity.request_principal(request)
+    if access.visible_workspaces(principal) is None:
+        return
+    service = store.get(str(service_id))
+    if service:
+        access.require_visible(principal, service.get("workspace"))
+
+
+router = APIRouter(prefix="/api/services", tags=["services"],
+                   dependencies=[Depends(_require_service_visible)])
 
 
 class ServiceCreate(BaseModel):

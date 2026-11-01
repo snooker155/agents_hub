@@ -59,6 +59,7 @@ def _counted_runs(runs: Iterable[dict], workspace: Optional[str], since: Optiona
         ws = (r.get("workspace") or "").strip()
         if workspace and ws != workspace:
             continue
+        # A run that names no workspace is the default one's (common/access.py).
         if allowed is not None and (ws or "default") not in allowed:
             continue
         if launched_by and str(r.get("launched_by") or "") != str(launched_by):

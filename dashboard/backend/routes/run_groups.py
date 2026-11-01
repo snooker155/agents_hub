@@ -21,7 +21,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
-from common import access, identity
+from common import access, identity, record_access
 from managers.runs import groups as run_groups
 
 router = APIRouter(prefix="/api/runs/groups", tags=["run-groups"])
@@ -79,23 +79,41 @@ async def list_run_groups(
 
 
 @router.get("/{kind}/{group_id}")
-async def get_run_group(kind: str, group_id: str):
-    """One run group with its children and its catalog-priced spend."""
+async def get_run_group(kind: str, group_id: str, request: Request):
+    """One run group with its children and its catalog-priced spend. 403 when
+    the caller may not see the group's workspace (one that names none is the
+    default workspace's, common/access.py)."""
     try:
         group = run_groups.get_group(kind, group_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if group is None:
         raise HTTPException(status_code=404, detail=f"No {kind} run group '{group_id}'")
+    access.require_visible(identity.request_principal(request), group.workspace)
     return group.to_dict()
 
 
+def _group_workspace(kind: str, group_id: str, group) -> Optional[str]:
+    """The workspace a group's stop is checked in: for a flow, loop or team
+    run the one the middleware reads for that run's own stop route
+    (common/record_access.py, a run naming none inheriting its flow's, loop's
+    or team's), so the two doors agree; else the group's own."""
+    if kind in ("flow", "loop", "team"):
+        found = record_access.resolve(f"{kind}_run", group_id)
+        if found is not None:
+            return found.workspace
+    return group.workspace
+
+
 @router.post("/{kind}/{group_id}/stop")
-async def stop_run_group(kind: str, group_id: str):
+async def stop_run_group(kind: str, group_id: str, request: Request):
     """Stop a run group through its own store's stop path.
 
     ``stopped=false`` means there was nothing left to stop (the group had
-    already finished), which is not an error.
+    already finished), which is not an error. 403 unless the caller is an
+    ``editor`` in the group's own workspace (one that names none is the
+    default's): the path names a group, not a workspace, so the middleware
+    has nothing to check it against.
     """
     try:
         group = run_groups.get_group(kind, group_id)
@@ -103,4 +121,5 @@ async def stop_run_group(kind: str, group_id: str):
         raise HTTPException(status_code=400, detail=str(exc))
     if group is None:
         raise HTTPException(status_code=404, detail=f"No {kind} run group '{group_id}'")
+    record_access.require_in_workspace(request, _group_workspace(kind, group_id, group))
     return {"kind": kind, "id": group_id, "stopped": bool(group.stop())}

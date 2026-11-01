@@ -121,7 +121,8 @@ def start_flow_run(
 
     run_store.open_flow_run(
         run_id, flow_id,
-        task_id=str(task_id) if task else None, session_id=session_id, workspace=ws_name,
+        task_id=str(task_id) if task else None, session_id=session_id,
+        workspace=ws_name or "default",
         title=title, log_file=str(log_file), status="pending",
         parent_run_id=parent_run_id,
     )

@@ -728,6 +728,7 @@ def _trigger_session_continuation(cont: dict, finished_status: str) -> None:
         "status": "pending",
         "session_type": "task",
         "channel": "continuation",
+        "workspace": workspace or "default",
         "session_id": session_id,
         "log_file": str(log_file),
         "created_at": _utc_now_iso(),

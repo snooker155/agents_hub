@@ -299,6 +299,7 @@ def multi(monkeypatch):
     from common import identity
     monkeypatch.setattr(identity, "current_mode", lambda: "multi")
     monkeypatch.setattr(identity, "membership_role", lambda ws, uid: "editor")
+    monkeypatch.setattr(identity, "workspaces_for_user", lambda uid: ["default"])
     from common import chat_store
     monkeypatch.setattr(chat_store, "get_chat",
                         lambda cid: {"id": cid, "owner": "u-owner"} if cid.startswith("conv-") else None)
@@ -306,7 +307,7 @@ def multi(monkeypatch):
 
 def test_in_multi_mode_only_the_owner_or_an_admin_may(client, multi):
     run_id = _rid()
-    _open(run_id, session_type="chat", task_id=f"conv-{uuid.uuid4().hex[:6]}")
+    _open(run_id, session_type="chat", task_id=f"conv-{uuid.uuid4().hex[:6]}", workspace="default")
     assert _steer(client, run_id, principal="user:u-other:member").status_code == 403
     assert _steer(client, run_id, principal="user:u-owner:member").status_code == 200
     assert _steer(client, run_id, principal="user:u-admin:admin").status_code == 200
@@ -335,3 +336,13 @@ def test_a_remote_agent_takes_no_system_message(client, monkeypatch):
     run_id = _rid()
     _open(run_id)
     assert _steer(client, run_id).status_code == 409
+
+
+def test_a_run_with_no_workspace_is_the_default_ones(client, multi, monkeypatch):
+    from common import identity
+    run_id = _rid()
+    _open(run_id, session_type="chat", task_id=f"conv-{uuid.uuid4().hex[:6]}")
+    assert _steer(client, run_id, principal="user:u-owner:member").status_code == 200
+    monkeypatch.setattr(identity, "workspaces_for_user", lambda uid: ["alpha"])
+    assert _steer(client, run_id, principal="user:u-owner:member").status_code == 403
+    assert _steer(client, run_id, principal="user:u-admin:admin").status_code == 200

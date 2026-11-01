@@ -27,10 +27,10 @@ repository, not here; a SKILL.md can also be imported as text and any skill
 exported as one.
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from agents import registry
@@ -46,7 +46,27 @@ from workspace import get_workspace_metadata, is_system_agent
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/skills", tags=["skills"])
+def _require_skill_visible(request: Request) -> None:
+    """Router dependency: a route naming ``{skill_id}`` (looked up across
+    every workspace) answers 403 when the caller may not see the skill's
+    workspace, one that names none being default's
+    (common/access.py). A published skill is installable from any workspace,
+    so it reads everywhere. A skill that does not exist is left to the route's
+    own 404."""
+    skill_id = (getattr(request, "path_params", None) or {}).get("skill_id")
+    if not skill_id:
+        return
+    from common import access, identity
+    principal = identity.request_principal(request)
+    if access.visible_workspaces(principal) is None:
+        return
+    procedure = find_procedure(str(skill_id))
+    if procedure is not None and not procedure.shared:
+        access.require_visible(principal, procedure.workspace)
+
+
+router = APIRouter(prefix="/api/skills", tags=["skills"],
+                   dependencies=[Depends(_require_skill_visible)])
 
 
 def _agent_label(agent_id: str) -> Optional[Dict[str, Any]]:
@@ -581,7 +601,7 @@ async def update_skill_sharing(skill_id: str, data: SkillSharingUpdate):
 
 
 @router.post("/{skill_id}/install")
-async def install_skill(skill_id: str, data: SkillInstall):
+async def install_skill(skill_id: str, data: SkillInstall, request: Request = cast(Request, None)):
     """Install a skill into a workspace, optionally attaching it to an agent.
 
     This is the one integration path, used both by "add to my workspace" on the
@@ -595,6 +615,10 @@ async def install_skill(skill_id: str, data: SkillInstall):
     target_ws = (data.workspace or "").strip()
     if not target_ws:
         raise HTTPException(status_code=400, detail="A target workspace is required")
+    # The copy lands in the workspace the body names, which the middleware
+    # does not read: writing there needs editor in it.
+    from common import record_access
+    record_access.require_in_workspace(request, target_ws)
     if source.workspace != target_ws and not source.shared:
         raise HTTPException(
             status_code=403,

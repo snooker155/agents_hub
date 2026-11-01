@@ -92,7 +92,9 @@ def _matches(query: str, *values: Any) -> bool:
 
 
 def _item(entity_id: str, label: str, subtitle: str = "", **meta) -> Dict[str, Any]:
-    """One picker row. ``subtitle`` is the dimmed second line in the list."""
+    """One picker row. ``subtitle`` is the dimmed second line in the list.
+    ``workspace`` in ``meta`` is the record's own, for the route to drop what
+    the caller may not see (routes/context_refs.py); an agent row has none."""
     return {"id": str(entity_id), "label": label or str(entity_id), "subtitle": subtitle, **meta}
 
 
@@ -116,6 +118,7 @@ def _list_tasks(workspace: Optional[str], project_id: Optional[str], query: str)
             str(task.id),
             f"{key} {task.title}".strip() if key else task.title,
             status,
+            workspace=getattr(task, "workspace", None),
         ))
     return out
 
@@ -186,6 +189,7 @@ def _list_views(workspace: Optional[str], project_id: Optional[str], query: str)
             row.get("view_id"),
             (row.get("title") or "").strip() or "Untitled view",
             " · ".join(x for x in [row.get("kind"), (row.get("summary") or "")[:80]] if x),
+            workspace=row.get("workspace"),
         ))
     return out
 
@@ -230,6 +234,7 @@ def _list_projects(workspace: Optional[str], project_id: Optional[str], query: s
         out.append(_item(
             project.id, project.name,
             " · ".join(x for x in [ptype, status, project.workspace] if x),
+            workspace=project.workspace,
         ))
     return out
 
@@ -276,13 +281,16 @@ def _list_scenarios(workspace: Optional[str], project_id: Optional[str], query: 
     from playground.store import list_scenarios
 
     out = []
-    for scenario in list_scenarios(workspace or None):
+    # Strict: a scenario that names no workspace is default's, not offered
+    # in every workspace's picker (playground/store.py).
+    for scenario in list_scenarios(workspace or None, strict=True):
         if not _matches(query, scenario.name, scenario.description, scenario.environment, scenario.scenario_id):
             continue
         out.append(_item(
             scenario.scenario_id,
             scenario.name or scenario.scenario_id,
             " · ".join(x for x in [scenario.environment, f"{len(scenario.roles)} roles"] if x),
+            workspace=scenario.workspace,
         ))
     return out
 
@@ -341,6 +349,7 @@ def _list_loops(workspace: Optional[str], project_id: Optional[str], query: str)
             loop.name or loop.loop_id,
             " · ".join(x for x in [f"flow={loop.flow_id}" if loop.flow_id else "",
                                    f"max {loop.max_iterations} iterations"] if x),
+            workspace=loop.workspace,
         ))
     return out
 
@@ -412,6 +421,7 @@ def _list_flows(workspace: Optional[str], project_id: Optional[str], query: str)
             flow_id,
             (flow.get("name") or "").strip() or flow_id,
             f"{len(nodes)} nodes",
+            workspace=flow.get("workspace"), shared=bool(flow.get("shared")),
         ))
     return out
 
@@ -457,6 +467,7 @@ def _list_teams(workspace: Optional[str], project_id: Optional[str], query: str)
         out.append(_item(
             team.team_id, team.name or team.team_id,
             " · ".join(x for x in [team.mode, f"{len(team.members)} members"] if x),
+            workspace=team.workspace,
         ))
     return out
 
@@ -566,7 +577,8 @@ def _list_jobs(workspace: Optional[str], project_id: Optional[str], query: str) 
             continue
         status = getattr(getattr(job, "status", None), "value", "")
         kind = getattr(getattr(job, "kind", None), "value", "")
-        out.append(_item(str(job.id), job.title, " · ".join(x for x in [kind, status] if x)))
+        out.append(_item(str(job.id), job.title, " · ".join(x for x in [kind, status] if x),
+                         workspace=getattr(job, "workspace", None)))
     return out
 
 

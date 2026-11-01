@@ -1,5 +1,5 @@
 """Project files, spec extraction from code and the task list."""
-from ._common import (_project_root_path, _task_to_dict,
+from ._common import (require_project_visible, _project_root_path, _task_to_dict,
     package, store)
 import asyncio
 import json
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 
 from tasks import service as tasks_service
 from workspace import project_folder_name
@@ -18,7 +18,9 @@ import logging
 log = logging.getLogger(__name__)
 
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+# Every route naming {project_id} keeps to the projects the caller can see.
+router = APIRouter(prefix="/api/projects", tags=["projects"],
+                   dependencies=[Depends(require_project_visible)])
 
 # ─────────────────────────── FILES ────────────────────────────
 

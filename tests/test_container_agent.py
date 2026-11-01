@@ -202,7 +202,7 @@ def test_results_list_every_run_with_its_saved_result_or_its_answer():
     ts.set_task_result(a.id, "Wrote index.html", files=["index.html"], run_id=work, agent_id="swe_agent")
     rm.close_run(work, status="completed", exit_code=0, output="raw answer")
 
-    out = asyncio.run(get_task_result(parent.id))
+    out = asyncio.run(get_task_result(parent.id, None))
     assert [(e["agent_id"], e["result"]) for e in out["results"]] == [
         ("decomposer", "Split into one subtask"), ("swe_agent", "Wrote index.html")]
     assert out["results"][1]["subtask"]["id"] == str(a.id)
@@ -262,5 +262,5 @@ def test_files_of_every_run_are_listed_not_the_latest_alone():
     ts.set_task_result(a.id, "Checked again, nothing to change", files=[],
                        run_id=retry, agent_id="swe_agent")
 
-    assert asyncio.run(get_task_result(a.id))["files"] == ["index.html", "styles.css"]
-    assert asyncio.run(get_task_result(parent.id))["files"] == ["index.html", "styles.css"]
+    assert asyncio.run(get_task_result(a.id, None))["files"] == ["index.html", "styles.css"]
+    assert asyncio.run(get_task_result(parent.id, None))["files"] == ["index.html", "styles.css"]

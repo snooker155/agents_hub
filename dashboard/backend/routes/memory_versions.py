@@ -6,6 +6,8 @@ listing, reading one version, restoring it and redacting it. The pool
 visibility check is the one ``routes/memory.py`` already uses
 (``_require_pool_visible``), imported rather than copied so the two routers
 agree on who may see a pool without one of them drifting out of date.
+Restore and redact change the pool, so they use ``_require_pool_writable``
+(editor in the pool's workspace) instead.
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from routes.memory import _require_pool_visible
+from routes.memory import _require_pool_visible, _require_pool_writable
 from memory.store import MemoryStore
 from memory import versions as memory_versions
 from common import audit, identity
@@ -62,7 +64,7 @@ def _audit_actor(request: Request) -> dict:
 @router.post("/{memory_id}/versions/{version_id}/restore")
 async def restore_version(memory_id: str, version_id: int, request: Request):
     mem = _get_pool_or_404(memory_id)
-    _require_pool_visible(request, mem)
+    _require_pool_writable(request, mem)
     principal = identity.request_principal(request)
     try:
         result = memory_versions.restore(memory_id, version_id, _audit_actor(request))
@@ -78,7 +80,7 @@ async def restore_version(memory_id: str, version_id: int, request: Request):
 @router.post("/{memory_id}/versions/{version_id}/redact")
 async def redact_version(memory_id: str, version_id: int, body: RedactBody, request: Request):
     mem = _get_pool_or_404(memory_id)
-    _require_pool_visible(request, mem)
+    _require_pool_writable(request, mem)
     principal = identity.request_principal(request)
     try:
         result = memory_versions.redact(memory_id, version_id, _audit_actor(request),

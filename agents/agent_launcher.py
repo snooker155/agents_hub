@@ -51,12 +51,24 @@ log = logging.getLogger(__name__)
 QUEUE_KIND = "task"
 
 
-def preregister_run(task_id: str, agent_id: str, session_id: Optional[str] = None) -> str:
+def preregister_run(task_id: str, agent_id: str, session_id: Optional[str] = None,
+                    workspace: Optional[str] = None) -> str:
     """Pre-create a run record before the subprocess is launched.
 
     Returns the pre-allocated run_id.  Call start_run(..., run_id=<id>) later to
     actually spawn the subprocess using the same run_id.
+
+    The record names its workspace from the start: the one the caller passes,
+    else the task's own, else ``default``. A run that waits for approval is
+    otherwise in no workspace's list until someone approves it, and one that
+    names none is read as default's.
     """
+    if not workspace:
+        try:
+            from tasks import service as _ts
+            workspace = getattr(_ts.get_task(task_id), "workspace", None)
+        except Exception:  # noqa: BLE001 - an unreadable task leaves the run in the default workspace
+            log.debug("preregister_run: task workspace unreadable", exc_info=True)
     run_id = str(uuid4())
     return preopen_run(
         run_id,
@@ -65,6 +77,7 @@ def preregister_run(task_id: str, agent_id: str, session_id: Optional[str] = Non
         session_id=session_id or None,
         status="awaiting_approval",
         channel="local",
+        workspace=workspace or "default",
     )
 
 
@@ -124,6 +137,11 @@ def prepare_run(
     # the workspace root holds .logs/ (metadata lives in workspaces.json).
     params = as_param_dict(params)
     ws_name, ws_path = resolve_task_workspace(task, params)
+    if ws_name and not Path(ws_path).exists():
+        # A task made without a workspace is in ``default`` (tasks/service.py),
+        # whose folder a fresh install has not created yet.
+        from workspace import create_workspace_folder
+        create_workspace_folder(ws_name)
 
     # Agent version pin (agents/versions.py, docs/agent-versions.md): the
     # task's own pin, or a one-off override for this launch alone
@@ -169,6 +187,11 @@ def prepare_run(
     from common.attribution import check_launch_budget
     check_launch_budget()
 
+    # The records of this launch (instance, run) name a workspace even when the
+    # task names none: a task without one belongs to ``default``, and a record
+    # with none is default's.
+    record_ws = ws_name or "default"
+
     # Ensure a session exists for this task
     session_id = get_or_create_task_session(
         title=task.title,
@@ -189,7 +212,7 @@ def prepare_run(
     instance = instance_registry.ensure_instance(
         agent_id,
         kind="task",
-        workspace=ws_name,
+        workspace=record_ws,
         session_id=session_id,
         task_id=str(task_id),
         hint=(params.get("description") or task.title or ""),
@@ -215,7 +238,7 @@ def prepare_run(
         log_file=str(log_file),
         channel="local",
         instance_id=instance_id,
-        workspace=ws_name,
+        workspace=record_ws,
         agent_version_pin=agent_version_pin,
         # What this run was asked to build differently (the run page shows it).
         **({"overrides": _run_overrides.record_view(run_overrides)} if run_overrides else {}),

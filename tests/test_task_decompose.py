@@ -104,7 +104,7 @@ def test_the_review_pass_sees_the_tree_and_can_split_a_subtask(monkeypatch, tmp_
     assert len(seen["runs"]) == 2
     review = seen["runs"][1]["instruction"]
     assert "REVIEW PASS" in review and str(made["a"].id) in review
-    tree = asyncio.run(task_routes.decompose_status(task.id))
+    tree = asyncio.run(task_routes.decompose_status(task.id, None))
     assert [(n["title"], n["depth"]) for n in tree["tree"]] == [
         ("build the whole site", 1), ("write index.html", 2)]
     state = tree["status"]

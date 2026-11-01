@@ -106,13 +106,30 @@ def get_scenario(scenario_id: str) -> Optional[Scenario]:
     return _row_to_scenario(row) if row else None
 
 
+def _workspace_clause(workspace: str, strict: bool) -> str:
+    """The WHERE condition that keeps a named workspace's rows.
+
+    Without ``strict`` a row that names no workspace reads in every workspace,
+    the rule the agent tools (tools/scenario_management.py,
+    tools/world_management.py) are built on. ``strict`` is the listing a
+    person reads (routes/playground.py): such a row is the default
+    workspace's alone, so only default's list holds it.
+    """
+    if not strict:
+        return "(workspace = ? OR workspace IS NULL)"
+    if workspace == "default":
+        return "(workspace = ? OR workspace IS NULL OR workspace = '')"
+    return "workspace = ?"
+
+
 @remote_state.hub_call("workspace")
-def list_scenarios(workspace: Optional[str] = None) -> List[Scenario]:
+def list_scenarios(workspace: Optional[str] = None, *, strict: bool = False) -> List[Scenario]:
+    """Scenarios for a workspace (``strict``: see :func:`_workspace_clause`)."""
     conn = db.get_conn()
     if workspace:
         rows = conn.execute(
-            "SELECT * FROM scenarios WHERE workspace = ? OR workspace IS NULL "
-            "ORDER BY updated_at DESC",
+            "SELECT * FROM scenarios WHERE " + _workspace_clause(workspace, strict)
+            + " ORDER BY updated_at DESC",
             (workspace,),
         ).fetchall()
     else:
@@ -188,17 +205,19 @@ def get_world(world_id: str) -> Optional[WorldSpec]:
 
 
 @remote_state.hub_call("workspace")
-def list_worlds(workspace: Optional[str] = None) -> List[WorldSpec]:
+def list_worlds(workspace: Optional[str] = None, *, strict: bool = False) -> List[WorldSpec]:
     """Every world this workspace can run scenarios in.
 
     A world with no workspace is shared by all of them — the same rule
     scenarios follow, and the reason a world built once can be cast again.
+    Except in the ``strict`` listing a person reads, where it is the default
+    workspace's alone (:func:`_workspace_clause`).
     """
     conn = db.get_conn()
     if workspace:
         rows = conn.execute(
-            "SELECT * FROM worlds WHERE workspace = ? OR workspace IS NULL "
-            "ORDER BY updated_at DESC",
+            "SELECT * FROM worlds WHERE " + _workspace_clause(workspace, strict)
+            + " ORDER BY updated_at DESC",
             (workspace,),
         ).fetchall()
     else:
@@ -319,13 +338,13 @@ def get_story(sim_run_id: str) -> Dict[str, Any]:
 
 @remote_state.hub_call(("scenario:scenario_id", "workspace"))
 def list_sim_runs(scenario_id: Optional[str] = None, limit: int = 50,
-                  workspace: Optional[str] = None) -> List[SimRun]:
+                  workspace: Optional[str] = None, *, strict: bool = False) -> List[SimRun]:
     """Run history, newest first — one scenario's, or every scenario's.
 
     The scenario-less listing is the cross-scenario history page: without a
     workspace it is everything this install has run, with one it is that
     workspace's runs plus the workspace-less ones, the same rule the scenario
-    catalogue uses.
+    catalogue uses (``strict``: see :func:`_workspace_clause`).
     """
     where: List[str] = ["kind = 'scenario'"]
     params: List[Any] = []
@@ -333,7 +352,7 @@ def list_sim_runs(scenario_id: Optional[str] = None, limit: int = 50,
         where.append("entity_id = ?")
         params.append(scenario_id)
     if workspace:
-        where.append("(workspace = ? OR workspace IS NULL)")
+        where.append(_workspace_clause(workspace, strict))
         params.append(workspace)
     sql = "SELECT * FROM entity_runs WHERE " + " AND ".join(where)
     sql += " ORDER BY COALESCE(started_at, created_at, '') DESC, run_id LIMIT ?"

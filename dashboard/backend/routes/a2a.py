@@ -119,12 +119,30 @@ def _card_for(agent_id: str, request: Request) -> Dict[str, Any]:
     spec = registry.get_agent(agent_id)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    _require_card_visible(agent_id, request)
     return a2a_card.card_from_spec(
         spec,
         _base_url(request),
         version=_agent_version(agent_id),
         token_required=_token_required(),
     )
+
+
+def _require_card_visible(agent_id: str, request: Optional[Request]) -> None:
+    """404 unless a member may read this agent: the rule the
+    ``/api/agents/{id}`` routes apply in the middleware
+    (common/record_access.py), which does not see this prefix. A system or
+    shared agent reads everywhere; one that names no owner workspace is the
+    default workspace's."""
+    from common import access, identity, record_access
+    principal = identity.request_principal(request)
+    if not record_access.restricted(principal):
+        return
+    record = record_access.resolve("agent", agent_id)
+    if record is None or record.everywhere:
+        return
+    if not access.can_see_workspace(principal, record.workspace):
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
 
 @router.get(AGENT_PREFIX + "/{agent_id}/.well-known/agent-card.json")
@@ -208,6 +226,53 @@ def _hub_task(task_id: str):
     return task
 
 
+def _require_task_access(task, request: Optional[Request], *, write: bool = False) -> None:
+    """Refuse a task the caller may not read (or, ``write``, change) in its own
+    workspace, one that names none being the default's.
+
+    The middleware checks only a workspace the request names, and this endpoint
+    names an agent and carries the task id in the JSON-RPC body, so a member of
+    one workspace could otherwise read or stop another's task by its id. A task
+    the caller may not see answers TaskNotFound, the same as one that does not
+    exist; one it sees but may not change answers InvalidRequest with why.
+    """
+    from common import access, identity, record_access
+
+    workspace = getattr(task, "workspace", None)
+    if not access.can_see_workspace(identity.request_principal(request), workspace):
+        raise a2a.JsonRpcError(a2a.TASK_NOT_FOUND, f"no task '{task.id}'")
+    if write:
+        try:
+            record_access.require_in_workspace(request, workspace)
+        except HTTPException as exc:
+            raise a2a.JsonRpcError(a2a.INVALID_REQUEST, str(exc.detail))
+
+
+def _launch_workspace(spec, params: Dict[str, Any]) -> Optional[str]:
+    """The workspace a new task lands in: the one the message's metadata
+    names, else the agent's own."""
+    return str(a2a.metadata_of(params).get("workspace") or "").strip() or spec.owner_workspace
+
+
+def _require_launch_access(agent_id: str, spec, params: Dict[str, Any],
+                           request: Optional[Request]) -> None:
+    """Refuse a launch the caller may not make: ``editor`` in the workspace the
+    task lands in, and an agent that lives there or everywhere. The workspace
+    comes from the JSON-RPC body, which the middleware never reads. An agent
+    the caller may not see answers as one that is not registered here."""
+    from common import record_access
+
+    try:
+        _require_card_visible(agent_id, request)
+    except HTTPException:
+        raise a2a.JsonRpcError(a2a.INVALID_PARAMS, f"agent '{agent_id}' is not registered here")
+    try:
+        record_access.require_chat_target(request, workspace=_launch_workspace(spec, params),
+                                          agent_id=agent_id)
+    except HTTPException as exc:
+        raise a2a.JsonRpcError(a2a.INVALID_REQUEST, str(exc.detail))
+
+
 def _latest_run(task_id: str) -> Dict[str, Any]:
     """The newest run of a hub task, or ``{}`` when it has not started one."""
     from managers import run_manager
@@ -272,7 +337,7 @@ def _start(agent_id: str, spec, text: str, params: Dict[str, Any]) -> tuple[str,
     from tasks import CreatedBy, TaskStatus
     from tasks import service as tasks_service
 
-    workspace = str(a2a.metadata_of(params).get("workspace") or "").strip() or spec.owner_workspace
+    workspace = _launch_workspace(spec, params)
 
     task = tasks_service.create_task(
         title=text[:120],
@@ -311,9 +376,11 @@ async def _await_run(task_id: str, run_id: str, timeout: float) -> None:
         await asyncio.sleep(POLL_INTERVAL)
 
 
-def _handle_send(agent_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_send(agent_id: str, params: Dict[str, Any],
+                 request: Optional[Request] = None) -> Dict[str, Any]:
     """``message/send`` up to the point where waiting begins."""
     spec = _require_agent(agent_id)
+    _require_launch_access(agent_id, spec, params, request)
     message = a2a.require_message(params)
     if message.get("taskId"):
         raise a2a.JsonRpcError(
@@ -325,8 +392,9 @@ def _handle_send(agent_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
     return {"task_id": task_id, "run_id": run_id, "session_id": session_id, "text": text}
 
 
-async def _message_send(agent_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    started = _handle_send(agent_id, params)
+async def _message_send(agent_id: str, params: Dict[str, Any],
+                        request: Optional[Request] = None) -> Dict[str, Any]:
+    started = _handle_send(agent_id, params, request)
     if a2a.blocking_requested(params):
         await _await_run(started["task_id"], started["run_id"], _blocking_timeout())
         return _task_payload(_hub_task(started["task_id"]), _latest_run(started["task_id"]))
@@ -339,17 +407,19 @@ async def _message_send(agent_id: str, params: Dict[str, Any]) -> Dict[str, Any]
     )
 
 
-def _tasks_get(params: Dict[str, Any]) -> Dict[str, Any]:
+def _tasks_get(params: Dict[str, Any], request: Optional[Request] = None) -> Dict[str, Any]:
     task_id = a2a.require_task_id(params)
     task = _hub_task(task_id)
+    _require_task_access(task, request)
     return _task_payload(task, _latest_run(task_id))
 
 
-def _tasks_cancel(params: Dict[str, Any]) -> Dict[str, Any]:
+def _tasks_cancel(params: Dict[str, Any], request: Optional[Request] = None) -> Dict[str, Any]:
     from managers import run_manager
 
     task_id = a2a.require_task_id(params)
     task = _hub_task(task_id)
+    _require_task_access(task, request, write=True)
     run = _latest_run(task_id)
     state = a2a.state_for(str(run.get("status") or ""), _status_of(task))
     if a2a.is_terminal(state):
@@ -383,7 +453,7 @@ async def _message_stream(
     """
     from common.session_broker import broker
 
-    started = _handle_send(agent_id, params)
+    started = _handle_send(agent_id, params, request)
     task_id, session_id = started["task_id"], started["session_id"]
 
     async def _generate():
@@ -464,13 +534,13 @@ async def jsonrpc(agent_id: str, request: Request):
         if method == "message/stream":
             return await _message_stream(agent_id, params, request_id, request)
         if method == "message/send":
-            return a2a.result_response(request_id, await _message_send(agent_id, params))
+            return a2a.result_response(request_id, await _message_send(agent_id, params, request))
         if method == "tasks/get":
             _require_agent(agent_id)
-            return a2a.result_response(request_id, _tasks_get(params))
+            return a2a.result_response(request_id, _tasks_get(params, request))
         if method == "tasks/cancel":
             _require_agent(agent_id)
-            return a2a.result_response(request_id, _tasks_cancel(params))
+            return a2a.result_response(request_id, _tasks_cancel(params, request))
         # parse_request already refused anything else; this is unreachable and
         # says so rather than falling through to a silent None.
         raise a2a.JsonRpcError(a2a.METHOD_NOT_FOUND, f"method '{method}' is not supported")

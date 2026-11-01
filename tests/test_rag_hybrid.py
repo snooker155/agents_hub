@@ -324,15 +324,25 @@ def test_the_search_route_answers_unavailable_with_rag_off(monkeypatch):
     import uuid
     monkeypatch.setenv("RAG_VECTOR_DB", "none")
     monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "none")
+    from types import SimpleNamespace
+    from memory.models import SharedMemory
+    from memory.store import MemoryStore
     from routes.memory import RagSearchRequest, search_rag_passages
-    out = asyncio.run(search_rag_passages(uuid.uuid4(), RagSearchRequest(query="x")))
+    mem = SharedMemory(name="rag off", workspace="default")
+    MemoryStore().add(mem)
+    out = asyncio.run(search_rag_passages(mem.id, RagSearchRequest(query="x"),
+                                          SimpleNamespace(state=SimpleNamespace())))
     assert out["available"] is False and out["results"] == []
 
 
 def test_the_search_route_searches_with_rag_on(monkeypatch):
     import asyncio
-    import uuid
-    pool = uuid.uuid4()
+    from types import SimpleNamespace
+    from memory.models import SharedMemory
+    from memory.store import MemoryStore
+    mem = SharedMemory(name="rag on", workspace="default")
+    MemoryStore().add(mem)
+    pool = mem.id
     monkeypatch.setenv("RAG_VECTOR_DB", "chroma")
     monkeypatch.setenv("RAG_EMBEDDING_PROVIDER", "sentence-transformers")
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake-model")
@@ -340,5 +350,6 @@ def test_the_search_route_searches_with_rag_on(monkeypatch):
     chunks = [Chunk(text="owls hunt at night", heading_path=[], char_start=0, char_end=18)]
     replace_file_chunks(str(pool), "doc.md", f"{pool}::doc.md", chunks, content_hash="h")
     from routes.memory import RagSearchRequest, search_rag_passages
-    out = asyncio.run(search_rag_passages(pool, RagSearchRequest(query="owls", top_k=3)))
+    out = asyncio.run(search_rag_passages(
+        pool, RagSearchRequest(query="owls", top_k=3), SimpleNamespace(state=SimpleNamespace())))
     assert out["available"] is True and out["results"][0]["filename"] == "doc.md"

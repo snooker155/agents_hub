@@ -9,9 +9,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
+from common import access, identity
 from plans import JobKind, JobStatus, Recurrence
 from plans import service as plan_service
 from plans.service import (
@@ -119,16 +120,33 @@ class JobUpdate(BaseModel):
 
 # -------------------- jobs --------------------
 
+def _visible_job(job_id: UUID, request: Request):
+    """The job, 404 when there is none, 403 when the caller may not see its
+    workspace (one that names none is default's,
+    common/access.py)."""
+    job = plan_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    access.require_visible(identity.request_principal(request), job.workspace)
+    return job
+
+
 @router.get("/jobs")
 async def list_jobs(
+    request: Request,
     workspace: Optional[str] = None,
     status: Optional[str] = None,
     kinds: Optional[str] = None,
 ):
     """``kinds`` is a comma list (e.g. ``agent_task,flow,loop``) so the
     Deployments page can list only the job kinds it treats as deployments,
-    excluding plain ``notification`` reminders."""
-    jobs = plan_service.list_jobs(workspace=workspace)
+    excluding plain ``notification`` reminders.
+
+    Only the jobs whose workspace the caller can see: with none named every
+    workspace's would be listed otherwise (a no-op outside ``multi`` mode)."""
+    principal = identity.request_principal(request)
+    jobs = [j for j in plan_service.list_jobs(workspace=workspace)
+            if access.can_see_workspace(principal, j.workspace)]
     if status:
         jobs = [j for j in jobs if j.status.value == status]
     if kinds:
@@ -176,11 +194,8 @@ async def create_job(payload: JobCreate):
 
 
 @router.get("/jobs/{job_id}")
-async def get_job(job_id: UUID):
-    job = plan_service.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return job_to_dict(job)
+async def get_job(job_id: UUID, request: Request):
+    return job_to_dict(_visible_job(job_id, request))
 
 
 @router.patch("/jobs/{job_id}")
@@ -269,12 +284,10 @@ async def run_job_now(job_id: UUID):
 
 
 @router.get("/jobs/{job_id}/fires")
-async def list_job_fires(job_id: UUID, limit: int = 50, only_errors: bool = False):
+async def list_job_fires(job_id: UUID, request: Request, limit: int = 50, only_errors: bool = False):
     """The firing journal for one job, newest first, each firing with what
     the work it started has come to (plans.service.fire_result)."""
-    job = plan_service.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _visible_job(job_id, request)
     items = await asyncio.to_thread(plan_service.list_job_fires, job_id,
                                     only_errors=only_errors, limit=limit)
     results = await asyncio.to_thread(lambda: [plan_service.fire_result(f) for f in items])
@@ -282,10 +295,14 @@ async def list_job_fires(job_id: UUID, limit: int = 50, only_errors: bool = Fals
 
 
 @router.get("/fires")
-async def list_fires(workspace: Optional[str] = None, only_errors: bool = False, limit: int = 100):
-    """The firing journal across every job, newest first."""
+async def list_fires(request: Request, workspace: Optional[str] = None,
+                     only_errors: bool = False, limit: int = 100):
+    """The firing journal across every job, newest first, narrowed to the
+    workspaces the caller can see after the query (a page can come back short
+    of ``limit``)."""
     items = plan_service.list_fires(workspace=workspace, only_errors=only_errors, limit=limit)
-    return [fire_to_dict(f) for f in items]
+    principal = identity.request_principal(request)
+    return [fire_to_dict(f) for f in items if access.can_see_workspace(principal, f.workspace)]
 
 
 # -------------------- cron preview --------------------
@@ -327,12 +344,17 @@ async def cron_preview(
 
 @router.get("/notifications")
 async def list_notifications(
+    request: Request,
     workspace: Optional[str] = None,
     unread_only: bool = False,
     limit: int = 100,
 ):
+    """Notifications, newest first, narrowed after the query to the workspaces
+    the caller can see (a page can come back short of ``limit``)."""
     items = plan_service.list_notifications(workspace=workspace, unread_only=unread_only, limit=limit)
-    return [notification_to_dict(n) for n in items]
+    principal = identity.request_principal(request)
+    return [notification_to_dict(n) for n in items
+            if access.can_see_workspace(principal, n.workspace)]
 
 
 @router.get("/notifications/unread-count")

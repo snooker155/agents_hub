@@ -70,6 +70,7 @@ from flow.task_driver import (
     log_flow,
     _resolve_agent_id,
     build_task_driver,
+    run_workspace_name,
 )
 from tasks import service as _ts
 
@@ -92,7 +93,7 @@ def _finalize_task(task_id: Optional[str], status: str, exit_code: int, *, error
 
 def _park_on_interrupt(
     *, flow: Dict, flow_id: str, run_id: str, task_id: Optional[str], session_id: str,
-    interrupt: Dict, checkpoint: Dict,
+    interrupt: Dict, checkpoint: Dict, workspace: Optional[str] = None,
 ) -> None:
     """Park the flow on a human_interrupt node and end this process.
 
@@ -113,7 +114,8 @@ def _park_on_interrupt(
         open_run(
             node_run_id, INTERRUPT_AGENT_ID, pid=os.getpid(),
             task_id=task_id, session_id=session_id, session_type="task",
-            channel="flow", flow_id=flow_id, flow_run_id=run_id,
+            channel="flow", workspace=workspace or flow.get("workspace") or "default",
+            flow_id=flow_id, flow_run_id=run_id,
             flow_node_id=node_id, flow_node_label="Human Interrupt",
             link_to_session=True,
         )
@@ -341,11 +343,7 @@ def main() -> None:
 
     # The workspace the run works in, for the agents it may run: the one the
     # --workspace folder belongs to, else the flow's own.
-    from common.workspace_context import workspace_name_from_path
-    from workspace import get_workspace_folder
-    run_workspace = workspace_name_from_path(args.workspace)
-    if not (run_workspace and get_workspace_folder(run_workspace)):
-        run_workspace = flow.get("workspace")
+    run_workspace = run_workspace_name(args.workspace, flow)
 
     async def _drive() -> dict:
         final: dict = {}
@@ -370,7 +368,7 @@ def main() -> None:
         _park_on_interrupt(
             flow=flow, flow_id=flow_id, run_id=run_id, task_id=task_id,
             session_id=session_id, interrupt=final["interrupt"],
-            checkpoint=final.get("checkpoint") or {},
+            checkpoint=final.get("checkpoint") or {}, workspace=run_workspace,
         )
         sys.exit(EXIT_AWAITING_INPUT)
 

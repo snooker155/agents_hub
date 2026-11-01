@@ -34,6 +34,10 @@ function duration(started, finished) {
 
 // ---- Main page --------------------------------------------------------------
 
+// The default workspace is the overview: it starts on every workspace and
+// offers the filter, another workspace locks the page to itself.
+const headerScope = ws => (ws && ws !== 'default' ? ws : '');
+
 export default function Sessions() {
   const { t } = useI18n();
   const { selectedWorkspace, liveUpdates } = useWorkspace();
@@ -43,7 +47,7 @@ export default function Sessions() {
   const [totalSessions, setTotalSessions] = useState(0);
   const [workspaces, setWorkspaces] = useState([]);
 
-  const [filterWorkspace, setFilterWorkspace] = useState(selectedWorkspace || '');
+  const [filterWorkspace, setFilterWorkspace] = useState(() => headerScope(selectedWorkspace));
   const [filterStatus,    setFilterStatus]    = useState('');
   const [filterFlow,      setFilterFlow]      = useState('');
   const [filterFrom,      setFilterFrom]      = useState('');
@@ -54,7 +58,7 @@ export default function Sessions() {
   const [seenSelected, setSeenSelected] = useState(selectedWorkspace);
   if (seenSelected !== selectedWorkspace) {
     setSeenSelected(selectedWorkspace);
-    setFilterWorkspace(selectedWorkspace || '');
+    setFilterWorkspace(headerScope(selectedWorkspace));
   }
 
   const [stopping,     setStopping]     = useState({});
@@ -306,7 +310,7 @@ export default function Sessions() {
 
           {hasFilters && (
             <button
-              onClick={() => { setFilterWorkspace(isDefaultWorkspace ? '' : (selectedWorkspace || '')); setFilterStatus(''); setFilterFlow(''); setFilterFrom(''); setFilterTo(''); }}
+              onClick={() => { setFilterWorkspace(headerScope(selectedWorkspace)); setFilterStatus(''); setFilterFlow(''); setFilterFrom(''); setFilterTo(''); }}
               className="flex items-center gap-1 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50"
             >
               <X className="w-4 h-4" /> {t('sessions.clear')}

@@ -27,6 +27,7 @@ router = APIRouter(prefix="/api/costs", tags=["costs"])
 
 @router.get("")
 async def get_costs(
+    request: Request,
     workspace: Optional[str] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
@@ -35,9 +36,12 @@ async def get_costs(
     project, plus overall totals (common/costs_report.py).
 
     ``since`` / ``until`` are ISO date/datetime strings compared against each
-    run's ``started_at``. ``workspace`` restricts to a single workspace.
+    run's ``started_at``. ``workspace`` restricts to a single workspace. Only
+    the runs of workspaces the caller may see are counted, like the run list
+    below.
     """
-    return costs_breakdown(workspace, since, until)
+    return costs_breakdown(workspace, since, until,
+                           workspaces=access.visible_workspaces(identity.request_principal(request)))
 
 
 @router.get("/runs")

@@ -146,6 +146,9 @@ def ensure_instance(
             updates["label"] = label
         return _publish(store.update(existing["instance_id"], **updates)) or existing
 
+    # A new instance always names its workspace: callers that know it pass it,
+    # and work with none is in ``default``. A row with none reads as default's.
+    workspace = workspace or "default"
     seq = _next_seq(agent_id, workspace)
     created = store.create(
         agent_id,

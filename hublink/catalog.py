@@ -1046,8 +1046,9 @@ def installed(workspace: Optional[str] = None,
 
 def item_workspace(rec: Dict[str, Any]) -> Optional[str]:
     """Where an installed copy lives now, as stored on the item (``None`` for
-    a global one, which every account sees), or the record's workspace when
-    the copy is gone. Visibility is checked against this."""
+    one that names no workspace: the default workspace's, seen by its
+    members and administrators, common/access.py), or the record's workspace
+    when the copy is gone. Visibility is checked against this."""
     if _local_exists(rec["kind"], rec["local_id"]):
         return _local_workspace(rec["kind"], rec["local_id"])
     return rec.get("workspace")

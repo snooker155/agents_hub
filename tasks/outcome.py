@@ -510,7 +510,7 @@ def _record_grading_run(task: Any, evaluation: Dict[str, Any], *, parent_run_id:
         record: Dict[str, Any] = {
             "run_id": run_id, "agent_id": GRADER_AGENT_ID, "channel": GRADING_CHANNEL,
             "task_id": str(getattr(task, "id", "") or ""), "session_type": "task",
-            "workspace": getattr(task, "workspace", None), "status": "completed", "exit_code": 0,
+            "workspace": getattr(task, "workspace", None) or "default", "status": "completed", "exit_code": 0,
             "title": f"Outcome grading, attempt {iteration}" if iteration else "Outcome grading",
             "provider": str(grader.get("provider") or ""), "model": str(grader.get("model") or ""),
             "created_at": when, "started_at": when, "finished_at": when,

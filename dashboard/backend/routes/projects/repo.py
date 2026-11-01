@@ -1,12 +1,12 @@
 """Repo, attach, git and swagger/api-proxy routes of a project."""
-from ._common import (_project_to_dict, store)
+from ._common import (require_project_visible, _project_to_dict, store)
 import asyncio
 import os
 from pathlib import Path
 from typing import Optional, cast
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import Depends, APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from workspace import get_workspace_folder, resolve_project_root, project_folder_name
@@ -20,7 +20,9 @@ import logging
 log = logging.getLogger(__name__)
 
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+# Every route naming {project_id} keeps to the projects the caller can see.
+router = APIRouter(prefix="/api/projects", tags=["projects"],
+                   dependencies=[Depends(require_project_visible)])
 
 # ─────────────────────────── Attach allowlist ────────────────────────────
 #

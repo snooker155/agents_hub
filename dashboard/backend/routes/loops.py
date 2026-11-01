@@ -199,10 +199,12 @@ def _last_run(loop_id: str) -> Optional[Dict[str, Any]]:
 @router.get("")
 async def list_loops(workspace: Optional[str] = None, request: Request = cast(Request, None)):
     loops = store.list_loops(workspace)
-    if not workspace:
-        # A member asking for no workspace sees their own workspaces' loops.
-        names = record_access.visible_names(request)
-        loops = [l for l in loops if record_access.visible(names, l.workspace)]
+    # A member sees their own workspaces' loops, whether one is named or
+    # not: asking for default also lists the loops that name no workspace
+    # (the store reads them as default's), for default's members
+    # (common/record_access.py).
+    names = record_access.visible_names(request)
+    loops = [l for l in loops if record_access.visible(names, l.workspace)]
     return {"loops": [{**_enrich(l), "last_run": _last_run(l.loop_id)} for l in loops]}
 
 

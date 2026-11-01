@@ -126,7 +126,8 @@ def _invoke(instance_id: str, instance: Dict[str, Any], args: Dict[str, Any],
         extra = dict(run.get("extra") or {})
         rm.open_run(
             run_id, agent_id,
-            workspace=run.get("workspace"), title=run.get("title"),
+            workspace=run.get("workspace") or instance.get("workspace") or "default",
+            title=run.get("title"),
             channel=run.get("channel"), execution_mode=run.get("execution_mode"),
             session_type=run.get("session_type"), message_origin=run.get("message_origin"),
             provider=provider, model=model, input=prompt,

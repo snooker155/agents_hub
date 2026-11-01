@@ -45,7 +45,7 @@ def get_environment_class(env_id: str) -> Optional[Type[Environment]]:
 
 
 def list_environments(workspace: Optional[str] = None,
-                      include_custom: bool = True) -> List[Dict[str, Any]]:
+                      include_custom: bool = True, *, strict: bool = False) -> List[Dict[str, Any]]:
     """Catalog for the setup UI: id, name, params, actions, renderer.
 
     Authored worlds are listed alongside the shipped ones, in the same shape,
@@ -56,13 +56,16 @@ def list_environments(workspace: Optional[str] = None,
     A database that is not there yet (a unit test constructing environments,
     a first boot) must not take the catalogue down with it: the shipped
     environments are still the answer to most of the question.
+
+    ``strict`` lists the authored worlds the way a person's listing does
+    (``store.list_worlds``): one that names no workspace is default's alone.
     """
     envs = [cls.describe() for cls in _REGISTRY.values()]
     if include_custom:
         try:
             from playground import store
             from playground.environments.custom import describe_world
-            envs += [describe_world(spec) for spec in store.list_worlds(workspace)]
+            envs += [describe_world(spec) for spec in store.list_worlds(workspace, strict=strict)]
         except Exception:  # noqa: BLE001 - custom worlds are optional in the catalogue, the built-in environments still list
             log.debug("custom world listing skipped", exc_info=True)
     return envs

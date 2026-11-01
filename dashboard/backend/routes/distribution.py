@@ -118,7 +118,16 @@ def _obsidian_version() -> Optional[str]:
         return None
 
 
-def _channel_overview(channel: str, workspace: str, base: str) -> Dict[str, Any]:
+def _visible_installs(request: Optional[Request], store) -> list:
+    """The installations the caller may see. Each names the workspace it was
+    approved into; one that names none yet (still pending) is the default
+    workspace's (common/access.py)."""
+    from common import access
+    return access.filter_by_workspace(identity.request_principal(request), store.public_installs())
+
+
+def _channel_overview(channel: str, workspace: str, base: str,
+                      request: Optional[Request] = None) -> Dict[str, Any]:
     try:
         svc = _service(channel, workspace)
     except HTTPException:
@@ -131,7 +140,7 @@ def _channel_overview(channel: str, workspace: str, base: str) -> Dict[str, Any]
         "enabled": store.is_enabled(),
         "distribution": str(store.get("distribution") or "private"),
         "app_name": str(store.get("app_name") or APP_NAME),
-        "installs": store.public_installs(),
+        "installs": _visible_installs(request, store),
     }
     if channel == "slack":
         oauth = store.is_configured("client_id", "client_secret")
@@ -174,8 +183,8 @@ async def overview(request: Request, workspace: Optional[str] = None):
                 "workspace_header": "X-Agents-Hub-Workspace"},
         "obsidian": {"available": all((OBSIDIAN_DIR / f).is_file() for f in OBSIDIAN_FILES),
                      "version": _obsidian_version(), "plugin_id": "agents-hub"},
-        "slack": _channel_overview("slack", ws, base),
-        "teams": _channel_overview("teams", ws, base),
+        "slack": _channel_overview("slack", ws, base, request),
+        "teams": _channel_overview("teams", ws, base, request),
     }
 
 
@@ -383,9 +392,9 @@ def _notify(svc: Any) -> None:
 
 
 @router.get("/{channel}/installs")
-async def list_installs(channel: str, workspace: Optional[str] = None):
+async def list_installs(channel: str, request: Request, workspace: Optional[str] = None):
     svc = _service(channel, workspace)
-    return {"workspace": svc.workspace, "installs": svc.store.public_installs()}
+    return {"workspace": svc.workspace, "installs": _visible_installs(request, svc.store)}
 
 
 @router.post("/{channel}/installs")

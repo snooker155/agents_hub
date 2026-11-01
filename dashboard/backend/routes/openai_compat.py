@@ -472,7 +472,25 @@ def _listed_agents(request: Request, principal: Any) -> List[Dict[str, Any]]:
         specs = usable_agents(header)
     else:
         specs = usable_in_any(access.visible_workspaces(principal))
+    if _restricted(principal):
+        # An agent that names no owner workspace (and is neither a system nor
+        # a shared one) is usable everywhere by widgets.agents, but it is the
+        # default workspace's alone (common/record_access.py).
+        in_default = (header == "default" if header
+                      else "default" in (access.visible_workspaces(principal) or set()))
+        specs = [s for s in specs if in_default or not _unbound_agent(s.id)]
     return [_agent_object(s) for s in sorted(specs, key=lambda s: s.id)]
+
+
+def _restricted(principal: Any) -> bool:
+    from common import record_access
+    return record_access.restricted(principal)
+
+
+def _unbound_agent(agent_id: str) -> bool:
+    from common import record_access
+    record = record_access.resolve("agent", agent_id)
+    return record is not None and record.unbound
 
 
 def _agent_spec(model: str) -> Any:
@@ -512,6 +530,11 @@ def _agent_workspace(request: Request, principal: Any, spec: Any,
         identity.require_role(principal, workspace=workspace, role=WS_EDITOR)
     except HTTPException as exc:
         raise _permission_error(str(exc.detail))
+    if (_restricted(principal) and workspace != "default"
+            and _unbound_agent(str(getattr(spec, "id", "") or ""))):
+        # Usable everywhere by widgets.agents, but an agent that names no
+        # owner workspace is the default one's (common/record_access.py).
+        raise _permission_error("this agent belongs to the default workspace; run it there")
     if workspace != "default":
         try:
             from workspace import get_workspace_folder

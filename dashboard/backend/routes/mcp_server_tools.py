@@ -83,6 +83,10 @@ def workspace_names(principal: Any) -> List[str]:
             and (principal is None or principal.reaches(n))]
 
 
+def _bound(value: Any) -> bool:
+    return bool(str(value or "").strip())
+
+
 def _named_workspace(ctx: Ctx, named: Any) -> str:
     from routes import openai_compat as v1
     workspace = str(named or "").strip() or v1._header_workspace(ctx.request)
@@ -345,12 +349,17 @@ async def search_knowledge(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
 # ── Workflows ────────────────────────────────────────────────────────────────
 
 def _flows_in(workspace: str) -> List[Dict[str, Any]]:
+    """The flows runnable in ``workspace``. A flow that names no workspace
+    is default's, runnable in default only; a shared one stays everyone's."""
     from flow import store as flow_store
     from workspace import get_workspace_metadata
     allowed = get_workspace_metadata(workspace).get("allowed_flows")
     out = []
     for flow in flow_store.list_flows():
-        if (flow.get("workspace") or workspace) != workspace:
+        if not _bound(flow.get("workspace")) and not flow.get("shared"):
+            if workspace != "default":
+                continue
+        elif (flow.get("workspace") or workspace) != workspace:
             continue
         if allowed is not None and flow.get("id") not in allowed:
             continue
@@ -381,13 +390,21 @@ async def list_workflows(ctx: Ctx, args: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _in_workspace(record_ws: Any, workspace: str) -> bool:
+    """Whether a team or loop filed under ``record_ws`` runs in ``workspace``:
+    one that names none is default's, so it runs in default only."""
+    if not _bound(record_ws):
+        return workspace == "default"
+    return record_ws == workspace
+
+
 def _launch(kind: str, entity_id: str, text: str, workspace: str) -> str:
     """Start one workflow run through its own launcher; its run id."""
     if kind == "team":
         from teams import store as teams_store
         from teams.launcher import start_team_run
         team = teams_store.get_team(entity_id)
-        if not team or (team.workspace or workspace) != workspace:
+        if not team or not _in_workspace(team.workspace, workspace):
             raise ToolError(f"no team '{entity_id}' in workspace '{workspace}'")
         goal = text or (team.description or "").strip()
         if not goal:
@@ -397,7 +414,7 @@ def _launch(kind: str, entity_id: str, text: str, workspace: str) -> str:
         from loops import store as loops_store
         from loops.launcher import start_loop_run
         loop = loops_store.get_loop(entity_id)
-        if not loop or (loop.workspace or workspace) != workspace:
+        if not loop or not _in_workspace(loop.workspace, workspace):
             raise ToolError(f"no loop '{entity_id}' in workspace '{workspace}'")
         return start_loop_run(entity_id, text, workspace=workspace).loop_run_id
     from flow import launcher as flow_launcher

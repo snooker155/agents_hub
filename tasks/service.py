@@ -57,6 +57,9 @@ TASKS_FILE = str(DEFAULT_TASKS_FILE)
 
 default_store = TaskStore(TASKS_FILE)
 
+#: The workspace a task lands in when its creator names none.
+DEFAULT_WORKSPACE = "default"
+
 # Marker prefix written into a subtask's blocked_reason when it was blocked
 # automatically because one of its ancestors is blocked. Used to tell an
 # auto-cascade block apart from a task the user/agent blocked deliberately, so
@@ -128,6 +131,10 @@ def create_task(
     (files/service.py) the task works from; the route layer checks they
     belong to the task's workspace.
     """
+    # A task always names its workspace: callers that know it pass it, and a
+    # task with none is in ``default``. One with none would be an anomaly that
+    # reads as default's, and no other workspace's queue would hold it.
+    workspace = workspace or DEFAULT_WORKSPACE
     dep_ids = [d if isinstance(d, UUID) else UUID(str(d)) for d in (depends or [])]
     if dep_ids:
         index = {t.id: t for t in store.list()}
@@ -1204,7 +1211,9 @@ def add_subtask(
     alongside its own ``assign_agent`` call.
     """
     parent = store.get(parent_id)
-    workspace = parent.workspace if parent else None
+    # The parent's workspace, else ``default``: a subtask of a task that is gone
+    # or names none still belongs somewhere (see create_task).
+    workspace = (parent.workspace if parent else None) or DEFAULT_WORKSPACE
     project = parent.project if parent else None
     project_id = parent.project_id if parent else None
     if budget_usd is None and parent is not None:

@@ -10,6 +10,7 @@ from agents import registry
 from managers import run_manager
 from models import OrchestratorSettings
 from workspace import create_workspace_folder, get_workspace_metadata, update_workspace_metadata
+from common import access, identity
 from common.workspace_context import normalize_workspace_name
 from common.paths import AGENTS_HUB_ROOT
 import logging
@@ -21,15 +22,32 @@ router = APIRouter(tags=["stats"])
 _DEFAULT_ORCHESTRATOR_SETTINGS = {"enabled": False, "assignment_mode": "manual", "followup_mode": "single", "wait_for_completion": False, "execution_mode": "subprocess", "max_retries": 0}
 
 
-@router.get("/api/stats")
-async def get_stats(workspace: Optional[str] = None):
-    all_tasks = tasks_service.list_tasks()
-    if workspace:
-        tasks = [t for t in all_tasks if (t.workspace or "").strip() == workspace]
-    else:
-        tasks = all_tasks
+def _in_workspace(record_workspace: Optional[str], workspace: str) -> bool:
+    """Whether a record filed under ``record_workspace`` belongs to ``workspace``:
+    a record that names none is the default workspace's (managers/runs/store.py
+    query_runs reads it the same way)."""
+    own = (record_workspace or "").strip() or "default"
+    return own == workspace
 
+
+def _visible_runs(request: Request, workspace: Optional[str]) -> list:
+    """Every run in ``workspace`` (all of them when none is named), narrowed to
+    the workspaces the caller can see (a no-op outside ``multi`` mode)."""
     runs = run_manager.load_runs()
+    if workspace:
+        runs = [r for r in runs if _in_workspace(r.get("workspace"), workspace)]
+    return access.filter_by_workspace(identity.request_principal(request), runs)
+
+
+@router.get("/api/stats")
+async def get_stats(request: Request, workspace: Optional[str] = None):
+    workspace = normalize_workspace_name(workspace) or None
+    principal = identity.request_principal(request)
+    tasks = [t for t in tasks_service.list_tasks()
+             if access.can_see_workspace(principal, t.workspace)
+             and (not workspace or _in_workspace(t.workspace, workspace))]
+
+    runs = _visible_runs(request, workspace)
     agents = registry.list_agents()
 
     total_tasks = len(tasks)
@@ -97,10 +115,8 @@ def get_overview(request: Request, workspace: Optional[str] = None, days: int = 
 
 
 @router.get("/api/runs")
-async def list_runs(workspace: Optional[str] = None):
-    runs = run_manager.load_runs()
-    if workspace:
-        runs = [r for r in runs if r.get("workspace") == workspace]
+async def list_runs(request: Request, workspace: Optional[str] = None):
+    runs = _visible_runs(request, normalize_workspace_name(workspace) or None)
     # Sort by started_at desc
     runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
     return runs
@@ -173,7 +189,14 @@ def _read_run_log_text(run_id: str) -> Optional[str]:
 
 
 @router.get("/api/logs/{run_id}")
-async def get_logs(run_id: str):
+async def get_logs(run_id: str, request: Request):
+    from common import record_access
+    if record_access.restricted(identity.request_principal(request)) \
+            and run_manager.get_run_by_id(run_id) is None:
+        # Without the run there is no workspace to check the caller against
+        # (the middleware let the request through for that reason), so a
+        # leftover log file is an administrator's to read.
+        raise HTTPException(status_code=404, detail="Log file not found")
     text = _read_run_log_text(run_id)
     if text is None:
         raise HTTPException(status_code=404, detail="Log file not found")

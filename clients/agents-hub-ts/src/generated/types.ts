@@ -963,6 +963,11 @@ export type GitTestRequest = {
   "provider": string;
 };
 
+export type GlobalDefaultUpdate = {
+  "provider": string;
+  "model": string;
+};
+
 export type GraderIn = {
   "kind"?: string;
   "params"?: Record<string, unknown>;
@@ -1509,6 +1514,11 @@ export type PreviewTicketRequest = {
   "project_id"?: string | null;
   "deployment_id"?: string | null;
   "service"?: string | null;
+};
+
+export type ProfileChange = {
+  "display_name"?: string | null;
+  "email"?: string | null;
 };
 
 export type ProjectApiRequest = {
@@ -2977,6 +2987,9 @@ export interface ApiPaths {
     get: { response: Record<string, unknown> };
     put: { body: Record<string, unknown>; response: unknown };
   };
+  "/api/auth/profile": {
+    patch: { body: ProfileChange; response: unknown };
+  };
   "/api/auth/sessions": {
     get: { response: Record<string, unknown>[] };
   };
@@ -3939,6 +3952,9 @@ export interface ApiPaths {
   };
   "/api/models/discover/{provider}": {
     post: { response: unknown };
+  };
+  "/api/models/global-default": {
+    put: { body: GlobalDefaultUpdate; response: unknown };
   };
   "/api/models/local/jobs": {
     get: { response: Record<string, unknown> };

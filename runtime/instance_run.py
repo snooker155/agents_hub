@@ -227,7 +227,7 @@ def answer_message(instance_id: str, agent_id: str, workspace: Optional[str],
         open_run(
             run_id, agent_id, pid=None, session_id=instance.get("session_id"),
             session_type="chat", channel=_CHANNEL_BY_ORIGIN.get(origin, "instance"),
-            workspace=instance.get("workspace"), log_file=str(log_file),
+            workspace=instance.get("workspace") or "default", log_file=str(log_file),
             title=body[:60] + ("…" if len(body) > 60 else ""),
             input=body, instance_id=instance_id, message_origin=origin,
             conversation_id=conversation_id, carrier_run=True, inbox_msg_id=msg_id,
@@ -403,6 +403,9 @@ def sweep_worker_tasks(instance_id: str, agent_id: str, workspace: Optional[str]
                 "status": "running", "instance_id": instance_id, "carrier_run": True,
                 "channel": channel, "started_at": _utc_now_iso(),
                 "log_file": str(log_file), "input": prompt,
+                # The task's workspace, else the carrier's scope: a run in no
+                # workspace reads as default's.
+                "workspace": task.workspace or scope,
             })
             session_id = None
             try:
@@ -623,6 +626,7 @@ def sweep_orchestrator_tasks(instance_id: str, workspace: Optional[str], scope: 
                 "pid": None, "status": "running", "session_type": "task",
                 "session_id": session_id, "started_at": _utc_now_iso(), "finished_at": None,
                 "exit_code": None, "error": None, "log_file": str(log_file), "input": prompt,
+                "workspace": task.workspace or scope,
             })
             tasks_service.update_task(
                 task.id, status=TaskStatus.in_progress,

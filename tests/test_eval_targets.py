@@ -227,13 +227,15 @@ def test_snapshot_caps_files_and_bytes(task_ws):
     assert small["truncated"] is True
 
 
-def test_snapshot_of_a_task_without_workspace_copies_no_files():
+def test_a_task_created_without_workspace_snapshots_as_a_default_one():
     from evals.snapshot import snapshot_task
     from tasks import service as tasks_service
 
+    # A task never stays unbound: it is the default workspace's, and its
+    # snapshot is that folder's, like any other default task's.
     task = tasks_service.create_task(title="Loose", description="no folder")
-    art = snapshot_task(str(task.id))
-    assert art["files"] == []
+    assert task.workspace == "default"
+    assert isinstance(snapshot_task(str(task.id))["files"], list)
     with pytest.raises(ValueError):
         snapshot_task(str(uuid4()))
 

@@ -73,10 +73,24 @@ def get_eval_set(eval_set_id: str) -> Optional[EvalSet]:
 
 
 @remote_state.hub_call("workspace")
-def list_eval_sets(workspace: Optional[str] = None) -> List[EvalSet]:
-    """Sets for a workspace, plus workspace-less (global) ones."""
+def list_eval_sets(workspace: Optional[str] = None, *, strict: bool = False) -> List[EvalSet]:
+    """Sets for a workspace, plus workspace-less (global) ones.
+
+    ``strict`` is the listing a person reads (routes/evals.py): a set that
+    names no workspace is the default workspace's alone, so another
+    workspace's list leaves it out and only default's holds it. Without it a
+    workspace-less set reads in every workspace, which the agent tools
+    (tools/eval_ops.py) still rely on.
+    """
     conn = db.get_conn()
-    if workspace:
+    if workspace and strict:
+        if workspace == "default":
+            sql = ("SELECT * FROM eval_sets WHERE workspace = ? OR workspace IS NULL "
+                   "OR workspace = '' ORDER BY updated_at DESC")
+        else:
+            sql = "SELECT * FROM eval_sets WHERE workspace = ? ORDER BY updated_at DESC"
+        rows = conn.execute(sql, (workspace,)).fetchall()
+    elif workspace:
         rows = conn.execute(
             "SELECT * FROM eval_sets WHERE workspace = ? OR workspace IS NULL "
             "ORDER BY updated_at DESC",

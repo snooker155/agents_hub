@@ -14,12 +14,13 @@ tokens, thinking and tool calls there (``agents.callbacks.ChannelPublishCallback
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from agents.agent_replay import replay_run, ReplayError
+from common import access, identity
 
 router = APIRouter(tags=["replay"])
 
@@ -35,7 +36,15 @@ class ReplayRequest(BaseModel):
 
 
 @router.post("/api/runs/{run_id}/replay")
-def replay(run_id: str, req: Optional[ReplayRequest] = None):
+def replay(run_id: str, req: Optional[ReplayRequest] = None, request: Request = cast(Request, None)):
+    """Replay a run the caller may see: the answer carries the original's
+    output, so a run of another workspace, or one the caller cannot see
+    (a run that names none is default's, common/access.py), is refused like
+    reading it."""
+    from managers import run_manager
+    run = run_manager.get_run_by_id(run_id)
+    if run is not None:
+        access.require_visible(identity.request_principal(request), run.get("workspace"))
     req = req or ReplayRequest()
     channel = (req.channel or "").strip() or None
     if channel and not channel.startswith("replay:"):

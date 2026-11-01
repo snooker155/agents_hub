@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from common import db, remote_state
 
@@ -155,14 +155,18 @@ def _snippet(text: str, at: int, length: int) -> str:
 
 
 @remote_state.hub_call("workspace")
-def search_chats(q: str, workspace: Optional[str] = None, limit: int = 50) -> Dict[str, Any]:
+def search_chats(q: str, workspace: Optional[str] = None, limit: int = 50,
+                 keep: Optional[Callable[[Dict[str, Any]], bool]] = None) -> Dict[str, Any]:
     """The conversations whose title or messages hold ``q`` (any case), newest
     activity first, without transcripts; a hit in a message carries the text
     around it as ``match``.
 
     Read in Python, not by SQL: the transcript is a JSON document, and
     matching its text case-blind in any script (Cyrillic too) the same way on
-    SQLite and Postgres is simplest where the document is decoded."""
+    SQLite and Postgres is simplest where the document is decoded.
+
+    ``keep`` drops a chat before it is matched (the route's visibility rule),
+    so the ``limit`` counts only chats the caller may see."""
     needle = " ".join(str(q or "").split()).casefold()
     if not needle:
         return {"items": [], "total": 0, "q": q}
@@ -178,7 +182,7 @@ def search_chats(q: str, workspace: Optional[str] = None, limit: int = 50) -> Di
     items: List[Dict[str, Any]] = []
     for row in rows:
         chat = _row_to_chat(row)
-        if chat is None:
+        if chat is None or (keep is not None and not keep(chat)):
             continue
         title = str(chat.get("title") or "")
         if needle in " ".join(title.split()).casefold():

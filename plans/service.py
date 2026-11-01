@@ -1410,6 +1410,7 @@ def _fire_agent_task(
                 "pid": None,
                 "exit_code": None,
                 "error": None,
+                "workspace": ws_name or "default",
             })
             tasks_service.assign_agent(task.id, job.agent_id, None, run_id=run_id)
             tasks_service.update_task(task.id, status=TaskStatus.ready, session_id=session_id)

@@ -379,8 +379,13 @@ def _agent_is_live(run: Dict[str, Any]) -> bool:
 
 
 def _live(workspace: Optional[str], runs: List[Dict[str, Any]], now: datetime,
-          limit: int = 8, recent: int = 5) -> Dict[str, Any]:
-    from common import entity_runs
+          limit: int = 8, recent: int = 5, principal: Any = None) -> Dict[str, Any]:
+    from common import access, entity_runs
+
+    def seen(rec: Dict[str, Any]) -> bool:
+        # A flow, loop, team or scenario run the viewer may not see stays off
+        # the board; one that names no workspace is default's.
+        return principal is None or access.can_see_workspace(principal, rec.get("workspace"))
 
     names: Dict[str, str] = {}
     try:
@@ -409,7 +414,8 @@ def _live(workspace: Optional[str], runs: List[Dict[str, Any]], now: datetime,
 
     active = [{**agent_item(r), "stale": _stale(r, now)} for r in runs if _agent_is_live(r)]
     active += [{**entity_item(r), "stale": _stale(r, now)}
-               for r in entity_runs.list_runs(statuses=sorted(_LIVE_STATUSES), workspace=workspace)]
+               for r in entity_runs.list_runs(statuses=sorted(_LIVE_STATUSES), workspace=workspace)
+               if seen(r)]
     live = sorted((a for a in active if not a["stale"]), key=lambda a: a.get("started_at") or "", reverse=True)
     stale = sorted((a for a in active if a["stale"]), key=lambda a: a.get("started_at") or "", reverse=True)
     by_kind: Dict[str, int] = {}
@@ -422,7 +428,7 @@ def _live(workspace: Optional[str], runs: List[Dict[str, Any]], now: datetime,
              if r.get("finished_at") and not _agent_is_live(r) and r.get("settled_by") != "watchdog"]
     ended += [entity_item(r) for r in entity_runs.list_runs(
         statuses=["completed", "failed", "stopped"], workspace=workspace, limit=recent * 2)
-        if r.get("stop_reason") != "orphan"]
+        if r.get("stop_reason") != "orphan" and seen(r)]
     ended.sort(key=lambda a: a.get("finished_at") or "", reverse=True)
     for e in ended:
         if e["status"] == "stop":
@@ -457,6 +463,12 @@ def overview(workspace: Optional[str] = None, *, days: int = 14, principal: Any 
         runs = run_manager.load_runs()
         if workspace:
             runs = [r for r in runs if (r.get("workspace") or "").strip() == workspace]
+        if principal is not None:
+            # Only the runs the viewer may see are counted and listed: with no
+            # workspace named every run would be, one that names none
+            # included (default's, common/access.py).
+            from common import access
+            runs = access.filter_by_workspace(principal, runs)
     except Exception:  # noqa: BLE001 - the sections below then report empty
         log.warning("dashboard overview: runs unavailable", exc_info=True)
 
@@ -469,5 +481,5 @@ def overview(workspace: Optional[str] = None, *, days: int = 14, principal: Any 
     out["endpoint"] = _section("endpoint", lambda: _endpoint(now, days, serving_user_id))
     out["local_models"] = _section("local_models", _local_models)
     out["services"] = _section("services", lambda: _services(workspace, runs, now, principal))
-    out["live"] = _section("live", lambda: _live(workspace, runs, now))
+    out["live"] = _section("live", lambda: _live(workspace, runs, now, principal=principal))
     return out

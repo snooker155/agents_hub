@@ -38,12 +38,12 @@ run container whose state mount is read-only):
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from common import access, audit, identity, tool_approvals
+from common import access, audit, identity, record_access, tool_approvals
 
 log = logging.getLogger(__name__)
 
@@ -130,14 +130,34 @@ def list_run_approvals(run_id: str, request: Request, status: Optional[str] = No
     return {"approvals": rows}
 
 
+def _group_visible(request: Request, kind: str, group_run_id: str,
+                   rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The approvals of one flow or team run, once the caller may see that
+    run: its own workspace, else its flow's or team's (common/record_access.py).
+    A run gone from its store leaves each row to its own workspace. Either
+    way, one that names none is the default workspace's."""
+    principal = identity.request_principal(request)
+    if not record_access.restricted(principal):
+        return rows
+    record = record_access.resolve(kind, group_run_id)
+    if record is None:
+        return access.filter_by_workspace(principal, rows)
+    if not access.can_see_workspace(principal, record.workspace):
+        raise HTTPException(status_code=403,
+                            detail="this record's workspace is not visible to this account")
+    return rows
+
+
 @router.get("/api/flow-runs/{flow_run_id}/tool-approvals")
-def list_flow_run_approvals(flow_run_id: str, status: Optional[str] = None):
-    return {"approvals": tool_approvals.list_for_flow_run(flow_run_id, status=status or None)}
+def list_flow_run_approvals(flow_run_id: str, request: Request, status: Optional[str] = None):
+    rows = tool_approvals.list_for_flow_run(flow_run_id, status=status or None)
+    return {"approvals": _group_visible(request, "flow_run", flow_run_id, rows)}
 
 
 @router.get("/api/team-runs/{team_run_id}/tool-approvals")
-def list_team_run_approvals(team_run_id: str, status: Optional[str] = None):
-    return {"approvals": tool_approvals.list_for_team_run(team_run_id, status=status or None)}
+def list_team_run_approvals(team_run_id: str, request: Request, status: Optional[str] = None):
+    rows = tool_approvals.list_for_team_run(team_run_id, status=status or None)
+    return {"approvals": _group_visible(request, "team_run", team_run_id, rows)}
 
 
 @router.get("/api/tool-approvals/{approval_id}")

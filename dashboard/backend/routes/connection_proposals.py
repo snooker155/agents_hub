@@ -58,9 +58,10 @@ def list_proposals(request: Request, status: Optional[str] = None, workspace: Op
     rows = tool_approvals.list_for_tool(proposals.TOOL, status=status or None, workspace=workspace or None)
     if status == tool_approvals.STATUS_PENDING:
         rows = [r for r in rows if not tool_approvals.is_expired(r)]
-    hub_rows = [r for r in rows if not r.get("workspace")]
-    ws_rows = access.filter_by_workspace(principal, [r for r in rows if r.get("workspace")])
-    return {"proposals": sorted(hub_rows + ws_rows, key=lambda r: str(r.get("created_at") or ""),
+    # A proposal that names no workspace is the default one's:
+    # filter_by_workspace keeps it for those who see default.
+    rows = access.filter_by_workspace(principal, rows)
+    return {"proposals": sorted(rows, key=lambda r: str(r.get("created_at") or ""),
                                 reverse=True)}
 
 

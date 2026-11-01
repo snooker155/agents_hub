@@ -1,9 +1,9 @@
 """Project structure graph and its generation and chat streams."""
-from ._common import (_graph_store, _project_root_path, store)
+from ._common import (require_project_visible, _graph_store, _project_root_path, store)
 import asyncio
 import json
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import Depends, APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from tasks import service as tasks_service
@@ -15,7 +15,9 @@ import logging
 log = logging.getLogger(__name__)
 
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+# Every route naming {project_id} keeps to the projects the caller can see.
+router = APIRouter(prefix="/api/projects", tags=["projects"],
+                   dependencies=[Depends(require_project_visible)])
 
 # ─────────────────────────── STRUCTURE GRAPH ────────────────────────────
 

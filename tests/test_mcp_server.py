@@ -448,3 +448,12 @@ def test_every_client_gets_its_own_format(tmp_path):
     mc.merge("windsurf", windsurf, url, {})
     assert json.loads(windsurf.read_text())["mcpServers"] == {"other": {"serverUrl": "x"},
                                                              "agents-hub": {"serverUrl": url}}
+
+
+def test_workflow_records_with_no_workspace_belong_to_default_only():
+    from dashboard.backend.routes import mcp_server_tools as tools
+    assert tools._in_workspace(None, "default")
+    assert tools._in_workspace("", "default")
+    assert not tools._in_workspace(None, "alpha")
+    assert tools._in_workspace("alpha", "alpha")
+    assert not tools._in_workspace("alpha", "default")

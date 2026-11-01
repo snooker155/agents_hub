@@ -37,9 +37,9 @@ what lets a chat talk to the bot at all. Channel-specific inbound webhooks
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from agents import registry as agent_registry
@@ -244,11 +244,19 @@ async def get_status(name: str, workspace: Optional[str] = None):
 
 
 @router.get("/{name}/bindings")
-async def list_bindings(name: str, workspace: Optional[str] = None):
+async def list_bindings(name: str, workspace: Optional[str] = None,
+                        request: Request = cast(Request, None)):
+    """The bindings of the bot in effect in ``workspace``. A member sees only
+    the ones bound to workspaces they belong to: the default's bot lists
+    every workspace's, and a binding that names none is default's
+    (common/access.py)."""
+    from common import access, identity
     spec = _spec(name)
     ws = _ws(workspace)
     svc, own = _bot(spec, ws)
-    return [_enriched(b) for b in svc.store.list_bindings() if _visible(b, ws, own)]
+    rows = [b for b in svc.store.list_bindings() if _visible(b, ws, own)]
+    rows = access.filter_by_workspace(identity.request_principal(request), rows)
+    return [_enriched(b) for b in rows]
 
 
 @router.post("/{name}/bindings")

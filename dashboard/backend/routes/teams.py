@@ -186,10 +186,12 @@ def _enrich(team: Team) -> Dict[str, Any]:
 @router.get("")
 async def list_teams(workspace: Optional[str] = None, request: Request = cast(Request, None)):
     teams = store.list_teams(workspace)
-    if not workspace:
-        # A member asking for no workspace sees their own workspaces' teams.
-        names = record_access.visible_names(request)
-        teams = [t for t in teams if record_access.visible(names, t.workspace)]
+    # A member sees their own workspaces' teams, whether one is named or
+    # not: asking for default also lists the teams that name no workspace
+    # (the store reads them as default's), for default's members
+    # (common/record_access.py).
+    names = record_access.visible_names(request)
+    teams = [t for t in teams if record_access.visible(names, t.workspace)]
     return {"teams": [_enrich(t) for t in teams]}
 
 

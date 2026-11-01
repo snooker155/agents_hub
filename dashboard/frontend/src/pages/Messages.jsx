@@ -85,6 +85,10 @@ function duration(started, finished) {
 
 // ---- Main page --------------------------------------------------------------
 
+// The default workspace is the overview: it starts on every workspace and
+// offers the filter, another workspace locks the page to itself.
+const headerScope = ws => (ws && ws !== 'default' ? ws : '');
+
 export default function Messages() {
   const { t } = useI18n();
   const { selectedWorkspace, liveUpdates } = useWorkspace();
@@ -95,7 +99,7 @@ export default function Messages() {
   const [agents, setAgents]           = useState([]);
   const [workspaces, setWorkspaces]   = useState([]);
 
-  const [filterWorkspace, setFilterWorkspace] = useState(selectedWorkspace || '');
+  const [filterWorkspace, setFilterWorkspace] = useState(() => headerScope(selectedWorkspace));
   const [filterAgent,     setFilterAgent]     = useState('');
   const [filterStatus,    setFilterStatus]    = useState('');
   const [filterFlow,      setFilterFlow]      = useState('');
@@ -108,7 +112,7 @@ export default function Messages() {
   const [seenSelected, setSeenSelected] = useState(selectedWorkspace);
   if (seenSelected !== selectedWorkspace) {
     setSeenSelected(selectedWorkspace);
-    setFilterWorkspace(selectedWorkspace || '');
+    setFilterWorkspace(headerScope(selectedWorkspace));
   }
 
   const [stopping,      setStopping]      = useState({});
@@ -433,7 +437,7 @@ export default function Messages() {
           {hasFilters && (
             <button
               onClick={() => {
-                setFilterWorkspace(isDefaultWorkspace ? '' : (selectedWorkspace || ''));
+                setFilterWorkspace(headerScope(selectedWorkspace));
                 setFilterAgent('');
                 setFilterStatus('');
                 setFilterFlow('');

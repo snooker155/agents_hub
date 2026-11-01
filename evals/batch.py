@@ -395,7 +395,7 @@ def _record_run(run: EvalRun, meta: Dict[str, Any], item: Any, row: Dict[str, An
     if int(meta.get("attempt") or 1) > 1:
         title += f" (attempt {meta['attempt']})"
     rm.open_run(
-        run_id, meta["agent_id"], workspace=run.workspace, title=title,
+        run_id, meta["agent_id"], workspace=run.workspace or "default", title=title,
         channel=EVAL_CHANNEL, execution_mode=EVAL_CHANNEL, session_type=EVAL_CHANNEL,
         message_origin=EVAL_CHANNEL, provider=row["provider"], model=row["model"],
         input=meta["prompt"], link_to_session=False, price_factor=PRICE_FACTOR,

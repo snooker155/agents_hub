@@ -371,7 +371,9 @@ def _open_judge_run(agent: Any, agent_id: str, prompt: str, run_id: str,
             # run's stop callback ends it, nothing signals the pid.
             in_process=True,
             provider=getattr(agent, "provider", "") or "", model=getattr(agent, "model", "") or "",
-            **{k: v for k, v in record.items() if v not in (None, "")},
+            # The pass's workspace, else ``default``: a run in none reads as
+            # default's.
+            **{"workspace": "default", **{k: v for k, v in record.items() if v not in (None, "")}},
         )
         started = utc_iso()
         msg_id = uuid.uuid4().hex[:8]

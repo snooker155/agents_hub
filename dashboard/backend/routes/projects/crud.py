@@ -1,8 +1,10 @@
 """Project registry CRUD: list, create, read, update and delete."""
-from ._common import (_graph_store, _project_to_dict, store)
+from ._common import (require_project_visible, _graph_store, _project_to_dict, store)
 from typing import Optional, cast
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import Depends, APIRouter, HTTPException, Query, Request
+
+from common import access, identity
 
 from tasks import service as tasks_service
 from workspace import get_workspace_folder, resolve_project_root, project_folder_name
@@ -13,15 +15,21 @@ import logging
 log = logging.getLogger(__name__)
 
 
-router = APIRouter(prefix="/api/projects", tags=["projects"])
+# Every route naming {project_id} keeps to the projects the caller can see.
+router = APIRouter(prefix="/api/projects", tags=["projects"],
+                   dependencies=[Depends(require_project_visible)])
 
 # ─────────────────────────── CRUD ────────────────────────────
 
 @router.get("")
-async def list_projects(workspace: Optional[str] = Query(None)):
+async def list_projects(request: Request, workspace: Optional[str] = Query(None)):
     projects = store().list()
     if workspace:
         projects = [p for p in projects if p.workspace == workspace]
+    # With no workspace named every project would be listed: keep to the
+    # ones the caller can see, one that names none being default's.
+    principal = identity.request_principal(request)
+    projects = [p for p in projects if access.can_see_workspace(principal, p.workspace)]
     result = []
     all_tasks = tasks_service.list_tasks()
     for p in projects:

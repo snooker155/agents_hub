@@ -54,6 +54,53 @@ _SSE_HEADERS = {
 }
 
 
+#: What a ``<prefix>:<id>`` channel streams, as record kinds of
+#: common/record_kinds/ tried in order (a ``flow:`` id is a flow run's or a
+#: flow's). A bare channel is a chat session's token stream.
+_CHANNEL_KINDS = {
+    "chat": ("chat",), "run": ("agent_run",), "task": ("task",), "view": ("view",),
+    "flow": ("flow_run_record", "flow_record"), "loop": ("loop_run_record", "loop_record"),
+    "team": ("team_run_record", "team_record"), "instance": ("instance",),
+    "memory": ("memory_pool",), "project": ("project",), "scenario": ("scenario",),
+    "sim": ("sim_run",), "world": ("world",), "": ("run_session", "chat"),
+}
+#: Channels named after a workspace (a page's list of that workspace's things).
+_WORKSPACE_CHANNELS = ("evals", "projects")
+
+
+def _channel_visible(principal, channel: str) -> bool:
+    """Whether a person held to their memberships may follow ``channel``: the
+    record it streams lives in a workspace they can see (common/access.py),
+    the same rule the record's own routes apply. A channel whose record is
+    not found (a run about to start) or that names no record is open."""
+    from common import access, record_kinds
+    if channel in (APP_CHANNEL, NOTIFICATIONS_CHANNEL):
+        return True
+    prefix, sep, value = channel.partition(":")
+    if not sep:
+        prefix, value = "", channel
+    if prefix in _WORKSPACE_CHANNELS:
+        return access.can_see_workspace(principal, value)
+    for kind in _CHANNEL_KINDS.get(prefix, ()):
+        record = record_kinds.resolve(kind, value)
+        if record is None:
+            continue
+        if record.admin_only:
+            return False
+        return record.everywhere or access.can_see_workspace(principal, record.workspace)
+    return True
+
+
+def _visible_channels(request: Request, channels: List[str]) -> List[str]:
+    """``channels`` without the ones this caller may not follow; all of them
+    for anyone not held to memberships (common/record_access.restricted)."""
+    from common import identity, record_access
+    principal = identity.request_principal(request)
+    if not record_access.restricted(principal):
+        return list(channels)
+    return [ch for ch in channels if _channel_visible(principal, ch)]
+
+
 class ChannelUpdate(BaseModel):
     add: List[str] = []
     remove: List[str] = []
@@ -132,6 +179,7 @@ async def stream(request: Request, session: Optional[str] = None, client: Option
             extra = extra.strip()
             if extra and extra not in default_channels:
                 default_channels.append(extra)
+        default_channels = _visible_channels(request, default_channels)
 
         # A stream catch-up only makes sense for a client id the browser
         # already had (nothing to "resume" for a brand-new tab) that this
@@ -172,13 +220,15 @@ async def stream(request: Request, session: Optional[str] = None, client: Option
 
 
 @router.post("/{client_id}/channels")
-async def update_channels(client_id: str, body: ChannelUpdate):
-    """Add/remove channel interest on an existing connection (detail pages)."""
-    for ch in body.add:
+async def update_channels(client_id: str, body: ChannelUpdate, request: Request):
+    """Add/remove channel interest on an existing connection (detail pages).
+    A channel the caller may not follow is not added (``added`` leaves it out)."""
+    added = _visible_channels(request, body.add)
+    for ch in added:
         broker.add_channel(client_id, ch)
     for ch in body.remove:
         broker.remove_channel(client_id, ch)
-    return {"client_id": client_id, "added": body.add, "removed": body.remove}
+    return {"client_id": client_id, "added": added, "removed": body.remove}
 
 
 @router.post("/notify")
@@ -221,7 +271,7 @@ async def relay_publish(body: PublishEvent):
 
 
 @router.get("/replay")
-async def replay_channel(channel: str):
+async def replay_channel(channel: str, request: Request):
     """What a run's live channel (``run:<id>``, ``team:<id>``) has streamed
     so far, numbered: a page that opens in the middle of the run folds this
     first, then the live events past its last number (common/run_replay.py).
@@ -229,4 +279,6 @@ async def replay_channel(channel: str):
     from common import run_replay
     if not run_replay.kept(channel):
         raise HTTPException(status_code=400, detail="not a run channel")
+    if not _visible_channels(request, [channel]):
+        raise HTTPException(status_code=403, detail="this run's workspace is not visible to this account")
     return run_replay.replay(channel)

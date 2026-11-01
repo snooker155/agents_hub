@@ -15,8 +15,9 @@ page hid from human readers, and the security flags raised against both.
 """
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
+from common import access, identity
 from tools import web_log
 
 router = APIRouter(prefix="/api/web-logs", tags=["web-logs"])
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/api/web-logs", tags=["web-logs"])
 
 @router.get("")
 async def list_web_logs(
+    request: Request,
     limit: int = Query(200, ge=1, le=web_log.MAX_PAGE),
     offset: int = Query(0, ge=0),
     kind: Optional[str] = Query(None, description="search | fetch"),
@@ -43,7 +45,7 @@ async def list_web_logs(
         raise HTTPException(status_code=400, detail=f"sort must be one of {', '.join(web_log.SORT_KEYS)}")
     if order and order not in ("asc", "desc"):
         raise HTTPException(status_code=400, detail="order must be 'asc' or 'desc'")
-    return web_log.query(
+    page = web_log.query(
         limit=limit,
         offset=offset,
         kind=kind,
@@ -55,6 +57,14 @@ async def list_web_logs(
         sort=sort,
         order=order,
     )
+    # The log reads a call made outside any workspace as default's, and with
+    # none named lists every workspace's: keep to the calls the caller can
+    # see, one that names no workspace being default's
+    # (common/access.py). Filtered after the page, so the totals still count
+    # the unfiltered rows.
+    page["items"] = access.filter_by_workspace(identity.request_principal(request),
+                                               page.get("items") or [])
+    return page
 
 
 @router.get("/stats")
@@ -63,10 +73,11 @@ async def web_log_stats(workspace: Optional[str] = None):
 
 
 @router.get("/{entry_id}")
-async def get_web_log(entry_id: str):
+async def get_web_log(entry_id: str, request: Request):
     entry = web_log.get(entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Log entry not found")
+    access.require_visible(identity.request_principal(request), entry.get("workspace"))
     return entry
 
 

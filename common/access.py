@@ -30,6 +30,9 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 from common import identity
 from common.auth import LOCAL_OPERATOR_ID, MULTI, Principal
 
+#: Where a record that names no workspace belongs.
+DEFAULT_WORKSPACE = "default"
+
 
 #: Principal kinds that are never checked against membership: the local
 #: single-operator principal, the shared API token, the service credential
@@ -82,16 +85,13 @@ def can_see_workspace(principal: Optional[Principal], workspace: Optional[str]) 
     """Whether this principal may see a record filed under ``workspace``.
 
     A record with no workspace at all (``None`` or ``""``) predates
-    workspaces, or was written by something other than a member action, and
-    reads as visible to any signed-in account — the same reasoning
-    ``owner_or_admin`` applies to an empty owner.
+    workspaces, or lost its binding to a bug: it is the default workspace's,
+    seen by whoever sees default (its members, an administrator), nobody else.
     """
-    if not workspace:
-        return True
     visible = visible_workspaces(principal)
     if visible is None:
         return True
-    return workspace in visible
+    return (str(workspace or "").strip() or DEFAULT_WORKSPACE) in visible
 
 
 def owner_or_admin(principal: Optional[Principal], owner_id: Optional[str]) -> bool:
@@ -120,9 +120,8 @@ def filter_by_workspace(principal: Optional[Principal], items: Iterable[Dict[str
 
     A convenience over :func:`can_see_workspace` for a page of dict-shaped
     records (the common case: a list route's JSON items). Rows that are not
-    dicts, or missing the key, are treated as workspace-less and kept — the
-    same "predates workspaces" reading :func:`can_see_workspace` gives an
-    empty value.
+    dicts, or missing the key, are treated as workspace-less: the default
+    workspace's, like any record with no workspace.
     """
     visible = visible_workspaces(principal)
     if visible is None:

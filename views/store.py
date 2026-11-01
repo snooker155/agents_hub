@@ -7,9 +7,10 @@ Layout (workspace-scoped, so views travel with the workspace)::
         view.json          # the full ViewEnvelope
         <assets...>        # optional data files, images, models, html
 
-Views created without a workspace land in the global ``VIEWS_ROOT``. The
-``views`` table (see ``common/db.py``) indexes them for the gallery/routes and
-carries per-user ``state`` (control values / selection) so reopening restores
+Views created before workspaces were required sit in the global ``VIEWS_ROOT``
+with no workspace (they stay as they are); a new view without one lands in
+``default``. The ``views`` table (see ``common/db.py``) indexes them for the
+gallery/routes and carries per-user ``state`` (control values / selection) so reopening restores
 the view. The heavy spec stays in ``view.json``; run records reference a view
 only by a lightweight ``view_ref`` (see :func:`view_ref`).
 
@@ -128,6 +129,10 @@ def create_view(
     not do that resolution itself, so a direct call with neither ``owner``
     nor ``run_id`` stores an ownerless view.
     """
+    # A new view always names its workspace: callers that know it pass it, and
+    # a view made with none is in ``default``. One with none is an anomaly that
+    # reads as default's (the global root holds the old ones).
+    workspace = (workspace or "").strip() or "default"
     owner_dict = owner.model_dump() if isinstance(owner, ViewOwner) else owner
     env = normalize_envelope({
         "kind": kind,

@@ -403,8 +403,11 @@ def build_run_trail(run_id: str) -> Optional[dict]:
 
 
 @router.get("/{run_id}/trail")
-async def get_message_trail(run_id: str):
+async def get_message_trail(run_id: str, request: Request):
     """The run as the chat draws a turn: timeline, file changes, stats."""
+    run = run_manager.get_run_by_id(run_id)
+    if run is not None:
+        _require_run_visible(request, run)
     trail = build_run_trail(run_id)
     if trail is None:
         raise HTTPException(status_code=404, detail="Message not found")

@@ -1275,6 +1275,15 @@ def authorize_request(request) -> tuple[bool, Optional[Principal]]:
 
         reason = record_access.check(method=method, path=path,
                                      named_workspace=workspace, role_in=role_in)
+        if not reason and record_access.target(path) is None:
+            # Every other collection: the record the matched route's first
+            # parameter names, in its own workspace.
+            matched = record_access.matched_route(request)
+            if matched is not None:
+                reason = record_access.check_route(
+                    method=method, template=matched[0], params=matched[1],
+                    named_workspace=workspace, role_in=role_in,
+                    query_workspace=request.query_params.get("workspace"))
         if reason:
             _refusal(request, reason)
             return False, principal

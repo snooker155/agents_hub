@@ -121,6 +121,18 @@ def _resolve_agent_id(node: Dict[str, Any]) -> Optional[str]:
     return resolve_agent_id(raw) or None
 
 
+def run_workspace_name(path: Optional[str], flow: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """The workspace a flow run works in: the one the ``--workspace`` folder
+    belongs to, else the flow's own. ``None`` when neither names one (the
+    records written for the run then fall back to ``default``)."""
+    from common.workspace_context import workspace_name_from_path
+    from workspace import get_workspace_folder
+    name = workspace_name_from_path(path)
+    if name and get_workspace_folder(name):
+        return name
+    return (flow or {}).get("workspace") or None
+
+
 def _close_node_run(
     task_id: str,
     run_id: str,
@@ -161,6 +173,7 @@ def _run_agent_node(
     should_stop: Optional[Callable[[], bool]] = None,
     flow_name: str = "",
     approval_link: Optional[Dict[str, Any]] = None,
+    workspace: Optional[str] = None,
 ) -> Any:
     """Execute an agent node in-process: open a run record, run the LLM agent
     with callbacks against the prebuilt ``prompt``, write its output to flow
@@ -180,6 +193,10 @@ def _run_agent_node(
     an answer, the node's timeout, ``should_stop`` (the flow's or the loop's
     stop) or the background approval timeout. ``approval_link`` is what the
     notification links to besides the flow run (a loop's ids).
+
+    The node's instance and run record carry ``workspace``, the one the flow
+    run works in (``run_workspace_name``), and ``default`` when it names none:
+    a record in no workspace reads as default's.
     """
     from uuid import uuid4
 
@@ -188,6 +205,7 @@ def _run_agent_node(
         return DispatchResult(ok=False, error="node has no agent assigned")
     label = _node_value(node, "label") or _agent_name(agent_id)
 
+    record_ws = workspace or "default"
     run_id = str(uuid4())
     # Publish the run id on the outcome as soon as it exists: a node that hits
     # its timeout is stopped from the engine's thread, and closing its run
@@ -206,6 +224,7 @@ def _run_agent_node(
             agent_id,
             instance_id=instance_registry.deterministic_id(args.run_id, node_id),
             kind="flow_node",
+            workspace=record_ws,
             session_id=args.session_id,
             task_id=args.task_id,
             label=f"{agent_id} · {label}",
@@ -218,7 +237,7 @@ def _run_agent_node(
     open_run(
         run_id, agent_id, pid=os.getpid(),
         task_id=args.task_id, session_id=args.session_id, session_type="task",
-        channel="flow",
+        channel="flow", workspace=record_ws,
         log_file=str(log_path), flow_id=args.flow_id, flow_run_id=args.run_id,
         flow_node_id=node_id, flow_node_label=label, link_to_session=True,
         instance_id=instance_id,
@@ -441,6 +460,7 @@ def build_task_driver(
             port=port, outcome=outcome, stream_channels=channels,
             should_stop=lambda: bool(driver_box) and driver_box[0].should_stop(),
             flow_name=str(flow.get("name") or ""), approval_link=approval_link,
+            workspace=run_workspace_name(args.workspace, flow),
         )
         if dr.extras:
             node_extras[node_id] = dr.extras

@@ -5659,6 +5659,24 @@
         "title": "GitTestRequest",
         "type": "object"
       },
+      "GlobalDefaultUpdate": {
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model"
+        ],
+        "title": "GlobalDefaultUpdate",
+        "type": "object"
+      },
       "GraderIn": {
         "properties": {
           "kind": {
@@ -9050,6 +9068,34 @@
           "kind"
         ],
         "title": "PreviewTicketRequest",
+        "type": "object"
+      },
+      "ProfileChange": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          }
+        },
+        "title": "ProfileChange",
         "type": "object"
       },
       "ProjectApiRequest": {
@@ -18465,7 +18511,7 @@
     },
     "/api/agents/{agent_id}/history": {
       "get": {
-        "description": "This agent's newest runs, paged in SQL like /api/messages.",
+        "description": "This agent's newest runs, paged in SQL like /api/messages.\n\nNarrowed after the page is read to the runs whose workspace the caller\ncan see (a no-op outside ``multi`` mode): the default workspace's view\nspans every workspace, and a run that names none is default's\n(common/access.py).",
         "parameters": [
           {
             "in": "path",
@@ -22371,6 +22417,45 @@
         ]
       }
     },
+    "/api/auth/profile": {
+      "patch": {
+        "description": "Change the caller's own display name or email. A field their sign-in\nowns (``identity.self_editable_fields``) is refused with 403.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change Profile",
+        "tags": [
+          "account"
+        ]
+      }
+    },
     "/api/auth/sessions": {
       "get": {
         "responses": {
@@ -24363,6 +24448,7 @@
     },
     "/api/channels/{name}/bindings": {
       "get": {
+        "description": "The bindings of the bot in effect in ``workspace``. A member sees only\nthe ones bound to workspaces they belong to: the default's bot lists\nevery workspace's, and a binding that names none is default's\n(common/access.py).",
         "parameters": [
           {
             "in": "path",
@@ -25134,7 +25220,7 @@
     },
     "/api/chats/search": {
       "get": {
-        "description": "The conversations whose title or messages hold ``q``, newest first,\nwithout transcripts; a message hit carries the text around it (``match``).",
+        "description": "The conversations whose title or messages hold ``q``, newest first,\nwithout transcripts; a message hit carries the text around it (``match``).\nOnly the chats the caller may see (:func:`_chat_visible`), the same as\nthe list.",
         "parameters": [
           {
             "in": "query",
@@ -25343,7 +25429,7 @@
     },
     "/api/chats/{chat_id}/background": {
       "get": {
-        "description": "The flows, loops and teams the agent started from this chat that are\nstill going: what each is, how far it has got (a flow's nodes passed of\nits longest way to the end, a loop's iteration and score, a team's members\nat work) and the channels it streams on. The composer lists them; the\nchat reloads this on ``flow_runs`` / ``loop_runs`` / ``team_runs``\nchanges (chat/background_runs.py).",
+        "description": "The flows, loops and teams the agent started from this chat that are\nstill going: what each is, how far it has got (a flow's nodes passed of\nits longest way to the end, a loop's iteration and score, a team's members\nat work) and the channels it streams on. The composer lists them; the\nchat reloads this on ``flow_runs`` / ``loop_runs`` / ``team_runs``\nchanges (chat/background_runs.py). A stored chat the caller may not see\nanswers 403, like reading it.",
         "parameters": [
           {
             "in": "path",
@@ -25815,7 +25901,7 @@
     },
     "/api/connections": {
       "get": {
-        "description": "Every connection, with how much each has reported lately.",
+        "description": "Every connection, with how much each has reported lately: the ones the\ncaller may see (the store reads a connection that names no workspace as\ndefault's, seen by its members).",
         "parameters": [
           {
             "in": "query",
@@ -27157,7 +27243,7 @@
     },
     "/api/context/{kind}": {
       "get": {
-        "description": "Candidates of one kind for the picker, newest/most relevant first.\n\n``q`` is a plain substring match over the entity's name, description and id \u2014\nthe picker filters server-side so a large workspace does not ship its whole\ntask list to the browser on every keystroke.",
+        "description": "Candidates of one kind for the picker, newest/most relevant first.\n\n``q`` is a plain substring match over the entity's name, description and id \u2014\nthe picker filters server-side so a large workspace does not ship its whole\ntask list to the browser on every keystroke. Only the records the caller\nmay see.",
         "parameters": [
           {
             "in": "path",
@@ -27298,7 +27384,7 @@
     },
     "/api/costs": {
       "get": {
-        "description": "Token + estimated-cost breakdowns grouped by workspace, agent, model and\nproject, plus overall totals (common/costs_report.py).\n\n``since`` / ``until`` are ISO date/datetime strings compared against each\nrun's ``started_at``. ``workspace`` restricts to a single workspace.",
+        "description": "Token + estimated-cost breakdowns grouped by workspace, agent, model and\nproject, plus overall totals (common/costs_report.py).\n\n``since`` / ``until`` are ISO date/datetime strings compared against each\nrun's ``started_at``. ``workspace`` restricts to a single workspace. Only\nthe runs of workspaces the caller may see are counted, like the run list\nbelow.",
         "parameters": [
           {
             "in": "query",
@@ -29573,6 +29659,7 @@
     },
     "/api/evals": {
       "get": {
+        "description": "The eval sets of ``workspace`` (every workspace's when none is named).\n\nA set that names no workspace is listed under default only, and only for\na caller who sees every workspace: a member of default does not see it\n(common/access.py).",
         "parameters": [
           {
             "in": "query",
@@ -38650,7 +38737,7 @@
     },
     "/api/models": {
       "get": {
-        "description": "Return the curated model catalog plus the read-only global default (.env).\n\n``global_default`` (provider + model) is sourced from .env and is not editable\nhere \u2014 the UI uses it only to badge the matching model and as the inherit\ntarget for workspaces. The per-provider ``default`` (starred) is catalog\nmetadata used to pre-select a provider's model; it no longer touches .env.",
+        "description": "Return the curated model catalog plus the global default.\n\n``global_default`` (provider + model) is the inherit target for workspaces;\nthe page badges the matching model and changes it through\n``PUT /global-default``. The per-provider ``default`` (starred) is catalog\nmetadata used to pre-select a provider's model; it does not touch .env.",
         "responses": {
           "200": {
             "content": {
@@ -38667,7 +38754,7 @@
         ]
       },
       "put": {
-        "description": "Persist the curated catalog (available models, per-provider default star,\npricing). Does NOT write .env \u2014 the global default is read-only and managed\nin the .env file; per-workspace selection lives in workspaces.json.",
+        "description": "Persist the curated catalog (available models, per-provider default star,\npricing). Does NOT write .env: the global default has its own endpoint\n(``PUT /global-default``); per-workspace selection lives in workspaces.json.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -38739,6 +38826,45 @@
           }
         },
         "summary": "Discover Models",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/api/models/global-default": {
+      "put": {
+        "description": "Set the system-wide default model. It must be a model switched on in the\ncatalog. A built-in provider's choice goes to ``.env`` (``DEFAULT_PROVIDER``\nand its ``*_MODEL``) and applies to the next model call here and in the\nrunner replicas (common/provider_env.py); a custom backend's model becomes\nthat backend's ``default_model``.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GlobalDefaultUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Global Default",
         "tags": [
           "models"
         ]
@@ -42284,7 +42410,7 @@
     },
     "/api/plan/fires": {
       "get": {
-        "description": "The firing journal across every job, newest first.",
+        "description": "The firing journal across every job, newest first, narrowed to the\nworkspaces the caller can see after the query (a page can come back short\nof ``limit``).",
         "parameters": [
           {
             "in": "query",
@@ -42351,7 +42477,7 @@
     },
     "/api/plan/jobs": {
       "get": {
-        "description": "``kinds`` is a comma list (e.g. ``agent_task,flow,loop``) so the\nDeployments page can list only the job kinds it treats as deployments,\nexcluding plain ``notification`` reminders.",
+        "description": "``kinds`` is a comma list (e.g. ``agent_task,flow,loop``) so the\nDeployments page can list only the job kinds it treats as deployments,\nexcluding plain ``notification`` reminders.\n\nOnly the jobs whose workspace the caller can see: with none named every\nworkspace's would be listed otherwise (a no-op outside ``multi`` mode).",
         "parameters": [
           {
             "in": "query",
@@ -42814,6 +42940,7 @@
     },
     "/api/plan/notifications": {
       "get": {
+        "description": "Notifications, newest first, narrowed after the query to the workspaces\nthe caller can see (a page can come back short of ``limit``).",
         "parameters": [
           {
             "in": "query",
@@ -43103,7 +43230,7 @@
     },
     "/api/playground/environments": {
       "get": {
-        "description": "The environment catalog. Each entry declares its own parameter schema,\naction API and renderer, so adding an environment touches no frontend code.\n\nAuthored worlds are in here too, in the same shape and marked ``custom``:\n\"which worlds can I run in\" has one answer, and a picker split in two would\nmake a world you built yourself feel like a second-class one.",
+        "description": "The environment catalog. Each entry declares its own parameter schema,\naction API and renderer, so adding an environment touches no frontend code.\n\nAuthored worlds are in here too, in the same shape and marked ``custom``:\n\"which worlds can I run in\" has one answer, and a picker split in two would\nmake a world you built yourself feel like a second-class one. Only the\nworlds the caller can see: a shipped environment belongs to no workspace\nand is everyone's.",
         "parameters": [
           {
             "in": "query",
@@ -43150,7 +43277,7 @@
     },
     "/api/playground/runs": {
       "get": {
-        "description": "Run history, newest first.\n\nWith ``scenario_id`` it is one scenario's history \u2014 what the scenario page\noffers to switch between. Without it, it is every scenario's, which is the\nhistory page: there each row has to say which scenario it belongs to, so\nthe names are resolved in one query and carried on the runs.",
+        "description": "Run history, newest first.\n\nWith ``scenario_id`` it is one scenario's history \u2014 what the scenario page\noffers to switch between. Without it, it is every scenario's, which is the\nhistory page: there each row has to say which scenario it belongs to, so\nthe names are resolved in one query and carried on the runs.\n\nOnly the runs the caller can see, by the run's own workspace or, for a run\nthat recorded none, its scenario's; filtered after the query, so a page\ncan come back short of ``limit``.",
         "parameters": [
           {
             "in": "query",
@@ -43542,7 +43669,7 @@
     },
     "/api/playground/scenarios": {
       "get": {
-        "description": "The catalogue, each scenario carrying its most recent run.\n\nA scenario has no status of its own \u2014 what the catalogue is asked is \"is\nthis one running, and how did it end last time\", and that is a property of\nits last run. One windowed query answers it for the whole page.",
+        "description": "The catalogue, each scenario carrying its most recent run.\n\nA scenario has no status of its own \u2014 what the catalogue is asked is \"is\nthis one running, and how did it end last time\", and that is a property of\nits last run. One windowed query answers it for the whole page. Only the\nscenarios the caller can see; one that names no workspace is listed under\ndefault.",
         "parameters": [
           {
             "in": "query",
@@ -44097,7 +44224,7 @@
     },
     "/api/playground/worlds": {
       "get": {
-        "description": "Every world this workspace can cast a scenario in, plus its usage count.\n\nA world's scenarios are what makes deleting it consequential, so the count\nis on the card rather than a click away.",
+        "description": "Every world this workspace can cast a scenario in, plus its usage count.\n\nA world's scenarios are what makes deleting it consequential, so the count\nis on the card rather than a click away. Only the worlds the caller can\nsee; one that names no workspace is listed under default.",
         "parameters": [
           {
             "in": "query",
@@ -48778,7 +48905,7 @@
     },
     "/api/runs/groups/{kind}/{group_id}": {
       "get": {
-        "description": "One run group with its children and its catalog-priced spend.",
+        "description": "One run group with its children and its catalog-priced spend. 403 when\nthe caller may not see the group's workspace (one that names none is the\ndefault workspace's, common/access.py).",
         "parameters": [
           {
             "in": "path",
@@ -48827,7 +48954,7 @@
     },
     "/api/runs/groups/{kind}/{group_id}/stop": {
       "post": {
-        "description": "Stop a run group through its own store's stop path.\n\n``stopped=false`` means there was nothing left to stop (the group had\nalready finished), which is not an error.",
+        "description": "Stop a run group through its own store's stop path.\n\n``stopped=false`` means there was nothing left to stop (the group had\nalready finished), which is not an error. 403 unless the caller is an\n``editor`` in the group's own workspace (one that names none is the\ndefault's): the path names a group, not a workspace, so the middleware\nhas nothing to check it against.",
         "parameters": [
           {
             "in": "path",
@@ -48916,6 +49043,7 @@
     },
     "/api/runs/{run_id}/replay": {
       "post": {
+        "description": "Replay a run the caller may see: the answer carries the original's\noutput, so a run of another workspace, or one the caller cannot see\n(a run that names none is default's, common/access.py), is refused like\nreading it.",
         "parameters": [
           {
             "in": "path",
@@ -54044,7 +54172,7 @@
     },
     "/api/stream/{client_id}/channels": {
       "post": {
-        "description": "Add/remove channel interest on an existing connection (detail pages).",
+        "description": "Add/remove channel interest on an existing connection (detail pages).\nA channel the caller may not follow is not added (``added`` leaves it out).",
         "parameters": [
           {
             "in": "path",
@@ -58164,7 +58292,7 @@
     },
     "/api/views": {
       "get": {
-        "description": "List view index rows, newest first, optionally filtered.\n\n``run_id`` stays the shorthand for \"owned by that agent run\" (an alias for\n``owner_kind=run&owner_id=<run_id>``, see views.store.list_views);\n``owner_kind``/``owner_id`` filter directly, e.g. every view a team run\nproduced.",
+        "description": "List view index rows, newest first, optionally filtered.\n\n``run_id`` stays the shorthand for \"owned by that agent run\" (an alias for\n``owner_kind=run&owner_id=<run_id>``, see views.store.list_views);\n``owner_kind``/``owner_id`` filter directly, e.g. every view a team run\nproduced.\n\nNarrowed to the views whose own workspace the caller can see: a request\nnaming no workspace, or filtering by owner only, would otherwise list\nevery workspace's, and a view that names none is the default workspace's\n(common/access.py). A no-op outside ``multi`` mode.",
         "parameters": [
           {
             "in": "query",
@@ -58269,7 +58397,7 @@
     },
     "/api/views/code": {
       "post": {
-        "description": "Turn a fenced block of a chat reply into a code view.\n\nThe Code panel lists the code views owned by the conversation's runs, and\nonly an agent calling ``create_view`` used to put one there, so a block\nthat arrived as plain markdown could not be run, versioned or saved. The\nview is owned by the reply's run so the panel finds it, and asking again\nfor the same body under the same run returns the view made the first time\ninstead of a copy.",
+        "description": "Turn a fenced block of a chat reply into a code view.\n\nThe Code panel lists the code views owned by the conversation's runs, and\nonly an agent calling ``create_view`` used to put one there, so a block\nthat arrived as plain markdown could not be run, versioned or saved. The\nview is owned by the reply's run so the panel finds it, and asking again\nfor the same body under the same run returns the view made the first time\ninstead of a copy. The workspace comes in the body, so the caller's\n``editor`` role there is checked here, and a view made earlier is handed\nback only when the caller may see its workspace.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -58347,7 +58475,7 @@
     },
     "/api/views/code/save": {
       "post": {
-        "description": "Write a snippet's text into a project's own folder, no view involved.\n\nThe Code panel's \"Save to project\" on a fenced block of a reply: the block\nis just a file's worth of code, so it lands in the project as that file\nwithout first becoming a code view. Same path rules and overwrite guard\nas ``/{view_id}/code/save``.",
+        "description": "Write a snippet's text into a project's own folder, no view involved.\n\nThe Code panel's \"Save to project\" on a fenced block of a reply: the block\nis just a file's worth of code, so it lands in the project as that file\nwithout first becoming a code view. Same path rules and overwrite guard\nas ``/{view_id}/code/save``, and the same ``editor`` check in the\nproject's workspace.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -58514,7 +58642,7 @@
         ]
       },
       "post": {
-        "description": "Record an edit of a keyed snippet as its next version; returns the history.\n\n``base`` is the reply's own text: recorded as version 1 the first time,\nso the history opens with what was answered.",
+        "description": "Record an edit of a keyed snippet as its next version; returns the history.\n\n``base`` is the reply's own text: recorded as version 1 the first time,\nso the history opens with what was answered. ``editor`` in the body's\nworkspace (none named = default), which the middleware never reads.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -58553,7 +58681,7 @@
     },
     "/api/views/studio": {
       "post": {
-        "description": "Create a new empty live view for a Studio session and return its envelope.\n\nThe Studio then binds its chat to ``view_id`` and subscribes to ``view:<id>``.",
+        "description": "Create a new empty live view for a Studio session and return its envelope.\n\nThe Studio then binds its chat to ``view_id`` and subscribes to ``view:<id>``.\nThe workspace comes in the body, which the middleware never reads, so the\ncaller's ``editor`` role there is checked here (none named = default).",
         "requestBody": {
           "content": {
             "application/json": {
