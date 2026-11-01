@@ -31,6 +31,9 @@ all pass):
   not exist passes: the function finds nothing either.
 - ``"admin_workspace:<arg>"``: like ``workspace``, and a run of the default
   workspace may name any workspace (where workspaces are managed from).
+- ``"read_workspace:<arg>"``: like ``admin_workspace``, and a run of a
+  personal workspace may also name ``default``, whose model settings it runs
+  with when it sets none (common/personal_workspace.py). For reads only.
 - ``"own_instance:<arg>"``: the argument is the instance the token was minted
   for (a carrier's own row), not merely one of its workspace;
   ``"own_message:<arg>"`` a message of that instance's mailbox.
@@ -270,7 +273,8 @@ def hub_call(scope: Union[ScopeRule, Tuple[str, ...]], *, cache_seconds: float =
     key): for a listing with no workspace argument that callers on the hub
     filter themselves. ``"workspace_or_shared"`` also keeps items with no
     workspace at all (a memory pool shared between workspaces). A callable
-    ``(token_row, result) -> result`` filters anything else.
+    ``(token_row, result) -> result`` filters anything else; one that takes a
+    third parameter also gets the call's arguments by name.
 
     ``cache_seconds`` keeps a remote process's answer for that long, per
     arguments: for the reads a build repeats many times a second (a change
@@ -385,6 +389,10 @@ def _load_modules() -> None:
             _loaded = True
 
 
+#: Rule kinds whose argument is a workspace name.
+WORKSPACE_KINDS = ("workspace", "admin_workspace", "read_workspace")
+
+
 def _parse_scope(scope: str) -> Tuple[str, bool, Optional[str]]:
     """``(kind, optional, argument)`` of one rule: ``"<kind>[?]:<arg>"``.
     ``workspace?`` checks a workspace argument only when one is given (an
@@ -397,7 +405,7 @@ def _parse_scope(scope: str) -> Tuple[str, bool, Optional[str]]:
         raise ValueError(f"empty hub_call scope {scope!r}")
     if kind == "global":
         return kind, False, None
-    if kind in ("workspace", "admin_workspace"):
+    if kind in WORKSPACE_KINDS:
         return kind, optional, (arg.strip() or "workspace")
     if not arg.strip():
         raise ValueError(f"hub_call scope {scope!r} names no argument")
@@ -424,6 +432,15 @@ def _workspace_name_of(value: Optional[str]) -> Optional[str]:
 
 def _same_workspace(a: Optional[str], b: Optional[str]) -> bool:
     return (_workspace_name_of(a) or "default") == (_workspace_name_of(b) or "default")
+
+
+def reads_fallback(token_ws: Optional[str], name: Optional[str]) -> bool:
+    """Whether a run of ``token_ws`` names ``name`` as the workspace it falls
+    back to for model settings: ``default``, from a personal workspace."""
+    from common import personal_workspace
+    if _same_workspace(token_ws, None) or not _same_workspace(name, personal_workspace.FALLBACK):
+        return False
+    return personal_workspace.is_personal(_workspace_name_of(token_ws))
 
 
 #: What a resolver returns for a record that does not exist (None means the
@@ -612,17 +629,19 @@ def _check_rule(entry: Entry, rule: str, token_row: Mapping[str, Any],
         if not own or str(value or "") != str(own):
             raise ScopeError(f"{entry.key}: instance '{value}' is not this carrier's")
         return
-    if kind in ("workspace", "admin_workspace"):
+    if kind in WORKSPACE_KINDS:
         if value in (None, ""):
             if not optional:
                 _arg_set(entry, bound, arg, token_ws or None)
             return
         if _same_workspace(str(value), token_ws):
             return
-        if kind == "admin_workspace" and _same_workspace(token_ws, None):
+        if kind != "workspace" and _same_workspace(token_ws, None):
             # Workspaces are managed from a run of the default workspace
             # (common/workspace_scope.py WORKSPACE_ADMIN_TOOLS: the main agent
             # only, checked where the tool is built).
+            return
+        if kind == "read_workspace" and reads_fallback(token_ws, str(value)):
             return
         raise ScopeError(f"{entry.key}: workspace '{value}' is not this run's workspace")
     resolver = _RESOLVERS.get(kind)
@@ -646,12 +665,15 @@ def _item_workspace(item: Any) -> Any:
     return getattr(item, "workspace", None)
 
 
-def _filter_result(entry: Entry, token_row: Mapping[str, Any], result: Any) -> Any:
+def _filter_result(entry: Entry, token_row: Mapping[str, Any], result: Any,
+                   arguments: Optional[Mapping[str, Any]] = None) -> Any:
     """A list keeps the items of the token's workspace; a single record of
     another workspace becomes None (not found, as the tools say for it)."""
     if entry.result_scope is None or result is None:
         return result
     if callable(entry.result_scope):
+        if len(inspect.signature(entry.result_scope).parameters) > 2:
+            return entry.result_scope(dict(token_row), result, dict(arguments or {}))
         return entry.result_scope(dict(token_row), result)
     token_ws = token_row.get("workspace")
     shared_ok = entry.result_scope == "workspace_or_shared"
@@ -689,7 +711,8 @@ def dispatch(token_row: Mapping[str, Any], payload: Mapping[str, Any]) -> Dict[s
     with hub_side():
         check_scope(entry, token_row, bound)
         try:
-            result = _filter_result(entry, token_row, entry.fn(*bound.args, **bound.kwargs))
+            result = _filter_result(entry, token_row, entry.fn(*bound.args, **bound.kwargs),
+                                    bound.arguments)
         except Exception as exc:  # noqa: BLE001 - the caller gets the exception back as itself
             log.debug("remote call %s raised", key, exc_info=True)
             return {"ok": False, "error": _encode_error(exc)}

@@ -452,14 +452,21 @@ def _own_default_model_config(meta: Dict[str, Any] | None) -> Dict[str, str]:
     return {"provider": provider, "model": model}
 
 
-def _metadata_for_container(token: Dict[str, Any], metadata: Any) -> Any:
+#: What a personal workspace's run reads of ``default``'s metadata: the model
+#: settings it falls back to, nothing else (no env vars, agents or members).
+_FALLBACK_FIELDS = ("model_default", "model_effort", "model_policy", "settings", "personal_of")
+
+
+def _metadata_for_container(token: Dict[str, Any], metadata: Any, arguments: Dict[str, Any]) -> Any:
     """A workspace's provider keys reach a container as the model gateway's
     reference (common/llm_gateway.py), never as the keys."""
     from common.llm_gateway import strip_settings_keys
+    if isinstance(metadata, dict) and remote_state.reads_fallback(token.get("workspace"), arguments.get("name")):
+        metadata = {k: v for k, v in metadata.items() if k in _FALLBACK_FIELDS}
     return strip_settings_keys(metadata)
 
 
-@remote_state.hub_call("admin_workspace:name", cache_seconds=2.0, result_scope=_metadata_for_container)
+@remote_state.hub_call("read_workspace:name", cache_seconds=2.0, result_scope=_metadata_for_container)
 def get_workspace_metadata(name: str) -> Dict[str, Any]:
     """Get metadata for a workspace from the central store."""
     _migrate_legacy_metadata()

@@ -106,7 +106,7 @@ def provider_hosts(workspace: Optional[str] = None) -> Dict[str, Tuple[str, str]
     if workspace:
         try:
             from workspace.storage import get_workspace_metadata
-            settings = (get_workspace_metadata(workspace) or {}).get("settings") or {}
+            settings = (get_workspace_metadata(_settings_source(workspace)) or {}).get("settings") or {}
             host = _netloc(settings.get("openai_base_url"))
             if host and not _is_local(host):
                 out.setdefault(host, ("openai", ""))
@@ -190,6 +190,14 @@ def strip_settings_keys(metadata: Any) -> Any:
     return {**metadata, "settings": clean}
 
 
+def _settings_source(workspace: str) -> str:
+    """The workspace whose settings (keys, base URLs) ``workspace`` runs with:
+    a personal workspace with none of its own runs with default's, as
+    agent_factory builds it on the hub."""
+    from common.personal_workspace import model_source
+    return model_source(workspace) or workspace
+
+
 def _workspace_key(kind: str, workspace: Optional[str]) -> str:
     field = {"openai": "openai_api_key", "anthropic": "anthropic_api_key", "google": "google_api_key"}[kind]
     if workspace:
@@ -197,7 +205,7 @@ def _workspace_key(kind: str, workspace: Optional[str]) -> str:
         # it: only an override the workspace made), else the hub's.
         try:
             from workspace.storage import get_workspace_metadata
-            settings = (get_workspace_metadata(workspace) or {}).get("settings") or {}
+            settings = (get_workspace_metadata(_settings_source(workspace)) or {}).get("settings") or {}
             value = str(settings.get(field) or "")
             if value and value != SENTINEL:
                 return value

@@ -229,6 +229,41 @@ def test_the_default_model_falls_back_until_the_person_sets_one(multi):
     assert personal_workspace.model_source(personal) == personal
 
 
+def test_a_personal_run_in_a_container_reads_default_model_settings_only(multi):
+    """A personal workspace's container run reads default's metadata for the
+    model it falls back to, trimmed to the model settings, keys as the
+    gateway's reference; another workspace's run still may not."""
+    from common import remote_state, run_tokens
+    from common.llm_gateway import SENTINEL
+    from workspace import create_workspace_folder, update_workspace_metadata
+    create_workspace_folder("default")
+    create_workspace_folder("team")
+    update_workspace_metadata("default", {
+        "model_default": {"provider": "anthropic", "model": "claude-sonnet-5"},
+        "settings": {"anthropic_api_key": "sk-secret"},
+        "env_vars": {"TOKEN": "hidden"},
+    })
+    personal = personal_workspace.ensure_personal_workspace(identity.create_user("gus", PASSWORD)["id"])
+    call = {"fn": "workspace.storage:get_workspace_metadata", "args": ["default"]}
+
+    def as_run(workspace):
+        row = run_tokens.resolve(run_tokens.mint(run_id=f"run-{workspace}", workspace=workspace))
+        with remote_state.hub_side():
+            return remote_state.dispatch(row, call)
+
+    got = as_run(personal)
+    assert got["ok"], got
+    meta = remote_state.decode(got["result"])
+    assert meta["model_default"]["model"] == "claude-sonnet-5"
+    assert meta["settings"]["anthropic_api_key"] == SENTINEL
+    assert "env_vars" not in meta
+    with pytest.raises(remote_state.ScopeError):
+        as_run("team")
+    call["args"] = ["team"]
+    with pytest.raises(remote_state.ScopeError):
+        as_run(personal)
+
+
 # ── budgets ──────────────────────────────────────────────────────────────────
 
 def test_only_an_admin_sets_a_workspace_budget_in_multi(multi, client):
