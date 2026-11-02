@@ -2161,6 +2161,17 @@
             ],
             "title": "Mime Type"
           },
+          "quote_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Of"
+          },
           "store_to_workspace": {
             "default": false,
             "title": "Store To Workspace",
@@ -4616,6 +4627,46 @@
           "prompt"
         ],
         "title": "ExternalRunRequest",
+        "type": "object"
+      },
+      "FileRunRequest": {
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "timeout": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout"
+          },
+          "workspace": {
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "path"
+        ],
+        "title": "FileRunRequest",
         "type": "object"
       },
       "FinalizeTaskBody": {
@@ -26887,7 +26938,7 @@
     },
     "/api/containers/agents-status": {
       "get": {
-        "description": "Return build status (image exists?) for every registered agent.\n\nOne ``docker images`` listing for all of them: asking the daemon twice per\nagent made this page's load grow with the registry.",
+        "description": "Return build status (image exists?) for every registered agent, and\nthe base image (``base``: id, creation time, version, commit).\n\nEach per-agent image says which base it was built on (version, commit,\ndate) and ``stale`` when the base here has changed since: its code is the\nold base's until it is rebuilt.\n\nOne ``docker images`` listing and one ``docker image inspect`` for all of\nthem: asking the daemon per agent made this page's load grow with the\nregistry.",
         "responses": {
           "200": {
             "content": {
@@ -58473,6 +58524,45 @@
         ]
       }
     },
+    "/api/views/code/run-file": {
+      "post": {
+        "description": "Run a workspace file from its own folder: the Run of a file in the\nchat's Artifacts panel and on the Artifacts page.\n\n``body`` is the editor's unsaved text, run under the file's name in its\nplace. Where it runs follows the workspace (views/file_run.py): its\nisolated sandbox, a container of its own when the execution mode is\ndocker, else the run_code sandbox. Nothing is recorded. A plain ``def``:\nthe run blocks, so it takes a worker thread, not the event loop.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Workspace File",
+        "tags": [
+          "views"
+        ]
+      }
+    },
     "/api/views/code/save": {
       "post": {
         "description": "Write a snippet's text into a project's own folder, no view involved.\n\nThe Code panel's \"Save to project\" on a fenced block of a reply: the block\nis just a file's worth of code, so it lands in the project as that file\nwithout first becoming a code view. Same path rules and overwrite guard\nas ``/{view_id}/code/save``, and the same ``editor`` check in the\nproject's workspace.",
@@ -62093,6 +62183,56 @@
           }
         },
         "summary": "Get Workspace File Content",
+        "tags": [
+          "workspaces"
+        ]
+      },
+      "put": {
+        "description": "Write the text of an existing workspace file: Save of a file opened in\nthe code editor (the chat's Artifacts panel, the Artifacts page). Body\n``{path, content}``. Only a file that is there already: an editor saves\nwhat it opened, it does not make files. Its record (files/service.py)\nfollows, so a link to the file keeps working.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Workspace File Content",
         "tags": [
           "workspaces"
         ]

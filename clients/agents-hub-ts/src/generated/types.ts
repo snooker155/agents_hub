@@ -388,6 +388,7 @@ export type ChatAttachment = {
   "store_to_workspace"?: boolean;
   "stored_workspace_path"?: string | null;
   "file_id"?: string | null;
+  "quote_of"?: string | null;
 };
 
 export type ChatHistoryMessage = {
@@ -792,6 +793,13 @@ export type ExternalMessageRequest = {
 export type ExternalRunRequest = {
   "prompt": string;
   "workspace"?: string | null;
+};
+
+export type FileRunRequest = {
+  "workspace": string;
+  "path": string;
+  "body"?: string | null;
+  "timeout"?: number | null;
 };
 
 export type FinalizeTaskBody = {
@@ -5112,6 +5120,9 @@ export interface ApiPaths {
   "/api/views/code/run": {
     post: { body: SnippetRunRequest; response: unknown };
   };
+  "/api/views/code/run-file": {
+    post: { body: FileRunRequest; response: unknown };
+  };
   "/api/views/code/save": {
     post: { body: CodeBodySaveRequest; response: unknown };
   };
@@ -5308,6 +5319,7 @@ export interface ApiPaths {
   };
   "/api/workspaces/{name}/file-content": {
     get: { response: unknown };
+    put: { body: Record<string, unknown>; response: unknown };
   };
   "/api/workspaces/{name}/file-id": {
     get: { response: unknown };
