@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useChannel } from '../components/stream';
 import {
   Box, RefreshCw, Play, Square, Trash2, Eye, Terminal,
-  CheckCircle, AlertCircle, Clock, Package, Layers,
+  CheckCircle, AlertCircle, AlertTriangle, Clock, Package, Layers,
   ChevronDown, ChevronRight, Loader, Network,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
@@ -48,6 +48,27 @@ function Badge({ children, color = 'gray' }) {
       {children}
     </span>
   );
+}
+
+// When an image was made, in the page's language; '' for none.
+function fmtWhen(iso, language) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(language || undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+// The short form of a commit or image id.
+const short = (value) => String(value || '').replace(/^sha256:/, '').slice(0, 8);
+
+// "0.12.0 · 3a4a53b5 · 1 Nov 2026, 20:40": version, commit, date, as far as known.
+function describeBuild({ version, revision, created }, language, t) {
+  const parts = [
+    version ? t('containers.versionN', { version }) : t('containers.versionUnknown'),
+    revision ? t('containers.commitN', { commit: short(revision) }) : '',
+    fmtWhen(created, language),
+  ].filter(Boolean);
+  return parts.join(' · ');
 }
 
 // ── Log viewer ────────────────────────────────────────────────────────────────
@@ -153,10 +174,12 @@ function DockerfileViewer({ agentId, onClose }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function Containers() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { workspaceFilter } = useWorkspace();
   const [activeTab, setActiveTab] = useState('agents');
   const [agentsStatus, setAgentsStatus] = useState([]);
+  // The base image: id, creation time, version, commit (agents-status `base`).
+  const [baseInfo, setBaseInfo] = useState(null);
   // The agent ids of the filtered workspace, kept with the filter they were
   // fetched for; null = show all.
   const [wsAgents, setWsAgents] = useState({ filter: '', ids: null });
@@ -182,6 +205,7 @@ export default function Containers() {
     .then(([agRes, ctrRes]) => {
       setError('');
       setAgentsStatus(agRes.data.agents || []);
+      setBaseInfo(agRes.data.base || null);
       setContainers(ctrRes.data.containers || []);
     })
     .catch((e) => {
@@ -318,7 +342,16 @@ export default function Containers() {
     ? containers.filter(c => !c.agent_id || wsAgentIds.has(c.agent_id))
     : containers;
 
-  const baseExists = agentsStatus.some(a => a.base_exists);
+  const baseExists = baseInfo ? !!baseInfo.exists : agentsStatus.some(a => a.base_exists);
+  // Built on a base image that has changed since: they run the old base's code.
+  const staleAgents = visibleAgents.filter(a => a.image_exists && a.stale);
+
+  const rebuildStale = async () => {
+    for (const agent of staleAgents) {
+      // One at a time: each build reads the base and the log shows the last.
+      await buildAgent(agent.agent_id);
+    }
+  };
   const runningCount = visibleContainers.filter(c => c.state === 'running').length;
 
   return (
@@ -352,7 +385,12 @@ export default function Containers() {
       <div className="grid grid-cols-3 gap-4">
         {[
           { label: t('containers.stats.baseImage'), value: baseExists ? t('containers.built') : t('containers.notBuilt'), ok: baseExists },
-          { label: t('containers.stats.agentImages'), value: `${visibleAgents.filter(a => a.image_exists).length} / ${visibleAgents.length}`, ok: true },
+          {
+            label: t('containers.stats.agentImages'),
+            value: `${visibleAgents.filter(a => a.image_exists).length} / ${visibleAgents.length}`
+              + (staleAgents.length ? ` · ${t('containers.staleCount', { count: staleAgents.length })}` : ''),
+            ok: staleAgents.length === 0,
+          },
           { label: t('containers.stats.runningContainers'), value: runningCount, ok: runningCount > 0 },
         ].map(s => (
           <Card key={s.label} className="flex items-center gap-3">
@@ -409,6 +447,17 @@ export default function Containers() {
                     {t('containers.baseImageHint')}{' '}
                     <code className="bg-gray-100 rounded px-1">agents-hub/base:latest</code>
                   </p>
+                  {baseInfo?.exists && (
+                    <p className="text-xs text-gray-700 mt-1.5" data-testid="base-image-build">
+                      {describeBuild(baseInfo, language, t)}
+                      {baseInfo.source && (
+                        <span className="text-gray-400"> · <code>{baseInfo.source}</code></span>
+                      )}
+                      {baseInfo.id && (
+                        <span className="text-gray-400"> · {t('containers.imageId', { id: short(baseInfo.id) })}</span>
+                      )}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {baseExists
@@ -431,21 +480,64 @@ export default function Containers() {
 
             {/* Per-agent images */}
             <Card>
-              <h2 className="text-sm font-semibold text-gray-800 mb-3">{t('containers.perAgentImages')}</h2>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <h2 className="text-sm font-semibold text-gray-800">{t('containers.perAgentImages')}</h2>
+                {staleAgents.length > 0 && (
+                  <button
+                    onClick={rebuildStale}
+                    disabled={staleAgents.some(a => building[a.agent_id])}
+                    className="flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2 py-1 rounded text-xs font-medium disabled:opacity-50"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    {t('containers.rebuildStale', { count: staleAgents.length })}
+                  </button>
+                )}
+              </div>
+              {staleAgents.length > 0 && (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+                  {t('containers.staleHint')}
+                </p>
+              )}
               {visibleAgents.length === 0 && (
                 <p className="text-sm text-gray-500">{t('containers.noAgentsRegistered')}</p>
               )}
               <div className="divide-y divide-gray-200 -mx-2">
                 {visibleAgents.map(agent => (
-                  <div key={agent.agent_id} className="flex items-center justify-between px-2 py-3 hover:bg-gray-50">
+                  <div
+                    key={agent.agent_id}
+                    data-testid={`agent-image-${agent.agent_id}`}
+                    className={`flex items-center justify-between gap-3 px-2 py-3 ${
+                      agent.image_exists && agent.stale ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'}`}
+                  >
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-800">{agent.agent_name}</p>
                       <p className="text-xs text-gray-400">{agent.image_tag}</p>
+                      {agent.image_exists && (
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {t('containers.builtAt', { when: fmtWhen(agent.image_created, language) || '?' })}
+                          {' · '}
+                          {agent.base_id
+                            ? t('containers.onBase', {
+                              base: describeBuild({
+                                version: agent.base_version,
+                                revision: agent.base_revision,
+                                created: agent.base_created,
+                              }, language, t),
+                            })
+                            : t('containers.onUnknownBase')}
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {agent.image_exists
-                        ? <Badge color="green"><CheckCircle className="w-3 h-3" /> {t('containers.built')}</Badge>
-                        : <Badge color="gray">{t('containers.notBuilt')}</Badge>}
+                      {!agent.image_exists
+                        ? <Badge color="gray">{t('containers.notBuilt')}</Badge>
+                        : agent.stale
+                          ? (
+                            <span title={t('containers.staleTitle')}>
+                              <Badge color="yellow"><AlertTriangle className="w-3 h-3" /> {t('containers.stale')}</Badge>
+                            </span>
+                          )
+                          : <Badge color="green"><CheckCircle className="w-3 h-3" /> {t('containers.built')}</Badge>}
                       <button
                         onClick={() => setDockerfileViewer(agent.agent_id)}
                         title={t('containers.previewDockerfile')}
@@ -462,7 +554,7 @@ export default function Containers() {
                         {building[agent.agent_id]
                           ? <Loader className="w-3 h-3 animate-spin" />
                           : <Play className="w-3 h-3" />}
-                        {t('containers.build')}
+                        {agent.image_exists ? t('containers.rebuild') : t('containers.build')}
                       </button>
                     </div>
                   </div>

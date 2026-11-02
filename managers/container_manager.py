@@ -97,6 +97,17 @@ LABEL_MANAGED = "agents-hub.managed=true"
 # The code lives in the base, so a per-agent image whose base was rebuilt
 # since still runs the old code (image_tag_for_agent rebuilds it).
 LABEL_BASE_ID = "agents-hub.base-id"
+# What a per-agent image records of that base besides its id, for the
+# Containers page: the base's version, commit and creation time.
+LABEL_BASE_VERSION = "agents-hub.base-version"
+LABEL_BASE_REVISION = "agents-hub.base-revision"
+LABEL_BASE_CREATED = "agents-hub.base-created"
+# The base's version and commit (the Dockerfile sets them from build args; the
+# release workflow passes them, build_base_image does too), and for a build
+# from a checkout its ``git describe`` (release tag, commits since, dirty).
+LABEL_VERSION = "org.opencontainers.image.version"
+LABEL_REVISION = "org.opencontainers.image.revision"
+LABEL_SOURCE = "agents-hub.source"
 
 # Mount points inside every agent container (nodes and runs alike).
 from common.paths import CONTAINER_STATE_DIR  # noqa: E402 - one definition, shared with host_state_path
@@ -897,6 +908,11 @@ def build_base_image(no_cache: bool = False, on_line=None) -> Dict[str, Any]:
     cmd = ["docker", "build", "-t", BASE_IMAGE, "--target", "agents"]
     if no_cache:
         cmd.append("--no-cache")
+    stamp = _source_stamp()
+    cmd += ["--build-arg", f"AGENTS_HUB_VERSION={stamp['version']}",
+            "--build-arg", f"AGENTS_HUB_GIT_SHA={stamp['revision']}"]
+    if stamp["source"]:
+        cmd += ["--label", f"{LABEL_SOURCE}={stamp['source']}"]
     # The RAG extras (torch, the vector stores) are left out of the image
     # unless WITH_RAG=true, the same switch docker-compose.yml passes to the
     # backend image (Dockerfile, docs/memory.md).
@@ -920,6 +936,81 @@ def build_base_image(no_cache: bool = False, on_line=None) -> Dict[str, Any]:
         "error": None if success else (out.strip().splitlines() or ["build failed"])[-1],
         "built_at": _utc_now_iso() if success else None,
     }
+
+
+def _source_stamp() -> Dict[str, str]:
+    """The version, commit and ``git describe`` of the source a base image is
+    built from, read now (common.version caches git for the process, and the
+    checkout moves under a long running backend)."""
+    from common import version
+
+    def git(*args: str) -> str:
+        try:
+            out = subprocess.run(["git", *args], cwd=str(PROJECT_ROOT), capture_output=True,
+                                 text=True, timeout=5, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return out.stdout.strip() if out.returncode == 0 else ""
+
+    return {"version": version.app_version(),
+            "revision": git("rev-parse", "HEAD") or version.git_sha(),
+            "source": git("describe", "--tags", "--match", "v*", "--always", "--dirty")}
+
+
+def images_info(tags: List[str]) -> Dict[str, Dict[str, Any]]:
+    """``{tag: {id, created, labels}}`` for the tags of ``tags`` this host
+    has, in one ``docker image inspect``; a tag it lacks is left out."""
+    if not tags:
+        return {}
+    result = _query(["docker", "image", "inspect", "-f",
+                     "{{json .RepoTags}}\t{{.Id}}\t{{.Created}}\t{{json .Config.Labels}}", *tags])
+    out: Dict[str, Dict[str, Any]] = {}
+    wanted = set(tags)
+    for line in (result.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 4:
+            continue
+        try:
+            repo_tags = json.loads(parts[0]) or []
+            labels = json.loads(parts[3]) or {}
+        except ValueError:
+            continue
+        info = {"id": parts[1], "created": parts[2],
+                "labels": labels if isinstance(labels, dict) else {}}
+        for tag in repo_tags:
+            if tag in wanted:
+                out[tag] = info
+    return out
+
+
+def base_image_info(info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """What the Containers page shows of the base image: whether it is here,
+    its id, creation time, version, commit and ``git describe``."""
+    if not info:
+        return {"exists": False, "image": BASE_IMAGE}
+    labels = info.get("labels") or {}
+    return {"exists": True, "image": BASE_IMAGE, "id": info.get("id") or "",
+            "created": info.get("created") or "",
+            "version": labels.get(LABEL_VERSION) or "",
+            "revision": labels.get(LABEL_REVISION) or "",
+            "source": labels.get(LABEL_SOURCE) or ""}
+
+
+def agent_image_base(info: Optional[Dict[str, Any]], base: Dict[str, Any]) -> Dict[str, Any]:
+    """The base a per-agent image was built on (``info`` from
+    :func:`images_info`) and whether it is still the base here: ``stale``
+    when the base has another id now, or the image predates the base label
+    (then which base it was is not known)."""
+    if not info:
+        return {}
+    labels = info.get("labels") or {}
+    base_id = labels.get(LABEL_BASE_ID) or ""
+    return {"image_id": info.get("id") or "", "image_created": info.get("created") or "",
+            "base_id": base_id,
+            "base_version": labels.get(LABEL_BASE_VERSION) or "",
+            "base_revision": labels.get(LABEL_BASE_REVISION) or "",
+            "base_created": labels.get(LABEL_BASE_CREATED) or "",
+            "stale": bool(base.get("exists")) and base_id != base.get("id")}
 
 
 def missing_image_hint(image: str, error: str) -> str:
@@ -952,9 +1043,15 @@ def build_image(
     dockerfile_path = save_dockerfile(agent_id, agent_name)
 
     cmd = ["docker", "build", "-t", image_tag]
-    base_id = local_image_id(BASE_IMAGE)
-    if base_id:
-        cmd += ["--label", f"{LABEL_BASE_ID}={base_id}"]
+    try:
+        base = base_image_info(images_info([BASE_IMAGE]).get(BASE_IMAGE))
+    except DockerUnavailable:
+        base = {}
+    for label, value in ((LABEL_BASE_ID, base.get("id")), (LABEL_BASE_VERSION, base.get("version")),
+                         (LABEL_BASE_REVISION, base.get("revision")),
+                         (LABEL_BASE_CREATED, base.get("created"))):
+        if value:
+            cmd += ["--label", f"{label}={value}"]
     if no_cache:
         cmd.append("--no-cache")
     # Use the project root as build context even though the Dockerfile barely
@@ -1023,16 +1120,6 @@ def local_image_id(image_tag: str) -> str:
     return lines[0] if lines else ""
 
 
-def _image_labels(image_tag: str) -> Dict[str, str]:
-    result = _run(["docker", "image", "inspect", "-f", "{{json .Config.Labels}}", image_tag],
-                  timeout=QUERY_TIMEOUT)
-    try:
-        labels = json.loads((result.stdout or "").strip() or "null")
-    except ValueError:
-        return {}
-    return labels if isinstance(labels, dict) else {}
-
-
 _per_agent_lock = threading.Lock()
 
 
@@ -1044,7 +1131,7 @@ def _current_per_agent(agent_id: str, per_agent: str) -> Optional[str]:
     if not base_id:
         return per_agent  # nothing to compare with: the image as it is
     with _per_agent_lock:
-        labels = _image_labels(per_agent)
+        labels = (images_info([per_agent]).get(per_agent) or {}).get("labels") or {}
         if labels.get(LABEL_BASE_ID) == base_id:
             return per_agent
         logger.info("rebuilding %s: the base image changed since it was built", per_agent)
@@ -1198,6 +1285,7 @@ def build_shell_command(
     network: str,
     workspace: str,
     command: str,
+    interactive: bool = False,
 ) -> List[str]:
     """The ``docker run`` argv for one ``run_shell`` command made outside an
     agent container (a chat turn, a flow run on the hub) while the execution
@@ -1207,11 +1295,13 @@ def build_shell_command(
     run limits, no capabilities, a read-only root with /tmp, and only the
     command's working directory mounted read-write at /workspace. No host
     environment and no state directory: the command sees its files and
-    nothing of the hub.
+    nothing of the hub. ``interactive`` keeps stdin open (``-i``) for a
+    command that reads its input there (a workspace file run from the
+    Artifacts panel gets its text that way: views/file_run.py).
     """
     from common.config import live_setting
     cmd = [
-        "docker", "run", "--rm",
+        "docker", "run", "--rm", *(["-i"] if interactive else []),
         "--name", container_name,
         "--network", network,
         "--label", LABEL_MANAGED,

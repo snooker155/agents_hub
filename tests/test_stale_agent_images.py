@@ -33,8 +33,12 @@ class _Docker:
             found = self.images.get(cmd[-1])
             return _Done(stdout=(found["id"] + "\n") if found else "")
         if cmd[:3] == ["docker", "image", "inspect"]:
-            found = self.images.get(cmd[-1])
-            return _Done(stdout=json.dumps(found["labels"]) if found else "", returncode=0 if found else 1)
+            tags = cmd[5:]
+            lines = [f"{json.dumps([tag])}\t{self.images[tag]['id']}\t"
+                     f"{self.images[tag].get('created', '2026-11-01T19:40:48Z')}\t"
+                     f"{json.dumps(self.images[tag]['labels'])}"
+                     for tag in tags if tag in self.images]
+            return _Done(stdout="\n".join(lines), returncode=0 if len(lines) == len(tags) else 1)
         if cmd[:2] == ["docker", "build"]:
             if self.fail_build:
                 return _Done(returncode=1, stderr="build failed")
@@ -114,3 +118,63 @@ def test_an_environment_image_follows_a_rebuilt_base(monkeypatch, tmp_path):
     second = cm.ensure_environment_image(cm.BASE_IMAGE, ["numpy"])
     assert second != first and second.startswith("agents-hub-env:")
     assert len(docker.builds()) == 2
+
+
+def test_a_base_build_records_its_version_and_commit(monkeypatch):
+    monkeypatch.setattr(cm, "release_base_image", lambda: "")
+    monkeypatch.setattr(cm, "_source_stamp", lambda: {
+        "version": "0.12.0", "revision": "3a4a53b5c0ffee", "source": "v0.12.0-215-g3a4a53b5-dirty"})
+    seen = {}
+    monkeypatch.setattr(cm, "_stream", lambda cmd, on_line, timeout: seen.setdefault("cmd", cmd) and (0, ""))
+    assert cm.build_base_image()["success"]
+    cmd = seen["cmd"]
+    assert "AGENTS_HUB_VERSION=0.12.0" in cmd and "AGENTS_HUB_GIT_SHA=3a4a53b5c0ffee" in cmd
+    assert f"{cm.LABEL_SOURCE}=v0.12.0-215-g3a4a53b5-dirty" in cmd
+
+
+def test_a_per_agent_image_records_the_base_version(monkeypatch, tmp_path):
+    docker = _Docker({cm.BASE_IMAGE: {"id": "sha256:b1", "created": "2026-11-01T19:40:48Z", "labels": {
+        cm.LABEL_VERSION: "0.12.0", cm.LABEL_REVISION: "3a4a53b5c0ffee"}}})
+    _setup(monkeypatch, tmp_path, docker)
+    assert cm.build_image("swe_agent", "SWE")["success"]
+    labels = docker.images["agents-hub/swe_agent:latest"]["labels"]
+    assert labels[cm.LABEL_BASE_VERSION] == "0.12.0"
+    assert labels[cm.LABEL_BASE_REVISION] == "3a4a53b5c0ffee"
+    assert labels[cm.LABEL_BASE_CREATED] == "2026-11-01T19:40:48Z"
+
+
+def test_agents_status_gives_the_base_and_marks_outdated_images(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from dashboard.backend.routes import containers as route
+    docker = _Docker({
+        cm.BASE_IMAGE: {"id": "sha256:b2", "created": "2026-11-01T19:40:48Z",
+                        "labels": {cm.LABEL_VERSION: "0.12.0", cm.LABEL_REVISION: "3a4a53b5",
+                                   cm.LABEL_SOURCE: "v0.12.0-215-g3a4a53b5"}},
+        "agents-hub/main-agent:latest": {"id": "sha256:a2", "labels": {
+            cm.LABEL_BASE_ID: "sha256:b2", cm.LABEL_BASE_VERSION: "0.12.0"}},
+        "agents-hub/swe_agent:latest": {"id": "sha256:a1", "labels": {
+            cm.LABEL_BASE_ID: "sha256:b1", cm.LABEL_BASE_REVISION: "e4ee60fa"}},
+        "agents-hub/bean_scout:latest": {"id": "sha256:a0", "labels": {}},
+    })
+    _setup(monkeypatch, tmp_path, docker)
+    monkeypatch.setattr(cm, "list_images", lambda: [
+        {"repository": tag.split(":")[0], "tag": "latest"} for tag in docker.images])
+    monkeypatch.setattr(route, "list_agents", lambda: [
+        SimpleNamespace(id=i, name=i) for i in ("main-agent", "swe_agent", "bean_scout", "writer")])
+    app = FastAPI()
+    app.include_router(route.router)
+    body = TestClient(app).get("/api/containers/agents-status").json()
+    assert body["base"] == {"exists": True, "image": cm.BASE_IMAGE, "id": "sha256:b2",
+                            "created": "2026-11-01T19:40:48Z", "version": "0.12.0",
+                            "revision": "3a4a53b5", "source": "v0.12.0-215-g3a4a53b5"}
+    by_id = {a["agent_id"]: a for a in body["agents"]}
+    assert by_id["main-agent"]["stale"] is False and by_id["main-agent"]["base_version"] == "0.12.0"
+    assert by_id["swe_agent"]["stale"] is True and by_id["swe_agent"]["base_revision"] == "e4ee60fa"
+    assert by_id["bean_scout"]["stale"] is True and by_id["bean_scout"]["base_id"] == ""
+    assert by_id["writer"]["image_exists"] is False and "stale" not in by_id["writer"]
+    # One inspect for the base and every built agent image, not one per agent.
+    assert len([c for c in docker.calls if c[:3] == ["docker", "image", "inspect"]]) == 1

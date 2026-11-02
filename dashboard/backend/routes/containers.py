@@ -271,18 +271,26 @@ def ensure_network():
 
 @router.get("/agents-status")
 def agents_build_status():
-    """Return build status (image exists?) for every registered agent.
+    """Return build status (image exists?) for every registered agent, and
+    the base image (``base``: id, creation time, version, commit).
 
-    One ``docker images`` listing for all of them: asking the daemon twice per
-    agent made this page's load grow with the registry.
+    Each per-agent image says which base it was built on (version, commit,
+    date) and ``stale`` when the base here has changed since: its code is the
+    old base's until it is rebuilt.
+
+    One ``docker images`` listing and one ``docker image inspect`` for all of
+    them: asking the daemon per agent made this page's load grow with the
+    registry.
     """
     cm = _mgr()
     try:
         tags = {f"{i.get('repository')}:{i.get('tag')}" for i in cm.list_images()}
+        agents = list_agents()
+        built = [t for t in [cm.BASE_IMAGE] + [f"agents-hub/{a.id}:latest" for a in agents] if t in tags]
+        infos = cm.images_info(built)
     except Exception as exc:
         raise _docker_error(exc) from exc
-    base_exists = cm.BASE_IMAGE in tags
-    agents = list_agents()
+    base = cm.base_image_info(infos.get(cm.BASE_IMAGE))
     result = []
     for spec in agents:
         per_agent_tag = f"agents-hub/{spec.id}:latest"
@@ -291,7 +299,8 @@ def agents_build_status():
             "agent_name": spec.name,
             "image_tag": per_agent_tag,
             "image_exists": per_agent_tag in tags,
-            "base_exists": base_exists,
+            "base_exists": base["exists"],
             "dockerfile_path": str(cm.DOCKERFILE_DIR / f"{spec.id}.Dockerfile"),
+            **cm.agent_image_base(infos.get(per_agent_tag), base),
         })
-    return {"agents": result}
+    return {"agents": result, "base": base}
