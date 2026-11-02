@@ -141,7 +141,7 @@ def call_ids() -> Dict[str, str]:
         if run_id:
             out["run"] = str(run_id)
     except Exception:  # noqa: BLE001 - no run in context
-        pass
+        log.debug("no current run id", exc_info=True)
     import sys
     runs = sys.modules.get("chat.runs")  # only a process that serves chat turns has one
     try:
@@ -149,7 +149,7 @@ def call_ids() -> Dict[str, str]:
         if turn:
             out["turn"] = str(turn)
     except Exception:  # noqa: BLE001 - not a chat turn
-        pass
+        log.debug("no chat turn context", exc_info=True)
     return out
 
 

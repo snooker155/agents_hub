@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from langchain_core.tools import tool
+from pydantic import ValidationError
 
 from agents.callbacks.chat_stream import ChatStreamCallback
 from dashboard.backend.routes.sessions import _extract_chat_message_runs
@@ -59,10 +61,8 @@ def test_a_multi_line_result_stays_with_its_call(tmp_path):
 
 def test_a_multi_line_error_keeps_its_message(tmp_path):
     chat = _chat(tmp_path)
-    try:
+    with pytest.raises(ValidationError):
         strict.invoke({"key": "not a number"}, config={"callbacks": [chat]})
-    except Exception:  # noqa: BLE001 - the raise is the case under test
-        pass
     run = _parse(tmp_path, "Bad key.")
     (call,) = run["tools"]
     assert call["status"] == "error"

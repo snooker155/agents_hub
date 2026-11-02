@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader, Repeat, X, CheckCircle, AlertCircle } from 'lucide-react';
 
@@ -44,15 +44,19 @@ export default function ReplayRunModal({ run, onClose }) {
     return () => { alive = false; };
   }, []);
 
+  // Set with the state in handleReplay: a listener re-registered on each change
+  // of `replaying` missed an Escape pressed before the effect that swaps it ran.
+  const replayingRef = useRef(false);
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape' && !replaying) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !replayingRef.current) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, replaying]);
+  }, [onClose]);
 
   const handleReplay = async (e) => {
     e.preventDefault();
     if (replaying) return;
+    replayingRef.current = true;
     setReplaying(true);
     setError('');
     setResult(null);
@@ -67,6 +71,7 @@ export default function ReplayRunModal({ run, onClose }) {
     } catch (err) {
       setError(err.response?.data?.detail || t('messageDetails.replayFailed'));
     } finally {
+      replayingRef.current = false;
       setReplaying(false);
     }
   };
