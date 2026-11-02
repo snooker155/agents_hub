@@ -432,6 +432,47 @@ async def get_workspace_file_content(name: str, file_id: Optional[str] = None, p
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.put("/{name}/file-content")
+async def put_workspace_file_content(name: str, payload: Dict[str, Any], request: Request):
+    """Write the text of an existing workspace file: Save of a file opened in
+    the code editor (the chat's Artifacts panel, the Artifacts page). Body
+    ``{path, content}``. Only a file that is there already: an editor saves
+    what it opened, it does not make files. Its record (files/service.py)
+    follows, so a link to the file keeps working."""
+    from common import record_access
+    from files import service as files_service
+
+    record_access.require_in_workspace(request, name)
+    _ensure_writable_workspace(name)
+    root = _require_workspace_folder(name).resolve()
+    rel_path = str(payload.get("path") or "").strip()
+    content = payload.get("content")
+    if not rel_path or not isinstance(content, str):
+        raise HTTPException(status_code=400, detail="'path' and 'content' (text) are required")
+    candidate = (root / rel_path).resolve()
+    try:
+        rel = candidate.relative_to(root).as_posix()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    data = content.encode("utf-8")
+    if len(data) > files_service.max_file_bytes():
+        raise HTTPException(status_code=413, detail=(
+            f"'{rel}' would be {len(data)} bytes; the limit is {files_service.max_file_bytes()} bytes per file"))
+    try:
+        candidate.write_bytes(data)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    file_id = None
+    try:
+        if files_service.is_indexable(rel):
+            file_id = files_service.register_path(name, rel, source="upload")["file_id"]
+    except files_service.FileError:
+        pass  # over a limit or under a skipped folder: the file is written, without an id
+    return {"path": rel, "size": len(data), "file_id": file_id, "content": content}
+
+
 def _extract_pdf_preview(candidate: Path) -> str:
     """Extract text from a PDF for dashboard preview."""
     try:

@@ -372,13 +372,14 @@ SHELL_PIDS = 256
 
 def build_shell_command(command: str, *, workspace_dir: str, image: str, name: str,
                         memory: str = SHELL_MEMORY, cpus: str = SHELL_CPUS,
-                        pids_limit: int = SHELL_PIDS, user: Optional[str] = None) -> List[str]:
+                        pids_limit: int = SHELL_PIDS, user: Optional[str] = None,
+                        interactive: bool = False) -> List[str]:
     """The ``docker run`` argv for one shell command of an isolated workspace.
     Pure: no I/O. No network, a read only root, no capabilities, nothing in
     the environment but HOME, and the workspace folder at ``/work`` (read and
-    write: the agent works there)."""
+    write: the agent works there). ``interactive`` keeps stdin open (``-i``)."""
     cmd = [
-        "docker", "run", "--rm", "--quiet",
+        "docker", "run", "--rm", "--quiet", *(["-i"] if interactive else []),
         "--name", name,
         "--label", "agents_hub.kind=isolated_shell",
         "--network", "none",

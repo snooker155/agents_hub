@@ -201,6 +201,13 @@ class SnippetRunRequest(BaseModel):
     workspace: Optional[str] = None
 
 
+class FileRunRequest(BaseModel):
+    workspace: str
+    path: str
+    body: Optional[str] = None
+    timeout: Optional[int] = None
+
+
 class SnippetVersionCreate(BaseModel):
     key: str
     body: str
@@ -328,6 +335,14 @@ def _workspace_mount_path(workspace: Optional[str]) -> Optional[str]:
     return str(ws_dir)
 
 
+def _containers_only(workspace: Optional[str]) -> bool:
+    """Whether a snippet of ``workspace`` must run in a container: its
+    execution mode is docker, so the code runner's local fallback (a plain
+    subprocess on this host) is refused rather than taken."""
+    from common.config import agent_execution_mode
+    return agent_execution_mode(workspace or None) == "docker"
+
+
 def _run_result_payload(result: dict, run_lang: str) -> dict:
     return {
         "ok": result.get("ok", False),
@@ -363,8 +378,30 @@ async def run_code_body(payload: SnippetRunRequest, request: Request):
     workspace_path = _workspace_mount_path(payload.workspace) if payload.mount_workspace else None
     result = run_code_tool.run_snippet(
         run_lang, payload.body, mount_workspace=payload.mount_workspace, workspace=workspace_path,
+        container_only=_containers_only(payload.workspace),
     )
     return _run_result_payload(result, run_lang)
+
+
+@router.post("/code/run-file")
+def run_workspace_file(payload: FileRunRequest, request: Request):
+    """Run a workspace file from its own folder: the Run of a file in the
+    chat's Artifacts panel and on the Artifacts page.
+
+    ``body`` is the editor's unsaved text, run under the file's name in its
+    place. Where it runs follows the workspace (views/file_run.py): its
+    isolated sandbox, a container of its own when the execution mode is
+    docker, else the run_code sandbox. Nothing is recorded. A plain ``def``:
+    the run blocks, so it takes a worker thread, not the event loop.
+    """
+    from views import file_run
+    record_access.require_in_workspace(request, payload.workspace)
+    try:
+        result = file_run.run_file(payload.workspace, payload.path, payload.body,
+                                   timeout=payload.timeout or 60)
+    except file_run.FileRunError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    return {**result, "mode": file_run.run_mode(payload.workspace)}
 
 
 @router.get("/code/snippet/versions")
@@ -730,6 +767,7 @@ async def run_code_view(view_id: str, payload: CodeRunRequest, request: Request)
 
     result = run_code_tool.run_snippet(
         run_lang, body, mount_workspace=payload.mount_workspace, workspace=workspace_path,
+        container_only=_containers_only(view.get("workspace")),
     )
     add_code_run(view_id, {
         "version": int(spec.get("version") or 1),

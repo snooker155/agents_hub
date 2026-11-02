@@ -137,7 +137,8 @@ def format_result(exit_code: int, duration_ms: int, runtime: str,
 # ── The shared entry point ───────────────────────────────────────────────────
 
 def _run_request(language: str, code: str, timeout: Optional[int], stdin: Optional[str],
-                 mount_workspace: bool, workspace_override: Optional[str]) -> SandboxResult:
+                 mount_workspace: bool, workspace_override: Optional[str],
+                 container_only: bool = False) -> SandboxResult:
     """Build a ``SandboxRequest`` and hand it to the provider
     ``sandbox.registry.resolve`` picks. Never raises: any failure a provider
     cannot itself express becomes a ``SandboxResult`` with ``error`` set."""
@@ -164,6 +165,14 @@ def _run_request(language: str, code: str, timeout: Optional[int], stdin: Option
         provider = registry.get_provider(provider_name)
     except Exception as exc:  # noqa: BLE001 - an unknown provider name is a configuration error, reported not raised
         return SandboxResult(exit_code=-1, provider="none", error=f"cannot resolve a sandbox provider: {exc}")
+    if container_only and provider_name == "local":
+        # The execution mode promised a container; the local provider is a
+        # plain subprocess on this host (CODE_RUNNER_FALLBACK=local while
+        # docker is down, or CODE_RUNNER_PROVIDER=local).
+        return SandboxResult(exit_code=-1, provider="none", error=(
+            "the execution mode is docker, and the code runner would run this snippet on the "
+            "host (local provider), so it was not run. Start docker or set CODE_RUNNER_PROVIDER "
+            "to a container provider."))
 
     # Nothing ran at all: reported as provider "none" (run_snippet's
     # "sandbox": "unavailable"), the same as an unsupported language, so a
@@ -215,6 +224,7 @@ def run_snippet(
     stdin: Optional[str] = None,
     mount_workspace: bool = False,
     workspace: Optional[str] = None,
+    container_only: bool = False,
 ) -> Dict[str, Any]:
     """Run a snippet in the same sandbox the ``run_code`` tool uses; return a
     structured result instead of the tool's formatted-string shape.
@@ -231,8 +241,11 @@ def run_snippet(
     ``workspace`` overrides where ``mount_workspace`` mounts from: the route
     passes the view's own workspace directory explicitly, since there is no
     in-process agent run to resolve it from the way the tool does.
+    ``container_only`` refuses the local provider (a plain subprocess on this
+    host): the dashboard's runs pass it when the workspace's execution mode
+    is docker.
     """
-    result = _run_request(language, code, timeout, stdin, mount_workspace, workspace)
+    result = _run_request(language, code, timeout, stdin, mount_workspace, workspace, container_only)
     provider = (result.provider or "").strip()
     return {
         "ok": result.ok,

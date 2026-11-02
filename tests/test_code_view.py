@@ -257,7 +257,7 @@ def test_route_run_monkeypatched(client, monkeypatch):
     calls = []
 
     def fake_run_snippet(language, code, *, timeout=60, stdin=None, mount_workspace=False,
-                         workspace=None):
+                         workspace=None, container_only=False):
         calls.append((language, code, mount_workspace, workspace))
         return {"ok": True, "exit_code": 0, "duration_ms": 5, "stdout": "1\n", "stderr": "",
                 "runtime": "docker (fake)", "language": language, "sandbox": "docker", "error": ""}
@@ -283,7 +283,7 @@ def test_route_runs_are_newest_first(client, monkeypatch):
     outputs = iter(["first", "second", "third"])
 
     def fake_run_snippet(language, code, *, timeout=60, stdin=None, mount_workspace=False,
-                         workspace=None):
+                         workspace=None, container_only=False):
         return {"ok": True, "exit_code": 0, "duration_ms": 1, "stdout": next(outputs),
                 "stderr": "", "runtime": "docker", "language": language, "sandbox": "docker",
                 "error": ""}
@@ -416,9 +416,12 @@ def test_route_save_body_writes_the_file_without_a_view(client, project):
 def test_route_run_body_without_a_view(client, monkeypatch):
     from tools import run_code as run_code_tool
     calls = []
+    container_only_seen = []
 
-    def fake_run_snippet(language, code, *, timeout=60, stdin=None, mount_workspace=False, workspace=None):
+    def fake_run_snippet(language, code, *, timeout=60, stdin=None, mount_workspace=False, workspace=None,
+                         container_only=False):
         calls.append((language, code, mount_workspace, workspace))
+        container_only_seen.append(container_only)
         return {"ok": True, "exit_code": 0, "duration_ms": 3, "stdout": "2\n", "stderr": "",
                 "runtime": "docker (fake)", "language": language, "sandbox": "docker", "error": ""}
 
@@ -427,6 +430,12 @@ def test_route_run_body_without_a_view(client, monkeypatch):
     assert r.status_code == 200
     assert r.json()["stdout"] == "2\n"
     assert calls == [("node", "console.log(2)", False, None)]
+    assert container_only_seen == [False]
+    # The workspace's execution mode decides whether a host fallback is refused.
+    from common import config
+    monkeypatch.setattr(config, "agent_execution_mode", lambda ws=None: "docker")
+    client.post("/api/views/code/run", json={"language": "python", "body": "print(1)"})
+    assert container_only_seen[-1] is True
 
     assert client.post("/api/views/code/run", json={"language": "rust", "body": "fn main(){}"}).status_code == 400
     assert client.post("/api/views/code/run", json={"language": "python", "body": " "}).status_code == 400
