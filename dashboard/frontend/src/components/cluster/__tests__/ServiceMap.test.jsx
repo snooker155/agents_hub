@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -194,5 +194,15 @@ describe('ServiceMap', () => {
     expect(onViewLogs).toHaveBeenLastCalledWith({ container: expect.objectContaining({ name: 'agents-hub-node-inst_1' }) });
     fireEvent.click(screen.getByTestId('node-s:database'));
     expect(screen.queryByRole('button', { name: /log/i })).toBeNull();
+  });
+
+  it('reloads the map from the button in its top right corner', async () => {
+    const onRefresh = vi.fn(() => Promise.resolve());
+    render(<MemoryRouter><I18nProvider><ServiceMap map={MAP} onRefresh={onRefresh} /></I18nProvider></MemoryRouter>);
+    const button = screen.getByTestId('service-map-refresh');
+    fireEvent.click(button);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    await waitFor(() => expect(button).not.toBeDisabled());
   });
 });

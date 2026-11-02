@@ -278,7 +278,7 @@ export default function Cluster() {
       ) : (
         <div className="grid grid-cols-1 gap-4">
           <MachinesCard machines={map?.machines} />
-          <ServiceMap map={map} onViewLogs={({ member, container }) => {
+          <ServiceMap map={map} onRefresh={load} onViewLogs={({ member, container }) => {
             if (member) setLogMember(member);
             else if (container) setLogContainer(container);
           }} />

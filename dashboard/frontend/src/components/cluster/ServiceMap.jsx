@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ReactFlow, { Background, Controls, Handle, MarkerType, Position } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { ScrollText, X } from 'lucide-react';
+import { RefreshCw, ScrollText, X } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { InfoHint } from '../PageLayout';
 import { containerLink } from '../runs/runLinks';
@@ -371,9 +371,14 @@ function flat(detail) {
   return rows;
 }
 
-export default function ServiceMap({ map, onViewLogs }) {
+export default function ServiceMap({ map, onViewLogs, onRefresh }) {
   const { t } = useI18n();
   const [picked, setPicked] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = async () => {
+    setRefreshing(true);
+    try { await onRefresh(); } finally { setRefreshing(false); }
+  };
   const graph = useMemo(() => buildGraph(map, t), [map, t]);
   const { idle } = graph;
   // The picked box stays marked across the page's refresh (a new graph each
@@ -388,10 +393,19 @@ export default function ServiceMap({ map, onViewLogs }) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm" data-testid="service-map">
-      <h3 className="text-sm font-bold text-gray-800 flex items-center gap-1 mb-3">
-        {t('cluster.map.title')}
-        <InfoHint text={t('cluster.map.hint')} label={t('common.info')} className="font-normal" />
-      </h3>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="text-sm font-bold text-gray-800 flex items-center gap-1">
+          {t('cluster.map.title')}
+          <InfoHint text={t('cluster.map.hint')} label={t('common.info')} className="font-normal" />
+        </h3>
+        {onRefresh && (
+          <button onClick={refresh} disabled={refreshing} title={t('cluster.refresh')} aria-label={t('cluster.refresh')}
+                  data-testid="service-map-refresh"
+                  className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-60">
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        )}
+      </div>
       <div className="h-[420px] sm:h-[480px] w-full overflow-hidden rounded-lg border border-gray-100">
         <ReactFlow
           nodes={nodes}
