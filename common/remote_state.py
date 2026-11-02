@@ -98,6 +98,7 @@ REMOTE_MODULES: Tuple[str, ...] = (
     "agents.registry",
     "agents.roles",
     "common.audit",
+    "common.budget",
     "common.chat_store",
     "common.docstore",
     "common.entity_runs",
@@ -708,11 +709,14 @@ def dispatch(token_row: Mapping[str, Any], payload: Mapping[str, Any]) -> Dict[s
         bound = entry.signature.bind(*args, **kwargs)
     except TypeError as exc:
         raise ValueError(f"{key}: {exc}") from exc
+    from common import attribution, charge
     with hub_side():
         check_scope(entry, token_row, bound)
+        charged = charge.resolve(token_row, run_id=payload.get("run"), turn=payload.get("turn"))
         try:
-            result = _filter_result(entry, token_row, entry.fn(*bound.args, **bound.kwargs),
-                                    bound.arguments)
+            with attribution.charged_to(charged):
+                value = entry.fn(*bound.args, **bound.kwargs)
+            result = _filter_result(entry, token_row, value, bound.arguments)
         except Exception as exc:  # noqa: BLE001 - the caller gets the exception back as itself
             log.debug("remote call %s raised", key, exc_info=True)
             return {"ok": False, "error": _encode_error(exc)}
@@ -873,7 +877,15 @@ def decode(value: Any) -> Any:
 
 def _encode_error(exc: BaseException) -> Dict[str, Any]:
     cls = type(exc)
-    return {"type": f"{cls.__module__}:{cls.__qualname__}", "message": str(exc)}
+    out: Dict[str, Any] = {"type": f"{cls.__module__}:{cls.__qualname__}", "message": str(exc)}
+    # Plain fields of one of our exceptions (a budget refusal's spend and
+    # limit), so it comes back whole even when its constructor wants them.
+    if _own(cls.__module__):
+        attrs = {k: v for k, v in vars(exc).items()
+                 if not k.startswith("_") and (v is None or isinstance(v, (bool, int, float, str)))}
+        if attrs:
+            out["attrs"] = attrs
+    return out
 
 
 def _rebuild_error(error: Mapping[str, Any]) -> BaseException:
@@ -890,10 +902,21 @@ def _rebuild_error(error: Mapping[str, Any]) -> BaseException:
         except (ImportError, AttributeError, ValueError):
             cls = None
     if isinstance(cls, type) and issubclass(cls, Exception):
+        attrs = error.get("attrs")
         try:
-            return cls(message)
+            rebuilt = cls(message)
         except Exception:  # noqa: BLE001 - a constructor that wants more than a message
-            log.debug("could not rebuild %s from its message", name, exc_info=True)
+            rebuilt = None
+            if isinstance(attrs, Mapping) and _own(module):
+                rebuilt = cls.__new__(cls)
+                Exception.__init__(rebuilt, message)
+            else:
+                log.debug("could not rebuild %s from its message", name, exc_info=True)
+        if rebuilt is not None:
+            if isinstance(attrs, Mapping) and _own(module):
+                for k, v in attrs.items():
+                    setattr(rebuilt, str(k), v)
+            return rebuilt
     return RemoteCallError(f"{name}: {message}")
 
 
@@ -1077,7 +1100,12 @@ def _local_paths(value: Any, depth: int = 0) -> Any:
 def _client_call(key: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
     args = tuple(_hub_path(a) for a in args)
     kwargs = {k: _hub_path(v) for k, v in kwargs.items()}
-    body = _post({"fn": key, "args": encode(list(args)), "kwargs": encode(kwargs)})
+    payload: Dict[str, Any] = {"fn": key, "args": encode(list(args)), "kwargs": encode(kwargs)}
+    # The run executing and the chat turn it serves, ids only: the hub reads
+    # who that is from its own records (common/charge.py).
+    from common.charge import call_ids
+    payload.update(call_ids())
+    body = _post(payload)
     if body.get("ok"):
         return _local_paths(decode(body.get("result")))
     error = body.get("error")

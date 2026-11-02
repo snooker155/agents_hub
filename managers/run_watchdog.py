@@ -121,6 +121,10 @@ TICK_SECONDS = float(os.environ.get("RUN_WATCHDOG_TICK_SECONDS", "60"))
 PENDING_AUTOSTART_SECONDS = float(os.environ.get("RUN_PENDING_AUTOSTART_SECONDS", "180"))
 # Hard deadline: a pending run that could not be auto-started is failed.
 PENDING_TIMEOUT_SECONDS = float(os.environ.get("RUN_PENDING_TIMEOUT_SECONDS", "900"))
+# A chat turn's run the hub opened before queuing it (services/routing.py
+# open_turn_run) that no replica took this long after is failed: its turn
+# never started.
+QUEUED_TURN_TIMEOUT_SECONDS = float(os.environ.get("RUN_QUEUED_TURN_TIMEOUT_SECONDS", "900"))
 # A flow run's heartbeat is refreshed every node and at least every 15s inside a
 # node, so several missed beats mean the process is gone, not merely busy.
 FLOW_HEARTBEAT_STALE_SECONDS = float(os.environ.get("FLOW_HEARTBEAT_STALE_SECONDS", "180"))
@@ -389,6 +393,12 @@ def _sweep(counter: list) -> None:
 
     for rec in rm.load_runs():
         status = str(rec.get("status") or "")
+        if rec.get("carrier_run") and status == "queued":
+            age = _age_seconds(str(rec.get("started_at") or rec.get("created_at") or ""))
+            if age is not None and age > QUEUED_TURN_TIMEOUT_SECONDS:
+                _fail_run(rec, "No service instance took this chat turn up.")
+                counter[0] += 1
+            continue
         if rec.get("carrier_run") or rec.get("node_id"):
             continue
 

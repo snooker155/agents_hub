@@ -37,6 +37,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from common import remote_state
 from common.pricing import EVALUATION_CHANNELS
 
 log = logging.getLogger(__name__)
@@ -164,7 +165,7 @@ def _workspace_period_spend_strict(workspace: str, period: str) -> tuple[float, 
     estimate is unreliable) from a confident zero.
     """
     from managers import run_manager
-    from common.pricing import load_price_map, run_cost_usd
+    from common.pricing import container_cost_usd, load_price_map, run_cost_usd
 
     since = period_start(period)
     prices = load_price_map()
@@ -182,7 +183,14 @@ def _workspace_period_spend_strict(workspace: str, period: str) -> tuple[float, 
             ts = r.get("started_at") or r.get("created_at") or ""
             if ts and ts < since:
                 continue
-        total += run_cost_usd(r, prices)
+        # A cost measured where the money went (an imported agent's report,
+        # the model gateway's meter for an agent container) wins over a
+        # priced token count, as on the Costs page.
+        reported = r.get("reported_cost_usd")
+        if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+            total += float(reported) + container_cost_usd(r)
+        else:
+            total += run_cost_usd(r, prices)
     return round(total, 6), len(prices)
 
 
@@ -213,6 +221,10 @@ def budget_status(workspace: str) -> Dict[str, Any]:
     }
 
 
+# An agent container (an instance carrier's chat turn) has no database: the
+# check runs on the hub, charged to whoever the hub finds the call is for
+# (common/charge.py), and a refusal comes back as the same exception.
+@remote_state.hub_call("workspace?:workspace")
 def check_budget(workspace: Optional[str]) -> None:
     """Raise :class:`BudgetExceededError` when a hard cap is set and already met.
 

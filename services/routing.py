@@ -55,11 +55,16 @@ def service_for(workspace: Optional[str], agent_id: Optional[str]) -> Dict[str, 
 
 
 def turn_payload(request: Any, kind: str, *, user_id: Optional[str] = None,
-                 key_id: Optional[str] = None) -> Dict[str, Any]:
+                 key_id: Optional[str] = None, run_id: Optional[str] = None) -> Dict[str, Any]:
     """What a ``turn`` message carries: the request as JSON, which pipeline
-    runs it, and who it acts as (the run is stamped and charged to them)."""
+    runs it, who it acts as, and the run the hub opened for it (an agent
+    turn's; the replica answers on it). The replica reads the person only to
+    act as them (their secrets, their memory); what its runs are charged to
+    the hub reads from this message and that run (common/charge.py)."""
     dump = request.model_dump(mode="json") if hasattr(request, "model_dump") else dict(request)
     payload = {"kind": kind, "request": dump, "user_id": user_id, "key_id": key_id}
+    if run_id:
+        payload["run_id"] = run_id
     # The end user of a widget or channel turn (common/secrets.py), so the
     # replica acts on their consent token (docs/consent.md), not the hub's.
     from common.secrets import current_end_user
@@ -68,11 +73,53 @@ def turn_payload(request: Any, kind: str, *, user_id: Optional[str] = None,
     return payload
 
 
+def open_turn_run(request: Any, replica: Dict[str, Any], service: Optional[Dict[str, Any]] = None, *,
+                  user_id: Optional[str] = None, key_id: Optional[str] = None) -> str:
+    """Open the run an agent turn will be answered on, here, before the turn
+    is queued: the record carries the person and the key it is charged to
+    from the request that asked for it, so nothing the replica sends decides
+    that. The replica takes the run over (chat/runs.py create_chat_run) and
+    fills in the rest. Returns the run id."""
+    from managers.run_manager import new_unique_run_id, open_run
+
+    run_id = new_unique_run_id()
+    message = str(getattr(request, "message", "") or "")
+    source = getattr(request, "source", None) or "chat"
+    extra: Dict[str, Any] = {"carrier_run": True, "instance_id": str(replica["instance_id"])}
+    if (service or {}).get("service_id"):
+        extra["service_id"] = service["service_id"]
+    if user_id:
+        extra["launched_by"] = str(user_id)
+    if key_id:
+        extra["key_id"] = str(key_id)
+    open_run(
+        run_id, request.agent_id, status="queued", task_id=getattr(request, "conversation_id", None),
+        session_type="chat", message_origin=source, channel="telegram" if source == "telegram" else "chat",
+        workspace=getattr(request, "workspace", None), link_to_session=False,
+        title=message[:60] + ("…" if len(message) > 60 else ""), **extra,
+    )
+    return run_id
+
+
+def close_unstarted_run(run_id: Optional[str], error: str) -> None:
+    """Fail the run :func:`open_turn_run` opened when its turn never started
+    (no replica took it). A run the replica already took is left alone."""
+    if not run_id:
+        return
+    try:
+        from managers.run_manager import close_run, get_run_by_id
+        if str((get_run_by_id(run_id) or {}).get("status") or "") == "queued":
+            close_run(run_id, status="failed", exit_code=1, error=error)
+    except Exception:  # noqa: BLE001 - the watchdog fails a run left queued
+        log.debug("could not close unstarted run %s", run_id, exc_info=True)
+
+
 def dispatch_turn(request: Any, kind: str, *, user_id: Optional[str] = None,
                   key_id: Optional[str] = None,
                   service: Optional[Dict[str, Any]] = None,
                   replica: Optional[Dict[str, Any]] = None,
                   mailbox_conversation_id: Optional[str] = None,
+                  run_id: Optional[str] = None,
                   ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any], str]:
     """Write a chat turn into a replica's mailbox. Returns
     ``(service, replica, msg_id)``. ``service`` and ``replica`` may be chosen
@@ -87,7 +134,9 @@ def dispatch_turn(request: Any, kind: str, *, user_id: Optional[str] = None,
                                   request.agent_id if kind == TURN_AGENT else None,
                                   conversation_id=request.conversation_id,
                                   service=service)
-    payload = turn_payload(request, kind, user_id=user_id, key_id=key_id)
+    if kind == TURN_AGENT and not run_id:
+        run_id = open_turn_run(request, replica, service, user_id=user_id, key_id=key_id)
+    payload = turn_payload(request, kind, user_id=user_id, key_id=key_id, run_id=run_id)
     payload["budget_usd"] = (service or {}).get("budget_usd")
     payload["agent_version"] = (service or {}).get("agent_version")
     msg_id = inbox.enqueue(

@@ -139,6 +139,14 @@ def refusal_of(exc: BaseException, *, agent_id: Optional[str] = None,
             return budget_refusal(KIND_WORKSPACE, spent_usd=exc.spend, limit_usd=exc.limit, message=str(exc),
                                   workspace=getattr(exc, "workspace", None) or workspace,
                                   period=getattr(exc, "period", None), agent_id=agent_id)
+        # A model call the hub's gateway refused for money, in the middle of
+        # a turn an agent container ran (common/model_metering.py).
+        from common.model_metering import refusal_in
+        gateway = refusal_in(exc)
+        if gateway is not None:
+            if agent_id:
+                gateway["agent_id"] = agent_id
+            return gateway
     except Exception:  # noqa: BLE001 - a refusal that cannot be shaped is shown as plain text
         log.debug("refusal not shaped", exc_info=True)
     return None

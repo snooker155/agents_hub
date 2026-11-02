@@ -288,7 +288,16 @@ def create_chat_run(request: ChatRequest, **run_extra):
     ``handoff_from`` (chat/handoff.py) this way.
     """
     conv_id = request.conversation_id or str(uuid4())
-    run_id = new_unique_run_id()
+    # A turn a replica answers already has its run: the hub opened it when it
+    # queued the turn, charged to the person who asked (services/routing.py
+    # open_turn_run). The turn's first run takes it over; a receiving run of a
+    # handoff (parent_run_id) is a run of its own.
+    turn = _turn_context.get()
+    run_id = ""
+    if turn and turn.get("run_id") and not turn.get("run_taken") and not run_extra.get("parent_run_id"):
+        run_id = str(turn["run_id"])
+        turn["run_taken"] = True
+    run_id = run_id or new_unique_run_id()
     run_title = request.message[:60] + ("…" if len(request.message) > 60 else "")
     session_title = request.conversation_title or run_title
     log_file = run_log_path(run_id)

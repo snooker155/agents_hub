@@ -305,13 +305,31 @@ def test_the_workspace_budget_is_checked_before_the_receiving_run(agents, monkey
 
     def _check(ws):
         calls.append(ws)
-        raise budget.BudgetExceededError(ws or "default", 12.0, 10.0, "monthly")
+        if len(calls) > 1:  # the turn itself was allowed to start
+            raise budget.BudgetExceededError(ws or "default", 12.0, 10.0, "monthly")
 
     monkeypatch.setattr(budget, "check_budget", _check)
     events = asyncio.run(_collect(_request()))
     done = events[-1]
-    assert calls and done["ok"] is False and "budget" in done["error"].lower()
+    assert len(calls) == 2 and done["ok"] is False and "budget" in done["error"].lower()
     assert get_run_by_id(done["run_id"])["status"] == "failed"
+
+
+def test_the_budget_is_checked_before_the_turn_starts(agents, monkeypatch):
+    """A turn over the money refuses before its first run, with the card's
+    refusal, and opens no run."""
+    import common.budget as budget
+    _install(monkeypatch, {"front": lambda p, h: pytest.fail("over budget: must not start")})
+
+    def _check(ws):
+        raise budget.BudgetExceededError(ws or "default", 12.0, 10.0, "monthly")
+
+    monkeypatch.setattr(budget, "check_budget", _check)
+    events = asyncio.run(_collect(_request()))
+    assert len(events) == 1
+    done = events[0]
+    assert done["ok"] is False and done["status"] == 402 and done["run_id"] is None
+    assert done["refusal"]["code"] == "budget" and done["refusal"]["limit_usd"] == 10.0
 
 
 def test_each_run_keeps_its_own_usage(agents, monkeypatch):

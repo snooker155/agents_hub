@@ -72,6 +72,12 @@ def fails(kind: str):
 
 
 @hub_call("global")
+def over_budget():
+    from common.user_budget import UserBudgetExceededError
+    raise UserBudgetExceededError("u-1", 2.5, 1.0, "ann")
+
+
+@hub_call("global")
 def opens_db():
     return db.get_conn().execute("SELECT 1").fetchone()[0]
 
@@ -79,6 +85,13 @@ def opens_db():
 @hub_call("global")
 def returns_object():
     return object()
+
+
+@hub_call("workspace")
+def charged_to(workspace: Optional[str] = None):
+    """Who a run opened on the hub by this call would be charged to."""
+    from common.attribution import launching_key, launching_user
+    return {"user": launching_user(), "key": launching_key()}
 
 
 @hub_call("global")
@@ -98,13 +111,20 @@ def remote(monkeypatch):
     state = {"token": run_tokens.mint(run_id="run-remote", workspace="acme")}
 
     def transport(payload):
+        from common import identity
         wire = json.loads(json.dumps(payload))
-        with remote_state.hub_side():
-            row = run_tokens.resolve(state["token"])
-            try:
-                body = remote_state.dispatch(row, wire)
-            except ScopeError as exc:
-                raise ScopeError(str(exc))
+        # The hub's request comes in on the run token, which runs as the
+        # service principal: no person, only what the call itself carries.
+        user = identity.set_current_user(identity.SERVICE_PRINCIPAL.id)
+        try:
+            with remote_state.hub_side():
+                row = run_tokens.resolve(state["token"])
+                try:
+                    body = remote_state.dispatch(row, wire)
+                except ScopeError as exc:
+                    raise ScopeError(str(exc))
+        finally:
+            identity.reset_current_user(user)
         return json.loads(json.dumps(body))
 
     monkeypatch.setattr(remote_state, "_transport", transport)
@@ -128,6 +148,40 @@ def test_a_remote_process_cannot_open_the_database(remote):
 def test_marked_functions_run_locally_outside_a_container():
     assert ws_echo("acme", 2) == {"workspace": "acme", "value": 2}
     assert opens_db() == 1
+
+
+def test_a_remote_call_is_charged_from_the_hubs_records_not_the_containers(remote):
+    """An instance carrier serves many people's turns and has no database. It
+    sends the turn's mailbox message id, never a person; the hub reads the
+    person the API wrote into that message. A message of another instance,
+    and a person bound in the container's own context, count for nothing."""
+    import chat.runs  # noqa: F401 - a process that serves chat turns has it loaded
+    from chat.runs import reset_turn_context, set_turn_context
+    from common import charge, identity
+    from instances import inbox
+    charge._cache.clear()
+    with remote_state.hub_side():
+        bob = identity.create_user("bob-charge", "pw-123456789")
+        mine = inbox.enqueue("inst_mine", "hi", kind=inbox.KIND_TURN,
+                             payload={"kind": "agent", "user_id": bob["id"], "key_id": None})
+        other = inbox.enqueue("inst_other", "hi", kind=inbox.KIND_TURN,
+                              payload={"kind": "agent", "user_id": bob["id"], "key_id": None})
+        remote["token"] = run_tokens.mint(instance_id="inst_mine", workspace="acme")
+
+    def in_turn(msg_id, user=None):
+        ctx = set_turn_context({"msg_id": msg_id})
+        token = identity.set_current_user(user)
+        try:
+            return charged_to()
+        finally:
+            identity.reset_current_user(token)
+            reset_turn_context(ctx)
+
+    assert in_turn(mine)["user"] == bob["id"]
+    assert in_turn(other)["user"] == identity.SERVICE_PRINCIPAL.id
+    # Whatever the container's own context says is not sent at all.
+    assert in_turn(None, user=bob["id"])["user"] == identity.SERVICE_PRINCIPAL.id
+    charge._cache.clear()
 
 
 # ── scope ────────────────────────────────────────────────────────────────────
@@ -195,6 +249,19 @@ def test_exceptions_come_back_as_themselves(remote):
         fails("scope")
     with pytest.raises(TypeError, match="cannot send"):
         returns_object()
+
+
+def test_an_exception_that_wants_more_than_a_message_comes_back_whole(remote):
+    """A budget refusal raised on the hub reaches the container as itself,
+    with its numbers, so the chat's refusal card can say them."""
+    from common.budget import BudgetExceededError
+    from common.user_budget import UserBudgetExceededError
+    with pytest.raises(UserBudgetExceededError) as caught:
+        over_budget()
+    exc = caught.value
+    assert isinstance(exc, BudgetExceededError)
+    assert (exc.user_id, exc.spend, exc.limit, exc.period) == ("u-1", 2.5, 1.0, "monthly")
+    assert "ann" in str(exc)
 
 
 def test_only_listed_modules_and_marked_functions_run(remote, monkeypatch):

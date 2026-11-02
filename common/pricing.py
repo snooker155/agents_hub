@@ -134,6 +134,16 @@ def _tokens_cost(prices: PriceMap, provider: str, model: str,
     )
 
 
+def tokens_cost_usd(provider: str, model: str, prompt_tokens: int, completion_tokens: int,
+                    cached_tokens: int = 0, *, prices: Optional[PriceMap] = None) -> float:
+    """USD cost of one model call at catalog price (``cached_tokens`` a subset
+    of ``prompt_tokens``). Unknown models cost 0.0, as everywhere here."""
+    table = prices if prices is not None else load_price_map()
+    return round(_tokens_cost(table, str(provider or ""), str(model or ""),
+                              max(0, int(prompt_tokens or 0)), max(0, int(completion_tokens or 0)),
+                              max(0, int(cached_tokens or 0))), 8)
+
+
 def serving_cost_usd(provider: str, model: str, prompt_tokens: int,
                      completion_tokens: int, *, prices: Optional[PriceMap] = None) -> float:
     """USD cost of one served completion (``common/serving.py``) at catalog

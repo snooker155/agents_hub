@@ -1153,6 +1153,11 @@ async def _run(request: ChatRequest, kind: str):
         async for event in routing.relay(request, kind):
             yield event
         return
+    # The money is checked before the turn's first run, as the relay does.
+    refused = await asyncio.to_thread(routing.budget_refusal, request)
+    if refused is not None:
+        yield refused
+        return
     async for event in execute_locally(request, kind):
         yield event
 

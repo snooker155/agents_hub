@@ -38,6 +38,12 @@ HOSTS_ENV = "AGENTS_HUB_LLM_HOSTS"
 #: The prefix of the hub's proxy route.
 ROUTE = "/api/run-state/llm"
 
+#: Headers a container's call carries for the hub to know what it is charged
+#: to (common/charge.py): the run executing and the chat turn it serves, ids
+#: only. The hub checks both against the run token.
+RUN_HEADER = "x-hub-run"
+TURN_HEADER = "x-hub-turn"
+
 #: Headers that carry a provider key in one SDK or another.
 _KEY_HEADERS = ("authorization", "x-api-key", "x-goog-api-key", "api-key", "x-subscription-token")
 
@@ -299,6 +305,11 @@ def kind_of(netloc: str, workspace: Optional[str]) -> str:
     return provider_hosts(workspace).get(netloc, ("", ""))[0]
 
 
+def host_kind(netloc: str, workspace: Optional[str]) -> Tuple[str, str]:
+    """``(kind, backend id)`` of a proxied host, ``("", "")`` for any other."""
+    return provider_hosts(workspace).get(netloc, ("", ""))
+
+
 def browser_policy_floor(policy: Any, workspace: Optional[str]) -> Dict[str, Any]:
     """A session policy a container sent, made no looser than its workspace's:
     the workspace's own (isolated: read only, its site list), its denied hosts
@@ -366,7 +377,7 @@ def guard_browser(method: str, path: str, query: str, body: bytes, workspace: Op
 #: Request headers never forwarded to the provider.
 _HOP = frozenset({"host", "content-length", "connection", "keep-alive", "transfer-encoding",
                   "te", "upgrade", "proxy-authorization", "x-hub-run-token", "accept-encoding",
-                  *_KEY_HEADERS})
+                  RUN_HEADER, TURN_HEADER, *_KEY_HEADERS})
 
 
 def forward_headers(headers: Iterable[Tuple[str, str]], auth: Dict[str, str]) -> Dict[str, str]:
@@ -400,7 +411,14 @@ def _route(url: str) -> Optional[str]:
 def _token_header() -> Dict[str, str]:
     from common.run_tokens import ENV
     token = os.environ.get(ENV, "")
-    return {"Authorization": f"Bearer {token}"} if token else {}
+    out = {"Authorization": f"Bearer {token}"} if token else {}
+    from common.charge import call_ids
+    ids = call_ids()
+    if ids.get("run"):
+        out[RUN_HEADER] = ids["run"]
+    if ids.get("turn"):
+        out[TURN_HEADER] = ids["turn"]
+    return out
 
 
 def install() -> None:

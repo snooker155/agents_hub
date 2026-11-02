@@ -10,7 +10,10 @@ also set on the Users page). ``0`` means unlimited, and so does a default of
 A person's spend is what the accounting report (routes/accounting.py) shows on
 their row: every run stamped ``launched_by`` them this UTC month (evaluation
 channels excluded, the same leaf runs the report sums) plus their served
-``/v1`` completions. :func:`check_user_budget` compares it against the limit
+``/v1`` completions, plus the model calls an agent container made for them
+outside any run (``model_calls``, common/model_metering.py). A run an agent
+container ran carries the cost the hub's model gateway measured
+(``reported_cost_usd``), not a figure the container reported. :func:`check_user_budget` compares it against the limit
 before a run starts and before each chat turn; ``common.budget.check_budget``
 calls it, so every surface that honours a workspace's hard cap honours the
 person's limit too. A breach raises :class:`UserBudgetExceededError`, a
@@ -123,6 +126,10 @@ def user_month_spend_usd(user_id: str, *, now: Optional[datetime] = None) -> flo
             total += float(reported) + container_cost_usd(rec)
         else:
             total += run_cost_usd(rec, prices)
+    # Model calls an agent container made outside any run, metered by the
+    # hub's gateway (a run's own calls are in its reported_cost_usd above).
+    from common.model_metering import unattached_spend_usd
+    total += unattached_spend_usd(str(user_id), since)
     return round(total, 6)
 
 

@@ -288,9 +288,19 @@ class HttpStateTransport(StateTransport):
         try:
             import requests
             from common.auth import auth_headers
+            from common.charge import call_ids
+            from common.llm_gateway import RUN_HEADER, TURN_HEADER
+            headers = dict(auth_headers())
+            # The run executing and the turn it serves, ids only, for the hub
+            # to read who the call is for (common/charge.py).
+            ids = call_ids()
+            if ids.get("run"):
+                headers[RUN_HEADER] = ids["run"]
+            if ids.get("turn"):
+                headers[TURN_HEADER] = ids["turn"]
             resp = requests.request(
                 method, f"{self._base}{path}", json=body,
-                headers=auth_headers(), timeout=timeout or self._timeout,
+                headers=headers, timeout=timeout or self._timeout,
             )
             try:
                 data = resp.json()

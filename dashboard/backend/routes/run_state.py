@@ -296,6 +296,8 @@ class DelegateBody(BaseModel):
     #: The user the delegating run belongs to (``common.attribution.
     #: launching_user`` inside that run), so the child is attributed the way
     #: an in-process delegation attributes it, not to the relay's token.
+    #: Taken only from a caller on the hub's own credential: for a run token
+    #: the hub reads it from its own records (common/charge.py).
     launched_by: Optional[str] = None
 
 
@@ -311,6 +313,12 @@ def _caller_from_token(request: Request, body: DelegateBody) -> DelegateBody:
     if principal is None or getattr(principal, "kind", "") != "run":
         return body
     row = run_tokens.get_by_id(getattr(principal, "credential_id", "")) or {}
+    # Who the child is charged to: what the hub's records say about the run
+    # and turn the call names, never what the container put in the body.
+    from common import charge
+    from common.llm_gateway import RUN_HEADER, TURN_HEADER
+    charged = charge.resolve(row, run_id=request.headers.get(RUN_HEADER),
+                             turn=request.headers.get(TURN_HEADER))
     agent_id: Optional[str] = None
     if row.get("run_id"):
         from managers.run_manager import get_run_by_id
@@ -322,7 +330,8 @@ def _caller_from_token(request: Request, body: DelegateBody) -> DelegateBody:
         except Exception:  # noqa: BLE001 - an unknown instance leaves no caller: not service wide
             agent_id = None
     return body.model_copy(update={"workspace": row.get("workspace") or body.workspace,
-                                   "caller_agent_id": agent_id or None})
+                                   "caller_agent_id": agent_id or None,
+                                   "launched_by": charged.get("user") or None})
 
 
 @router.post("/tasks/{task_id}/delegate")
@@ -419,6 +428,9 @@ async def model_gateway_route(scheme: str, host: str, path: str, request: Reques
     from fastapi.responses import StreamingResponse
     from common import identity, llm_gateway, run_tokens
 
+    from fastapi.responses import JSONResponse
+    from common import charge, model_metering
+
     row = await asyncio.to_thread(run_tokens.resolve, identity.presented_credential(request))
     if row is None:
         raise HTTPException(status_code=401, detail="a model call needs a run token")
@@ -432,7 +444,21 @@ async def model_gateway_route(scheme: str, host: str, path: str, request: Reques
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     body = await asyncio.to_thread(llm_gateway.patch_body, host.lower(), await request.body(),
                                    row.get("workspace"))
-    kind = await asyncio.to_thread(llm_gateway.kind_of, host.lower(), row.get("workspace"))
+    kind, backend_id = await asyncio.to_thread(llm_gateway.host_kind, host.lower(), row.get("workspace"))
+    metered = kind in model_metering.MODEL_KINDS
+    charged: Dict[str, str] = {}
+    if metered:
+        # Who the call is for, from the hub's own records (the container sends
+        # the run and the turn it serves, ids only), and whether their money
+        # allows it: a person over their limit stops here, mid-turn too.
+        charged = await asyncio.to_thread(
+            charge.resolve, row, run_id=request.headers.get(llm_gateway.RUN_HEADER),
+            turn=request.headers.get(llm_gateway.TURN_HEADER))
+        verdict = await asyncio.to_thread(model_metering.refusal, row, charged)
+        if verdict is not None:
+            return JSONResponse(model_metering.refusal_body(verdict), status_code=402,
+                                headers={model_metering.REFUSAL_HEADER: "budget"})
+        body = model_metering.patch_request(kind, path, body)
     client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=20.0))
     if kind == "browser":
         # The service's own address as the hub reaches it (a container may know
@@ -457,15 +483,28 @@ async def model_gateway_route(scheme: str, host: str, path: str, request: Reques
     upstream = await client.send(client.build_request(request.method, url, headers=headers, content=body),
                                  stream=True)
 
+    capture = model_metering.Capture() if metered else None
+
     async def relay():
         try:
             # Decoded: httpx asked the provider for gzip itself, and the
             # encoding header is not passed on, so the container gets plain bytes.
             async for chunk in upstream.aiter_bytes():
+                if capture is not None:
+                    capture.feed(chunk)
                 yield chunk
         finally:
             await upstream.aclose()
             await client.aclose()
+            if capture is not None and capture.size:
+                # What the call cost, read from the answer and credited to its
+                # run (common/model_metering.py). Not awaited: a caller that
+                # went away mid-answer must not cancel the record.
+                import functools
+                asyncio.get_running_loop().run_in_executor(None, functools.partial(
+                    model_metering.record, row, charged, kind=kind, provider=backend_id or kind,
+                    path=path, request_body=body or b"", answer=capture.data(),
+                    status=upstream.status_code))
 
     passed = {k: v for k, v in upstream.headers.items()
               if k.lower() not in ("content-length", "transfer-encoding", "connection", "content-encoding")}

@@ -75,6 +75,30 @@ process are charged to the same user and key as the run that made them. The
 report and the key's monthly spend sum these leaf runs one by one; an entity
 run's own total is their sum and is never added on top.
 
+An agent container (a task run's, or an instance carrier answering many
+people's chat turns) has no database and no request: it never says who it
+works for. For an agent chat turn the API opens the run itself before it
+queues the turn, stamped with the person who sent the message
+(`services/routing.py` `open_turn_run`), and the replica answers on that run.
+Any other record a container creates through the hub (a delegate, a handoff's
+receiving run, a flow node) is stamped from the hub's own records
+(`common/charge.py`): the container sends only the id of the run executing and
+of the chat turn it serves, and the hub takes the person from that run, or
+from the turn's mailbox message the API wrote, once it has checked both belong
+to the container's run token. A run with a `parent_run_id` and nobody in its
+context takes its parent's person.
+
+## Metered at the model gateway
+
+A container's model calls all go through the hub (the model gateway), because
+it holds no provider key. The gateway reads the usage out of each answer
+(OpenAI, Anthropic and Google shapes, streamed or not; a streamed OpenAI chat
+completion is asked for its usage), prices it at the catalog, writes one
+`model_calls` row and sets the run's `reported_cost_usd` to the sum of its
+rows (`common/model_metering.py`). So a carrier's run costs what the hub
+measured, not what the container reported, and its cost grows while it runs.
+A call made outside any run keeps its row and counts for its person.
+
 ## Pricing on /v1
 
 A call to the hub's own [OpenAI-compatible endpoint](hub-as-provider.md)
@@ -113,13 +137,20 @@ The default starts at `0`, no limit.
 
 A person's spend is their row of the [report](#report) for the current UTC
 month: every run stamped `launched_by` them, evaluation channels excluded,
-plus their served `/v1` calls. It is checked before a run starts and before
-each chat turn, inside `common.budget.check_budget`, so every surface that
-honours a workspace's hard limit honours the person's too, and again when a
-flow, loop, team or scenario is launched (`runtime.entity_launch.dispatch`).
-Once spend reaches the limit the run or turn is refused with the same budget
-error a workspace cap gives (a chat turn answers 402). The check fails open on
-a lookup error.
+plus their served `/v1` calls and their metered calls made outside a run. It
+is checked before a run starts and before each chat turn, inside
+`common.budget.check_budget`, so every surface that honours a workspace's hard
+limit honours the person's too, and again when a flow, loop, team or scenario
+is launched (`runtime.entity_launch.dispatch`). A chat turn is checked by the
+API before it is queued, and an agent container's check runs on the hub, for
+the person the hub finds the call is for. Once spend reaches the limit the run
+or turn is refused with the same budget error a workspace cap gives (a chat
+turn answers 402). The check fails open on a lookup error.
+
+A turn already running is stopped where the money goes: the model gateway
+checks the person's limit and the workspace's hard cap before it forwards each
+of a container's model calls, and answers 402 once either is reached, with the
+same `refusal` in its error body, so the chat shows the same card.
 
 The person sees their limit and month spend on the Account page (`GET
 /api/auth/spend`); an administrator sees everyone's in the Limit column of the

@@ -66,6 +66,25 @@ def _failure(request: Any, error: str, *, status: Optional[int] = None,
     return out
 
 
+def budget_refusal(request: Any) -> Optional[Dict[str, Any]]:
+    """The failed ``done`` of a turn the money does not allow, decided here,
+    where the request names the person: their monthly limit, then the
+    workspace's hard cap (common/budget.py). None to go ahead. A turn already
+    running is stopped by the model gateway instead (common/model_metering.py)."""
+    from common.budget import BudgetExceededError, check_budget
+    try:
+        check_budget(getattr(request, "workspace", None) or None)
+    except BudgetExceededError as exc:
+        from chat.refusals import refusal_of
+        out = _failure(request, str(exc), status=402)
+        refusal = refusal_of(exc, agent_id=getattr(request, "agent_id", None),
+                             workspace=getattr(request, "workspace", None))
+        if refusal:
+            out["refusal"] = refusal
+        return out
+    return None
+
+
 def _replica_gone(replica_id: str) -> Optional[str]:
     """A reason when the replica can no longer answer, else None."""
     from instances import carrier, store
@@ -117,6 +136,10 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
     msg_id: Optional[str] = None
     run_id: Optional[str] = None
     try:
+        refused = await asyncio.to_thread(budget_refusal, request)
+        if refused is not None:
+            yield await _failed(refused)
+            return
         try:
             service, replica = await asyncio.to_thread(
                 service_routing.choose, request.workspace, agent_id, conversation_id=conv)
@@ -128,9 +151,15 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
             yield await _failed(_failure(request, f"could not start a service instance: {exc}", status=503))
             return
         replica_id = str(replica["instance_id"])
+        # An agent turn's run is opened here, charged to the person who asked;
+        # the replica answers on it (chat/runs.py create_chat_run).
+        if kind == "agent":
+            run_id = await asyncio.to_thread(
+                service_routing.open_turn_run, request, replica, service, user_id=user_id, key_id=key_id)
+        unstarted = run_id
         service, replica, msg_id = await asyncio.to_thread(
             service_routing.dispatch_turn, request, kind, user_id=user_id, key_id=key_id,
-            service=service, replica=replica)
+            service=service, replica=replica, run_id=run_id)
         log.debug("chat routing: turn %s -> %s (%s)", msg_id, replica_id, service.get("name"))
 
         timeouts = _timeouts()
@@ -152,6 +181,7 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
                 etype = event.get("type")
                 if etype == "turn_start":
                     started = True
+                    unstarted = None
                     deadline = now + timeouts["idle"]
                     continue
                 if etype == "chat_stream_end":
@@ -176,18 +206,21 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
                 if reply is not None:
                     run_id = run_id or reply.get("run_id")
                     if reply.get("status") == "failed" and not reply.get("run_id"):
-                        yield await _failed(_failure(request, str(reply.get("error") or "the turn failed"),
-                                                            run_id=run_id))
+                        error = str(reply.get("error") or "the turn failed")
+                        await asyncio.to_thread(service_routing.close_unstarted_run, unstarted, error)
+                        yield await _failed(_failure(request, error, run_id=run_id))
                         return
                 gone = await asyncio.to_thread(_replica_gone, replica_id)
                 if gone and not started:
                     await asyncio.to_thread(inbox.mark_error, msg_id, gone)
+                    await asyncio.to_thread(service_routing.close_unstarted_run, unstarted, gone)
                     yield await _failed(_failure(request, gone, status=503, run_id=run_id))
                     return
             if now >= deadline:
                 if not started:
                     error = f"the service instance did not pick the turn up within {int(timeouts['start'])}s"
                     await asyncio.to_thread(inbox.mark_error, msg_id, error)
+                    await asyncio.to_thread(service_routing.close_unstarted_run, unstarted, error)
                     yield await _failed(_failure(request, error, status=504, run_id=run_id))
                     return
                 if not got_done:
@@ -204,4 +237,4 @@ async def relay(request: Any, kind: str = "agent") -> AsyncIterator[Dict[str, An
         broker.close_client(client_id)
 
 
-__all__ = ["enabled", "relay"]
+__all__ = ["budget_refusal", "enabled", "relay"]
