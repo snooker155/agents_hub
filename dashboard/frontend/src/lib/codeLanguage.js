@@ -19,3 +19,12 @@ export function codeLanguageFor(name) {
   const ext = base.toLowerCase().split('.').pop();
   return BY_EXTENSION[ext] || '';
 }
+
+// Files the Run of a workspace file takes, by extension (views/file_run.py
+// RUN_LANG_BY_EXT): an ES module (.mjs) cannot run under the launcher.
+const RUNNABLE_FILE_EXTENSIONS = new Set(['py', 'js', 'cjs', 'sh', 'bash']);
+
+export function isRunnableFile(name) {
+  const base = String(name || '').split('/').pop().toLowerCase();
+  return base.includes('.') && RUNNABLE_FILE_EXTENSIONS.has(base.split('.').pop());
+}

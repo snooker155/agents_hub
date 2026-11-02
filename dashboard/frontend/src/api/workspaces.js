@@ -61,6 +61,9 @@ const workspaceFileParams = (ref) => (
   ref && typeof ref === 'object' && ref.fileId ? { file_id: ref.fileId } : { path: typeof ref === 'object' ? ref?.path : ref });
 export const getWorkspaceFileContent = (name, ref) =>
   api.get(`/workspaces/${encodeURIComponent(name)}/file-content`, { params: workspaceFileParams(ref) });
+// Save of a file opened in the code editor: an existing file's new text.
+export const saveWorkspaceFileContent = (name, path, content) =>
+  api.put(`/workspaces/${encodeURIComponent(name)}/file-content`, { path, content });
 export const getWorkspaceFileRawUrl = (name, ref) => {
   const [key, value] = Object.entries(workspaceFileParams(ref))[0];
   return `${api.defaults.baseURL}/workspaces/${encodeURIComponent(name)}/file-raw?${key}=${encodeURIComponent(value || '')}`;

@@ -10,8 +10,12 @@
  * project, and (for a view) the recorded run history. What needs the host is
  * handed in: `onVersionSaved` with what the backend returned, `saveAsView`
  * for a reply's block, `chat` when there is a composer to prefill.
+ *
+ * A workspace file (`file`, components/code/FileWorkbench.jsx) has no
+ * versions: Save writes the file, Run runs it from its own folder where the
+ * workspace says (views/file_run.py), the unsaved text in its place.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle, BookmarkPlus, Check, Copy, Download, Edit3, FolderGit2, History, Info, ListChecks, Loader2,
   MessageSquare, Play, Save,
@@ -19,8 +23,10 @@ import {
 import { useI18n } from '../../i18n';
 import {
   getCodeDiff, getCodeRuns, getCodeVersions, getSnippetDiff, getSnippetVersions, runCode, runSnippet,
-  saveCodeBody, saveCodeToProject, saveCodeVersion, saveSnippetToProject, saveSnippetVersion,
+  runWorkspaceFile, saveCodeBody, saveCodeToProject, saveCodeVersion, saveSnippetToProject, saveSnippetVersion,
 } from '../../api/code';
+import { saveWorkspaceFileContent } from '../../api/workspaces';
+import { isRunnableFile } from '../../lib/codeLanguage';
 import { DiffView } from '../chat/panels';
 import CodeEditor from '../chat/CodeEditor';
 import { isRunnable } from '../../lib/highlight';
@@ -94,11 +100,14 @@ const formatWhen = (iso) => {
  * @param {{onClick: function, busy: boolean, error: string}} [props.saveAsView] the reply block's "Save as view".
  * @param {{setInput: function}} [props.chat] a composer to prefill: Discuss, Edit and the run report show when given.
  * @param {boolean} [props.runHistory]   a Runs button with the view's recorded runs.
+ * @param {{workspace: string, path: string}} [props.file] a workspace file: Save writes it, Run runs it from its folder.
+ * @param {number}  [props.autoRun]      a nonce: run once when it changes (the file's Run button opens the editor running).
  * @param {string}  [props.className]
  */
 export default function CodeWorkbench({
   envelope, isReply = false, replyKey = null, workspace, projects, onVersionSaved = () => {},
-  onDraftChange = null, saveAsView = null, chat = null, runHistory = false, className = '',
+  onDraftChange = null, saveAsView = null, chat = null, runHistory = false, file = null, autoRun = null,
+  className = '',
 }) {
   const { t } = useI18n();
   const dark = useResolvedDark();
@@ -157,7 +166,8 @@ export default function CodeWorkbench({
   useEffect(() => { if (onDraftChange) onDraftChange(draft); }, [draft, onDraftChange]);
 
   const dirty = Boolean(envelope) && draft !== (spec.body || '');
-  const runnable = isRunnable(spec.language);
+  const isFile = Boolean(file);
+  const runnable = isFile ? isRunnableFile(file.path) : isRunnable(spec.language);
   const closeAll = () => { setVersionsOpen(false); setRunsOpen(false); setSaveProjectOpen(false); };
 
   const handleCopy = async () => {
@@ -199,7 +209,9 @@ export default function CodeWorkbench({
     setSavingInPlace(true);
     setSaveError('');
     try {
-      const res = await saveCodeBody(viewId, draft);
+      const res = isFile
+        ? await saveWorkspaceFileContent(file.workspace, file.path, draft)
+        : await saveCodeBody(viewId, draft);
       onVersionSaved(res.data);
     } catch (e) {
       setSaveError(e?.response?.data?.detail || t('chat.code.saveFailed'));
@@ -227,9 +239,11 @@ export default function CodeWorkbench({
     setRunError('');
     setRunResult(null);
     try {
-      const res = isReply
-        ? await runSnippet({ language: spec.language, body: draft, mountWorkspace, workspace })
-        : await runCode(viewId, { body: draft, mountWorkspace });
+      const res = isFile
+        ? await runWorkspaceFile({ workspace: file.workspace, path: file.path, body: dirty ? draft : undefined })
+        : isReply
+          ? await runSnippet({ language: spec.language, body: draft, mountWorkspace, workspace })
+          : await runCode(viewId, { body: draft, mountWorkspace });
       setRunResult(res.data);
       if (runHistory && runsOpen) loadRuns();
     } catch (e) {
@@ -238,6 +252,17 @@ export default function CodeWorkbench({
       setRunning(false);
     }
   };
+
+  // The file's Run button opens the editor running: once per nonce, after
+  // the envelope (the file's text) is in.
+  const ranFor = useRef(null);
+  useEffect(() => {
+    if (autoRun == null || autoRun === ranFor.current || !envelope || !runnable) return;
+    ranFor.current = autoRun;
+    handleRun();
+    // handleRun reads the current draft; only a new nonce runs again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRun, envelope, runnable]);
 
   const toggleRuns = async () => {
     const opening = !runsOpen;
@@ -273,6 +298,10 @@ export default function CodeWorkbench({
 
   const handleEdit = () => {
     if (!envelope || !chat) return;
+    if (isFile) {
+      chat.setInput(t('chat.code.editFilePrefill', { path: file.path }));
+      return;
+    }
     chat.setInput(t('chat.code.editPrefill', {
       filename: spec.filename || t('chat.code.untitled'),
       version: spec.version ?? '',
@@ -345,7 +374,7 @@ export default function CodeWorkbench({
   return (
     <div className={`flex flex-col min-h-0 ${className}`} data-testid="code-workbench">
       <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-medium text-gray-800 dark:text-gray-100 truncate max-w-[140px]">
+        <span className="text-xs font-medium text-gray-800 dark:text-gray-100 truncate max-w-[140px]" title={isFile ? file.path : undefined}>
           {spec.filename || t('chat.code.untitled')}
         </span>
         {spec.language && (
@@ -373,7 +402,7 @@ export default function CodeWorkbench({
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
           <ToolbarButton icon={Copy} label={t('chat.code.copy')} onClick={handleCopy} />
           <ToolbarButton icon={Download} label={t('chat.code.download')} onClick={handleDownload} />
-          <div className="relative">
+          {!isFile && <div className="relative">
             <ToolbarButton icon={History} label={t('chat.code.versions')} onClick={toggleVersions} active={versionsOpen} />
             {versionsOpen && (
               <div className={`${popover} right-0 w-72 max-h-80 overflow-y-auto p-2 space-y-1`}>
@@ -412,8 +441,8 @@ export default function CodeWorkbench({
                 )}
               </div>
             )}
-          </div>
-          {runHistory && !isReply && (
+          </div>}
+          {runHistory && !isReply && !isFile && (
             <div className="relative">
               <ToolbarButton icon={ListChecks} label={t('chat.code.runs')} title={t('chat.code.runsHint')} onClick={toggleRuns} active={runsOpen} />
               {runsOpen && (
@@ -458,7 +487,8 @@ export default function CodeWorkbench({
             tone="run"
             onClick={handleRun}
             disabled={!runnable || running}
-            title={runnable ? t('chat.code.runHint') : t('chat.code.notRunnable')}
+            title={!runnable ? t(isFile ? 'chat.code.fileNotRunnable' : 'chat.code.notRunnable')
+              : t(isFile ? 'chat.code.runFileHint' : 'chat.code.runHint')}
           />
         </div>
       </div>
@@ -479,19 +509,19 @@ export default function CodeWorkbench({
           <ToolbarButton
             icon={savingInPlace ? Loader2 : Save}
             label={t('chat.code.saveInPlace')}
-            title={t('chat.code.saveInPlaceHint', { version: spec.version ?? 1 })}
+            title={isFile ? t('chat.code.saveFileHint') : t('chat.code.saveInPlaceHint', { version: spec.version ?? 1 })}
             onClick={handleSaveInPlace}
             disabled={!dirty || savingInPlace || saving}
           />
         )}
-        <ToolbarButton
+        {!isFile && <ToolbarButton
           icon={saving ? Loader2 : Save}
           label={t('chat.code.saveVersion')}
           title={t('chat.code.saveVersionHint')}
           onClick={handleSaveVersion}
           disabled={!dirty || saving || savingInPlace}
-        />
-        <div className="relative">
+        />}
+        {!isFile && <div className="relative">
           <ToolbarButton
             icon={FolderGit2}
             label={t('chat.code.saveToProject')}
@@ -542,9 +572,10 @@ export default function CodeWorkbench({
               )}
             </div>
           )}
-        </div>
-        {/* The mount switch, after the saves: it belongs to Run, but the row above is full. */}
-        {runnable && (
+        </div>}
+        {/* The mount switch, after the saves: it belongs to Run, but the row above is full.
+            A file always runs with its folder: no switch. */}
+        {runnable && !isFile && (
           <span className="flex items-center gap-1">
             <label className="flex items-center gap-1 text-[10px] text-gray-500 dark:text-gray-400" title={t('chat.code.mountWorkspaceHint')}>
               <input
@@ -628,8 +659,9 @@ export default function CodeWorkbench({
                 </span>
                 <span className="text-gray-400">{t('chat.code.duration', { ms: runResult.duration_ms ?? 0 })}</span>
                 {runResult.sandbox && (
-                  <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
-                    {runResult.sandbox}
+                  <span className="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400" data-testid="run-sandbox">
+                    {runResult.sandbox === 'container' ? t('chat.code.ranInContainer')
+                      : runResult.sandbox === 'isolated' ? t('chat.code.ranIsolated') : runResult.sandbox}
                   </span>
                 )}
                 {runResult.recorded && (

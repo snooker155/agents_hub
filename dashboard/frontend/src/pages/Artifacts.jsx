@@ -37,13 +37,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Ban, Boxes, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Eye, FileCode, FileImage, FileText, Folder,
-  FolderOpen, FolderSync, Images, Info, LayoutGrid, List, ListTree, Loader, RefreshCw, Search, Trash2, Upload, X,
+  Ban, Boxes, ChevronDown, ChevronRight, Code2, Copy, Download, ExternalLink, Eye, FileCode, FileImage, FileText, Folder,
+  FolderOpen, FolderSync, Images, Info, LayoutGrid, List, ListTree, Loader, Play, RefreshCw, Search, Trash2, Upload, X,
 } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import FileViewer from '../components/files/FileViewer';
 import { frameType, isImageFile, needsBytes, objectUrl } from '../lib/fileKind';
-import { codeLanguageFor } from '../lib/codeLanguage';
+import { codeLanguageFor, isRunnableFile } from '../lib/codeLanguage';
+import FileWorkbench from '../components/code/FileWorkbench';
 import { useWorkspace } from '../components/workspace';
 import { useI18n, useFormatters } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
@@ -357,6 +358,39 @@ function FilePreviewModal({ fileId, onClose }) {
   );
 }
 
+/** A folder file in the code editor, over the page: Save writes it, Run runs
+ * it from its folder (components/code/FileWorkbench.jsx). `autoRun` when the
+ * Run button opened it. */
+function FileEditorModal({ workspace, path, autoRun, onClose, onSaved }) {
+  const { t } = useI18n();
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return createPortal(
+    <div
+      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+      onClick={(e) => { e.stopPropagation(); onClose(); }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={path}
+      data-testid="file-editor-modal"
+    >
+      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-5xl h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100 dark:border-gray-800">
+          <p className="min-w-0 text-[11px] font-mono text-gray-500 truncate">{workspace} / {path}</p>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label={t('files.close')}>
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <FileWorkbench workspace={workspace} path={path} autoRun={autoRun} onSaved={onSaved} className="flex-1 min-h-0" />
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function UsageList({ usage, t }) {
   if (!usage) return null;
   if (!usage.total && !usage.produced_by) {
@@ -420,6 +454,10 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  // The code editor over the page: `{ run }`, a nonce when Run opened it.
+  const [editor, setEditor] = useState(null);
+  // A save in the editor reads the preview again.
+  const [saves, setSaves] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -453,7 +491,13 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [fileId, t]);
+  }, [fileId, t, saves]);
+
+  // A folder file of code: it opens in the editor, and runs when runnable.
+  const folderPath = rec?.meta?.path || '';
+  const editable = Boolean(rec?.workspace && folderPath) && Boolean(codeLanguageFor(folderPath))
+    && codeLanguageFor(folderPath) !== 'markdown';
+  const runnable = editable && isRunnableFile(folderPath);
 
   const download = async () => {
     try {
@@ -512,6 +556,20 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50">
             <Eye className="w-3.5 h-3.5" /> {t('files.preview')}
           </button>
+          {runnable && (
+            <button type="button" onClick={() => setEditor({ run: Date.now() })} title={t('chat.code.runFileHint')}
+              data-testid="file-run"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-emerald-600 bg-emerald-600 rounded-lg text-white hover:bg-emerald-700">
+              <Play className="w-3.5 h-3.5" /> {t('chat.code.run')}
+            </button>
+          )}
+          {editable && (
+            <button type="button" onClick={() => setEditor({ run: null })} title={t('chat.code.openEditorHint')}
+              data-testid="file-editor"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50">
+              <Code2 className="w-3.5 h-3.5" /> {t('chat.code.editor')}
+            </button>
+          )}
           <button type="button" onClick={download}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50">
             <Download className="w-3.5 h-3.5" /> {t('files.download')}
@@ -561,6 +619,10 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
         <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">{t('files.whereUsed')}</div>
         {usage ? <UsageList usage={usage} t={t} /> : <p className="text-xs text-gray-400">…</p>}
       </div>
+      {editor && (
+        <FileEditorModal workspace={rec.workspace} path={folderPath} autoRun={editor.run}
+          onClose={() => setEditor(null)} onSaved={() => setSaves((n) => n + 1)} />
+      )}
     </aside>
   );
 }

@@ -9,6 +9,12 @@ vi.mock('../../../api', () => ({ getWorkspaceFileContent: (...a) => getWorkspace
 vi.mock('../../../views/ViewCard', () => ({ default: ({ viewRef, actions }) => <div data-testid="view-card">{viewRef.title}{actions}</div> }));
 vi.mock('../../GraphMirror', () => ({ default: () => null }));
 vi.mock('../../ProcessGraph', () => ({ default: () => null, TokenPill: () => null }));
+// The file's editor (components/code/FileWorkbench.jsx) stands in: what it was opened with.
+vi.mock('../../code/FileWorkbench', () => ({
+  default: ({ workspace, path, autoRun }) => (
+    <div data-testid="file-workbench">{workspace}:{path}:{autoRun ? 'run' : 'edit'}</div>
+  ),
+}));
 
 import { MemoryRouter } from 'react-router-dom';
 import { I18nProvider } from '../../../i18n';
@@ -65,5 +71,36 @@ describe('ArtifactsPanel', () => {
   it('says so when there is nothing yet', () => {
     draw({ artifacts: {}, views: [] });
     expect(screen.getByText(/No files or views yet/)).toBeInTheDocument();
+  });
+
+  it('opens a code file in the editor, and Run opens it running', () => {
+    draw({ artifacts: ARTIFACTS, views: [], workspace: 'ws', pick: { key: 'file:src/new.py', nonce: 1 } });
+    fireEvent.click(screen.getByTestId('artifact-editor'));
+    expect(screen.getByTestId('file-workbench')).toHaveTextContent('ws:src/new.py:edit');
+    expect(screen.queryByTestId('artifact-detail')).not.toBeInTheDocument();
+    // Editor again: back to the file as it is.
+    fireEvent.click(screen.getByTestId('artifact-editor'));
+    expect(screen.queryByTestId('file-workbench')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('artifact-run'));
+    expect(screen.getByTestId('file-workbench')).toHaveTextContent('ws:src/new.py:run');
+  });
+
+  it('offers neither on a Markdown file, nor Run on code it cannot run', () => {
+    const files = {
+      'README.md': { op: 'add', path: 'README.md', diff: '+# r', additions: 1, deletions: 0 },
+      'src/a.ts': { op: 'add', path: 'src/a.ts', diff: '+1', additions: 1, deletions: 0 },
+    };
+    draw({ artifacts: files, views: [], workspace: 'ws', pick: { key: 'file:README.md', nonce: 1 } });
+    expect(screen.queryByTestId('artifact-editor')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('artifact-run')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('a.ts'));
+    expect(screen.getByTestId('artifact-editor')).toBeInTheDocument();
+    expect(screen.queryByTestId('artifact-run')).not.toBeInTheDocument();
+  });
+
+  it('offers neither in diff mode', () => {
+    draw({ artifacts: ARTIFACTS, views: [], workspace: 'ws', mode: 'diff' });
+    expect(screen.queryByTestId('artifact-editor')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('artifact-run')).not.toBeInTheDocument();
   });
 });

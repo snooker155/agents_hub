@@ -66,6 +66,13 @@ export const runSnippet = ({ language, body, mountWorkspace = false, workspace }
     ...(workspace ? { workspace } : {}),
   });
 
+// ── A workspace file, run from its own folder ────────────────────────────────
+// `body`, when given, is the editor's unsaved text, run under the file's name.
+// Where it runs follows the workspace (views/file_run.py): `mode` in the
+// result is `container`, `isolated` or `sandbox`.
+export const runWorkspaceFile = ({ workspace, path, body }) =>
+  api.post('/views/code/run-file', { workspace, path, ...(body != null ? { body } : {}) });
+
 export const getSnippetVersions = (key, workspace) =>
   api.get('/views/code/snippet/versions', { params: { key, ...(workspace ? { workspace } : {}) } });
 
