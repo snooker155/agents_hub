@@ -85,6 +85,8 @@ def _user_card(ctx: Any, entity_id: str) -> Optional[Dict[str, Any]]:
         "role": u.get("role"), "active": not u.get("disabled"), "created_at": u.get("created_at"),
         "last_login": _last_logins().get(str(u["id"])),
         "workspaces_count": len(workspaces), "spend_limit_usd": u.get("spend_limit_usd"),
+        "rate_limit_per_minute": u.get("rate_limit_per_minute"),
+        "tokens_per_day": u.get("tokens_per_day"),
         "source": u.get("source"),
     }
     # The Users page shows an account's email next to its name; a person

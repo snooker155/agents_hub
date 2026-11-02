@@ -357,6 +357,14 @@ def test_limit_routes_for_admin_and_person(multi, client, monkeypatch):
     cleared = client.patch(f"/api/auth/users/{bob_id}", json={"spend_limit_usd": None}, headers=admin)
     assert cleared.json()["spend_limit_usd"] is None
 
+    # A budget can be given with the account itself.
+    created = client.post("/api/auth/users", headers=admin, json={
+        "username": "budgeted", "password": PASSWORD, "spend_limit_usd": 7.5})
+    assert created.status_code == 200, created.text
+    assert created.json()["spend_limit_usd"] == 7.5
+    assert client.post("/api/auth/users", headers=admin, json={
+        "username": "negative", "password": PASSWORD, "spend_limit_usd": -1}).status_code == 422
+
     from routes import settings as settings_routes
     written = {}
     monkeypatch.setattr(settings_routes, "_write_env_key", lambda key, value: written.update({key: value}))

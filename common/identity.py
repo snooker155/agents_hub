@@ -209,6 +209,10 @@ def verify_password(password: str, *, password_hash: str, password_salt: str,
 
 # ── users ────────────────────────────────────────────────────────────────────
 
+#: A person's own rate limits, the columns of migration 0056.
+RATE_LIMIT_FIELDS = ("rate_limit_per_minute", "tokens_per_day")
+
+
 def _row_to_user(row) -> Dict[str, Any]:
     """A user as the API returns it: everything but the password record."""
     keys = row.keys() if hasattr(row, "keys") else ()
@@ -240,6 +244,10 @@ def _row_to_user(row) -> Dict[str, Any]:
         # hub default, 0 is unlimited.
         "spend_limit_usd": (float(spend_limit) if (spend_limit := col("spend_limit_usd")) is not None
                             else None),
+        # Own rate limits (common/rate_limit.py); None follows the hub-wide
+        # setting, 0 is unlimited.
+        **{field: (int(value) if (value := col(field)) is not None else None)
+           for field in RATE_LIMIT_FIELDS},
     }
 
 
@@ -624,6 +632,33 @@ def set_spend_limit(user_id: str, limit_usd: Optional[float]) -> Optional[Dict[s
             (limit_usd, _iso(_now()), str(user_id)))
         if not cursor.rowcount:
             return None
+    return get_user(user_id)
+
+
+def set_rate_limits(user_id: str, **limits: Optional[int]) -> Optional[Dict[str, Any]]:
+    """Set some of a person's own rate limits (``RATE_LIMIT_FIELDS``):
+    ``None`` = follow the hub-wide setting, ``0`` = unlimited. Fields not
+    passed are left alone. Returns the updated user, None when unknown."""
+    values: Dict[str, Optional[int]] = {}
+    for field, value in limits.items():
+        if field not in RATE_LIMIT_FIELDS:
+            raise ValueError(f"unknown rate limit {field!r}")
+        if value is not None:
+            value = int(value)
+            if value < 0:
+                raise ValueError("a rate limit cannot be negative")
+        values[field] = value
+    if not values:
+        return get_user(user_id)
+    assignments = ", ".join(f"{field} = ?" for field in values)
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            f"UPDATE users SET {assignments}, updated_at = ? WHERE user_id = ?",
+            (*values.values(), _iso(_now()), str(user_id)))
+        if not cursor.rowcount:
+            return None
+    from common import rate_limit
+    rate_limit.forget_user(user_id)
     return get_user(user_id)
 
 
@@ -1382,11 +1417,11 @@ __all__ = [
     "hash_password", "is_service_token", "list_members", "list_sessions", "list_users",
     "local_passwords_enabled", "login", "login_throttled",
     "logout", "membership_role", "mode_features", "open_session", "presented_credential",
-    "principal_dict",
+    "RATE_LIMIT_FIELDS", "principal_dict",
     "remove_member", "request_principal", "require_role", "reset_current_user",
     "revoke_other_sessions", "revoke_session",
     "service_token", "session_for_token", "set_current_user", "set_member",
-    "set_password", "set_preferences", "set_spend_limit",
+    "set_password", "set_preferences", "set_rate_limits", "set_spend_limit",
     "update_user", "upsert_external_user", "user_count", "user_for_session",
     "verify_password", "workspace_roles_for_user", "workspaces_for_user",
     "required_workspace_role",

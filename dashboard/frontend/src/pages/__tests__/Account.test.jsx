@@ -39,7 +39,13 @@ vi.mock('../../api', () => ({
   revokeMyApiKey: (...a) => revokeMyApiKey(...a),
   getWorkspaces: (...a) => getWorkspaces(...a),
   updateMyProfile: (...a) => updateMyProfile(...a),
-  getOwnSpend: () => Promise.resolve({ data: { limit_usd: 0, spend: 0, source: 'default', exceeded: false } }),
+  getOwnSpend: () => Promise.resolve({ data: {
+    limit_usd: 0, spend: 0, source: 'default', exceeded: false,
+    rate_limits: {
+      rate_limit_per_minute: { limit: 120, source: 'user', hub_default: 60 },
+      tokens_per_day: { limit: 0, source: 'hub', hub_default: 0 },
+    },
+  } }),
 }));
 
 // The key's own money quota (docs/api-keys.md "Money quota"): a separate
@@ -104,6 +110,12 @@ beforeEach(() => {
 });
 
 describe('Account', () => {
+  it('shows the request and token limits that apply, with where they come from', async () => {
+    show();
+    expect(await screen.findByText('120 (your own)')).toBeInTheDocument();
+    expect(screen.getByText('Tokens per day on /v1').nextSibling.textContent).toBe('No limit');
+  });
+
   it('shows the profile drawn from the viewer', async () => {
     show();
     await waitFor(() => expect(screen.getByText('alice')).toBeInTheDocument());

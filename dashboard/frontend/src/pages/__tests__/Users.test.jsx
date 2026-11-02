@@ -108,6 +108,66 @@ describe('Users page', () => {
     await waitFor(() => expect(api.setDefaultSpendLimit).toHaveBeenCalledWith(12));
   });
 
+  it('sets a person\'s own limits in place of the defaults, empty following them', async () => {
+    api.getUsers.mockImplementation(() => ok([
+      { ...USERS[0], spend_limit_usd: null, rate_limit_per_minute: null, tokens_per_day: null },
+      { ...USERS[1], spend_limit_usd: 20, rate_limit_per_minute: 120, tokens_per_day: 0 },
+    ]));
+    api.getSpendLimits.mockImplementation(() => ok({
+      period: 'monthly',
+      default_limit_usd: 10,
+      rate_limit_defaults: { rate_limit_per_minute: 60, tokens_per_day: 50000 },
+      users: {
+        u1: { limit_usd: 10, source: 'default', spend: 2, exceeded: false },
+        u2: { limit_usd: 20, source: 'user', spend: 3, exceeded: false },
+      },
+    }));
+    api.updateUser.mockImplementation(() => ok({}));
+    show();
+    await screen.findByTestId('limit-alice');
+    expect(screen.getByTestId('limit-alice').textContent).toContain('120/min · no token limit');
+    expect(screen.getByTestId('limit-root').textContent).not.toContain('/min');
+
+    fireEvent.click(screen.getByTestId('limits-root'));
+    const modal = await screen.findByTestId('limits-modal');
+    expect(within(modal).getByLabelText('Requests per minute').placeholder).toBe('Default: 60');
+    expect(within(modal).getByLabelText('Budget, USD per month').placeholder).toBe('Default: $10.00');
+    // The browser stops a fraction at the field's step; the form checks again.
+    fireEvent.change(within(modal).getByLabelText('Requests per minute'), { target: { value: '1.5' } });
+    fireEvent.submit(modal);
+    expect(await within(modal).findByRole('alert')).toBeTruthy();
+    expect(api.updateUser).not.toHaveBeenCalled();
+
+    fireEvent.change(within(modal).getByLabelText('Requests per minute'), { target: { value: '300' } });
+    fireEvent.change(within(modal).getByLabelText('Tokens per day on /v1'), { target: { value: '0' } });
+    fireEvent.click(within(modal).getByTestId('limits-save'));
+    await waitFor(() => expect(api.updateUser).toHaveBeenCalledWith('u1', {
+      spend_limit_usd: null, rate_limit_per_minute: 300, tokens_per_day: 0,
+    }));
+    await waitFor(() => expect(screen.queryByTestId('limits-modal')).toBeNull());
+  });
+
+  it('opens the limits from the row\'s Limits button and takes a budget with a new account', async () => {
+    api.getSpendLimits.mockImplementation(() => ok({
+      period: 'monthly', default_limit_usd: 0, rate_limit_defaults: {}, users: {},
+    }));
+    api.createUser.mockImplementation(() => ok({}));
+    show();
+    fireEvent.click(await screen.findByTestId('set-limits-alice'));
+    expect(within(await screen.findByTestId('limits-modal')).getByText('alice')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.change(screen.getByLabelText('User name'), { target: { value: 'dana' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret-pass' } });
+    const budget = screen.getByLabelText('Budget, USD per month');
+    expect(budget.placeholder).toBe('Default: no limit');
+    fireEvent.change(budget, { target: { value: '15' } });
+    fireEvent.submit(budget.closest('form'));
+    await waitFor(() => expect(api.createUser).toHaveBeenCalledWith(
+      expect.objectContaining({ username: 'dana', spend_limit_usd: 15 }),
+    ));
+  });
+
   it('shows where each account came from and offers a password reset only where it helps', async () => {
     show();
     await screen.findByText('alice');

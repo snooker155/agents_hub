@@ -198,10 +198,18 @@ function ProfileDialog({ user, editable, t, onClose, onSaved }) {
 
 // ── spend ────────────────────────────────────────────────────────────────────
 
+// The request and token limits GET /api/auth/spend reports, each the
+// person's own, their key's or the hub's (common/rate_limit.py).
+const RATE_FIELDS = [
+  ['rate_limit_per_minute', 'account.spend.perMinute'],
+  ['tokens_per_day', 'account.spend.tokensPerDay'],
+];
+
 /**
  * What the person spent this month against their limit
- * (GET /api/auth/spend, common/user_budget.py). The limit is set by an
- * administrator on the Users page; nothing here changes it.
+ * (GET /api/auth/spend, common/user_budget.py), and the request and token
+ * limits that apply to them. The limits are set by an administrator on the
+ * Users page; nothing here changes them.
  */
 function SpendSection({ t }) {
   const [status, setStatus] = useState(null);
@@ -223,6 +231,16 @@ function SpendSection({ t }) {
           value={status.limit_usd
             ? `${money(status.limit_usd)} (${t(`account.spend.sources.${status.source}`)})`
             : t('account.spend.none')} />
+        {RATE_FIELDS.map(([field, label]) => {
+          const rate = status.rate_limits?.[field];
+          if (!rate) return null;
+          return (
+            <Field key={field} label={t(label)}
+              value={rate.limit
+                ? `${Number(rate.limit).toLocaleString()} (${t(`account.spend.rateSources.${rate.source}`)})`
+                : t('account.spend.none')} />
+          );
+        })}
       </dl>
       {status.limit_usd > 0 && (
         <div className="mt-3 h-1.5 rounded-full bg-gray-100 overflow-hidden" aria-hidden="true">

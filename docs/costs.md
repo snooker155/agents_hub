@@ -135,6 +135,13 @@ limit), or else the default for everyone, set on the same page (`PUT
 /api/auth/spend-limits/default`, stored as `AGENTS_HUB_USER_SPEND_LIMIT_USD`).
 The default starts at `0`, no limit.
 
+On the Users page the row's Limits button opens a window with the person's
+budget, and the new account form takes one too (`spend_limit_usd` in `POST
+/api/auth/users`; left empty the account follows the default). The same
+window also sets the person's own requests per
+minute and tokens per day in place of the hub-wide ones (see
+[api-keys](api-keys.md#rate-limits)).
+
 A person's spend is their row of the [report](#report) for the current UTC
 month: every run stamped `launched_by` them, evaluation channels excluded,
 plus their served `/v1` calls and their metered calls made outside a run. It

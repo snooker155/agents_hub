@@ -225,6 +225,66 @@ def test_a_keys_own_limits_win_over_the_global_ones(monkeypatch, client, served,
     assert client.get("/api/auth/me", headers=plain).status_code == 429
 
 
+def test_a_persons_own_limits_sit_between_the_key_and_the_hub(monkeypatch, client, multi_key):
+    from common import identity
+    from common.config import settings
+    monkeypatch.setattr(settings, "rate_limit_per_minute", 1, raising=False)
+    plain, _record, user = multi_key()
+    keyed, _record2, _user = multi_key(rate_limit_per_minute=1)
+    login = client.post("/api/auth/login", json={"username": "root", "password": PASSWORD})
+    session = {"Authorization": f"Bearer {login.json()['token']}"}
+    rate_limit.reset()
+
+    # The admin gives themselves 3 a minute; the hub says 1.
+    patched = client.patch(f"/api/auth/users/{user['id']}", headers=session,
+                           json={"rate_limit_per_minute": 3, "tokens_per_day": 0})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["rate_limit_per_minute"] == 3 and patched.json()["tokens_per_day"] == 0
+    rate_limit.reset()
+    for _ in range(3):
+        assert client.get("/api/auth/me", headers=plain).status_code == 200
+    assert client.get("/api/auth/me", headers=plain).status_code == 429
+    # A key with its own value keeps it.
+    assert client.get("/api/auth/me", headers=keyed).status_code == 200
+    assert client.get("/api/auth/me", headers=keyed).status_code == 429
+
+    rate_limit.reset()
+    status = client.get("/api/auth/spend", headers=session).json()["rate_limits"]
+    assert status["rate_limit_per_minute"] == {"limit": 3, "source": "user", "hub_default": 1}
+    assert status["tokens_per_day"]["source"] == "user" and status["tokens_per_day"]["limit"] == 0
+    overview = client.get("/api/auth/spend-limits", headers=session).json()
+    assert overview["rate_limit_defaults"] == {"rate_limit_per_minute": 1, "tokens_per_day": 0}
+
+    # Null clears the person's value, which applies at once.
+    cleared = client.patch(f"/api/auth/users/{user['id']}", headers=session,
+                           json={"rate_limit_per_minute": None})
+    assert cleared.json()["rate_limit_per_minute"] is None
+    assert cleared.json()["tokens_per_day"] == 0
+    assert identity.get_user(user["id"])["rate_limit_per_minute"] is None
+    assert client.get("/api/auth/me", headers=plain).status_code == 200
+    assert client.get("/api/auth/me", headers=plain).status_code == 429
+
+    rate_limit.reset()
+    refused = client.patch(f"/api/auth/users/{user['id']}", headers=session,
+                           json={"tokens_per_day": -5})
+    assert refused.status_code == 400
+
+
+def test_a_persons_tokens_per_day_cap_their_v1_calls(monkeypatch, client, served, multi_key):
+    from common import identity, serving
+    from common.config import settings
+    monkeypatch.setattr(settings, "rate_limit_tokens_per_day", 0, raising=False)
+    headers, record, user = multi_key()
+    serving.record_usage(_key_principal(user, record), provider="openai", model="gpt-4o",
+                         prompt_tokens=50)
+    assert client.post("/v1/chat/completions", json=REQUEST, headers=headers).status_code == 200
+    identity.set_rate_limits(user["id"], tokens_per_day=10)
+    rate_limit.reset()
+    refused = client.post("/v1/chat/completions", json=REQUEST, headers=headers)
+    assert refused.status_code == 429
+    assert refused.json()["error"]["code"] == "tokens_per_day_exceeded"
+
+
 def test_negative_key_limits_are_refused(multi_key):
     with pytest.raises(ValueError):
         multi_key(rate_limit_per_minute=-1)

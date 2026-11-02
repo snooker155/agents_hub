@@ -67,6 +67,9 @@ class UserCreate(BaseModel):
     last_name: str = ""
     # The language the account's welcome opens in (migration 0051).
     language: str = "en"
+    # Own monthly spend limit from the start (common/user_budget.py); left
+    # out or null the person follows the hub default, 0 is unlimited.
+    spend_limit_usd: Optional[float] = Field(default=None, ge=0)
 
 
 class UserPatch(BaseModel):
@@ -80,6 +83,10 @@ class UserPatch(BaseModel):
     # Own monthly spend limit (common/user_budget.py). Sent as null it clears
     # the person's own value, so the hub default applies; 0 is unlimited.
     spend_limit_usd: Optional[float] = None
+    # Own rate limits (common/rate_limit.py), the same way: null follows the
+    # hub-wide setting, 0 is unlimited. A personal key's own values win.
+    rate_limit_per_minute: Optional[int] = None
+    tokens_per_day: Optional[int] = None
 
 
 class DefaultSpendLimit(BaseModel):
@@ -305,11 +312,15 @@ async def post_user(request: Request, payload: UserCreate):
                                     display_name=payload.display_name,
                                     email=payload.email, first_name=payload.first_name,
                                     last_name=payload.last_name, language=payload.language)
+        if payload.spend_limit_usd is not None:
+            user = identity.set_spend_limit(user["id"], payload.spend_limit_usd) or user
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    details = {"username": user["username"], "role": user["role"]}
+    if payload.spend_limit_usd is not None:
+        details["spend_limit_usd"] = payload.spend_limit_usd
     audit.record("user.create", principal=_principal(request), object_type="user",
-                 object_id=user["id"], ip=identity.client_ip(request),
-                 details={"username": user["username"], "role": user["role"]})
+                 object_id=user["id"], ip=identity.client_ip(request), details=details)
     return user
 
 
@@ -325,13 +336,19 @@ async def patch_user(request: Request, user_id: str, payload: UserPatch):
                                     language=payload.language)
         if user is not None and "spend_limit_usd" in payload.model_fields_set:
             user = identity.set_spend_limit(user_id, payload.spend_limit_usd)
+        rate_limits = {field: getattr(payload, field) for field in identity.RATE_LIMIT_FIELDS
+                       if field in payload.model_fields_set}
+        if user is not None and rate_limits:
+            user = identity.set_rate_limits(user_id, **rate_limits)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if user is None:
         raise HTTPException(status_code=404, detail="No such user")
     changes = {k: v for k, v in payload.model_dump().items() if v is not None}
-    if "spend_limit_usd" in payload.model_fields_set:
-        changes["spend_limit_usd"] = payload.spend_limit_usd
+    # A limit sent as null is a change too: back to the default.
+    for field in ("spend_limit_usd", *identity.RATE_LIMIT_FIELDS):
+        if field in payload.model_fields_set:
+            changes[field] = getattr(payload, field)
     audit.record("user.role" if "role" in changes else "user.update",
                  principal=_principal(request), object_type="user", object_id=user_id,
                  ip=identity.client_ip(request), details=changes)
@@ -346,10 +363,13 @@ async def get_spend_limits(request: Request):
     this month's spend (common/user_budget.py)."""
     _require_multi()
     identity.require_role(_principal(request), admin=True)
-    from common import user_budget
+    from common import rate_limit, user_budget
     return {
         "period": user_budget.PERIOD,
         "default_limit_usd": user_budget.default_limit(),
+        # What a person without their own rate limits follows (the person's
+        # own values are on their user record).
+        "rate_limit_defaults": rate_limit.hub_defaults(),
         "users": {u["id"]: user_budget.user_budget_status(u["id"]) for u in identity.list_users()},
     }
 

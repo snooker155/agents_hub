@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  KeyRound, Link2, Loader, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, UserPlus, Users as UsersIcon,
-  UsersRound,
+  Gauge, KeyRound, Link2, Loader, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, UserPlus,
+  Users as UsersIcon, UsersRound,
 } from 'lucide-react';
 import {
   createGroup, createGroupMapping, createUser, deleteGroup, deleteGroupMapping, deleteUser,
@@ -14,6 +14,7 @@ import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 import MemberMenuSection from '../components/users/MemberMenuSection';
 import EditUserModal, { LanguageSelect } from '../components/users/EditUserModal';
+import LimitsModal from '../components/users/LimitsModal';
 
 const inputCls = 'border border-gray-200 rounded-lg px-3 py-2 text-sm '
   + ' focus:outline-none';
@@ -42,6 +43,7 @@ export default function Users() {
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [limits, setLimits] = useState(null);
+  const [limitsFor, setLimitsFor] = useState(null);
   const [defaultDraft, setDefaultDraft] = useState('');
 
   // The core sets no state until the answers arrive, so the effect may call
@@ -80,9 +82,17 @@ export default function Users() {
 
   const add = async (event) => {
     event.preventDefault();
+    // The budget is optional: empty follows the default for everyone.
+    const { spend_limit_usd: budget, ...account } = draft;
+    const raw = String(budget).trim().replace(',', '.');
+    const limit = raw === '' ? null : Number(raw);
+    if (limit !== null && (!Number.isFinite(limit) || limit < 0)) {
+      setError(t('auth.users.limitInvalid'));
+      return;
+    }
     setBusy(true);
     try {
-      await createUser(draft);
+      await createUser(limit === null ? account : { ...account, spend_limit_usd: limit });
       setDraft(EMPTY_DRAFT);
       setError('');
       await load();
@@ -114,27 +124,6 @@ export default function Users() {
     }
   };
 
-  // A person's own monthly limit: a number, 0 for unlimited, empty to
-  // follow the hub default.
-  const changeLimit = async (user) => {
-    const current = user.spend_limit_usd ?? '';
-    const answer = window.prompt(t('auth.users.limitPrompt', { name: user.username }), String(current));
-    if (answer === null) return;
-    const trimmed = answer.trim();
-    const value = trimmed === '' ? null : Number(trimmed.replace(',', '.'));
-    if (value !== null && (!Number.isFinite(value) || value < 0)) {
-      setError(t('auth.users.limitInvalid'));
-      return;
-    }
-    try {
-      await updateUser(user.id, { spend_limit_usd: value });
-      setError('');
-      await load();
-    } catch (err) {
-      fail(err, 'auth.users.updateFailed');
-    }
-  };
-
   const saveDefaultLimit = async (event) => {
     event.preventDefault();
     const value = Number(String(defaultDraft).trim().replace(',', '.') || 0);
@@ -158,6 +147,17 @@ export default function Users() {
     if (!status.limit_usd) return t('auth.users.limitNone', { spent });
     return t('auth.users.limitOf', { spent, limit: `$${Number(status.limit_usd).toFixed(2)}` });
   };
+
+  // The person's own request and token limits, when they have any; without
+  // them the hub-wide ones apply and nothing is shown.
+  const rateText = (user) => [
+    user.rate_limit_per_minute != null && (user.rate_limit_per_minute
+      ? t('auth.users.limits.perMinuteShort', { value: user.rate_limit_per_minute.toLocaleString() })
+      : t('auth.users.limits.perMinuteNone')),
+    user.tokens_per_day != null && (user.tokens_per_day
+      ? t('auth.users.limits.tokensShort', { value: user.tokens_per_day.toLocaleString() })
+      : t('auth.users.limits.tokensNone')),
+  ].filter(Boolean).join(' · ');
 
   const resetPassword = async (user) => {
     const password = window.prompt(t('auth.users.newPasswordFor', { name: user.username }));
@@ -236,6 +236,18 @@ export default function Users() {
             <option value="admin">{t('auth.roles.admin')}</option>
           </select>
         </div>
+        {limits && (
+          <div>
+            <label htmlFor="new-budget" className="block text-xs font-medium text-gray-500 mb-1">
+              {t('auth.users.limits.spend')}
+            </label>
+            <input id="new-budget" type="number" min="0" step="0.01" value={draft.spend_limit_usd}
+              placeholder={Number(limits.default_limit_usd)
+                ? t('auth.users.limits.defaultIs', { value: `$${Number(limits.default_limit_usd).toFixed(2)}` })
+                : t('auth.users.limits.defaultNone')}
+              onChange={(e) => setDraft({ ...draft, spend_limit_usd: e.target.value })} className={`${inputCls} w-44`} />
+          </div>
+        )}
         <button type="submit" disabled={busy || !draft.username || !draft.password}
           className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
           {busy ? <Loader className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
@@ -309,12 +321,16 @@ export default function Users() {
                   </td>
                   {limits && (
                     <td className="px-4 py-2 text-xs text-gray-600 whitespace-nowrap" data-testid={`limit-${user.username}`}>
-                      <button type="button" onClick={() => changeLimit(user)}
+                      <button type="button" onClick={() => setLimitsFor(user)} data-testid={`limits-${user.username}`}
+                        title={t('auth.users.limits.title')}
                         className={`hover:text-indigo-700 ${limits.users?.[user.id]?.exceeded ? 'text-red-600 font-medium' : ''}`}>
                         {limitText(user)}
                       </button>
                       {user.spend_limit_usd == null && (
                         <span className="ml-1.5 text-[11px] text-gray-400">{t('auth.users.limitFromDefault')}</span>
+                      )}
+                      {rateText(user) && (
+                        <span className="block text-[11px] text-gray-500">{rateText(user)}</span>
                       )}
                     </td>
                   )}
@@ -323,6 +339,12 @@ export default function Users() {
                       className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 mr-3">
                       <Pencil className="w-3.5 h-3.5" /> {t('auth.users.edit')}
                     </button>
+                    {limits && (
+                      <button type="button" onClick={() => setLimitsFor(user)} data-testid={`set-limits-${user.username}`}
+                        className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 mr-3">
+                        <Gauge className="w-3.5 h-3.5" /> {t('auth.users.limits.button')}
+                      </button>
+                    )}
                     {canUsePassword(user) && (
                       <button type="button" onClick={() => resetPassword(user)}
                         className="inline-flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 mr-3">
@@ -345,6 +367,10 @@ export default function Users() {
       </p>
 
       {editing && <EditUserModal user={editing} onClose={() => setEditing(null)} onSaved={load} />}
+      {limitsFor && (
+        <LimitsModal user={limitsFor} onClose={() => setLimitsFor(null)} onSaved={load}
+          defaults={{ spend_limit_usd: limits?.default_limit_usd, ...limits?.rate_limit_defaults }} />
+      )}
 
       {features?.groups !== false && <GroupsAndMappings users={users} />}
 
@@ -353,8 +379,11 @@ export default function Users() {
   );
 }
 
-// A new account's form; English unless the administrator picks another.
-const EMPTY_DRAFT = { username: '', password: '', role: 'member', first_name: '', last_name: '', language: 'en' };
+// A new account's form; English unless the administrator picks another, and
+// the default budget unless a monthly limit of its own is typed in.
+const EMPTY_DRAFT = {
+  username: '', password: '', role: 'member', first_name: '', last_name: '', language: 'en', spend_limit_usd: '',
+};
 
 // A local account signs in with a password. One from SSO or SCIM does only
 // when it already has one (a linked local account, or one an administrator

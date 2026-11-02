@@ -142,12 +142,26 @@ Two limits, both off by default, both answered with `429` and a
   when a key is used and per person otherwise. It holds across replicas; the
   figure is cached for 30 seconds, so a burst can overshoot the cap slightly.
 
+In `multi` mode a person may carry their own values in place of the
+hub-wide ones, set by an administrator on the Users page (the limits cell of
+the person's row opens a window with the monthly spend, requests per minute
+and tokens per day) or through `PATCH /api/auth/users/{id}` with
+`rate_limit_per_minute` and `tokens_per_day`. `null` follows the hub-wide
+setting, a number overrides it for that person alone, and 0 means unlimited.
+They are stored on the user (migration 0056) and apply to the person's
+sessions and to every key of theirs that sets no value of its own; a change
+applies on the next request. The person sees the values that apply to them,
+and where each comes from, on the Account page (`GET /api/auth/spend`,
+`rate_limits`).
+
 A key may carry its own values, set when it is created on the Account page
 (or `rate_limit_per_minute` and `tokens_per_day` in `POST /api/auth/keys`) and
 editable afterwards, together with its money quota below, through
 `PUT /api/auth/keys/{id}` or the same field on the Account page's key row.
-Empty follows the hub-wide setting, a number overrides it for that key, and 0
-means unlimited. They are stored on the key (migration 0017).
+Empty follows the person's own value, or the hub-wide setting when they have
+none; a number overrides both for that key, and 0 means unlimited. They are
+stored on the key (migration 0017). Counting stays per key, so a person's
+tokens per day hold for each of their keys separately.
 
 ## Money quota
 

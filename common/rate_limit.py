@@ -14,6 +14,11 @@ Three callers share one implementation:
 * ``POST /v1/chat/completions``, which refuses a caller that already used its
   tokens for the day (counted from ``serving_usage``).
 
+Each limit has a hub-wide setting. A person may carry their own values
+(``users.rate_limit_per_minute`` / ``tokens_per_day``, set by an administrator
+on the Users page, migration 0056) and a personal key its own (migration
+0017); the key's win over the person's, the person's over the hub's.
+
 Requests per minute live in memory, in this process: with several API
 replicas each keeps its own window, so the effective limit is the setting
 times the number of replicas. That is deliberate. A shared counter would put
@@ -31,7 +36,8 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Deque, Dict, Optional, Tuple
 
-#: How long a tokens-used-today figure and a key's own limits are reused.
+#: How long a tokens-used-today figure and a key's or person's own limits
+#: are reused.
 TOKENS_CACHE_SECONDS = 30.0
 KEY_LIMITS_CACHE_SECONDS = 30.0
 #: Past this many tracked keys a check sweeps out the idle ones, so a flood of
@@ -97,6 +103,7 @@ def reset() -> None:
     with _cache_lock:
         _tokens_cache.clear()
         _key_limits_cache.clear()
+        _user_limits_cache.clear()
         _key_budget_cache.clear()
 
 
@@ -105,6 +112,7 @@ def reset() -> None:
 _cache_lock = threading.Lock()
 _tokens_cache: Dict[Tuple[Optional[str], Optional[str]], Tuple[float, int]] = {}
 _key_limits_cache: Dict[str, Tuple[float, Dict[str, Optional[int]]]] = {}
+_user_limits_cache: Dict[str, Tuple[float, Dict[str, Optional[int]]]] = {}
 #: A key's month-to-date spend, cached the same short while as its tokens
 #: figure: computing it walks the runs and serving_usage tables, too costly
 #: to do on every request of a busy key.
@@ -143,13 +151,77 @@ def key_limits(key_id: str) -> Dict[str, Optional[int]]:
     return limits
 
 
-def _limit_for(principal: Any, key_field: str, setting: str) -> int:
+def user_limits(user_id: str) -> Dict[str, Optional[int]]:
+    """A person's own ``rate_limit_per_minute`` and ``tokens_per_day``
+    (migration 0056, None where they set nothing), cached briefly. An
+    administrator's change drops the entry at once (:func:`forget_user`)."""
+    now = time.monotonic()
+    with _cache_lock:
+        hit = _user_limits_cache.get(user_id)
+        if hit and now - hit[0] < KEY_LIMITS_CACHE_SECONDS:
+            return hit[1]
+    from common import identity
+    record = identity.get_user(user_id) or {}
+    limits = {field: record.get(field) for field in identity.RATE_LIMIT_FIELDS}
+    with _cache_lock:
+        _user_limits_cache[user_id] = (now, limits)
+    return limits
+
+
+def forget_user(user_id: str) -> None:
+    """Drop a person's cached limits, so a new value applies on the next request."""
+    with _cache_lock:
+        _user_limits_cache.pop(str(user_id), None)
+
+
+def _user_id(principal: Any) -> Optional[str]:
+    """The person behind a principal (a session, an SSO session or one of
+    their keys), None for the shared token, the local operator and the hub's
+    own credentials."""
+    if principal is None or getattr(principal, "kind", "") != "user":
+        return None
+    return getattr(principal, "id", None) or None
+
+
+#: Each limit's column (on keys and users) and the hub-wide setting behind it.
+_FIELDS = {"rate_limit_per_minute": "rate_limit_per_minute",
+           "tokens_per_day": "rate_limit_tokens_per_day"}
+
+
+def _resolve(principal: Any, field: str) -> Tuple[int, str]:
+    """``(limit, source)`` for one of :data:`_FIELDS`: the key's own
+    (``"key"``), else the person's own (``"user"``), else the hub-wide
+    setting (``"hub"``). 0 is unlimited."""
     key_id = _key_id(principal)
     if key_id:
-        own = key_limits(key_id).get(key_field)
+        own = key_limits(key_id).get(field)
         if own is not None:
-            return max(0, int(own))
-    return _setting(setting)
+            return max(0, int(own)), "key"
+    user_id = _user_id(principal)
+    if user_id:
+        try:
+            own = user_limits(user_id).get(field)
+        except Exception:  # noqa: BLE001 - fails open to the hub-wide setting
+            own = None
+        if own is not None:
+            return max(0, int(own)), "user"
+    return _setting(_FIELDS[field]), "hub"
+
+
+def hub_defaults() -> Dict[str, int]:
+    """The hub-wide values, what a person or key without their own follows."""
+    return {field: _setting(setting) for field, setting in _FIELDS.items()}
+
+
+def effective_limits(principal: Any) -> Dict[str, Dict[str, Any]]:
+    """Per limit, the value that applies to ``principal``, where it comes
+    from and the hub-wide value, for the Account page."""
+    defaults = hub_defaults()
+    out: Dict[str, Dict[str, Any]] = {}
+    for field in _FIELDS:
+        limit, source = _resolve(principal, field)
+        out[field] = {"limit": limit, "source": source, "hub_default": defaults[field]}
+    return out
 
 
 def principal_key(principal: Any) -> Optional[str]:
@@ -171,7 +243,7 @@ def check_request(principal: Any) -> Tuple[bool, int]:
     key = principal_key(principal)
     if key is None:
         return True, 0
-    limit = _limit_for(principal, "rate_limit_per_minute", "rate_limit_per_minute")
+    limit, _source = _resolve(principal, "rate_limit_per_minute")
     return request_window.check(key, limit, 60.0)
 
 
@@ -209,7 +281,7 @@ def check_tokens_per_day(principal: Any) -> Tuple[bool, int]:
     """
     if principal is None or getattr(principal, "kind", "") in ("service", "run"):
         return True, 0
-    cap = _limit_for(principal, "tokens_per_day", "rate_limit_tokens_per_day")
+    cap, _source = _resolve(principal, "tokens_per_day")
     if cap <= 0:
         return True, 0
     key_id = _key_id(principal)
@@ -262,7 +334,7 @@ def check_key_budget(principal: Any) -> Tuple[bool, int]:
 
 __all__ = [
     "SlidingWindow", "check_external", "check_key_budget", "check_request",
-    "check_tokens_per_day", "external_window", "key_limits", "principal_key",
-    "request_window", "reset", "seconds_until_utc_midnight",
-    "seconds_until_utc_month_end",
+    "check_tokens_per_day", "effective_limits", "external_window", "forget_user",
+    "hub_defaults", "key_limits", "principal_key", "request_window", "reset",
+    "seconds_until_utc_midnight", "seconds_until_utc_month_end", "user_limits",
 ]

@@ -6,13 +6,16 @@ export default {
   description: 'Your own profile, sessions and personal API keys.',
 
   spend: {
-    title: 'Spend this month',
-    spent: 'Spent',
+    title: 'Spend and limits',
+    spent: 'Spent this month',
     limit: 'Limit',
     none: 'No limit',
     sources: { user: 'your own', default: 'the default for everyone' },
     hint: 'Runs you start, chat turns and calls with your API keys count toward it. An administrator sets the limit.',
     exceeded: 'You have reached your limit for this month: new runs and chat turns are refused. Ask an administrator to raise it.',
+    perMinute: 'Requests per minute',
+    tokensPerDay: 'Tokens per day on /v1',
+    rateSources: { key: 'this key\'s own', user: 'your own', hub: 'the default for everyone' },
   },
   profile: {
     title: 'Profile',
