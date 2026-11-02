@@ -3,7 +3,7 @@ import { useChannel } from '../components/stream';
 import {
   Box, RefreshCw, Play, Square, Trash2, Eye, Terminal,
   CheckCircle, AlertCircle, AlertTriangle, Clock, Package, Layers,
-  ChevronDown, ChevronRight, Loader, Network,
+  ChevronDown, ChevronRight, Loader, Network, ScrollText,
 } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import api, { getAgents } from '../api';
@@ -11,6 +11,7 @@ import api, { getAgents } from '../api';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import BaseBuildLogModal from '../components/containers/BaseBuildLogModal';
 
 const TABS = [
   { id: 'agents',     labelKey: 'containers.tabs.agents',     icon: Package },
@@ -194,6 +195,8 @@ export default function Containers() {
   const [dockerfileViewer, setDockerfileViewer] = useState(null); // agent id
   const [error, setError] = useState('');
   const [buildLog, setBuildLog] = useState('');
+  // The last base image build's log, in a dialog (live while it runs).
+  const [baseLogOpen, setBaseLogOpen] = useState(false);
   const [noCache, setNoCache] = useState(false);
 
   // A promise chain, not an async function: the React Compiler lint treats an
@@ -471,6 +474,15 @@ export default function Containers() {
                     {buildingBase ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
                     {buildingBase ? t('containers.building') : t('containers.buildBase')}
                   </button>
+                  <button
+                    onClick={() => setBaseLogOpen(true)}
+                    title={t('containers.baseBuildLog.hint')}
+                    data-testid="base-build-log"
+                    className="flex items-center gap-1.5 border border-gray-200 hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium"
+                  >
+                    <ScrollText className="w-3.5 h-3.5" />
+                    {t('containers.baseBuildLog.open')}
+                  </button>
                 </div>
               </div>
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
@@ -680,6 +692,7 @@ export default function Containers() {
       {/* Modals */}
       {logViewer && <LogViewer name={logViewer} onClose={() => setLogViewer(null)} />}
       {dockerfileViewer && <DockerfileViewer agentId={dockerfileViewer} onClose={() => setDockerfileViewer(null)} />}
+      {baseLogOpen && <BaseBuildLogModal onClose={() => setBaseLogOpen(false)} />}
     </PageContainer>
   );
 }

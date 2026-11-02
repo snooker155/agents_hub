@@ -78,4 +78,40 @@ describe('Containers — base image build', () => {
     await waitFor(() => expect(screen.getByText('no space left on device')).toBeInTheDocument());
     expect(screen.getByText('step 3 broke')).toBeInTheDocument();
   });
+
+  it('shows the last build\'s log in a dialog beside Build base, even one this page did not start', async () => {
+    buildStates = [{ state: 'failed', error: 'old failure', log: 'step 3 broke', started_at: '2026-11-02T10:00:00Z',
+      finished_at: '2026-11-02T10:05:00Z', source: 'build' }];
+    show();
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/containers/build-base'));
+    expect(screen.queryByText('step 3 broke')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('base-build-log'));
+    const modal = await screen.findByTestId('base-build-log-modal');
+    expect(await screen.findByTestId('base-build-log-text')).toHaveTextContent('step 3 broke');
+    expect(screen.getByTestId('base-build-state')).toHaveTextContent('Failed');
+    expect(screen.getByTestId('base-build-error')).toHaveTextContent('old failure');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(modal).not.toBeInTheDocument());
+  });
+
+  it('follows a running build live in the dialog', async () => {
+    buildStates = [{ state: 'idle' }];
+    show();
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/containers/build-base'));
+    buildStates = [
+      { state: 'running', log: 'Step 1/9' },
+      { state: 'done', log: 'Step 1/9\nSuccessfully tagged agents-hub/base:latest' },
+    ];
+    fireEvent.click(screen.getByTestId('base-build-log'));
+    expect(await screen.findByText('Step 1/9')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('base-build-state')).toHaveTextContent('Done'), { timeout: 5000 });
+    expect(screen.getByText(/Successfully tagged/)).toBeInTheDocument();
+  });
+
+  it('says when there has been no build yet', async () => {
+    buildStates = [{ state: 'idle' }];
+    show();
+    fireEvent.click(await screen.findByTestId('base-build-log'));
+    expect(await screen.findByText(/has not been pulled or built/)).toBeInTheDocument();
+  });
 });
