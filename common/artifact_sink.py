@@ -27,6 +27,10 @@ log = logging.getLogger(__name__)
 # without it, so the type leaves the arguments open.
 ArtifactRecorder = Callable[..., None]
 
+#: agents/tool_spill.py SPILL_DIR, spelled here so this module stays free of
+#: agent imports (a test checks the two agree).
+_SPILL_DIR = "tool-outputs"
+
 _artifact_recorder: contextvars.ContextVar[Optional[ArtifactRecorder]] = contextvars.ContextVar(
     "artifact_recorder", default=None
 )
@@ -54,6 +58,10 @@ def record_artifact(op: str, path: str, before: Optional[str], after: Optional[s
     """
     recorder = _artifact_recorder.get()
     if recorder is None:
+        return
+    if _SPILL_DIR in str(path or "").replace("\\", "/").split("/"):
+        # A saved tool output (agents/tool_spill.py) is the agent's scratch,
+        # not something it made for the person: never an artifact.
         return
     try:
         if url:

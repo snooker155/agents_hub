@@ -45,6 +45,11 @@ vi.mock('../../api/files', () => ({
   indexWorkspaceFiles: vi.fn(() => ok({ workspace: 'acme', added: 0, updated: 0, unchanged: 0, removed: 0, skipped: [] })),
 }));
 
+const deleteWorkspaceFile = vi.fn(() => ok({ deleted: true, type: 'directory' }));
+vi.mock('../../api/workspaces', () => ({
+  deleteWorkspaceFile: (...a) => deleteWorkspaceFile(...a),
+}));
+
 vi.mock('../../components/workspace', () => ({
   useWorkspace: () => ({ selectedWorkspace: 'acme' }),
 }));
@@ -306,6 +311,35 @@ describe('Artifacts page', () => {
     fireEvent.click(screen.getByTestId('folder-card'));
     expect(screen.getByText('plan.md')).toBeInTheDocument();
     expect(screen.queryByText('main.py')).not.toBeInTheDocument();
+  });
+
+  it('deletes a folder from its card after a confirmation that names it and its file count', async () => {
+    listWorkspaceFiles.mockImplementation(() => ok({ workspace: 'acme', files: IN_FOLDER, usage_bytes: 30, limits: {} }));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    show('/artifacts?folder=proj');
+    await waitFor(() => expect(screen.getByText('main.py')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Delete folder proj/docs' }));
+    await waitFor(() => expect(deleteWorkspaceFile).toHaveBeenCalledWith('acme', { path: 'proj/docs' }));
+    expect(confirm.mock.calls[0][0]).toContain('proj/docs');
+    expect(confirm.mock.calls[0][0]).toContain('1 file');
+    confirm.mockRestore();
+  });
+
+  it('keeps the folder when the confirmation is declined, and offers no delete on Views', async () => {
+    listWorkspaceFiles.mockImplementation(() => ok({ workspace: 'acme', files: IN_FOLDER, usage_bytes: 30, limits: {} }));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    show();
+    await waitFor(() => expect(screen.getAllByTestId('folder-card')).toHaveLength(2));
+    // One trash button: the proj folder's; the Views folder has none.
+    expect(screen.getAllByTestId('folder-delete')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete folder proj' }));
+    expect(deleteWorkspaceFile).not.toHaveBeenCalled();
+    // In the tree too.
+    pick('Tree');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete folder proj' }));
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(deleteWorkspaceFile).not.toHaveBeenCalled();
+    confirm.mockRestore();
   });
 
   it('closes the open file when another folder is opened', async () => {

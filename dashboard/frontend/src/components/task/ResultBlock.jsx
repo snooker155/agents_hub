@@ -8,6 +8,7 @@ import MarkdownRenderer from '../MarkdownRenderer';
 import SystemPatchCard from '../SystemPatchCard';
 import { parseSystemPatch } from '../systemPatch';
 import { useI18n } from '../../i18n';
+import { isToolOutputPath } from '../../lib/toolOutputs';
 
 // One agent result in a neutral frame of its own: a header line with who
 // wrote it (and on which subtask), when, the run and a small view switch,
@@ -24,6 +25,8 @@ function ResultBlock({ entry, onOpenFile }) {
   const patch = useMemo(() => parseSystemPatch(text), [text]);
   const renderedText = patch ? patch.body : text;
   const when = entry.updated_at || entry.timestamp;
+  // Saved tool outputs are the agent's scratch, not a result (lib/toolOutputs.js).
+  const files = (entry.files || []).filter((path) => !isToolOutputPath(path));
   const viewButton = (id, Icon, label) => (
     <button
       type="button"
@@ -76,10 +79,10 @@ function ResultBlock({ entry, onOpenFile }) {
           <pre className="text-xs text-gray-700 whitespace-pre-wrap break-words">{text}</pre>
         )}
       </div>
-      {(entry.files || []).length > 0 && (
+      {files.length > 0 && (
         <div className="px-4 py-2 border-t border-gray-100 flex items-center gap-1.5 flex-wrap" data-testid="result-files">
           <span className="text-xs text-gray-500">{t('taskDetails.changedFiles')}</span>
-          {entry.files.map((path) => (
+          {files.map((path) => (
             <button
               key={path}
               type="button"

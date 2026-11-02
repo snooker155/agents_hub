@@ -26,6 +26,7 @@ import {
   DueDateField, PriorityDropdown, ProjectSelector, StatusDropdown, WorkspaceBadge,
 } from '../components/task/TaskFields';
 import { TaskFilesTab } from '../components/task/TaskFilesTab';
+import { isToolOutputPath } from '../lib/toolOutputs';
 import { TaskKeyRow, TaskLinksRow } from '../components/task/TaskMetaRow';
 import TaskOutcomeCard from '../components/task/TaskOutcomeCard';
 import { AwaitingInputCard, BudgetPauseCard, ToolApprovalCard } from '../components/task/TaskPendingCards';
@@ -65,7 +66,11 @@ const TaskDetails = () => {
   const [executionLog, setExecutionLog] = useState([]);
   const [activeRunId, setActiveRunId] = useState(null);
   const [decomposeChannel, setDecomposeChannel] = useState(null);
-  const [workspaceFiles, setWorkspaceFiles] = useState([]);
+  const [workspaceFiles, setShownFiles] = useState([]);
+  // Saved tool outputs are the agent's scratch, never a file of the task
+  // (lib/toolOutputs.js); the server leaves them out, an old result may not.
+  const setWorkspaceFiles = useCallback(
+    (files) => setShownFiles((files || []).filter((path) => !isToolOutputPath(path))), []);
 
   // ── Files tab: preview state (mirrors WorkspaceDetails) ──────────────────
   const [expandedFolders, setExpandedFolders] = useState(new Set());
@@ -205,7 +210,7 @@ const TaskDetails = () => {
       })
       .catch((err) => console.error('Error fetching task details:', err))
       .finally(() => setLoading(false))
-  ), [fetchExecutionLog, fetchLogs, id]);
+  ), [fetchExecutionLog, fetchLogs, id, setWorkspaceFiles]);
 
   useEffect(() => {
     fetchData();

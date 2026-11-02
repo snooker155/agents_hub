@@ -68,6 +68,17 @@ describe('ArtifactsPanel', () => {
     expect(screen.getByTestId('artifact-detail')).toHaveTextContent('-gone');
   });
 
+  it('leaves out saved tool outputs in either mode', () => {
+    const withSpill = { ...ARTIFACTS,
+      'tool-outputs/r1/001-web_fetch.txt': { op: 'add', path: 'tool-outputs/r1/001-web_fetch.txt', diff: '+long', additions: 1, deletions: 0 } };
+    const { unmount } = draw({ artifacts: withSpill, views: [], workspace: 'ws' });
+    expect(screen.queryByText('001-web_fetch.txt')).not.toBeInTheDocument();
+    unmount();
+    draw({ artifacts: withSpill, views: [], workspace: 'ws', mode: 'diff' });
+    expect(screen.queryByText('001-web_fetch.txt')).not.toBeInTheDocument();
+    expect(screen.getByText('app.py')).toBeInTheDocument();
+  });
+
   it('says so when there is nothing yet', () => {
     draw({ artifacts: {}, views: [] });
     expect(screen.getByText(/No files or views yet/)).toBeInTheDocument();

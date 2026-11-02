@@ -71,6 +71,14 @@ _HEADER_RE = re.compile(
     r"(?:, file id (?P<file_id>file_[0-9a-f]{16}))?\]")
 
 
+def is_spill_path(path: Any) -> bool:
+    """True when ``path`` (workspace- or folder-relative) lies under a
+    saved-outputs folder at any depth: such a file is the agent's scratch,
+    never a result, so the file lists, the Artifacts page and a task's files
+    leave it out (the run page links it by id)."""
+    return SPILL_DIR in str(path or "").replace("\\", "/").split("/")
+
+
 def _threshold(value: Any) -> int:
     try:
         number = int(value)
@@ -406,6 +414,6 @@ def wrap_tools(tools: List[Any], *, workspace: Optional[str],
 
 
 __all__ = [
-    "DEFAULT_THRESHOLD", "NEVER_SPILLED", "SPILL_DIR", "SpillingTool", "preview",
+    "DEFAULT_THRESHOLD", "NEVER_SPILLED", "SPILL_DIR", "SpillingTool", "is_spill_path", "preview",
     "register_relayed_spills", "spill_fields", "spill_output", "threshold_for", "wrap_tools",
 ]

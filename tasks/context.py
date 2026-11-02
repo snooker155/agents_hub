@@ -74,6 +74,7 @@ def collect_changed_files(task_id: str, started_at_iso: Optional[str]) -> list:
         from tasks import service as _ts
         from uuid import UUID as _UUID
         from workspace import resolve_project_root, project_folder_name
+        from agents.tool_spill import is_spill_path
         task = _ts.get_task(_UUID(str(task_id)))
         ws_name = (getattr(task, "workspace", None) or "").strip() if task else ""
         if not ws_name:
@@ -103,6 +104,8 @@ def collect_changed_files(task_id: str, started_at_iso: Optional[str]) -> list:
             except ValueError:
                 continue
             if any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _INTERNAL_PREFIXES):
+                continue
+            if is_spill_path(rel):
                 continue
             try:
                 mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)

@@ -209,6 +209,24 @@ def test_results_list_every_run_with_its_saved_result_or_its_answer():
     assert out["files"] == ["index.html"]
 
 
+def test_results_leave_out_saved_tool_outputs():
+    import asyncio
+    from dashboard.backend.routes.tasks import get_task_result
+
+    task = ts.create_task("report")
+    run = rm.new_unique_run_id()
+    rm.open_run(run, "analyst", task_id=str(task.id), status="running", link_to_session=False)
+    # A result saved before the changed-file scan skipped them still names them.
+    ts.set_task_result(task.id, "Wrote the report", run_id=run, agent_id="analyst",
+                       files=["report.md", "tool-outputs/r1/001-web_fetch.txt",
+                              "proj/tool-outputs/r1/002-run_shell.txt"])
+    rm.close_run(run, status="completed", exit_code=0, output="done")
+
+    out = asyncio.run(get_task_result(task.id, None))
+    assert out["files"] == ["report.md"]
+    assert out["results"][0]["files"] == ["report.md"]
+
+
 def test_activity_names_the_agent_and_plain_statuses(no_launch):
     task = ts.create_task("solo")
     assign_agent_to_task(task.id, "swe_agent", None, task_to_dict=task_to_dict)

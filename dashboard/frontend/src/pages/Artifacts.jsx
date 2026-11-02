@@ -55,6 +55,7 @@ import {
 } from '../api/files';
 import PageLoader from '../components/PageLoader';
 import { deleteView, getView, listViews } from '../api';
+import { deleteWorkspaceFile } from '../api/workspaces';
 import ViewCard from '../views/ViewCard';
 import { ownerLink } from '../views/owner';
 import { allDirPaths, buildFileTree } from '../components/files/fileTree';
@@ -109,6 +110,18 @@ function findDir(root, path) {
     if (node.path === path) return node;
   }
   return node;
+}
+
+/** The trash button of a real folder (the Views folder has none). */
+function FolderDeleteButton({ node, onDeleteFolder, t, className = '' }) {
+  if (!onDeleteFolder || node.virtual) return null;
+  return (
+    <button type="button" onClick={(e) => { e.stopPropagation(); onDeleteFolder(node); }}
+      className={`p-1 text-gray-400 hover:text-red-600 ${className}`} data-testid="folder-delete"
+      title={t('artifacts.deleteFolder')} aria-label={`${t('artifacts.deleteFolder')} ${node.path}`}>
+      <Trash2 className="w-4 h-4" />
+    </button>
+  );
 }
 
 function TreeFile({ file, depth, openId, openFile, onPreview, t, formatDate }) {
@@ -185,16 +198,18 @@ function TreeView({ view, depth, active, onOpenView, navigate, t, formatDate }) 
   );
 }
 
-function TreeDir({ node, depth, expanded, toggle, openId, openViewId, openFile, onPreview, onOpenView, navigate, t, formatDate }) {
+function TreeDir({ node, depth, expanded, toggle, openId, openViewId, openFile, onPreview, onOpenView, onDeleteFolder, navigate, t, formatDate }) {
   const open = expanded.has(node.path);
   return (
     <div>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => toggle(node.path)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(node.path); } }}
         aria-expanded={open}
         data-testid="tree-dir"
-        className="w-full flex items-center gap-2 pr-3 py-1.5 text-sm text-left text-gray-700 hover:bg-gray-50"
+        className="w-full flex items-center gap-2 pr-3 py-1.5 text-sm text-left text-gray-700 hover:bg-gray-50 cursor-pointer"
         style={{ paddingLeft: `${12 + depth * 18}px` }}
       >
         {open ? <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />}
@@ -208,15 +223,17 @@ function TreeDir({ node, depth, expanded, toggle, openId, openViewId, openFile, 
               ? t('artifacts.viewCount', { count: node.count })
               : <>{t('files.tree.count', { count: node.count })} · {formatBytes(node.bytes)}</>}
           </span>
-          <span />
+          <span className="flex justify-end">
+            <FolderDeleteButton node={node} onDeleteFolder={onDeleteFolder} t={t} />
+          </span>
         </span>
-      </button>
+      </div>
       {open && (
         <div>
           {node.children.map((c) => (
             <TreeDir key={c.path} node={c} depth={depth + 1} expanded={expanded} toggle={toggle}
               openId={openId} openViewId={openViewId} openFile={openFile} onPreview={onPreview} onOpenView={onOpenView}
-              navigate={navigate} t={t} formatDate={formatDate} />
+              onDeleteFolder={onDeleteFolder} navigate={navigate} t={t} formatDate={formatDate} />
           ))}
           {(node.views || []).map((v) => (
             <TreeView key={v.view_id} view={v} depth={depth + 1} active={openViewId === v.view_id}
@@ -232,7 +249,7 @@ function TreeDir({ node, depth, expanded, toggle, openId, openViewId, openFile, 
   );
 }
 
-function FileTree({ files, views, viewsName, searching, openId, openViewId, openFile, onPreview, onOpenView, navigate, t, formatDate }) {
+function FileTree({ files, views, viewsName, searching, openId, openViewId, openFile, onPreview, onOpenView, onDeleteFolder, navigate, t, formatDate }) {
   const root = useMemo(() => buildTree(files, views, viewsName), [files, views, viewsName]);
   const [expanded, setExpanded] = useState(() => new Set());
   // A search already narrowed the list on the server: show every match.
@@ -258,7 +275,7 @@ function FileTree({ files, views, viewsName, searching, openId, openViewId, open
       {root.children.map((c) => (
         <TreeDir key={c.path} node={c} depth={0} expanded={shown} toggle={toggle}
           openId={openId} openViewId={openViewId} openFile={openFile} onPreview={onPreview} onOpenView={onOpenView}
-          navigate={navigate} t={t} formatDate={formatDate} />
+          onDeleteFolder={onDeleteFolder} navigate={navigate} t={t} formatDate={formatDate} />
       ))}
       {root.files.map((f) => (
         <TreeFile key={f.file_id} file={f} depth={0} openId={openId} openFile={openFile} onPreview={onPreview}
@@ -625,12 +642,16 @@ function FileIcon({ file, className }) {
   return <FileText className={className} />;
 }
 
-function FolderCard({ node, onOpen, t }) {
+function FolderCard({ node, onOpen, onDeleteFolder, t }) {
   return (
-    <button type="button" onClick={() => onOpen(node.path)} data-testid="folder-card"
-      className="text-left rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 hover:border-indigo-300 hover:shadow-sm transition-colors flex flex-col gap-3 min-h-[9rem]">
-      <span className={`inline-flex w-10 h-10 items-center justify-center rounded-lg ${node.virtual ? 'bg-indigo-50 text-indigo-500' : 'bg-amber-50 text-amber-500'}`}>
-        {node.virtual ? <Images className="w-5 h-5" /> : <Folder className="w-5 h-5" />}
+    <div role="button" tabIndex={0} onClick={() => onOpen(node.path)} data-testid="folder-card"
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(node.path); } }}
+      className="text-left rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 cursor-pointer hover:border-indigo-300 hover:shadow-sm transition-colors flex flex-col gap-3 min-h-[9rem]">
+      <span className="flex items-start justify-between gap-2">
+        <span className={`inline-flex w-10 h-10 items-center justify-center rounded-lg ${node.virtual ? 'bg-indigo-50 text-indigo-500' : 'bg-amber-50 text-amber-500'}`}>
+          {node.virtual ? <Images className="w-5 h-5" /> : <Folder className="w-5 h-5" />}
+        </span>
+        <FolderDeleteButton node={node} onDeleteFolder={onDeleteFolder} t={t} />
       </span>
       <span className="min-w-0">
         <span className="block font-medium text-gray-800 dark:text-gray-100 truncate">{node.name}</span>
@@ -640,7 +661,7 @@ function FolderCard({ node, onOpen, t }) {
             : <>{t('files.tree.count', { count: node.count })} · {formatBytes(node.bytes)}</>}
         </span>
       </span>
-    </button>
+    </div>
   );
 }
 
@@ -707,7 +728,7 @@ function ViewGrid({ views, onOpenView, onDeleteView, navigate, t }) {
 }
 
 /** Cards: the folders, files and views of one folder, or every match of a search. */
-function CardsBrowser({ files, views, viewsName, folder, setFolder, searching, openId, openFile, onPreview, onOpenView, onDeleteView, navigate, t, formatDate }) {
+function CardsBrowser({ files, views, viewsName, folder, setFolder, searching, openId, openFile, onPreview, onOpenView, onDeleteView, onDeleteFolder, navigate, t, formatDate }) {
   const root = useMemo(() => buildTree(files, views, viewsName), [files, views, viewsName]);
   const node = searching ? null : findDir(root, folder);
   const crumbs = useMemo(() => {
@@ -741,7 +762,7 @@ function CardsBrowser({ files, views, viewsName, folder, setFolder, searching, o
   } else {
     body = (
       <div className={grid}>
-        {node.children.map((c) => <FolderCard key={c.path} node={c} onOpen={setFolder} t={t} />)}
+        {node.children.map((c) => <FolderCard key={c.path} node={c} onOpen={setFolder} onDeleteFolder={onDeleteFolder} t={t} />)}
         {node.files.map((f) => (
           <FileCard key={f.file_id} file={{ ...f, leaf: f.leaf }} active={openId === f.file_id} openFile={openFile}
             onPreview={onPreview} t={t} formatDate={formatDate} />
@@ -1033,6 +1054,30 @@ export default function Artifacts() {
     }
   };
 
+  // A folder goes from the workspace folder with everything in it, saved
+  // tool outputs and files the list does not show included; their records
+  // are tombstoned on the server. The cards step out of it when it was open,
+  // and a panel showing one of its files closes.
+  const onDeleteFolder = async (node) => {
+    if (!node?.path || node.virtual) return;
+    if (!window.confirm(t('artifacts.confirmDeleteFolder', { name: node.path, count: node.count }))) return;
+    try {
+      await deleteWorkspaceFile(workspace, { path: node.path });
+      toast.success(t('artifacts.folderDeleted', { name: node.path }));
+    } catch (e) {
+      toast.error(t('artifacts.folderDeleteFailed'), errorDetail(e));
+      return;
+    }
+    const inside = (p) => p === node.path || String(p || '').startsWith(`${node.path}/`);
+    const openRec = openId ? files.find((f) => f.file_id === openId) : null;
+    if (inside(folder)) {
+      setFolder(node.path.split('/').slice(0, -1).join('/'));
+    } else if (openRec && inside(openRec.meta?.path)) {
+      openFile('');
+    }
+    await load();
+  };
+
   // The views the search and the source filter leave: the files are filtered
   // on the server, the views here, by title, summary and kind.
   const shownViews = useMemo(() => {
@@ -1219,11 +1264,12 @@ export default function Artifacts() {
           ) : view === 'cards' ? (
             <CardsBrowser files={shownFiles} views={shownViews} viewsName={viewsName} folder={folder} setFolder={setFolder}
               searching={Boolean(q || source)} openId={openId} openFile={openFile} onPreview={setPreviewId}
-              onOpenView={onOpenView} onDeleteView={onDeleteView} navigate={navigate} t={t} formatDate={formatDate} />
+              onOpenView={onOpenView} onDeleteView={onDeleteView} onDeleteFolder={onDeleteFolder}
+              navigate={navigate} t={t} formatDate={formatDate} />
           ) : view === 'tree' ? (
             <FileTree files={shownFiles} views={shownViews} viewsName={viewsName} searching={Boolean(q || source)}
               openId={openId} openViewId={openViewId} openFile={openFile} onPreview={setPreviewId} onOpenView={onOpenView}
-              navigate={navigate} t={t} formatDate={formatDate} />
+              onDeleteFolder={onDeleteFolder} navigate={navigate} t={t} formatDate={formatDate} />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

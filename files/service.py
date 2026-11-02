@@ -310,9 +310,12 @@ def list_files(workspace: str, *, source: Optional[str] = None, q: Optional[str]
                limit: int = 200) -> List[Dict[str, Any]]:
     """The live files of ``workspace``, newest first, optionally narrowed to a
     ``source`` and to names containing ``q`` (case-insensitive; an exact file
-    id also matches)."""
-    where = ["workspace = ?", "deleted_at IS NULL"]
-    args: List[Any] = [str(workspace)]
+    id also matches). Saved tool outputs (a ``tool-outputs/`` folder at any
+    depth, agents/tool_spill.py) are left out: they are the agent's scratch,
+    and the run page opens each by its id."""
+    from agents.tool_spill import SPILL_DIR
+    where = ["workspace = ?", "deleted_at IS NULL", "storage_key NOT LIKE ?"]
+    args: List[Any] = [str(workspace), f"%/{SPILL_DIR}/%"]
     if source:
         where.append("source = ?")
         args.append(str(source))

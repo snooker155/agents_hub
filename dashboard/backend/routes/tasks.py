@@ -393,6 +393,7 @@ _INTERNAL_PREFIXES = (".logs/", ".progress.json", ".task_result")
 @router.get("/{task_id}/workspace-files")
 async def list_workspace_files(task_id: UUID, request: Request):
     from datetime import datetime, timezone
+    from agents.tool_spill import is_spill_path
     t = _visible_task(task_id, request)
     name = (t.workspace or '').strip()
     if not name:
@@ -406,9 +407,10 @@ async def list_workspace_files(task_id: UUID, request: Request):
     run_status = (run or {}).get("status", "")
 
     # For completed runs, read the file list already stored in the result sidecar
+    # (one saved before saved tool outputs were left out may still name them)
     if run_status in ("completed", "failed", "done"):
         stored = tasks_service.get_task_result_files(task_id)
-        return {"files": stored}
+        return {"files": [f for f in stored if not is_spill_path(f)]}
 
     # For still-running/pending runs, do a live filesystem scan
     raw_start = (run or {}).get("started_at")
@@ -435,6 +437,8 @@ async def list_workspace_files(task_id: UUID, request: Request):
                 log.debug("list_workspace_files: falling back after a failure", exc_info=True)
                 continue
             if any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _INTERNAL_PREFIXES):
+                continue
+            if is_spill_path(rel):
                 continue
             try:
                 mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
@@ -1041,8 +1045,12 @@ async def get_task_activity_log(task_id: UUID, request: Request):
 
 @router.get("/{task_id}/result")
 async def get_task_result(task_id: UUID, request: Request):
+    from agents.tool_spill import is_spill_path
     _visible_task(task_id, request)
-    results = tasks_service.get_task_results(task_id)
+    # Saved tool outputs (agents/tool_spill.py) are the agent's scratch, not
+    # what it made: a result saved before they were left out may name them.
+    results = [{**e, "files": [f for f in (e.get("files") or []) if not is_spill_path(f)]}
+               for e in tasks_service.get_task_results(task_id)]
     # Backward-compat: expose the latest result at top level
     latest = results[-1] if results else {}
     # Every file any run changed, not the latest run's alone: a retry that
@@ -1059,7 +1067,8 @@ async def get_task_result(task_id: UUID, request: Request):
     stored: dict = {}
     for owner, mark in [(task_id, None)] + [
             (s.id, {"id": str(s.id), "key": s.key, "title": s.title}) for s in subtasks]:
-        entries = tasks_service.get_task_results(owner)
+        entries = [{**e, "files": [f for f in (e.get("files") or []) if not is_spill_path(f)]}
+                   for e in tasks_service.get_task_results(owner)]
         for e in entries:
             stored[str(e.get("run_id") or id(e))] = {**e, "subtask": mark} if mark else dict(e)
         if mark:

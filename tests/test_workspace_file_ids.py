@@ -171,6 +171,51 @@ def test_delete_of_a_folder_tombstones_its_files(root, client):
     assert service.get_file(rec["file_id"]) is None
 
 
+def test_delete_of_a_folder_gone_from_disk_drops_its_records(root, client):
+    import shutil
+
+    _write(root, "stale/a.txt")
+    rec = service.register_path(WS, "stale/a.txt")
+    shutil.rmtree(root / "stale")
+    resp = client.delete(f"/api/workspaces/{WS}/files", params={"path": "stale"})
+    assert resp.status_code == 200 and resp.json()["type"] == "directory"
+    assert service.get_file(rec["file_id"]) is None
+    # Nothing on disk and no records: still a 404.
+    assert client.delete(f"/api/workspaces/{WS}/files", params={"path": "stale"}).status_code == 404
+
+
+def test_artifacts_list_leaves_out_saved_tool_outputs(root):
+    _write(root, "tool-outputs/run-1/001-web_fetch.txt", "long")
+    _write(root, "proj/tool-outputs/run-2/001-run_shell.txt", "long")
+    _write(root, "proj/report.md", "# R")
+    spill = service.register_path(WS, "tool-outputs/run-1/001-web_fetch.txt")
+    service.register_path(WS, "proj/tool-outputs/run-2/001-run_shell.txt")
+    kept = service.register_path(WS, "proj/report.md")
+
+    listed = [r["file_id"] for r in service.list_files(WS)]
+    assert kept["file_id"] in listed and spill["file_id"] not in listed
+    assert not [r for r in service.list_files(WS) if "tool-outputs" in r["meta"].get("path", "")]
+    # Still opened by its id from the run page.
+    assert service.get_file(spill["file_id"]) is not None
+
+
+def test_saved_tool_outputs_are_never_chat_artifacts():
+    from agents.tool_spill import SPILL_DIR, is_spill_path
+    from common import artifact_sink
+
+    assert artifact_sink._SPILL_DIR == SPILL_DIR
+    assert is_spill_path("tool-outputs/r/001-x.txt") and is_spill_path("proj\\tool-outputs\\r\\a.txt")
+    assert not is_spill_path("docs/tool-outputs.md")
+    seen = []
+    token = artifact_sink.set_recorder(lambda op, path, before, after: seen.append(path))
+    try:
+        artifact_sink.record_artifact("add", "proj/tool-outputs/r/001-x.txt", None, "x")
+        artifact_sink.record_artifact("add", "proj/report.md", None, "x")
+    finally:
+        artifact_sink.reset_recorder(token)
+    assert seen == ["proj/report.md"]
+
+
 # ── chat links ───────────────────────────────────────────────────────────────
 
 def test_a_chat_link_to_a_registered_file_carries_its_id(root):

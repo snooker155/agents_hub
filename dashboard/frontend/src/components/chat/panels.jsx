@@ -14,6 +14,7 @@ import CodeBlock from '../CodeBlock';
 import { codeLanguageFor } from '../../lib/codeLanguage';
 import { renderContent } from './markdown';
 import { ARTIFACT_OP_META } from './artifactOps';
+import { isToolOutputPath } from '../../lib/toolOutputs';
 import { CodeDetail, CodeSection } from './CodePanel';
 import FileWorkbench from '../code/FileWorkbench';
 import { ChatPageContext } from './context';
@@ -282,7 +283,7 @@ function ArtifactsPanel({
   const { t } = useI18n();
   const items = useMemo(
     () => Object.values(artifacts || {})
-      .filter((a) => mode === 'diff' || a.op !== 'delete')
+      .filter((a) => (mode === 'diff' || a.op !== 'delete') && !isToolOutputPath(a.path))
       .sort((a, b) => (a.path || '').localeCompare(b.path || '')),
     [artifacts, mode],
   );

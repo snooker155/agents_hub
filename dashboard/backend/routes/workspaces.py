@@ -547,8 +547,19 @@ async def delete_workspace_file(name: str, file_id: Optional[str] = None, path: 
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid file path")
 
+    from files import service as files_service
     if not candidate.exists():
+        # A folder the Artifacts page still lists from its records, gone from
+        # the disk already: dropping the records is the whole delete.
+        try:
+            gone = files_service.unregister_tree(name, rel_path) if rel_path else 0
+        except files_service.FileError:
+            gone = 0
+        if gone:
+            return {"deleted": True, "path": rel_path, "type": "directory"}
         raise HTTPException(status_code=404, detail="Path not found")
+    if candidate == root:
+        raise HTTPException(status_code=400, detail="The workspace folder itself cannot be deleted")
 
     try:
         if candidate.is_dir():
@@ -564,7 +575,6 @@ async def delete_workspace_file(name: str, file_id: Optional[str] = None, path: 
     except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
         raise HTTPException(status_code=500, detail=str(e))
 
-    from files import service as files_service
     try:
         if deleted_type == "directory":
             files_service.unregister_tree(name, rel_path)
