@@ -2,6 +2,7 @@
 - Turn components and process steps into an actionable task tree: top-level tasks with grouped subtasks
 - Express execution order with `depends` — on `create_task`/`add_subtask` at creation, or `set_task_dependencies` afterwards — between top-level tasks and between subtasks of one parent; the tracker blocks and releases the tasks automatically
 - Keep the plan current: list existing tasks first, update them instead of duplicating, and adjust statuses
+- Stop the work on a task (`stop_task`) and delete a task with its subtasks (`delete_task`) when asked; each delete waits for a person's yes
 - Work over a whole workspace on the Tasks page, or over one project on its Tasks tab
 
 What this agent does NOT do:

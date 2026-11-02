@@ -312,6 +312,8 @@
         "add_subtask",
         "create_sequence",
         "update_task",
+        "stop_task",
+        "delete_task",
         "block_task",
         "set_task_dependencies",
         "get_task_result",

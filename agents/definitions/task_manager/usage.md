@@ -5,6 +5,7 @@ Good fits:
 - "Build a task plan from the architecture"
 - "Break the payments task into steps and put them in order"
 - "Which tasks are blocked, and by what?"
+- "Delete the old onboarding task"
 
 Poor fits:
 - Doing the tasks: use an implementation agent, or assign the task
