@@ -517,7 +517,7 @@ const TaskDetails = () => {
   // Live output is a tab only while an agent works on the task; the page
   // opens on it then, and on Results otherwise.
   const agentWorking = liveWorking || task.agent_state === 'running';
-  const shownTab = shownTab === 'live' && !agentWorking ? 'results' : activeTab;
+  const shownTab = activeTab === 'live' && !agentWorking ? 'results' : activeTab;
   const TABS = [
     ...(agentWorking ? [{ id: 'live', label: t('taskDetails.tabs.live'), Icon: Radio }] : []),
     { id: 'results',   label: t('taskDetails.tabs.results'), Icon: FileText },

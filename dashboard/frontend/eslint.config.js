@@ -30,6 +30,10 @@ export default defineConfig([
         varsIgnorePattern: '^[A-Z_]',
         argsIgnorePattern: '^[A-Z_]',
       }],
+      // A const read in its own scope before its line throws at render
+      // ("Cannot access 'x' before initialization"). A read from a nested
+      // function (a handler, a component below) runs later and is allowed.
+      'no-use-before-define': ['error', { functions: false, classes: false, variables: false }],
     },
   },
   {
