@@ -211,12 +211,14 @@ function SpendSection({ t }) {
   }, []);
 
   if (!status) return null;
-  const money = (value) => `$${Number(value || 0).toFixed(2)}`;
+  // Spend in cents' fractions, as on the Users page: one person's chat turns
+  // cost well under a cent; the limit itself is whole cents.
+  const money = (value, digits = 2) => `$${Number(value || 0).toFixed(digits)}`;
   const share = status.limit_usd ? Math.min(100, (status.spend / status.limit_usd) * 100) : 0;
   return (
     <SectionCard title={t('account.spend.title')}>
       <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-        <Field label={t('account.spend.spent')} value={money(status.spend)} />
+        <Field label={t('account.spend.spent')} value={money(status.spend, 4)} />
         <Field label={t('account.spend.limit')}
           value={status.limit_usd
             ? `${money(status.limit_usd)} (${t(`account.spend.sources.${status.source}`)})`
