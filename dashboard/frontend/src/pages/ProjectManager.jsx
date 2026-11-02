@@ -188,8 +188,6 @@ export default function ProjectManager() {
         </div>
       )}
 
-      <DeployedApps t={t} />
-
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative">
@@ -231,6 +229,8 @@ export default function ProjectManager() {
           {filtered.map(project => <ProjectCard key={project.id} project={project} />)}
         </div>
       )}
+
+      <DeployedApps t={t} />
 
       {/* Import from repo modal */}
       {showImport && (
