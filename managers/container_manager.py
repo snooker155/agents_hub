@@ -74,6 +74,7 @@ import sys
 import shlex
 import socket
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -92,6 +93,10 @@ NETWORK_NAME = "agents-hub"
 BASE_IMAGE = "agents-hub/base:latest"
 IMAGE_PREFIX = "agents-hub"
 LABEL_MANAGED = "agents-hub.managed=true"
+# Stamped on a per-agent image: the id of the base image it was built FROM.
+# The code lives in the base, so a per-agent image whose base was rebuilt
+# since still runs the old code (image_tag_for_agent rebuilds it).
+LABEL_BASE_ID = "agents-hub.base-id"
 
 # Mount points inside every agent container (nodes and runs alike).
 from common.paths import CONTAINER_STATE_DIR  # noqa: E402 - one definition, shared with host_state_path
@@ -947,6 +952,9 @@ def build_image(
     dockerfile_path = save_dockerfile(agent_id, agent_name)
 
     cmd = ["docker", "build", "-t", image_tag]
+    base_id = local_image_id(BASE_IMAGE)
+    if base_id:
+        cmd += ["--label", f"{LABEL_BASE_ID}={base_id}"]
     if no_cache:
         cmd.append("--no-cache")
     # Use the project root as build context even though the Dockerfile barely
@@ -1008,11 +1016,56 @@ def image_exists(image_tag: str) -> bool:
     return bool((result.stdout or "").strip())
 
 
+def local_image_id(image_tag: str) -> str:
+    """The id of ``image_tag`` on this host, ``""`` when it is not here."""
+    result = _run(["docker", "images", "-q", "--no-trunc", image_tag], timeout=QUERY_TIMEOUT)
+    lines = (result.stdout or "").split()
+    return lines[0] if lines else ""
+
+
+def _image_labels(image_tag: str) -> Dict[str, str]:
+    result = _run(["docker", "image", "inspect", "-f", "{{json .Config.Labels}}", image_tag],
+                  timeout=QUERY_TIMEOUT)
+    try:
+        labels = json.loads((result.stdout or "").strip() or "null")
+    except ValueError:
+        return {}
+    return labels if isinstance(labels, dict) else {}
+
+
+_per_agent_lock = threading.Lock()
+
+
+def _current_per_agent(agent_id: str, per_agent: str) -> Optional[str]:
+    """``per_agent`` when it was built on the base image here now, rebuilt
+    first when the base changed since (or it predates the base id label);
+    None when it is stale and the rebuild failed, so the run takes the base."""
+    base_id = local_image_id(BASE_IMAGE)
+    if not base_id:
+        return per_agent  # nothing to compare with: the image as it is
+    with _per_agent_lock:
+        labels = _image_labels(per_agent)
+        if labels.get(LABEL_BASE_ID) == base_id:
+            return per_agent
+        logger.info("rebuilding %s: the base image changed since it was built", per_agent)
+        built = build_image(agent_id, labels.get("agents-hub.agent-name") or "")
+    if built["success"]:
+        return per_agent
+    logger.warning("rebuilding %s failed (%s); running on %s", per_agent, built["error"], BASE_IMAGE)
+    return None
+
+
 def image_tag_for_agent(agent_id: str) -> str:
-    """Return the expected image tag for an agent, preferring per-agent then base."""
+    """Return the expected image tag for an agent, preferring per-agent then base.
+
+    A per-agent image only adds labels and env on top of the base, which holds
+    the code: one built on an older base is rebuilt before it is used."""
     per_agent = f"{IMAGE_PREFIX}/{agent_id}:latest"
     if image_exists(per_agent):
-        return per_agent
+        current = _current_per_agent(agent_id, per_agent)
+        if current:
+            return current
+        return BASE_IMAGE
     if image_exists(BASE_IMAGE):
         return BASE_IMAGE
     # Fall back to the globally configured image, read live so the Settings
@@ -1034,11 +1087,14 @@ def image_tag_for_agent(agent_id: str) -> str:
 ENV_IMAGE_REPO = "agents-hub-env"
 
 
-def environment_image_tag(base_image: str, packages: List[str]) -> str:
+def environment_image_tag(base_image: str, packages: List[str], base_id: str = "") -> str:
     """``agents-hub-env:<12 hex>`` for this base image and package set (order
-    and duplicates do not matter)."""
+    and duplicates do not matter). ``base_id`` is the base image's id here: a
+    rebuilt base (new code under the same tag) then gets a derived image of
+    its own instead of the one built on the old base."""
     import hashlib
-    key = base_image.strip() + "\n" + "\n".join(sorted({p.strip() for p in packages if p.strip()}))
+    base = base_image.strip() + (f"@{base_id}" if base_id else "")
+    key = base + "\n" + "\n".join(sorted({p.strip() for p in packages if p.strip()}))
     return f"{ENV_IMAGE_REPO}:{hashlib.sha256(key.encode('utf-8')).hexdigest()[:12]}"
 
 
@@ -1074,7 +1130,11 @@ def build_environment_image(base_image: str, packages: List[str], *,
                             force: bool = False) -> Dict[str, Any]:
     """Build (or find) the derived image. Returns ``{ok, image, error, cached}``;
     ``image`` is the derived tag on success and the base image on failure."""
-    tag = environment_image_tag(base_image, packages)
+    try:
+        base_id = local_image_id(base_image)
+    except (OSError, subprocess.SubprocessError):
+        base_id = ""
+    tag = environment_image_tag(base_image, packages, base_id)
     try:
         if not force and image_exists(tag):
             return {"ok": True, "image": tag, "error": None, "cached": True}
