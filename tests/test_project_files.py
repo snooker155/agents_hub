@@ -1,6 +1,7 @@
-"""The Files tab of a project: the list skips hidden and dependency folders,
-a file comes back with its kind (text, pdf, binary) the way workspace files
-do, and the raw bytes never come back as a type the browser would run.
+"""The Files tab of a project: the list skips hidden and dependency folders
+and saved tool outputs, a file comes back with its kind (text, pdf, binary)
+the way workspace files do, and the raw bytes never come back as a type the
+browser would run.
 
 Exercises the file routes of dashboard/backend/routes/projects.py and
 files.service.preview_path.
@@ -44,6 +45,8 @@ def project():
     (root / ".git").mkdir()
     (root / ".git" / "HEAD").write_text("ref", encoding="utf-8")
     (root / ".env").write_text("SECRET=1", encoding="utf-8")
+    (root / "tool-outputs" / "run-1").mkdir(parents=True)
+    (root / "tool-outputs" / "run-1" / "001-web_fetch.txt").write_text("long", encoding="utf-8")
     yield proj, root
     ProjectStore().delete(proj.id)
 

@@ -26,10 +26,12 @@ router = APIRouter(prefix="/api/projects", tags=["projects"],
 
 def _skip_dir(name: str) -> bool:
     """Folders the file list never enters: hidden ones, dependencies and
-    build output, the same ones the workspace's file index skips."""
+    build output, the same ones the workspace's file index skips, and saved
+    tool outputs (agents/tool_spill.py), which the run page links by id."""
+    from agents.tool_spill import SPILL_DIR
     from files.service import INDEX_SKIP_DIRS
 
-    return name.startswith(".") or name in INDEX_SKIP_DIRS
+    return name.startswith(".") or name in INDEX_SKIP_DIRS or name == SPILL_DIR
 
 
 _MAX_LISTED_FILES = 5000
