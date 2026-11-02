@@ -67,17 +67,9 @@ describe('FileWorkbench', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /^Save$/ })).toBeDisabled());
   });
 
-  it('runs once on its own when opened by Run', async () => {
-    const { rerender } = show({ autoRun: 1 });
-    await waitFor(() => expect(runWorkspaceFile).toHaveBeenCalledTimes(1));
-    rerender(<I18nProvider><FileWorkbench workspace="ws" path="pkg/main.py" autoRun={1} /></I18nProvider>);
-    await screen.findByText('one');
-    expect(runWorkspaceFile).toHaveBeenCalledTimes(1);
-  });
-
   it('opens a file it cannot run without Run enabled', async () => {
     getWorkspaceFileContent.mockResolvedValue({ data: { content: 'export const a = 1' } });
-    render(<I18nProvider><FileWorkbench workspace="ws" path="src/a.ts" autoRun={1} /></I18nProvider>);
+    render(<I18nProvider><FileWorkbench workspace="ws" path="src/a.ts" /></I18nProvider>);
     await screen.findByDisplayValue('export const a = 1');
     expect(screen.getByRole('button', { name: /^Run$/ })).toBeDisabled();
     expect(runWorkspaceFile).not.toHaveBeenCalled();

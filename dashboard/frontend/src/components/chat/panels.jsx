@@ -6,12 +6,12 @@ import GraphMirror from '../GraphMirror';
 import ProcessGraph, { TokenPill } from '../ProcessGraph';
 import ViewCard from '../../views/ViewCard';
 import { useI18n } from '../../i18n';
-import { ChevronDown, ChevronUp, Code2, ExternalLink, FileText, LayoutGrid, Loader2, Play, Workflow } from 'lucide-react';
+import { ChevronDown, ChevronUp, Code2, ExternalLink, FileText, LayoutGrid, Loader2, Workflow } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useContext, useEffect, useMemo, useState } from 'react';
 import { getWorkspaceFileContent } from '../../api';
 import CodeBlock from '../CodeBlock';
-import { codeLanguageFor, isRunnableFile } from '../../lib/codeLanguage';
+import { codeLanguageFor } from '../../lib/codeLanguage';
 import { renderContent } from './markdown';
 import { ARTIFACT_OP_META } from './artifactOps';
 import { CodeDetail, CodeSection } from './CodePanel';
@@ -184,8 +184,8 @@ function ArtifactContent({ workspace, path }) {
 }
 
 /** One changed file: what it holds now (``content``) or what changed (``diff``),
- * or, for a code file, at work in the editor (Editor, or Run: the editor
- * opened running it; components/code/FileWorkbench.jsx). */
+ * or, for a code file, at work in the editor (Editor, where it also runs;
+ * components/code/FileWorkbench.jsx). */
 function ArtifactDetail({ artifact, workspace, mode, onModeChange = null }) {
   const { t } = useI18n();
   const meta = ARTIFACT_OP_META[artifact.op] || ARTIFACT_OP_META.modify;
@@ -194,12 +194,10 @@ function ArtifactDetail({ artifact, workspace, mode, onModeChange = null }) {
   const chat = useMemo(() => (chatPage?.setInput ? {
     setInput: (text) => { chatPage.setInput(text); chatPage.textareaRef?.current?.focus(); },
   } : null), [chatPage]);
-  // `{ run }` while the editor is open; `run` a nonce when Run opened it.
-  // Kept per file: the detail is keyed by the file's path.
-  const [editor, setEditor] = useState(null);
+  // Whether the editor is open, kept per file: the detail is keyed by the file's path.
+  const [editor, setEditor] = useState(false);
   const editable = Boolean(workspace) && artifact.op !== 'delete' && !artifact.binary
     && Boolean(codeLanguageFor(artifact.path)) && codeLanguageFor(artifact.path) !== 'markdown';
-  const runnable = editable && isRunnableFile(artifact.path);
   const showEditor = editor && editable && mode === 'content';
   return (
     <div className="flex-1 min-w-0 flex flex-col min-h-0">
@@ -227,7 +225,7 @@ function ArtifactDetail({ artifact, workspace, mode, onModeChange = null }) {
         {editable && mode === 'content' ? (
           <button
             type="button"
-            onClick={() => setEditor(showEditor ? null : { run: null })}
+            onClick={() => setEditor(!showEditor)}
             title={showEditor ? t('chat.code.closeEditor') : t('chat.code.openEditorHint')}
             aria-pressed={Boolean(showEditor)}
             data-testid="artifact-editor"
@@ -238,24 +236,12 @@ function ArtifactDetail({ artifact, workspace, mode, onModeChange = null }) {
             {t('chat.code.editor')}
           </button>
         ) : null}
-        {runnable && mode === 'content' ? (
-          <button
-            type="button"
-            onClick={() => setEditor({ run: Date.now() })}
-            title={t('chat.code.runFileHint')}
-            data-testid="artifact-run"
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-600 bg-emerald-600 px-2 py-0.5 text-xs text-white transition-colors hover:bg-emerald-700"
-          >
-            <Play className="h-3 w-3" />
-            {t('chat.code.run')}
-          </button>
-        ) : null}
         {/* Files / Diff on the file's own line, where the panel has no header of its own. */}
         {onModeChange ? <ArtifactsModeSwitch mode={mode} onChange={onModeChange} t={t} /> : null}
       </div>
       {showEditor ? (
         <div className="flex-1 min-h-0 flex flex-col" data-testid="artifact-file-editor">
-          <FileWorkbench workspace={workspace} path={artifact.path} autoRun={editor.run} chat={chat} className="flex-1 min-h-0" />
+          <FileWorkbench workspace={workspace} path={artifact.path} chat={chat} className="flex-1 min-h-0" />
         </div>
       ) : (
       <div className="flex-1 min-h-0 overflow-auto" data-testid="artifact-detail">

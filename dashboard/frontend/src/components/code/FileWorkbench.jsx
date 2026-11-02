@@ -1,5 +1,5 @@
 /**
- * A workspace file in the code editor: the "Editor" and "Run" of a file in
+ * A workspace file in the code editor: the "Editor" of a file in
  * the chat's Artifacts panel (components/chat/panels.jsx) and on the
  * Artifacts page. Reads the file, hands it to CodeWorkbench as a file (Save
  * writes it back, Run runs it from its folder: views/file_run.py), and keeps
@@ -16,12 +16,11 @@ import CodeWorkbench from './CodeWorkbench';
  * @param {object}  props
  * @param {string}  props.workspace
  * @param {string}  props.path       workspace-relative
- * @param {number}  [props.autoRun]  a nonce: run once the file is read
  * @param {{setInput: function}} [props.chat] a composer to prefill (Discuss, Edit, the run report)
  * @param {function} [props.onSaved] (path) after Save
  * @param {string}  [props.className]
  */
-export default function FileWorkbench({ workspace, path, autoRun = null, chat = null, onSaved = null, className = '' }) {
+export default function FileWorkbench({ workspace, path, chat = null, onSaved = null, className = '' }) {
   const { t } = useI18n();
   // Keyed by the file: a new one starts loading, with nothing shown.
   const key = `${workspace}:${path}`;
@@ -59,7 +58,6 @@ export default function FileWorkbench({ workspace, path, autoRun = null, chat = 
       envelope={envelope}
       file={file}
       workspace={workspace}
-      autoRun={autoRun}
       chat={chat}
       onVersionSaved={(data) => {
         setState({ key, body: data?.content ?? '', error: '' });

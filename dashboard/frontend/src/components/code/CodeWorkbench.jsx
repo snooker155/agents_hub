@@ -15,7 +15,7 @@
  * versions: Save writes the file, Run runs it from its own folder where the
  * workspace says (views/file_run.py), the unsaved text in its place.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertCircle, BookmarkPlus, Check, Copy, Download, Edit3, FolderGit2, History, Info, ListChecks, Loader2,
   MessageSquare, Play, Save,
@@ -101,12 +101,11 @@ const formatWhen = (iso) => {
  * @param {{setInput: function}} [props.chat] a composer to prefill: Discuss, Edit and the run report show when given.
  * @param {boolean} [props.runHistory]   a Runs button with the view's recorded runs.
  * @param {{workspace: string, path: string}} [props.file] a workspace file: Save writes it, Run runs it from its folder.
- * @param {number}  [props.autoRun]      a nonce: run once when it changes (the file's Run button opens the editor running).
  * @param {string}  [props.className]
  */
 export default function CodeWorkbench({
   envelope, isReply = false, replyKey = null, workspace, projects, onVersionSaved = () => {},
-  onDraftChange = null, saveAsView = null, chat = null, runHistory = false, file = null, autoRun = null,
+  onDraftChange = null, saveAsView = null, chat = null, runHistory = false, file = null,
   className = '',
 }) {
   const { t } = useI18n();
@@ -252,17 +251,6 @@ export default function CodeWorkbench({
       setRunning(false);
     }
   };
-
-  // The file's Run button opens the editor running: once per nonce, after
-  // the envelope (the file's text) is in.
-  const ranFor = useRef(null);
-  useEffect(() => {
-    if (autoRun == null || autoRun === ranFor.current || !envelope || !runnable) return;
-    ranFor.current = autoRun;
-    handleRun();
-    // handleRun reads the current draft; only a new nonce runs again.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRun, envelope, runnable]);
 
   const toggleRuns = async () => {
     const opening = !runsOpen;

@@ -65,8 +65,8 @@ vi.mock('../../views/ViewCard', () => ({
 
 // The file's code editor stands in: what it was opened with.
 vi.mock('../../components/code/FileWorkbench', () => ({
-  default: ({ workspace, path, autoRun }) => (
-    <div data-testid="file-workbench">{workspace}:{path}:{autoRun ? 'run' : 'edit'}</div>
+  default: ({ workspace, path }) => (
+    <div data-testid="file-workbench">{workspace}:{path}</div>
   ),
 }));
 
@@ -244,7 +244,7 @@ describe('Artifacts page', () => {
     expect(modal.querySelector('.hl-code-block__action')).toBeInTheDocument();
   });
 
-  it('runs a folder code file and opens it in the editor; a document has neither', async () => {
+  it('opens a folder code file in the editor, with no Run beside it; a document has no editor', async () => {
     const PY = { ...REC, file_id: 'file_4444444444444444', name: 'main.py', mime_type: 'text/x-python', meta: { path: 'proj/main.py' } };
     listWorkspaceFiles.mockImplementation(() => ok({ workspace: 'acme', files: [PY], usage_bytes: 20, limits: {} }));
     getWorkspaceFileRecord.mockImplementation(() => ok(PY));
@@ -252,12 +252,11 @@ describe('Artifacts page', () => {
       kind: 'text', text: 'print(1)', truncated: false }));
     getWorkspaceFileUsage.mockImplementation(() => ok({ file_id: PY.file_id, total: 0 }));
     const { unmount } = show(`/artifacts?file=${PY.file_id}`);
-    fireEvent.click(await screen.findByTestId('file-run'));
-    expect(await screen.findByTestId('file-workbench')).toHaveTextContent('acme:proj/main.py:run');
+    fireEvent.click(await screen.findByTestId('file-editor'));
+    expect(screen.queryByTestId('file-run')).not.toBeInTheDocument();
+    expect(await screen.findByTestId('file-workbench')).toHaveTextContent('acme:proj/main.py');
     fireEvent.keyDown(window, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByTestId('file-editor-modal')).not.toBeInTheDocument());
-    fireEvent.click(screen.getByTestId('file-editor'));
-    expect(await screen.findByTestId('file-workbench')).toHaveTextContent('acme:proj/main.py:edit');
     unmount();
 
     getWorkspaceFileRecord.mockImplementation(() => ok(REC));
@@ -265,7 +264,6 @@ describe('Artifacts page', () => {
       kind: 'text', text: '# Leave', truncated: false }));
     show(`/artifacts?file=${REC.file_id}`);
     await screen.findByRole('button', { name: 'Download' });
-    expect(screen.queryByTestId('file-run')).not.toBeInTheDocument();
     expect(screen.queryByTestId('file-editor')).not.toBeInTheDocument();
   });
 

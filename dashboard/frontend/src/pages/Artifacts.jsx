@@ -38,12 +38,12 @@ import { createPortal } from 'react-dom';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Ban, Boxes, ChevronDown, ChevronRight, Code2, Copy, Download, ExternalLink, Eye, FileCode, FileImage, FileText, Folder,
-  FolderOpen, FolderSync, Images, Info, LayoutGrid, List, ListTree, Loader, Play, RefreshCw, Search, Trash2, Upload, X,
+  FolderOpen, FolderSync, Images, Info, LayoutGrid, List, ListTree, Loader, RefreshCw, Search, Trash2, Upload, X,
 } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import FileViewer from '../components/files/FileViewer';
 import { frameType, isImageFile, needsBytes, objectUrl } from '../lib/fileKind';
-import { codeLanguageFor, isRunnableFile } from '../lib/codeLanguage';
+import { codeLanguageFor } from '../lib/codeLanguage';
 import FileWorkbench from '../components/code/FileWorkbench';
 import { useWorkspace } from '../components/workspace';
 import { useI18n, useFormatters } from '../i18n';
@@ -359,9 +359,8 @@ function FilePreviewModal({ fileId, onClose }) {
 }
 
 /** A folder file in the code editor, over the page: Save writes it, Run runs
- * it from its folder (components/code/FileWorkbench.jsx). `autoRun` when the
- * Run button opened it. */
-function FileEditorModal({ workspace, path, autoRun, onClose, onSaved }) {
+ * it from its folder (components/code/FileWorkbench.jsx). */
+function FileEditorModal({ workspace, path, onClose, onSaved }) {
   const { t } = useI18n();
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -384,7 +383,7 @@ function FileEditorModal({ workspace, path, autoRun, onClose, onSaved }) {
             <X className="w-5 h-5" />
           </button>
         </div>
-        <FileWorkbench workspace={workspace} path={path} autoRun={autoRun} onSaved={onSaved} className="flex-1 min-h-0" />
+        <FileWorkbench workspace={workspace} path={path} onSaved={onSaved} className="flex-1 min-h-0" />
       </div>
     </div>,
     document.body,
@@ -454,8 +453,8 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  // The code editor over the page: `{ run }`, a nonce when Run opened it.
-  const [editor, setEditor] = useState(null);
+  // Whether the code editor is open over the page.
+  const [editor, setEditor] = useState(false);
   // A save in the editor reads the preview again.
   const [saves, setSaves] = useState(0);
 
@@ -493,11 +492,10 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
     };
   }, [fileId, t, saves]);
 
-  // A folder file of code: it opens in the editor, and runs when runnable.
+  // A folder file of code: it opens in the editor, and runs there when runnable.
   const folderPath = rec?.meta?.path || '';
   const editable = Boolean(rec?.workspace && folderPath) && Boolean(codeLanguageFor(folderPath))
     && codeLanguageFor(folderPath) !== 'markdown';
-  const runnable = editable && isRunnableFile(folderPath);
 
   const download = async () => {
     try {
@@ -556,15 +554,8 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50">
             <Eye className="w-3.5 h-3.5" /> {t('files.preview')}
           </button>
-          {runnable && (
-            <button type="button" onClick={() => setEditor({ run: Date.now() })} title={t('chat.code.runFileHint')}
-              data-testid="file-run"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-emerald-600 bg-emerald-600 rounded-lg text-white hover:bg-emerald-700">
-              <Play className="w-3.5 h-3.5" /> {t('chat.code.run')}
-            </button>
-          )}
           {editable && (
-            <button type="button" onClick={() => setEditor({ run: null })} title={t('chat.code.openEditorHint')}
+            <button type="button" onClick={() => setEditor(true)} title={t('chat.code.openEditorHint')}
               data-testid="file-editor"
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50">
               <Code2 className="w-3.5 h-3.5" /> {t('chat.code.editor')}
@@ -620,8 +611,8 @@ function FilePanel({ fileId, onClose, onDeleted, onPreview }) {
         {usage ? <UsageList usage={usage} t={t} /> : <p className="text-xs text-gray-400">…</p>}
       </div>
       {editor && (
-        <FileEditorModal workspace={rec.workspace} path={folderPath} autoRun={editor.run}
-          onClose={() => setEditor(null)} onSaved={() => setSaves((n) => n + 1)} />
+        <FileEditorModal workspace={rec.workspace} path={folderPath}
+          onClose={() => setEditor(false)} onSaved={() => setSaves((n) => n + 1)} />
       )}
     </aside>
   );
