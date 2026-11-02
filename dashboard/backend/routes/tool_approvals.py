@@ -49,6 +49,11 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tool-approvals"])
 
+#: The waiting run's side, served by the API backend and by every worker to
+#: the containers it starts (runtime/tool_host.py worker_app): an instance
+#: carrier's state goes to its worker, never to the API.
+run_router = APIRouter(tags=["tool-approvals"])
+
 
 class DecideBody(BaseModel):
     decision: str
@@ -235,19 +240,19 @@ class CloseBody(BaseModel):
     note: str = ""
 
 
-@router.post("/api/run-state/runs/{run_id}/tool-approvals")
+@run_router.post("/api/run-state/runs/{run_id}/tool-approvals")
 def open_for_run(run_id: str, body: OpenBody):
     """Mirrors ``common.tool_approvals.open_approval``."""
     return {"approval": tool_approvals.open_approval(run_id=run_id, **body.model_dump())}
 
 
-@router.get("/api/run-state/tool-approvals/{approval_id}")
+@run_router.get("/api/run-state/tool-approvals/{approval_id}")
 def read_for_run(approval_id: str):
     """Mirrors ``common.tool_approvals.get``."""
     return {"approval": _load(approval_id)}
 
 
-@router.post("/api/run-state/tool-approvals/{approval_id}/close")
+@run_router.post("/api/run-state/tool-approvals/{approval_id}/close")
 def close_for_run(approval_id: str, body: CloseBody):
     """Mirrors ``common.tool_approvals.close``: a timeout or a stop."""
     _load(approval_id)

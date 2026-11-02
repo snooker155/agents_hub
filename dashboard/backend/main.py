@@ -880,6 +880,7 @@ for _loop_router in (tool_policy_router, outcomes_router, steering_router, guard
 # Deny, and the waiting run's side under /api/run-state (docs/hooks.md).
 from routes import tool_approvals as tool_approvals_router
 app.include_router(tool_approvals_router.router)
+app.include_router(tool_approvals_router.run_router)
 # A connection an agent proposed (connectors/proposals.py), finished by a
 # person: the apply half of the same waiting call.
 from routes import connection_proposals as connection_proposals_router

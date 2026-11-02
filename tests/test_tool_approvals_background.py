@@ -239,6 +239,7 @@ def test_the_flow_run_lists_its_waiting_calls():
 
     app = FastAPI()
     app.include_router(routes.router)
+    app.include_router(routes.run_router)
     client = TestClient(app)
     flow_run_id = f"fr-{uuid.uuid4().hex[:8]}"
     row = tool_approvals.open_approval(run_id=_rid(), tool="run_shell", flow_run_id=flow_run_id)
@@ -400,6 +401,7 @@ def test_the_team_run_lists_its_waiting_calls():
 
     app = FastAPI()
     app.include_router(routes.router)
+    app.include_router(routes.run_router)
     client = TestClient(app)
     team_run_id = f"trun_{uuid.uuid4().hex[:8]}"
     row = tool_approvals.open_approval(run_id=_rid(), tool="run_shell", team_run_id=team_run_id)

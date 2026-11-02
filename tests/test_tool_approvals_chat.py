@@ -288,6 +288,7 @@ def client():
         return await call_next(request)
 
     app.include_router(routes.router)
+    app.include_router(routes.run_router)
     return TestClient(app)
 
 
@@ -403,6 +404,17 @@ def test_the_http_transport_posts_to_the_run_state_routes(monkeypatch):
         ("GET", "/tool-approvals/appr_1"),
         ("POST", "/tool-approvals/appr_1/close"),
     ]
+
+
+def test_a_worker_serves_the_waiting_side_to_its_containers():
+    # An instance carrier's state transport points at the worker that started
+    # it (runtime/tool_host.py worker_app), not at the API backend.
+    from runtime import tool_host
+
+    served = {(m, r.path) for r in tool_host.worker_app().routes for m in getattr(r, "methods", ())}
+    assert {("POST", "/api/run-state/runs/{run_id}/tool-approvals"),
+            ("GET", "/api/run-state/tool-approvals/{approval_id}"),
+            ("POST", "/api/run-state/tool-approvals/{approval_id}/close")} <= served
 
 
 def test_a_process_with_no_database_waits_over_its_transport(monkeypatch):

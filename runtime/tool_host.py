@@ -226,7 +226,7 @@ def worker_app() -> Any:
     import asyncio
     from fastapi import FastAPI
     from fastapi.responses import JSONResponse
-    from dashboard.backend.routes import run_state
+    from dashboard.backend.routes import run_state, tool_approvals
 
     app = FastAPI(title="Agents Hub worker state host")
 
@@ -243,6 +243,7 @@ def worker_app() -> Any:
         return await call_next(request)
 
     app.include_router(run_state.router)
+    app.include_router(tool_approvals.run_router)
     app.include_router(router())
     return app
 
