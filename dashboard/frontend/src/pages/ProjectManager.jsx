@@ -5,9 +5,8 @@ import {
   getProjectRegistryChat, clearProjectRegistryChat, stopProjectRegistryChat,
   projectRegistryChatUrl,
 } from '../api';
-import EntityChat from '../components/EntityChat';
-import { usePageChat } from '../components/pageChat/pageChat';
-import { ChatColumn, ChatToggle, FILL_COLUMN, useChatColumn } from '../components/ChatColumn';
+import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
+import { ChatToggle } from '../components/ChatColumn';
 import ImportRepoModal from '../components/ImportRepoModal';
 import ProjectCard from '../components/projects/ProjectCard';
 import DeployedApps from '../components/projects/DeployedApps';
@@ -32,8 +31,7 @@ const DEFAULT_FORM = {
 };
 
 /**
- * The registry's own chat, as one descriptor the column and the floating page
- * chat both draw: the Project Manager creates and retires projects in the
+ * The registry's own chat, as the page chat's descriptor: the Project Manager creates and retires projects in the
  * current workspace while the list updates beside it.
  *
  * Distinct from the two per-project chats. Those are about the contents of one
@@ -80,7 +78,6 @@ export default function ProjectManager() {
   const [showImport, setShowImport] = useState(false);
   const [workspaceNames, setWorkspaceNames] = useState([]);
   const [importNotice, setImportNotice] = useState('');
-  const chat = useChatColumn(false);
 
   // A promise chain rather than an async body, so the effect below may call it
   // without a synchronous setState.
@@ -93,9 +90,11 @@ export default function ProjectManager() {
     fetchProjects();
   }, [fetchProjects]);
 
-  // The same conversation the column shows, offered to the floating panel too.
+  // The Project Manager's conversation is the page chat: the header button and
+  // the corner launcher open the same floating panel with this one conversation.
   const registryChat = useRegistryChatDescriptor(selectedWorkspace, fetchProjects);
   usePageChat(registryChat);
+  const chat = usePageChatPanel();
 
   // The create form follows the workspace switcher (adjusted while rendering).
   const [formWorkspaceFor, setFormWorkspaceFor] = useState(selectedWorkspace);
@@ -218,12 +217,6 @@ export default function ProjectManager() {
         </div>
       </div>
 
-      {/* Only the grid sits beside the chat. The notice and the filters stay
-          full width above it: inside the narrowing column they rewrap when the
-          chat opens, which pushes everything below them down — the toggle is
-          supposed to change one column's width and nothing else. */}
-      <div className={chat.gridClass}>
-        <div className={`space-y-6 ${chat.mainClass}`}>
       {loading ? (
         <PageLoader label={t('projectManager.loading')} />
       ) : filtered.length === 0 ? (
@@ -238,14 +231,6 @@ export default function ProjectManager() {
           {filtered.map(project => <ProjectCard key={project.id} project={project} />)}
         </div>
       )}
-        </div>
-
-        {chat.open && (
-          <ChatColumn>
-            <EntityChat {...registryChat} {...FILL_COLUMN} />
-          </ChatColumn>
-        )}
-      </div>
 
       {/* Import from repo modal */}
       {showImport && (
