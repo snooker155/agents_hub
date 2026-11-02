@@ -4,6 +4,11 @@
 
 export const SKILL_TOOL = 'get_skill';
 
+// The tools that run another agent and return its result. Their call is shown as
+// the delegated run itself, with that run's own steps inside, rather than as one
+// more tool with a JSON blob for output.
+export const DELEGATION_TOOLS = new Set(['run_agent_tool', 'delegate_task_tool']);
+
 export function shortText(v, max = 180) {
   const s = String(v || '');
   return s.length > max ? `${s.slice(0, max)}...` : s;

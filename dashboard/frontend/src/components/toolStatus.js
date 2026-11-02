@@ -30,3 +30,26 @@ export function toolOutcome(event) {
   const status = event?.status === 'ok' || event?.status === 'error' ? { status: event.status } : {};
   return { ...policyVerdict(event), ...status };
 }
+
+/**
+ * What went wrong in a failed call, as one message: the `error` of a
+ * `{"ok": false, "error": ...}` result (whole or cut short in a run log), the
+ * text after "ERROR:" of a call that raised, or the record's own `error`.
+ * Empty for a call that did not fail.
+ */
+export function toolErrorText(entry) {
+  if (toolStatus(entry) !== 'error') return '';
+  if (entry.error) return String(entry.error);
+  const output = entry.output;
+  if (output && typeof output === 'object') return String(output.error || JSON.stringify(output));
+  const text = String(output ?? '').trim();
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && parsed.error) return String(parsed.error);
+  } catch { /* cut short in the log, or not JSON */ }
+  const cut = /"error"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(text);
+  if (cut) {
+    try { return JSON.parse(`"${cut[1]}"`); } catch { return cut[1]; }
+  }
+  return text.replace(/^(ERROR|Error):\s*/, '');
+}

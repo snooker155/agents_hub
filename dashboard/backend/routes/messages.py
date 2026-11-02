@@ -147,7 +147,25 @@ async def get_message(run_id: str, request: Request):
     enriched = _enrich_message(run, tasks_by_id)
     if not enriched.get("model"):
         enriched["model"] = _resolve_session_model(enriched)
+    enriched["delegated_from"] = _delegating_run(run)
     return enriched
+
+
+def _delegating_run(run: dict) -> Optional[dict]:
+    """The run whose run_agent_tool call started this one, or None.
+
+    A delegation record keeps its caller in ``parent_run_id``
+    (tools/langchain_tools.py run_agent_tool); the page names that run's agent
+    and links to it. A caller that is gone still gives its id."""
+    parent_id = run.get("parent_run_id")
+    if not parent_id or run.get("message_origin") != "delegation":
+        return None
+    parent = run_manager.get_run_by_id(str(parent_id)) or {}
+    return {
+        "run_id": str(parent_id),
+        "agent_id": parent.get("agent_id") or "",
+        "title": parent.get("title") or "",
+    }
 
 
 @router.get("/{run_id}/logs")
@@ -525,6 +543,9 @@ async def get_message_insights(run_id: str, request: Request):
                     "started_at": None,
                     "finished_at": None,
                     "running": False,
+                    # How the call ended (run_statistics.tool_status), so an
+                    # error reads as one whatever its output looks like.
+                    **({"status": tc["status"]} if tc.get("status") in ("ok", "error") else {}),
                     **({"evaluated_permission": tc["evaluated_permission"],
                         "reason_code": tc.get("reason_code") or ""}
                        if tc.get("evaluated_permission") else {}),

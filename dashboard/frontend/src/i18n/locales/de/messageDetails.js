@@ -33,6 +33,7 @@ export default {
   model: 'Modell:',
   status: 'Status:',
   session: 'Sitzung:',
+  delegatedFrom: 'Delegiert von:',
   flowRun: 'Flow-Lauf:',
   flow: 'Flow:',
   flowNode: 'Flow-Knoten:',

@@ -22,6 +22,7 @@ export default {
   failed: 'fehlgeschlagen',
   delegatedRunUnavailable: 'Der delegierte Lauf konnte nicht geladen werden.',
   loadingDelegatedRun: 'Delegierter Lauf wird geladen…',
+  openRun: 'Lauf öffnen',
   noResponseYet: '(noch keine Antwort)',
   openFull: 'Ganzen Schritt öffnen',
   parsed: 'Aufbereitet',

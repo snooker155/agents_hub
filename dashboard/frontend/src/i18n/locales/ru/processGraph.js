@@ -22,6 +22,7 @@ export default {
   failed: 'ошибка',
   delegatedRunUnavailable: 'Не удалось загрузить делегированный запуск.',
   loadingDelegatedRun: 'Загружаю делегированный запуск…',
+  openRun: 'Открыть запуск',
   noResponseYet: '(ответа пока нет)',
   openFull: 'Открыть шаг целиком',
   parsed: 'Разобрано',

@@ -21,6 +21,7 @@ def _chat_log(path):
         "[tool_end] output=ERROR: nope\n"
         "[tool_start] step=3 tool=think input=x\n"
         "[tool_end] output=ok\n"
+        "[llm_start] model=m\n"
         "final answer\n"
         "Finished: now\nStatus  : completed\n", encoding="utf-8")
 

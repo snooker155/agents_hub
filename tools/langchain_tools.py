@@ -728,6 +728,10 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
         # Footer mirrors the chat driver's, so the parser picks up the response
         # text and the message summary (tokens / tool calls / duration).
         if stopped:
+            # A marker first, as the chat driver writes one: the line after a
+            # tool's result is still that result to the log parser
+            # (routes/sessions.py _fold_tool_output).
+            stats.write("[stopped] run stopped by user")
             stats.write("(stopped by user)")
         else:
             stats.write(output if ok else f"Error: {error or 'unknown error'}")

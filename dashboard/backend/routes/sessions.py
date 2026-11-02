@@ -512,6 +512,34 @@ def _parse_reasoning_line(line: str) -> Optional[dict]:
     return {"step": int(m.group("step")), "content": str(content), "native": True}
 
 
+# A line a run log writes for an event, not as text: [llm_start], [tool_end],
+# [message_summary] and the like (agents/callbacks/chat_stream.py).
+_LOG_MARKER_RE = re.compile(r"^\[[a-z_]+\](?:\s|$)")
+
+
+def _fold_tool_output(text: str) -> list:
+    """The lines of a chat log body, a tool's result kept on its marker line.
+
+    ``[tool_end] output=`` writes a plain-text result as it is, line breaks and
+    all (format_tool_payload puts only JSON on one line), and ``[tool_error]``
+    does the same with a multi-line error. The lines under the marker, up to
+    the next marker, are the rest of that result: read line by line they were
+    cut from the call, which kept only its first line (an error's header
+    without its message), and passed into the agent's reply."""
+    lines: list = []
+    in_result = False
+    for ln in text.splitlines():
+        s = ln.strip()
+        if _LOG_MARKER_RE.match(s):
+            lines.append(ln)
+            in_result = s.startswith(("[tool_end]", "[tool_error]"))
+        elif in_result:
+            lines[-1] = f"{lines[-1]}\n{ln}"
+        else:
+            lines.append(ln)
+    return lines
+
+
 def _extract_messages(log_text: str) -> list:
     out = []
     for m in re.finditer(
@@ -535,16 +563,11 @@ def _extract_messages(log_text: str) -> list:
             out.append({"role": "user", "content": user_part})
         raw_assistant = (m.group("assistant") or "").strip()
         filtered_lines = []
-        for ln in raw_assistant.splitlines():
+        for ln in _fold_tool_output(raw_assistant):
             txt = ln.strip()
             if not txt:
                 continue
-            if (txt.startswith("[llm_start]") or txt.startswith("[llm_usage]") or
-                    txt.startswith("[tool_start]") or txt.startswith("[tool_end]") or
-                    txt.startswith("[tool_call]") or txt.startswith("[tool_error]") or
-                    txt.startswith("[llm_error]") or txt.startswith("[chain_error]") or
-                    txt.startswith("[message_summary]") or txt.startswith("[reasoning]") or
-                    txt.startswith("[artifact]")):
+            if _LOG_MARKER_RE.match(txt):
                 continue
             filtered_lines.append(ln)
         assistant_part = "\n".join(filtered_lines).strip()
@@ -583,25 +606,20 @@ def _extract_chat_message_runs(log_text: str) -> list:
         )
         if m_out:
             lines = []
-            for ln in (m_out.group("v") or "").splitlines():
+            for ln in _fold_tool_output(m_out.group("v") or ""):
                 txt = ln.strip()
                 if not txt:
                     continue
-                if (txt.startswith("[llm_start]") or txt.startswith("[llm_usage]") or
-                        txt.startswith("[tool_start]") or txt.startswith("[tool_end]") or
-                        txt.startswith("[tool_call]") or txt.startswith("[tool_error]") or
-                        txt.startswith("[llm_error]") or txt.startswith("[chain_error]") or
-                        txt.startswith("[message_summary]") or txt.startswith("[reasoning]") or
-                        txt.startswith("[artifact]")):
+                if _LOG_MARKER_RE.match(txt):
                     continue
                 lines.append(ln)
             output = "\n".join(lines).strip()
         tools = []
         tool_start_re = re.compile(r"^\[tool_start\]\s+step=(?P<step>\d+)\s+tool=(?P<tool>[^\s]+)\s+input=(?P<input>.*)$")
-        tool_end_re = re.compile(r"^\[tool_end\]\s+output=(?P<output>.*)$")
+        tool_end_re = re.compile(r"^\[tool_end\]\s+output=(?P<output>.*)$", re.S)
         # A call that raised ends on [tool_error] instead of [tool_end].
-        tool_error_re = re.compile(r"^\[tool_error\]\s+(?:tool=\S+\s+)?(?P<error>.*)$")
-        for ln in body.splitlines():
+        tool_error_re = re.compile(r"^\[tool_error\]\s+(?:tool=\S+\s+)?(?P<error>.*)$", re.S)
+        for ln in _fold_tool_output(body):
             s = ln.strip()
             ms = tool_start_re.match(s)
             if ms:
@@ -612,7 +630,8 @@ def _extract_chat_message_runs(log_text: str) -> list:
             if (me or mx) and tools:
                 for j in range(len(tools) - 1, -1, -1):
                     if tools[j].get("output") is None:
-                        tools[j]["output"] = me.group("output") if me else f"ERROR: {mx.group('error') if mx else ''}"
+                        tools[j]["output"] = (me.group("output").rstrip() if me
+                                              else f"ERROR: {mx.group('error').rstrip() if mx else ''}")
                         tools[j]["running"] = False
                         if mx:
                             tools[j]["status"] = "error"

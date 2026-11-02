@@ -33,6 +33,7 @@ export default {
   model: 'Модель:',
   status: 'Статус:',
   session: 'Сессия:',
+  delegatedFrom: 'Вызван из запуска:',
   flowRun: 'Запуск потока:',
   flow: 'Поток:',
   flowNode: 'Узел потока:',

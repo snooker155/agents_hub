@@ -542,6 +542,21 @@ export default function MessageDetails() {
             </button>
           </div>
         )}
+        {/* A run started by another run's run_agent_tool call: its agent,
+            linking to that run (routes/messages.py _delegating_run). */}
+        {message?.delegated_from && (
+          <div>
+            <span className={META_LABEL}>{t('messageDetails.delegatedFrom')}</span>{' '}
+            <button
+              onClick={() => navigate(`/messages/${message.delegated_from.run_id}`)}
+              className={`${META_VALUE} !text-indigo-600 hover:underline`}
+              title={message.delegated_from.title || message.delegated_from.run_id}
+              data-testid="delegated-from"
+            >
+              {message.delegated_from.agent_id || message.delegated_from.run_id}
+            </button>
+          </div>
+        )}
         {/* A chat turn that changed hands (chat/handoff.py): where this run
             sent the conversation, and where a receiving run got it from. */}
         {message?.handoff?.next_run_id && (

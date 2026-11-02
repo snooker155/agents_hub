@@ -22,6 +22,7 @@ export default {
   failed: 'failed',
   delegatedRunUnavailable: 'The delegated run could not be loaded.',
   loadingDelegatedRun: 'Loading the delegated run…',
+  openRun: 'Open run',
   noResponseYet: '(no response yet)',
   openFull: 'Open the full step',
   parsed: 'Parsed',

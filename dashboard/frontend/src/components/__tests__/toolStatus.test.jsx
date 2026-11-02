@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 
 import { I18nProvider } from '../../i18n';
 import ToolStatusMark from '../ToolStatusMark';
-import { toolOutcome, toolStatus } from '../toolStatus';
+import { toolErrorText, toolOutcome, toolStatus } from '../toolStatus';
 import { TimelineToolCard } from '../chat/timeline';
 
 describe('toolStatus', () => {
@@ -56,5 +56,22 @@ describe('ToolStatusMark', () => {
   it('is drawn on a Build-view tool card', () => {
     draw(<TimelineToolCard entry={{ type: 'tool', tool: 'read_file', output: '{"ok": false}' }} />);
     expect(screen.getByTestId('tool-status').dataset.status).toBe('error');
+  });
+});
+
+describe('toolErrorText', () => {
+  it('is empty for a call that did not fail', () => {
+    expect(toolErrorText({ output: 'fine', status: 'ok' })).toBe('');
+  });
+
+  it('takes the error of a failed JSON result, whole or cut short in the log', () => {
+    expect(toolErrorText({ output: '{"ok": false, "error": "no such file"}' })).toBe('no such file');
+    expect(toolErrorText({ output: '{"ok": false, "error": "it said \\"no\\" and stopp', status: 'error' }))
+      .toBe('it said "no" and stopp');
+  });
+
+  it('takes the message of a call that raised, every line of it', () => {
+    expect(toolErrorText({ output: 'ERROR: ValidationError: 1 validation error\n  Value error, bad id', status: 'error' }))
+      .toBe('ValidationError: 1 validation error\n  Value error, bad id');
   });
 });
