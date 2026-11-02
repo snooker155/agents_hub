@@ -189,3 +189,34 @@ describe('Costs runs tab', () => {
     expect(scopeSelects).toHaveLength(1);
   });
 });
+
+// Projects are listed by name and open their page; spend outside a project
+// and a project deleted since (its label is the bare id) have no page.
+describe('Costs by project', () => {
+  const row = (key, label) => ({ key, label, runs: 1, total_tokens: 10, cached_tokens: 0, cost: 1 });
+
+  it('links a named project to its page', async () => {
+    getCosts.mockImplementation(() => ok({
+      totals: { runs: 3, total_tokens: 30, cached_tokens: 0, cost: 3 },
+      by_model: [], by_agent: [], by_workspace: [],
+      by_project: [row('p1', 'Website'), row('p-gone', 'p-gone'), row('(none)', '(none)')],
+    }));
+    show();
+    const link = await screen.findByRole('link', { name: 'Website' });
+    expect(link).toHaveAttribute('href', '/projects/p1');
+    expect(screen.getByText('p-gone').closest('a')).toBeNull();
+    expect(screen.getByText('(none)').closest('a')).toBeNull();
+  });
+
+  it('links projects in the report grouped by project', async () => {
+    getAccountingReport.mockImplementation(({ group_by }) => ok(group_by === 'project'
+      ? { ...REPORT, group_by, rows: [{ ...REPORT.rows[0], key: 'p2', label: 'Docs' }] }
+      : REPORT));
+    show();
+    await waitFor(() => expect(screen.getByText('Alice')).toBeInTheDocument());
+    expect(screen.getByText('Alice').closest('a')).toBeNull();
+    const groupBySelect = screen.getAllByRole('combobox').find((s) => s.innerHTML.includes('By API key'));
+    fireEvent.change(groupBySelect, { target: { value: 'project' } });
+    expect(await screen.findByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/projects/p2');
+  });
+});

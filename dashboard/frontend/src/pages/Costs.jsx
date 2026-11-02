@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { DollarSign, Loader, Save, RefreshCw, AlertTriangle, ShieldCheck, Download, PieChart, ListOrdered } from 'lucide-react';
 import { useWorkspace } from '../components/workspace';
 import { getCosts, getBudget, setBudget } from '../api';
@@ -20,8 +20,24 @@ const fmtUsd = (n) => `$${(n || 0).toLocaleString(undefined, { minimumFractionDi
 // The spend report shows cents' fractions: one person's chat turns cost well under a cent.
 const fmtUsd4 = (n) => `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
 
-// One breakdown table (by workspace / agent / model / project).
-function Breakdown({ title, rows }) {
+// A project row's page. The label falls back to the id for a project deleted
+// since (common/costs_report.py), and "(none)" is spend outside any project:
+// neither has a page to open.
+const projectHref = (r) => (r.key && r.label !== r.key ? `/projects/${encodeURIComponent(r.key)}` : null);
+
+// A row's name cell, a link when the row has a page.
+function NameCell({ row, href }) {
+  const to = href?.(row);
+  return (
+    <td className="py-1.5 text-gray-800 truncate max-w-[16rem]" title={row.label}>
+      {to ? <Link to={to} className="text-indigo-600 hover:underline">{row.label}</Link> : row.label}
+    </td>
+  );
+}
+
+// One breakdown table (by workspace / agent / model / project). ``href``
+// turns a row into a link to its page.
+function Breakdown({ title, rows, href }) {
   const { t } = useI18n();
   return (
     <div className={card}>
@@ -42,7 +58,7 @@ function Breakdown({ title, rows }) {
           <tbody>
             {rows.map((r) => (
               <tr key={r.key} className="border-b border-gray-50 last:border-0">
-                <td className="py-1.5 text-gray-800 truncate max-w-[16rem]" title={r.label}>{r.label}</td>
+                <NameCell row={r} href={href} />
                 <td className="py-1.5 text-right text-gray-600">{fmtInt(r.runs)}</td>
                 <td className="py-1.5 text-right text-gray-600">{fmtInt(r.total_tokens)}</td>
                 {/* Cache reads are a slice of the input tokens already counted
@@ -151,7 +167,7 @@ function ReportSection({ t, workspace }) {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.key} className="border-b border-gray-50 last:border-0">
-                  <td className="py-1.5 text-gray-800 truncate max-w-[16rem]" title={r.label}>{r.label}</td>
+                  <NameCell row={r} href={groupBy === 'project' ? projectHref : null} />
                   <td className="py-1.5 text-right text-gray-600">{fmtInt(r.runs)}</td>
                   <td className="py-1.5 text-right text-gray-600">{fmtInt(r.calls)}</td>
                   <td className="py-1.5 text-right text-gray-600">{fmtInt(r.total_tokens)}</td>
@@ -406,7 +422,7 @@ export default function Costs() {
           <Breakdown title={t('costs.byModel')} rows={data?.by_model} />
           <Breakdown title={t('costs.byAgent')} rows={data?.by_agent} />
           {scope === 'all' && <Breakdown title={t('costs.byWorkspace')} rows={data?.by_workspace} />}
-          <Breakdown title={t('costs.byProject')} rows={data?.by_project} />
+          <Breakdown title={t('costs.byProject')} rows={data?.by_project} href={projectHref} />
         </div>
       )}
 

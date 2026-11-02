@@ -104,6 +104,14 @@ def costs_breakdown(workspace: Optional[str] = None, since: Optional[str] = None
     except Exception:  # noqa: BLE001 - agents are then listed by id
         log.debug("costs: agent names unavailable", exc_info=True)
 
+    # Projects are listed by name; one deleted since keeps its id.
+    project_names = {}
+    try:
+        from projects.storage import ProjectStore
+        project_names = {p.id: p.name for p in ProjectStore().list()}
+    except Exception:  # noqa: BLE001 - projects are then listed by id
+        log.debug("costs: project names unavailable", exc_info=True)
+
     by_workspace: dict = {}
     by_agent: dict = {}
     by_model: dict = {}
@@ -143,7 +151,7 @@ def costs_breakdown(workspace: Optional[str] = None, since: Optional[str] = None
         _bump(by_workspace, ws or "(none)", ws or "(none)", r, inbound, outbound, cached, cost)
         _bump(by_agent, agent_id, agent_names.get(agent_id, agent_id), r, inbound, outbound, cached, cost)
         _bump(by_model, f"{provider}/{model}", f"{provider}/{model}", r, inbound, outbound, cached, cost)
-        _bump(by_project, project, project, r, inbound, outbound, cached, cost)
+        _bump(by_project, project, project_names.get(project) or project, r, inbound, outbound, cached, cost)
 
         totals["runs"] += 1
         totals["inbound_tokens"] += inbound

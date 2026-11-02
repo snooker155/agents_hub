@@ -310,3 +310,21 @@ def test_a_bare_until_day_includes_that_whole_day(monkeypatch, tmp_path):
     assert costs_runs("ws1", until="2026-07-06")["total"] == 1
     assert costs_runs("ws1", until="2026-07-05")["total"] == 0
     assert costs_breakdown("ws1", until="2026-07-06")["totals"]["runs"] == 1
+
+
+def test_project_rows_are_labelled_by_project_name(monkeypatch, tmp_path):
+    """The Costs page's By project block lists projects by name, its key stays
+    the id the page links with; a project deleted since keeps its id."""
+    from types import SimpleNamespace
+    from common.costs_report import costs_breakdown
+    from projects.storage import ProjectStore
+    from tasks import service as tasks_service
+    _seed_prices(monkeypatch, tmp_path)
+    monkeypatch.setattr(tasks_service, "list_tasks", lambda *a, **k: [
+        SimpleNamespace(id="t1", project_id="p1"), SimpleNamespace(id="t2", project_id="p-gone")])
+    monkeypatch.setattr(ProjectStore, "list", lambda self, *a, **k: [SimpleNamespace(id="p1", name="Website")])
+    _make_run("r1", workspace="ws1", inbound=1, outbound=1, task_id="t1")
+    _make_run("r2", workspace="ws1", inbound=1, outbound=1, task_id="t2")
+    _make_run("r3", workspace="ws1", inbound=1, outbound=1, task_id="")
+    rows = {r["key"]: r["label"] for r in costs_breakdown("ws1")["by_project"]}
+    assert rows == {"p1": "Website", "p-gone": "p-gone", "(none)": "(none)"}
