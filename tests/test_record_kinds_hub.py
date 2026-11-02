@@ -135,8 +135,9 @@ def test_context_agents_and_flows_answer_to_their_own_rules(stores, monkeypatch)
 
 def test_every_key_names_a_real_route():
     from dashboard.backend import main
-    keys = {record_access.route_key(getattr(r, "path", "")) for r in main.app.routes
-            if "{" in getattr(r, "path", "")}
+    keys = {record_access.route_key(getattr(r, "path", "") or "")
+            for r in record_access.app_routes(main.app.routes)
+            if "{" in (getattr(r, "path", "") or "")}
     assert set(kinds.ROUTES) <= keys
     assert set(kinds.EXEMPT) <= keys
 

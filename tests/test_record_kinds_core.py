@@ -174,9 +174,10 @@ def test_containers_resolve_by_what_started_them(stores):
 
 def test_every_key_names_a_real_route():
     from dashboard.backend import main
-    keys = {record_access.route_key(getattr(r, "path", "")) for r in main.app.routes
-            if "{" in getattr(r, "path", "")}
-    templates = {getattr(r, "path", "") for r in main.app.routes}
+    routes = record_access.app_routes(main.app.routes)
+    keys = {record_access.route_key(getattr(r, "path", "") or "") for r in routes
+            if "{" in (getattr(r, "path", "") or "")}
+    templates = {getattr(r, "path", "") for r in routes}
     assert set(kinds.ROUTES) <= keys
     assert set(kinds.EXEMPT) <= keys
     assert set(kinds.READ_ROUTES) <= templates

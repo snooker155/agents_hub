@@ -332,6 +332,22 @@ def route_key(template: str) -> Optional[Tuple[str, str]]:
     return template[:start], name
 
 
+def app_routes(routes) -> list:
+    """Every route in ``routes`` with each included router opened up, each
+    with its full ``path``, ``endpoint`` and ``matches``.
+
+    FastAPI 0.141 keeps an included router as one entry of ``app.routes``
+    that has no ``path`` and matches with an empty child scope, so a walk over
+    ``app.routes`` sees none of the API there; ``iter_route_contexts`` gives
+    the routes inside. Older FastAPI copies them into ``app.routes`` itself
+    and has no such function."""
+    try:
+        from fastapi.routing import iter_route_contexts  # type: ignore[attr-defined]
+    except ImportError:
+        return list(routes)
+    return list(iter_route_contexts(routes))
+
+
 def matched_route(request) -> Optional[Tuple[str, dict]]:
     """The template and path parameters of the route ``request`` matches, or
     None. The middleware runs before routing, so it asks the router itself."""
@@ -341,7 +357,7 @@ def matched_route(request) -> Optional[Tuple[str, dict]]:
     if router is None:
         return None
     partial = None
-    for route in router.routes:
+    for route in app_routes(router.routes):
         try:
             match, child = route.matches(request.scope)
         except Exception:  # noqa: BLE001 - a route that cannot match this scope is not it
@@ -406,7 +422,7 @@ def visible(names: Optional[set], workspace) -> bool:
     return names is None or _workspace(workspace) in names
 
 
-__all__ = ["AGENT_READ_SEGMENTS", "AGENT_SELF_CHECKED_SEGMENTS", "AGENT_WORKSPACE_SEGMENTS", "PATH_CHECKED", "Record", "check",
+__all__ = ["AGENT_READ_SEGMENTS", "AGENT_SELF_CHECKED_SEGMENTS", "AGENT_WORKSPACE_SEGMENTS", "PATH_CHECKED", "Record", "app_routes", "check",
            "check_route", "decide", "matched_route", "require_chat_target", "route_key",
            "require_in_workspace", "resolve", "restricted", "target", "visible",
            "visible_names"]

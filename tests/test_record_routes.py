@@ -6,13 +6,13 @@ from __future__ import annotations
 import pytest
 
 from common import record_kinds
-from common.record_access import route_key
+from common.record_access import app_routes, route_key
 
 
 def _api_routes():
     from dashboard.backend import main
-    for route in main.app.routes:
-        path = getattr(route, "path", "")
+    for route in app_routes(main.app.routes):
+        path = getattr(route, "path", "") or ""
         if path.startswith("/api/") and "{" in path:
             yield path
 
@@ -34,7 +34,7 @@ def test_route_key(template, key):
 
 
 def test_the_middleware_finds_the_route_a_request_matches():
-    from fastapi import FastAPI, Request
+    from fastapi import APIRouter, FastAPI, Request
     from fastapi.testclient import TestClient
     from common.record_access import matched_route
 
@@ -54,12 +54,24 @@ def test_the_middleware_finds_the_route_a_request_matches():
     async def _get(view_id: str):
         return {}
 
+    # As main.py registers the API: a router included with its prefix, which
+    # FastAPI 0.141 keeps as one entry of app.routes (common/record_access.app_routes).
+    router = APIRouter(prefix="/api/things")
+
+    @router.post("/{thing_id}/run")
+    async def _run(thing_id: str):
+        return {}
+
+    app.include_router(router)
+
     client = TestClient(app)
     client.delete("/api/views/v-1/state?workspace=alpha")
     client.get("/api/views/v-2")
+    client.post("/api/things/t-3/run")
     client.get("/api/nothing/here")
     assert seen == [("/api/views/{view_id}/state", {"view_id": "v-1"}),
                     ("/api/views/{view_id}", {"view_id": "v-2"}),
+                    ("/api/things/{thing_id}/run", {"thing_id": "t-3"}),
                     None]
 
 

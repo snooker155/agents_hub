@@ -9,7 +9,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from common import record_access, record_kinds
-from common.record_access import route_key
+from common.record_access import app_routes, route_key
 from common.record_kinds import data as kinds
 
 
@@ -225,8 +225,8 @@ def test_scoped_routes_read_the_workspace_query():
     per_workspace = set(kinds.SCOPED)
     assert per_workspace
     seen = set()
-    for route in main.app.routes:
-        key = route_key(getattr(route, "path", ""))
+    for route in app_routes(main.app.routes):
+        key = route_key(getattr(route, "path", "") or "")
         if key in per_workspace:
             seen.add(key)
             assert "workspace" in inspect.signature(route.endpoint).parameters, route.path
