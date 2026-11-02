@@ -838,18 +838,19 @@ export default function ProjectDetails() {
 
       {activeTab === 'Files' && (
         /* The whole height of the page: the tree and the file each scroll
-           on their own inside it. */
-        <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 flex-1 min-h-0 flex flex-col">
-          <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2 shrink-0">
+           on their own inside it, and run to the card's edges (padding on
+           top only). */
+        <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden pt-6 flex-1 min-h-0 flex flex-col">
+          <h3 className="text-base font-semibold text-gray-800 mb-4 px-6 flex items-center gap-2 shrink-0">
             <FileText className="w-5 h-5 text-indigo-500" /> {t('projectDetails.projectFiles')}
           </h3>
           {filesLoading ? (
-            <p className="text-sm text-gray-400">{t('projectDetails.loadingFiles')}</p>
+            <p className="text-sm text-gray-400 px-6 pb-6">{t('projectDetails.loadingFiles')}</p>
           ) : filesError ? (
-            <p className="text-sm text-red-500">{filesError}</p>
+            <p className="text-sm text-red-500 px-6 pb-6">{filesError}</p>
           ) : files.length ? (
             // One block: the list, a divider, the file.
-            <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border border-gray-200 rounded-lg overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border-t border-gray-200 overflow-hidden">
               <div className="lg:col-span-4 p-2 min-h-0 overflow-y-auto border-b lg:border-b-0 lg:border-r border-gray-200">
                 {renderFileNodes(fileTree)}
               </div>
@@ -913,7 +914,7 @@ export default function ProjectDetails() {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-gray-400">{t('projectDetails.noFilesFoundInThis')}</p>
+            <p className="text-sm text-gray-400 px-6 pb-6">{t('projectDetails.noFilesFoundInThis')}</p>
           )}
         </div>
       )}

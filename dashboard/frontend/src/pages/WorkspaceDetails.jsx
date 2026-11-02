@@ -831,8 +831,9 @@ const WorkspaceDetails = () => {
       })()}
 
       {activeTab === 'files' && (
-        <div className="bg-white p-6 shadow-md rounded-lg flex flex-col flex-1 min-h-0">
-          <div className="flex items-center justify-between mb-4 shrink-0">
+        // Padding on top only: the tree and the file run to the card's edges.
+        <div className="bg-white pt-6 shadow-md rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
+          <div className="flex items-center justify-between mb-4 px-6 shrink-0">
             <h3 className="text-lg font-bold flex items-center">
               <FileText className="w-5 h-5 mr-2" />
               {t('workspaceDetails.files')}
@@ -855,7 +856,7 @@ const WorkspaceDetails = () => {
             </button>
           </div>
           {(files.length || folders.length) ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border border-gray-200 rounded-lg overflow-hidden">
+            <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border-t border-gray-200 overflow-hidden">
               {/* One block: the tree, a divider, the file. The tree is a
                   picker; the file is the thing being read. Two of twelve
                   columns is enough for names, and the other ten stop wrapping
@@ -959,7 +960,7 @@ const WorkspaceDetails = () => {
               </div>
             </div>
           ) : (
-            <p className="text-gray-500 text-sm">{t('workspaceDetails.noFilesFound')}</p>
+            <p className="text-gray-500 text-sm px-6 pb-6">{t('workspaceDetails.noFilesFound')}</p>
           )}
         </div>
       )}
