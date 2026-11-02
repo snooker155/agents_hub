@@ -320,3 +320,65 @@ def test_the_sweep_is_off_by_switch(api_role, monkeypatch):
     removed = _sweep_sees(monkeypatch, [{"name": "agents-hub-node-inst_x", "created": "2026-01-01 00:00:00 +0000 UTC"}])
     monkeypatch.setenv("AGENTS_HUB_CONTAINER_SWEEP", "0")
     assert carrier.reap_orphan_containers() == [] and removed == []
+
+
+def _stale_docker_carrier(heartbeat_minutes_ago: float = 10):
+    base = registry.ensure_instance("swe_agent", kind=store.RESIDENT_KIND, workspace="default", state="standby")
+    iid = base["instance_id"]
+    beat = datetime.now(timezone.utc) - timedelta(minutes=heartbeat_minutes_ago)
+    store.update(iid, carrier_status="running", carrier_mode="docker", carrier_host="gone-worker",
+                 container_name=f"agents-hub-node-{iid[:12]}", heartbeat_at=beat.isoformat(),
+                 carrier_started_at=(beat - timedelta(hours=2)).isoformat())
+    return iid, beat
+
+
+@pytest.fixture
+def daemon(monkeypatch):
+    """The daemon this process talks to: ``started`` maps a container name to
+    when it was started; ``removed`` lists what was removed."""
+    state = SimpleNamespace(started={}, removed=[])
+    monkeypatch.setattr(carrier, "_container_started_at", lambda name: state.started.get(name))
+    monkeypatch.setattr("managers.container_manager.remove_container",
+                        lambda name: state.removed.append(name) or True)
+    return state
+
+
+def test_a_written_off_container_left_on_this_daemon_is_removed(fake_agent, api_role, daemon):
+    """Its worker is gone (compose recreated the workers): the stop never reached
+    it and its retired token cannot tell it, so it would run on as an orphan."""
+    iid, beat = _stale_docker_carrier()
+    name = store.get(iid)["container_name"]
+    daemon.started[name] = beat - timedelta(hours=2)
+    synced = carrier.sync(store.get(iid))
+    assert synced["carrier_status"] == "stopped" and "no heartbeat" in synced["carrier_error"]
+    assert daemon.removed == [name]
+
+
+def test_a_container_started_after_the_last_beat_is_left_alone(fake_agent, api_role, daemon):
+    # Not the written-off carrier: one of the same name started since.
+    iid, beat = _stale_docker_carrier()
+    daemon.started[store.get(iid)["container_name"]] = beat + timedelta(seconds=30)
+    carrier.sync(store.get(iid))
+    assert daemon.removed == []
+
+
+def test_a_written_off_container_on_another_daemon_is_not_touched(fake_agent, api_role, daemon):
+    iid, _ = _stale_docker_carrier()
+    assert carrier.sync(store.get(iid))["carrier_status"] == "stopped"
+    assert daemon.removed == []
+
+
+def test_a_fresh_remote_carrier_is_not_removed(fake_agent, api_role, daemon):
+    iid, beat = _stale_docker_carrier(heartbeat_minutes_ago=0.1)
+    daemon.started[store.get(iid)["container_name"]] = beat - timedelta(hours=2)
+    assert carrier.sync(store.get(iid))["carrier_status"] == "running"
+    assert daemon.removed == []
+
+
+def test_a_docker_start_time_with_nanoseconds_is_read(monkeypatch):
+    monkeypatch.setattr("managers.container_manager._run", lambda cmd, timeout=10: SimpleNamespace(
+        returncode=0, stdout="2026-11-01T23:37:34.178188123Z\n"))
+    assert carrier._container_started_at("x") == datetime(2026, 11, 1, 23, 37, 34, 178188, tzinfo=timezone.utc)
+    monkeypatch.setattr("managers.container_manager._run", lambda cmd, timeout=10: SimpleNamespace(
+        returncode=1, stdout=""))
+    assert carrier._container_started_at("x") is None

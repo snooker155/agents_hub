@@ -51,7 +51,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -847,9 +847,72 @@ def sync(instance: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         # instance the supervisor starts in its place.
         from common import run_tokens
         run_tokens.retire_for_instance(instance["instance_id"], grace=0)
+        _remove_left_container(instance)
     updated = update_from_process(instance["instance_id"], "stopped", exit_code=-1, error=reason)
     fail_in_progress_runs(instance["instance_id"], reason)
     return updated or instance
+
+
+def _parse_ts(value: Any) -> Optional[datetime]:
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _container_started_at(name: str) -> Optional[datetime]:
+    """When the daemon this process talks to started the container ``name``,
+    or None (no such container, no docker)."""
+    from managers.container_manager import _run
+    try:
+        result = _run(["docker", "inspect", "-f", "{{.State.StartedAt}}", name], timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    # Docker gives nanoseconds; fromisoformat takes microseconds.
+    raw = (result.stdout or "").strip()
+    head, dot, frac = raw.partition(".")
+    if dot:
+        digits = "".join(ch for ch in frac if ch.isdigit())
+        raw = f"{head}.{digits[:6]}" + frac[len(digits):]
+    return _parse_ts(raw)
+
+
+def _remove_left_container(instance: Dict[str, Any]) -> None:
+    """Remove the container of a carrier written off for a missing heartbeat,
+    when it still runs on the daemon this process talks to.
+
+    Its worker is gone (``docker compose up`` recreated the workers, a host
+    went down), so the stop never reached it and its retired token never
+    tells it so either: it reaches hub state only through that worker's
+    address, which no longer answers, and it would run on beside the carrier
+    the supervisor starts in its place. Only a container that was started no
+    later than the carrier's last sign of life is removed, so a fresh carrier
+    of the same instance under the same name is left alone. A container on
+    another host's daemon is not seen here and stays to that host.
+    """
+    if instance.get("carrier_mode") != "docker" and instance.get("kind") != "container":
+        return
+    name = instance.get("container_name")
+    if not name or os.environ.get("AGENTS_HUB_RUN_NETWORK"):
+        return  # nothing to remove, or this is an agent container itself (no docker here)
+    last_seen = _parse_ts(instance.get("heartbeat_at") or "")
+    if last_seen is None:
+        # Never reported in: its container came up within the start's grace.
+        begun = _parse_ts(instance.get("spawn_beat_at") or instance.get("carrier_started_at") or "")
+        last_seen = begun + timedelta(seconds=SPAWN_GRACE_SECONDS) if begun else None
+    started = _container_started_at(str(name))
+    if started is None or last_seen is None or started > last_seen:
+        return
+    from managers.container_manager import remove_container
+    removed = remove_container(str(name))
+    append_log(instance, f"[carrier_cleanup] container {name} of the written-off carrier "
+                         + ("removed" if removed else "could not be removed")
+                         + f" (from {socket.gethostname()})")
+    log.info("written-off carrier %s: container %s %s", instance.get("instance_id"), name,
+             "removed" if removed else "not removed")
 
 
 def get(instance_id: str) -> Optional[Dict[str, Any]]:
