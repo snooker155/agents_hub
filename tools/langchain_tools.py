@@ -436,6 +436,24 @@ class InvokeAgentInput(BaseModel):
     )
 
 
+def _delegating_run_id() -> Optional[str]:
+    """The run making this delegation: an enclosing delegation first, then the
+    calling agent's own loop. None when neither names one."""
+    from common import stream_sink
+    nested = stream_sink.current_run_id()
+    if nested:
+        return nested
+    try:
+        from agents.agent_loop import current_state
+        state = current_state()
+        if state is not None and state.run_id:
+            return str(state.run_id)
+    except Exception:  # noqa: BLE001 - no loop state: the context variable may still name the run
+        log.debug("run_agent_tool: no loop state for the parent run", exc_info=True)
+    from common.agent_context import current_run_id
+    return current_run_id.get() or None
+
+
 @tool("run_agent_tool", args_schema=InvokeAgentInput)
 def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
                    model: Optional[str] = None) -> str:
@@ -552,6 +570,10 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
         run_id = new_unique_run_id()
         title = input.strip()[:60]
         started = _utc_now_iso()
+        # The run that delegates: a gated call of the worker waits in that
+        # run's chat turn, with its card in the turn's bubble
+        # (common/tool_approvals.py chat_context reads the chain back).
+        parent_run_id = _delegating_run_id()
 
         # The worker runs in-process — no subprocess stdout tee, no SSE stream —
         # so scaffold a chat-format log file and write tool/LLM markers into it
@@ -587,6 +609,7 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
             session_type="chat",
             message_origin="delegation",
             channel="chat_delegate",
+            parent_run_id=parent_run_id,
             workspace=ws or None,
             title=title,
             status="running",
@@ -637,13 +660,13 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
         deleg_depth = 0
         extra_cbs = [stop_cb]
         if emitter is not None:
-            parent_run_id = stream_sink.current_run_id()
+            enclosing_run_id = stream_sink.current_run_id()
             deleg_scope = stream_sink.delegation_scope(run_id)
             deleg_depth = deleg_scope[2]
             emitter({
                 "type": "delegation_start",
                 "run_id": run_id,
-                "parent_run_id": parent_run_id,
+                "parent_run_id": enclosing_run_id,
                 "agent_id": agent_id,
                 "agent_name": spec.name,
                 "depth": deleg_depth,
@@ -661,11 +684,12 @@ def run_agent_tool(agent_id: str, input: str, workspace: Optional[str] = None,
         from common.agent_context import current_view_binding
         view_binding: dict = {}
         _view_binding_token = current_view_binding.set(view_binding)
-        # run_id is tracked via open_run/close_run_from_result below; we don't pass
-        # it into invoke_agent because StandardAgent.run() takes no positional run_id.
+        # The worker's loop runs under this run's id, so its tool guard finds
+        # the record above (the delegation, its parent) instead of no run at all.
         try:
             invocation = invoke_agent(
-                worker, input, stats=stats, extra_callbacks=extra_cbs, catch_exceptions=True
+                worker, input, stats=stats, extra_callbacks=extra_cbs, catch_exceptions=True,
+                run_id=run_id,
             )
         finally:
             current_view_binding.reset(_view_binding_token)

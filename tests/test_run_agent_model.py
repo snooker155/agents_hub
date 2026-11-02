@@ -90,3 +90,35 @@ def test_the_delegating_system_agents_can_pick_a_model():
         assert "delegate_task_tool" not in get_agent(agent_id).tools, agent_id
     prompt = get_factory().load_definition("assistant")["system_prompt"]
     assert "Choosing a model for a delegate" in prompt
+
+
+def test_the_delegate_runs_under_its_own_run_parented_on_the_caller(chat, monkeypatch):
+    """The worker's loop gets the delegation's run id and the record names the
+    run that delegated, so a gated call of the worker waits in that run's chat
+    turn (common/tool_approvals.py chat_context)."""
+    from types import SimpleNamespace
+
+    from agents.agent_loop import LoopState, reset_state, set_state
+    from managers.run_manager import get_run_by_id
+
+    worker = SimpleNamespace(provider="openai", model="gpt-4o-mini", system_prompt="")
+    monkeypatch.setattr("agents.agent_factory.create_agent", lambda agent_id, workspace=None, **p: worker)
+    seen: dict = {}
+
+    def fake_invoke(agent, prompt, **kwargs):
+        seen["run_id"] = kwargs.get("run_id")
+        seen["record"] = get_run_by_id(kwargs.get("run_id") or "")
+        result = SimpleNamespace(ok=True, agent_output="done", error=None)
+        return SimpleNamespace(result=result, process={}, duration_ms=1)
+
+    monkeypatch.setattr("agents.agent_invoke.invoke_agent", fake_invoke)
+    monkeypatch.setattr("managers.run_manager.close_run_from_result", lambda *a, **k: None)
+    token = set_state(LoopState(run_id="turn-run-1", agent_id="main-agent", workspace="default"))
+    try:
+        out = _call()
+    finally:
+        reset_state(token)
+    assert out["ok"] is True, out
+    assert seen["run_id"] == out["run_id"]
+    assert seen["record"]["parent_run_id"] == "turn-run-1"
+    assert seen["record"]["message_origin"] == "delegation"

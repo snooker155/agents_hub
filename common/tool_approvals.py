@@ -169,16 +169,40 @@ def get(approval_id: str) -> Optional[Dict[str, Any]]:
 
 
 def list_for_run(run_id: str, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Every call of ``run_id`` that waited, oldest first; ``status`` narrows it."""
+    """Every call of ``run_id`` that waited, oldest first; ``status`` narrows it.
+
+    The calls of the agents this run delegated to (run_agent_tool) count as
+    its own: they wait in the same chat turn, and the turn's bubble shows them.
+    """
+    ids = [str(run_id), *_delegated_runs(str(run_id))]
+    marks = ", ".join("?" for _ in ids)
+    sql = f"SELECT * FROM tool_approvals WHERE run_id IN ({marks})"
+    params: List[Any] = list(ids)
     if status:
-        rows = db.get_conn().execute(
-            "SELECT * FROM tool_approvals WHERE run_id = ? AND status = ? ORDER BY created_at",
-            (str(run_id), str(status))).fetchall()
-    else:
-        rows = db.get_conn().execute(
-            "SELECT * FROM tool_approvals WHERE run_id = ? ORDER BY created_at",
-            (str(run_id),)).fetchall()
-    return [_row(r) for r in rows]
+        sql += " AND status = ?"
+        params.append(str(status))
+    sql += " ORDER BY created_at"
+    return [_row(r) for r in db.get_conn().execute(sql, tuple(params)).fetchall()]
+
+
+def _delegated_runs(run_id: str) -> List[str]:
+    """The runs ``run_id`` delegated to, and theirs in turn, by ``parent_run_id``."""
+    found: List[str] = []
+    frontier = [run_id]
+    for _ in range(_MAX_DELEGATION_DEPTH):
+        if not frontier:
+            break
+        marks = ", ".join("?" for _ in frontier)
+        try:
+            rows = db.get_conn().execute(
+                f"SELECT run_id FROM runs WHERE parent_run_id IN ({marks}) AND message_origin = ?",
+                (*frontier, DELEGATION_ORIGIN)).fetchall()
+        except Exception:  # noqa: BLE001 - no runs table here: the run's own calls still list
+            log.debug("tool approvals: delegated runs of %s unreadable", run_id, exc_info=True)
+            break
+        frontier = [str(r["run_id"]) for r in rows if str(r["run_id"]) not in found]
+        found.extend(frontier)
+    return found
 
 
 def list_for_flow_run(flow_run_id: str, *, status: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -390,8 +414,9 @@ def chat_context(run_id: str) -> Optional[Dict[str, Any]]:
     Held only when all of these are true: there is a run id; the turn streams
     to a client (``common.stream_sink`` has an emitter, which every chat
     pipeline installs); and the run is a dashboard chat turn, by its record's
-    ``message_origin`` or, for a run started inside one (a delegated agent),
-    by the turn's own source.
+    ``message_origin`` (a delegated agent's run by the turn it was delegated
+    from, through ``parent_run_id``) or, for any other run started inside
+    one, by the turn's own source.
     """
     run_id = str(run_id or "").strip()
     if not run_id:
@@ -409,8 +434,9 @@ def chat_context(run_id: str) -> Optional[Dict[str, Any]]:
     except Exception:  # noqa: BLE001 - an unreadable run cannot be answered from its chat
         log.debug("tool approvals: run %s unreadable", run_id, exc_info=True)
         return None
-    if str(run.get("session_type") or "") == "chat":
-        origin = str(run.get("message_origin") or "chat")
+    turn = _delegating_turn(run, transport)
+    if str(turn.get("session_type") or "") == "chat":
+        origin = str(turn.get("message_origin") or "chat")
     else:
         origin = _turn_source() or ""
     if origin not in INTERACTIVE_ORIGINS:
@@ -420,11 +446,43 @@ def chat_context(run_id: str) -> Optional[Dict[str, Any]]:
         "run": run,
         "emitter": emitter,
         "transport": transport,
-        "owner": _owner_of(run),
+        "owner": _owner_of(turn),
         # A chat run's task_id is its conversation (chat/runs.py create_chat_run).
-        "conversation_id": (run.get("task_id") if str(run.get("session_type") or "") == "chat"
-                            else None) or run.get("conversation_id"),
+        "conversation_id": (turn.get("task_id") if str(turn.get("session_type") or "") == "chat"
+                            else None) or turn.get("conversation_id"),
     }
+
+
+#: ``message_origin`` of a run another agent started with run_agent_tool
+#: (tools/langchain_tools.py): a chat run, but not a turn anybody typed.
+DELEGATION_ORIGIN = "delegation"
+
+#: How many delegations deep the turn is looked for.
+_MAX_DELEGATION_DEPTH = 8
+
+
+def _delegating_turn(run: Dict[str, Any], transport: Any) -> Dict[str, Any]:
+    """The chat turn ``run`` belongs to: the run itself, or for a delegated
+    agent's run the turn its delegations started from, by ``parent_run_id``.
+    The run itself when the chain breaks, so the caller's rule decides."""
+    current = run
+    for _ in range(_MAX_DELEGATION_DEPTH):
+        if str(current.get("message_origin") or "") != DELEGATION_ORIGIN:
+            return current
+        parent_id = str(current.get("parent_run_id") or "")
+        if not parent_id:
+            break
+        try:
+            parent = transport.get_run(parent_id) or {}
+        except Exception:  # noqa: BLE001 - an unreadable parent leaves the delegation's own record
+            log.debug("tool approvals: parent run %s unreadable", parent_id, exc_info=True)
+            break
+        if not parent:
+            break
+        current = parent
+    # No turn found: a delegation still holds inside a dashboard turn's own
+    # source, as any other run started inside one does.
+    return {} if str(current.get("message_origin") or "") == DELEGATION_ORIGIN else current
 
 
 # -------------------- a background flow node or team turn --------------------

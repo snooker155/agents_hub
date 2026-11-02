@@ -149,6 +149,45 @@ def test_a_run_started_inside_a_dashboard_turn_holds_too():
         stream_sink.reset_emitter(token)
 
 
+def test_an_agent_delegated_from_a_dashboard_turn_holds_in_that_turn():
+    # run_agent_tool's record: a chat run of origin "delegation", parented on
+    # the turn that delegated (tools/langchain_tools.py). No turn context, as
+    # in a chat turn the backend runs itself.
+    turn, child, grandchild = _rid(), _rid(), _rid()
+    _open_run(turn, task_id="conv-turn")
+    _open_run(child, origin="delegation", task_id=None, parent_run_id=turn)
+    _open_run(grandchild, origin="delegation", task_id=None, parent_run_id=child)
+    token = stream_sink.set_emitter(lambda e: None)
+    try:
+        for run_id in (child, grandchild):
+            ctx = tool_approvals.chat_context(run_id)
+            assert ctx is not None and ctx["run_id"] == run_id
+            assert ctx["conversation_id"] == "conv-turn"
+        orphan = _rid()
+        _open_run(orphan, origin="delegation", task_id=None)
+        assert tool_approvals.chat_context(orphan) is None
+        telegram, from_telegram = _rid(), _rid()
+        _open_run(telegram, origin="telegram")
+        _open_run(from_telegram, origin="delegation", task_id=None, parent_run_id=telegram)
+        assert tool_approvals.chat_context(from_telegram) is None
+    finally:
+        stream_sink.reset_emitter(token)
+
+
+def test_a_turn_lists_the_calls_its_delegated_agents_wait_on():
+    turn, child, grandchild, other = _rid(), _rid(), _rid(), _rid()
+    _open_run(turn)
+    _open_run(child, origin="delegation", task_id=None, parent_run_id=turn)
+    _open_run(grandchild, origin="delegation", task_id=None, parent_run_id=child)
+    _open_run(other)
+    rows = [tool_approvals.open_approval(run_id=r, tool="run_shell", tool_input={"command": r})
+            for r in (turn, child, grandchild, other)]
+    assert [a["approval_id"] for a in tool_approvals.list_for_run(turn)] == \
+        [r["approval_id"] for r in rows[:3]]
+    assert [a["approval_id"] for a in tool_approvals.list_for_run(child, status="pending")] == \
+        [r["approval_id"] for r in rows[1:3]]
+
+
 # ── the guard in a chat turn ─────────────────────────────────────────────────
 
 def test_approve_runs_the_call_in_the_same_turn(chat_turn):
