@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowUpRight, ChevronDown, ChevronUp, FlaskConical, Repeat, Zap, Bot } from 'lucide-react';
-import { SKILL_TOOL, shortText, fmtDurationMs, plainMarkdown, preview } from './processUtils';
+import { ArrowUpRight, ChevronDown, ChevronUp, FlaskConical, Maximize2, Repeat, Zap, Bot } from 'lucide-react';
+import { DELEGATION_TOOLS, SKILL_TOOL, shortText, fmtDurationMs, plainMarkdown, preview } from './processUtils';
 import { toolInline } from './toolFormatters';
+import { toolErrorText } from './toolStatus';
 import ProcessNode from './ProcessNode';
+import ProcessStepModal, { ToolCallDetail } from './ProcessStepModal';
 import StepText from './StepText';
 import SaveAsEvalCaseDialog from './evals/SaveAsEvalCaseDialog';
 import { getMessageInsights } from '../api';
@@ -38,10 +40,6 @@ function fmtTimestamp(ts) {
   return Number.isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
 }
 
-// The tools that run another agent and return its result. Their call is shown as
-// the delegated run itself, with that run's own steps inside, rather than as one
-// more tool with a JSON blob for output.
-const DELEGATION_TOOLS = new Set(['run_agent_tool', 'delegate_task_tool']);
 
 // The run log keeps only the head of a long tool result, so the fields are read
 // with a pattern when the JSON no longer parses. The input is logged as a
@@ -57,8 +55,9 @@ function parseDelegation(tc) {
   const out = data && typeof data === 'object' ? data : {};
   return {
     runId: out.run_id || field(tc.output, 'run_id'),
-    agent: out.agent?.name || out.agent_id || field(tc.input, 'agent_id') || field(tc.output, 'agent_id'),
-    output: typeof out.output === 'string' ? out.output : '',
+    // The result names the agent that ran; the call may name a role (@coder).
+    agent: out.agent?.name || out.agent_id || field(tc.output, 'agent_id') || field(tc.input, 'agent_id'),
+    output: typeof out.output === 'string' ? out.output : field(tc.output, 'output'),
     failed: out.ok === false || /^\s*\{\s*"ok"\s*:\s*false/.test(String(tc.output || '')),
   };
 }
@@ -81,72 +80,110 @@ function liveRun(d) {
   };
 }
 
-// A delegated run inside the run that asked for it: fetched when opened, and
-// drawn with the same graph, so a delegation nested in it opens the same way.
-// While the turn is live it is open and grows with each step the worker takes.
-function DelegatedRunNode({ tc, flush = false }) {
+// The delegated run in the modal: the stored run once the delegation is over,
+// the worker's steps as they stream while it runs. A run with nothing stored
+// (no log on this machine) still shows the call's input and result.
+function DelegatedRunDetail({ tc, live, runId, streaming }) {
   const { t } = useI18n();
-  const live = tc.delegation || null;
-  const [open, setOpen] = useState(Boolean(live?.running));
   const [runs, setRuns] = useState(null);
   const [error, setError] = useState('');
-  const parsed = parseDelegation(tc);
-  const runId = parsed.runId || live?.run_id || '';
-  const agentName = parsed.agent || live?.agent_name || live?.agent_id;
-  const output = parsed.output || live?.output || '';
-  const failed = parsed.failed || live?.ok === false;
   useEffect(() => {
-    if (!open || !runId || runs || live) return undefined;
+    if (!runId || streaming) return undefined;
     let cancelled = false;
     getMessageInsights(runId)
       .then((r) => { if (!cancelled) setRuns(r.data?.message_runs || []); })
       .catch((e) => { if (!cancelled) setError(e?.response?.data?.detail || t('processGraph.delegatedRunUnavailable')); });
     return () => { cancelled = true; };
-  }, [open, runId, runs, live, t]);
+  }, [runId, streaming, t]);
+  const stored = !streaming && runs?.length ? runs : null;
+  const graphRuns = stored || (live ? [liveRun(live)] : null);
+  if (graphRuns) {
+    return (
+      <ProcessGraph messageRuns={graphRuns} titleByAgent showDetailsLink={false} followLast={Boolean(live?.running)} />
+    );
+  }
+  if (runId && !error && runs === null) {
+    return <p className="text-xs text-gray-400 italic">{t('processGraph.loadingDelegatedRun')}</p>;
+  }
   return (
-    <div className={`${flush ? 'border-y' : 'rounded-lg border'} border-indigo-200 bg-indigo-50/40`}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-2 px-2.5 py-2 text-left"
-      >
-        {open ? <ChevronUp className="w-3.5 h-3.5 text-gray-400 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />}
-        <Repeat className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-        <span className="text-[11px] font-semibold text-indigo-700 shrink-0">
-          {t('processGraph.delegatedTo', { agent: agentName || '…' })}
-        </span>
-        {live?.running && (
-          <span className="flex gap-1 shrink-0">
-            {[0, 150, 300].map((d) => (
-              <span key={d} className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
-            ))}
-          </span>
-        )}
-        {failed && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-100 text-red-700">{t('processGraph.failed')}</span>
-        )}
-        {!open && (
-          <span className="text-[11px] text-gray-500 truncate">{preview(output || tc.input)}</span>
-        )}
-      </button>
-      {/* The worker's graph fills the card to its sides and bottom; only the
-          plain text lines keep a padding. */}
-      {open && (
-        <div className="space-y-1.5">
-          {live ? (
-            <ProcessGraph messageRuns={[liveRun(live)]} titleByAgent nested />
-          ) : !runId ? (
-            <div className="px-2.5 pb-2.5 text-[11px] text-gray-700 whitespace-pre-wrap break-all">{tc.output || tc.input}</div>
-          ) : error ? (
-            <div className="px-2.5 pb-2.5 text-[11px] text-red-600">{error}</div>
-          ) : runs === null ? (
-            <div className="px-2.5 pb-2.5 text-[11px] text-gray-400 italic">{t('processGraph.loadingDelegatedRun')}</div>
-          ) : (
-            <ProcessGraph messageRuns={runs} titleByAgent nested />
-          )}
-        </div>
-      )}
+    <div className="space-y-3">
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <ToolCallDetail tc={tc} />
     </div>
+  );
+}
+
+// A delegated run inside the run that asked for it: a card like a tool call's,
+// with the result on it; a click opens the delegated run's own steps in a
+// modal, drawn with the same graph, so a delegation nested in it opens the
+// same way. While the turn is live the card and the modal grow with each step
+// the worker takes; once it is over the stored run replaces what the stream
+// carried, which may be missing steps (a page opened mid-run, a worker on
+// another machine). The card and the modal link to the run's own page.
+export function DelegatedRunNode({ tc, flush = false }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const live = tc.delegation || null;
+  const parsed = parseDelegation(tc);
+  const runId = parsed.runId || live?.run_id || '';
+  const agentName = parsed.agent || live?.agent_name || live?.agent_id;
+  const output = parsed.output || live?.output || '';
+  const failed = parsed.failed || live?.ok === false;
+  const streaming = Boolean(live && (live.running || !runId));
+  const lastTool = live?.running ? (live.tools || []).at(-1) : null;
+  const task = live?.input || field(tc.input, 'input') || tc.input;
+  const title = t('processGraph.delegatedTo', { agent: agentName || '…' });
+  const runLink = (testId) => runId && (
+    <a
+      href={`/messages/${runId}`}
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-indigo-500 hover:text-indigo-700 shrink-0"
+      data-testid={testId}
+    >
+      <ArrowUpRight className="w-3 h-3" /> {t('processGraph.openRun')}
+    </a>
+  );
+  return (
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={(e) => { if (!e.target.closest('a, button')) setOpen(true); }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); } }}
+        title={t('processGraph.openFull')}
+        className={`group/step ${flush ? 'border-y' : 'rounded-lg border'} border-indigo-200 bg-indigo-50/40 px-2.5 py-2 cursor-pointer transition-shadow hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300`}
+        data-testid="delegated-run"
+      >
+        <div className="flex items-center gap-2">
+          <Repeat className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+          <span className="text-[11px] font-semibold text-indigo-700 truncate">{title}</span>
+          {live?.running && (
+            <span className="flex gap-1 shrink-0">
+              {[0, 150, 300].map((d) => (
+                <span key={d} className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: `${d}ms` }} />
+              ))}
+            </span>
+          )}
+          {failed && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-red-100 text-red-700 shrink-0">{t('processGraph.failed')}</span>
+          )}
+          <span className="ml-auto flex items-center gap-2 shrink-0">
+            {runLink('delegated-run-link')}
+            <Maximize2 className="w-3 h-3 text-gray-400 opacity-0 group-hover/step:opacity-100 group-focus-visible/step:opacity-100" />
+          </span>
+        </div>
+        <div className="mt-1 text-[11px] leading-4 text-gray-600 line-clamp-3 break-words">
+          {output ? preview(plainMarkdown(output), 300)
+            : lastTool ? [lastTool.tool, toolInline(lastTool.tool, lastTool.input)].filter(Boolean).join(' · ')
+              : preview(task, 300)}
+        </div>
+      </div>
+      {open && (
+        <ProcessStepModal title={title} labelColor="text-indigo-700" actions={runLink('delegated-run-modal-link')} onClose={() => setOpen(false)}>
+          <DelegatedRunDetail tc={tc} live={live} runId={runId} streaming={streaming} />
+        </ProcessStepModal>
+      )}
+    </>
   );
 }
 
@@ -470,6 +507,7 @@ export default function ProcessGraph({
                     // think/plan tools carry their content as the input and merely
                     // echo it back as output, so the "in:" line is redundant noise.
                     const isReasoningTool = tc.tool === 'think' || tc.tool === 'plan';
+                    const errorText = toolErrorText(tc);
                     return (
                       <ProcessNode
                         flush={nested}
@@ -481,14 +519,21 @@ export default function ProcessGraph({
                         hint={toolInline(tc.tool, tc.input)}
                         tool={tc}
                       >
+                        {/* A failed call says why first, so the four lines of the card
+                            show it whatever the length of the input. */}
+                        {errorText && (
+                          <div className="text-[11px] text-red-700 whitespace-pre-wrap break-words" data-testid="tool-error">
+                            <span className="font-medium">{t('processGraph.error')}:</span> {errorText}
+                          </div>
+                        )}
                         {!isReasoningTool && tc.input && (
                           <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
                             <span className="text-gray-500">{t('processGraph.in2')}</span> {tc.input}
                           </div>
                         )}
                         {(tc.output || (isReasoningTool && tc.input)) && (
-                          <div className="text-[11px] text-emerald-700 whitespace-pre-wrap break-all">
-                            <span className="text-emerald-600">{t('processGraph.out2')}</span> {tc.output || tc.input}
+                          <div className={`text-[11px] whitespace-pre-wrap break-all ${errorText ? 'text-gray-600' : 'text-emerald-700'}`}>
+                            <span className={errorText ? 'text-gray-500' : 'text-emerald-600'}>{t('processGraph.out2')}</span> {tc.output || tc.input}
                           </div>
                         )}
                       </ProcessNode>

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('../../api', () => ({
   getMessageInsights: vi.fn(() => Promise.resolve({ data: { message_runs: [{
@@ -41,19 +41,35 @@ describe('ProcessGraph', () => {
     expect(screen.queryByText('To eval case')).toBeNull();
   });
 
-  it('opens a delegated run with its own steps, even from a truncated log line', async () => {
+  it('opens a delegated run with its own steps in a modal, even from a truncated log line', async () => {
     show({});
+    // The card shows the result; its steps wait for the modal.
+    expect(screen.getByTestId('delegated-run')).toHaveTextContent('Built v1');
+    expect(screen.queryByText('Tool: mesh_new')).toBeNull();
     fireEvent.click(screen.getByText('Delegated to visualizer'));
     await waitFor(() => expect(getMessageInsights).toHaveBeenCalledWith('child'));
-    expect(await screen.findByText('Tool: mesh_new')).toBeInTheDocument();
+    const modal = screen.getByTestId('process-step-modal');
+    expect(await within(modal).findByText('Tool: mesh_new')).toBeInTheDocument();
+    expect(within(modal).getByTestId('delegated-run-modal-link')).toHaveAttribute('href', '/messages/child');
   });
 
-  it('draws the delegated run without a timeline dot of its own', async () => {
-    const { container } = show({});
+  it('shows the call itself when the delegated run has no steps stored', async () => {
+    getMessageInsights.mockResolvedValueOnce({ data: { message_runs: [] } });
+    show({});
     fireEvent.click(screen.getByText('Delegated to visualizer'));
-    await screen.findByText('Tool: mesh_new');
-    // One dot: the parent run's. The delegated run hangs off its step.
-    expect(container.querySelectorAll('.rounded-full.bg-indigo-500')).toHaveLength(1);
+    const modal = screen.getByTestId('process-step-modal');
+    expect(await within(modal).findByTestId('tool-call-status')).toBeInTheDocument();
+    expect(within(modal).getByText(/Built v1/)).toBeInTheDocument();
+  });
+
+  it('closes only the top modal on Escape', async () => {
+    show({});
+    fireEvent.click(screen.getByText('Delegated to visualizer'));
+    const modal = screen.getByTestId('process-step-modal');
+    fireEvent.click(await within(modal).findByText('Tool: mesh_new'));
+    expect(screen.getAllByTestId('process-step-modal')).toHaveLength(2);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getAllByTestId('process-step-modal')).toHaveLength(1);
   });
 
   it('grows a live delegated run step by step, without fetching it', () => {
@@ -69,11 +85,48 @@ describe('ProcessGraph', () => {
       }],
     };
     const { rerender } = render(<I18nProvider><ProcessGraph messageRuns={[live]} /></I18nProvider>);
+    // The card names the step the worker is on; the modal draws them all.
+    expect(screen.getByTestId('delegated-run')).toHaveTextContent('mesh_new');
+    fireEvent.click(screen.getByText('Delegated to Visualizer'));
     expect(screen.getByText('Tool: mesh_new')).toBeInTheDocument();
     const d = live.tools[0].delegation;
     const next = { ...live, tools: [{ ...live.tools[0], delegation: { ...d, tools: [...d.tools, { step: 2, tool: 'set_color', input: 'red', running: true }] } }] };
     rerender(<I18nProvider><ProcessGraph messageRuns={[next]} /></I18nProvider>);
     expect(screen.getByText('Tool: set_color')).toBeInTheDocument();
     expect(getMessageInsights).not.toHaveBeenCalled();
+  });
+
+  it('links the delegated run to its page and names the agent that ran, not the role', () => {
+    const run = { ...RUN, tools: [{ ...RUN.tools[0], input: "{'agent_id': '@coder', 'input': 'cube'}" }] };
+    render(<I18nProvider><ProcessGraph messageRuns={[run]} /></I18nProvider>);
+    expect(screen.getByText('Delegated to visualizer')).toBeInTheDocument();
+    expect(screen.getByTestId('delegated-run-link')).toHaveAttribute('href', '/messages/child');
+  });
+
+  it('opens the stored run once a live delegation is over', async () => {
+    getMessageInsights.mockClear();
+    const done = {
+      ...RUN,
+      tools: [{
+        ...RUN.tools[0],
+        delegation: { run_id: 'child', agent_id: 'visualizer', input: 'cube', running: false, ok: true, tools: [] },
+      }],
+    };
+    render(<I18nProvider><ProcessGraph messageRuns={[done]} /></I18nProvider>);
+    fireEvent.click(screen.getByText('Delegated to visualizer'));
+    await waitFor(() => expect(getMessageInsights).toHaveBeenCalledWith('child'));
+    expect(await screen.findByText('Tool: mesh_new')).toBeInTheDocument();
+  });
+
+  it('says why a tool call failed ahead of its input', () => {
+    const failed = {
+      ...RUN,
+      tools: [{
+        step: 1, tool: 'run_shell', input: '{"command": "ls"}', status: 'error',
+        output: '{"ok": false, "error": "run_shell needs the user\'s approval", "code": "approval_required"}',
+      }],
+    };
+    render(<I18nProvider><ProcessGraph messageRuns={[failed]} /></I18nProvider>);
+    expect(screen.getByTestId('tool-error')).toHaveTextContent("Error: run_shell needs the user's approval");
   });
 });

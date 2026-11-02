@@ -1,6 +1,8 @@
-import { SKILL_TOOL, preview } from './processUtils';
+import { DELEGATION_TOOLS, SKILL_TOOL, preview } from './processUtils';
 import { toolInline } from './toolFormatters';
 import ProcessNode from './ProcessNode';
+import { DelegatedRunNode } from './ProcessGraph';
+import { toolErrorText } from './toolStatus';
 import StepText from './StepText';
 import { useI18n } from '../i18n';
 
@@ -85,6 +87,11 @@ export default function MessageProcessFlow({ runs = [] }) {
             }
 
             const tc = entry.item;
+            // A delegation opens into the run it started, as on the task and
+            // chat graphs, with a link to that run's page.
+            if (DELEGATION_TOOLS.has(tc.tool)) {
+              return <DelegatedRunNode key={entry.key} tc={tc} />;
+            }
             if (tc.tool === SKILL_TOOL) {
               return (
                 <ProcessNode
@@ -113,6 +120,7 @@ export default function MessageProcessFlow({ runs = [] }) {
             // think/plan tools carry their content as the input and merely echo
             // it back as output, so the "in:" line is redundant noise.
             const isReasoningTool = tc.tool === 'think' || tc.tool === 'plan';
+            const errorText = toolErrorText(tc);
             return (
               <ProcessNode
                 key={entry.key}
@@ -123,14 +131,21 @@ export default function MessageProcessFlow({ runs = [] }) {
                 hint={toolInline(tc.tool, tc.input)}
                 tool={tc}
               >
+                {/* A failed call says why first, so the four lines of the card
+                    show it whatever the length of the input. */}
+                {errorText && (
+                  <div className="text-[11px] text-red-700 whitespace-pre-wrap break-words" data-testid="tool-error">
+                    <span className="font-medium">{t('processGraph.error')}:</span> {errorText}
+                  </div>
+                )}
                 {!isReasoningTool && tc.input && (
                   <div className="text-[11px] text-gray-700 whitespace-pre-wrap break-all">
                     <span className="text-gray-500">{t('messageProcessFlow.in')}</span> {tc.input}
                   </div>
                 )}
                 {(tc.output || (isReasoningTool && tc.input)) && (
-                  <div className="text-[11px] text-emerald-700 whitespace-pre-wrap break-all">
-                    <span className="text-emerald-600">{t('messageProcessFlow.out')}</span> {tc.output || tc.input}
+                  <div className={`text-[11px] whitespace-pre-wrap break-all ${errorText ? 'text-gray-600' : 'text-emerald-700'}`}>
+                    <span className={errorText ? 'text-gray-500' : 'text-emerald-600'}>{t('messageProcessFlow.out')}</span> {tc.output || tc.input}
                   </div>
                 )}
               </ProcessNode>

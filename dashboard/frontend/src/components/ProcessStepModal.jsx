@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import ObjectTree from './ObjectTree';
 import ToolStatusMark from './ToolStatusMark';
-import { toolStatus } from './toolStatus';
+import { toolErrorText, toolStatus } from './toolStatus';
 import PolicyBadge from './PolicyBadge';
 import { parseToolOutput } from './toolFormatters';
 import { displayToolOutput, parseWebOutput } from './webOutput';
@@ -56,6 +56,7 @@ export function ToolCallDetail({ tc }) {
   const { t } = useI18n();
   const echo = tc.tool === 'think' || tc.tool === 'plan';
   const status = toolStatus(tc);
+  const error = toolErrorText(tc);
   return (
     <div className="space-y-4">
       {!echo && (
@@ -63,6 +64,14 @@ export function ToolCallDetail({ tc }) {
           <ToolStatusMark status={status} />
           <span>{t(`chat.toolStatus.${status}`)}</span>
         </div>
+      )}
+      {/* The reason first: a failed call's output is a JSON envelope or a
+          traceback, and the message in it is what the reader came for. */}
+      {error && (
+        <section data-testid="tool-call-error">
+          <h4 className="text-xs font-semibold text-red-700 mb-1.5">{t('processGraph.error')}</h4>
+          <pre className="rounded-lg border border-red-200 bg-red-50 p-3 font-mono text-xs leading-5 text-red-700 whitespace-pre-wrap break-words">{error}</pre>
+        </section>
       )}
       {tc.evaluated_permission && (
         <div className="flex items-center gap-2 text-xs text-gray-500" data-testid="tool-call-policy">
@@ -82,20 +91,32 @@ export function ToolCallDetail({ tc }) {
   );
 }
 
-export default function ProcessStepModal({ title, labelColor = 'text-gray-800', onClose, children }) {
+// Open modals, the newest last: a step inside a modal (a delegated run's
+// graph) opens one of its own on top, and Escape closes only that one.
+const openModals = [];
+
+// `actions` sit in the header before the close button (a link to the run).
+export default function ProcessStepModal({ title, labelColor = 'text-gray-800', onClose, actions = null, children }) {
   const { t } = useI18n();
+  const [me] = useState(() => ({}));
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    openModals.push(me);
+    return () => { openModals.splice(openModals.indexOf(me), 1); };
+  }, [me]);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape' && openModals[openModals.length - 1] === me) onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [me, onClose]);
   return createPortal(
     <div
       className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
       // React events cross the portal into the tree that opened it: stop them
       // here so a click or a key in the modal never reaches a clickable card.
       onClick={(e) => { e.stopPropagation(); onClose(); }}
-      onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') onClose(); }}
+      onKeyDown={(e) => e.stopPropagation()}
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -107,9 +128,12 @@ export default function ProcessStepModal({ title, labelColor = 'text-gray-800', 
       >
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100">
           <h3 className={`text-sm font-semibold truncate ${labelColor}`}>{title}</h3>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label={t('common.close')}>
-            <X className="w-5 h-5" />
-          </button>
+          <span className="flex items-center gap-3 shrink-0">
+            {actions}
+            <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label={t('common.close')}>
+              <X className="w-5 h-5" />
+            </button>
+          </span>
         </div>
         <div className="px-5 py-4 overflow-y-auto text-sm text-gray-800">{children}</div>
       </div>
