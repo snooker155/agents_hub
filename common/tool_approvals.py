@@ -359,9 +359,15 @@ def transport_for(run_id: str) -> Any:
     """The state transport for ``run_id``'s approvals: the run's own transport
     in its own process (a run container may only have HTTP), direct database
     access everywhere else (the backend, a service replica). The same rule
-    agents/loop_ext/steering.py applies."""
+    agents/loop_ext/steering.py applies.
+
+    A process with no database (``AGENTS_HUB_REMOTE_STATE``) always goes over
+    its transport: an instance carrier runs many turns and the agents they
+    delegate to under one environment, so ``AGENT_RUN_ID`` names none of them,
+    and a direct write would be refused (common/remote_state.py)."""
+    from common import remote_state
     from common.state_transport import DirectStateTransport, get_state_transport
-    if run_id and os.environ.get("AGENT_RUN_ID", "") == run_id:
+    if remote_state.is_remote() or (run_id and os.environ.get("AGENT_RUN_ID", "") == run_id):
         try:
             return get_state_transport()
         except Exception:  # noqa: BLE001 - an unreadable setting falls back to direct access

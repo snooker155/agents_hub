@@ -405,6 +405,19 @@ def test_the_http_transport_posts_to_the_run_state_routes(monkeypatch):
     ]
 
 
+def test_a_process_with_no_database_waits_over_its_transport(monkeypatch):
+    # An instance carrier: no AGENT_RUN_ID (it runs many turns), and the
+    # agents its turns delegate to run under their own run ids in it.
+    from common import remote_state
+    from common.state_transport import DirectStateTransport, HttpStateTransport
+
+    monkeypatch.delenv("AGENT_RUN_ID", raising=False)
+    monkeypatch.setenv("AGENT_RUN_STATE_TRANSPORT", "http")
+    assert isinstance(tool_approvals.transport_for("delegate-1"), DirectStateTransport)
+    monkeypatch.setenv(remote_state.ENV, "1")
+    assert isinstance(tool_approvals.transport_for("delegate-1"), HttpStateTransport)
+
+
 # ── the workspace setting ────────────────────────────────────────────────────
 
 def test_the_wait_is_set_per_workspace_from_settings():
