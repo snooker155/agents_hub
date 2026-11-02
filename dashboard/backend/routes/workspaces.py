@@ -342,7 +342,9 @@ def _target_rel_path(name: str, path: Optional[str], file_id: Optional[str]) -> 
 async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
     """The folder's files and directories as workspace-relative paths, and
     ``ids``: path to file id for each file the registry knows, the id a link
-    to the file carries."""
+    to the file carries. Saved tool outputs (``tool-outputs/``,
+    agents/tool_spill.py) are left out: the run page links them by id."""
+    from agents.tool_spill import SPILL_DIR
     root = _require_workspace_folder(name)
     pattern = glob or "**/*"
     files = []
@@ -350,6 +352,9 @@ async def list_workspace_files_by_name(name: str, glob: Optional[str] = "**/*"):
     try:
         for p in root.rglob("*"):
             try:
+                rel_parts = p.relative_to(root).parts
+                if SPILL_DIR in rel_parts:
+                    continue
                 rel = p.relative_to(root).as_posix()
                 if p.is_dir():
                     directories.append(rel)

@@ -105,6 +105,21 @@ def test_listing_carries_the_ids_and_content_reads_by_id(root, client):
     assert client.get(f"/api/workspaces/{WS}/file-content", params={"path": "loose.txt"}).status_code == 200
 
 
+def test_listing_leaves_out_saved_tool_outputs(root, client):
+    _write(root, "tool-outputs/run-1/001-web_fetch.txt", "long")
+    _write(root, "project/tool-outputs/run-2/001-run_shell.txt", "long")
+    _write(root, "kept.txt")
+    rec = service.register_path(WS, "tool-outputs/run-1/001-web_fetch.txt")
+
+    body = client.get(f"/api/workspaces/{WS}/files").json()
+    shown = body["files"] + body["directories"]
+    assert not [p for p in shown if "tool-outputs" in p]
+    assert "kept.txt" in body["files"] and "project" in body["directories"]
+    # The run page still opens a saved output by its id.
+    resp = client.get(f"/api/workspaces/{WS}/file-content", params={"file_id": rec["file_id"]})
+    assert resp.status_code == 200 and resp.json()["content"] == "long"
+
+
 def test_an_unknown_or_foreign_id_is_404_and_nothing_is_400(root, client):
     other = WORKSPACES_ROOT / "elsewhere"
     other.mkdir(parents=True, exist_ok=True)
