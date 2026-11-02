@@ -28,6 +28,7 @@ from tools.task_management import (
     list_tasks,
     update_task,
     stop_task,
+    delete_task,
     block_task,
     set_task_dependencies,
     create_sequence,
@@ -513,6 +514,7 @@ class AgentFactory:
             list_tasks,
             update_task,
             stop_task,
+            delete_task,
             block_task,
             set_task_dependencies,
             create_sequence,
@@ -1238,7 +1240,7 @@ class AgentFactory:
         # storing tasks in memory (resolved tool instances, so group aliases count).
         _TASK_TOOL_NAMES = {
             "create_task", "add_subtask", "update_task", "get_task",
-            "list_tasks", "stop_task", "block_task", "set_task_dependencies",
+            "list_tasks", "stop_task", "delete_task", "block_task", "set_task_dependencies",
             "create_sequence", "get_task_result",
         }
         if _tool_names & _TASK_TOOL_NAMES:

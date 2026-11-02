@@ -61,6 +61,7 @@ NEEDS_APPROVAL: frozenset[str] = frozenset({
     "system_prune_branches",
     "delete_agent_tool",
     "delete_flow_tool",
+    "delete_task",
     "delete_team_tool",
     "delete_loop_tool",
     "delete_project_tool",
@@ -133,6 +134,7 @@ CALL_DESCRIBERS: Dict[str, str] = {
     "hub_action": "tools.hub_action:describe_call",
     "setup_step": "tools.setup_guide:describe_call",
     "schedule_pulse": "tools.proactive_setup:describe_call",
+    "delete_task": "tools.task_management:describe_call",
 }
 
 

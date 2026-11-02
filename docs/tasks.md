@@ -220,6 +220,15 @@ the list, and a file from another workspace is refused.
 
 An optional rubric that defines done, with maximum attempts, an optional grader model and an optional pass threshold. After every completed agent run, an independent model grades the result against the rubric and decides whether to retry or pass. See [outcomes](outcomes.md).
 
+## Deleting
+
+A person deletes a task from its page, `ah task delete` or `DELETE /api/tasks/{id}`;
+an agent uses the `delete_task` tool, which waits for a person's yes on a card
+that names the task and how many subtasks go with it. Either way the subtasks,
+results and activity logs go too, and tasks that depended on it stop waiting.
+The tool refuses a task of another workspace, the task its own run works on (or
+one above it), and a task an agent is working on: `stop_task` comes first.
+
 ## Agent version
 
 A task can be pinned to a stored agent version via `agent_version`; `null` means the live definition. The run page shows that version against the agent's current one and offers rollback. The task page has a version picker for live or stored versions. See [agents](agents.md) for details.

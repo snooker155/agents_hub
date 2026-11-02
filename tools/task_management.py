@@ -34,6 +34,8 @@ from tasks.service import (
     list_tasks as svc_list_tasks,
     update_task as svc_update_task,
     stop_task as svc_stop_task,
+    delete_task as svc_delete_task,
+    get_subtasks as svc_get_subtasks,
     block_task as svc_block_task,
     set_dependencies as svc_set_dependencies,
     find_task_by_key as svc_find_task_by_key,
@@ -581,6 +583,107 @@ def stop_task(id: str) -> str:
         return _json_err(f"Failed to stop task: {e}")
 
 
+class DeleteTaskInput(BaseModel):
+    id: str = Field(..., description="UUID or key of the task to delete, with its subtasks")
+
+    @field_validator("id")
+    @classmethod
+    def _valid_id(cls, v):
+        return str(_uuid_from_str(v))
+
+
+def _run_task_id() -> Optional[UUID]:
+    """The task this run works on, or None in a chat (agents/hooks.py reads it
+    the same way)."""
+    import os
+    from common.agent_context import current_task_id
+    raw = current_task_id.get() or os.environ.get("AGENT_TASK_ID") or ""
+    try:
+        return UUID(str(raw)) if raw else None
+    except ValueError:
+        return None
+
+
+def _holds_run_task(task_id: UUID) -> bool:
+    """Whether deleting ``task_id`` with its subtasks would take the run's own
+    task with it: the run's task is ``task_id`` or lies under it."""
+    current = _run_task_id()
+    seen: set = set()
+    while current is not None and current not in seen:
+        if current == task_id:
+            return True
+        seen.add(current)
+        task = svc_get_task(current)
+        current = task.parent_id if task else None
+    return False
+
+
+def _subtree(task: Task) -> List[Task]:
+    """``task`` and every task under it."""
+    out, stack, seen = [], [task], set()
+    while stack:
+        t = stack.pop()
+        if t.id in seen:
+            continue
+        seen.add(t.id)
+        out.append(t)
+        stack.extend(svc_get_subtasks(t.id))
+    return out
+
+
+@tool("delete_task", args_schema=DeleteTaskInput)
+def delete_task(id: str) -> str:
+    """Delete a task for good, with all its subtasks, their results and
+    activity logs. Tasks that waited on it stop waiting. A task an agent is
+    working on is refused: stop it with stop_task first. Use only when the
+    person asked to delete the task; to end work on it, use stop_task.
+    Returns JSON with the number of deleted tasks."""
+    try:
+        tid = _uuid_from_str(id)
+        existing = svc_get_task(tid)
+        if not existing or _task_out_of_scope(existing):
+            return _task_not_found(id)
+        if _holds_run_task(tid):
+            return _json_err("This run works on this task or one of its subtasks; "
+                             "a run cannot delete its own task", code="forbidden", extra={"id": id})
+        busy = [t for t in _subtree(existing) if t.status == TaskStatus.in_progress]
+        if busy:
+            return _json_err("An agent is working on this task or one of its subtasks; "
+                             "stop it with stop_task first", code="conflict",
+                             extra={"id": id, "in_progress": [t.key or str(t.id) for t in busy]})
+        deleted = svc_delete_task(tid, cascade=True)
+        if not deleted:
+            return _task_not_found(id)
+        return _json_ok({"deleted": deleted, "task": {
+            "id": str(existing.id), "key": existing.key, "title": existing.title}})
+    except Exception as e:  # noqa: BLE001 - the error goes back to the caller as a message
+        return _json_err(f"Failed to delete task: {e}")
+
+
+def describe_call(tool_input: Any) -> str:
+    """The approval card's sentence for one ``delete_task`` call, or "" when
+    the call names no task this run can reach (the call itself then says why)."""
+    import json
+    if isinstance(tool_input, str):
+        try:
+            tool_input = json.loads(tool_input)
+        except ValueError:
+            return ""
+    if not isinstance(tool_input, dict):
+        return ""
+    try:
+        task = svc_get_task(_uuid_from_str(str(tool_input.get("id") or "")))
+    except Exception:  # noqa: BLE001 - the card falls back to the generic sentence
+        return ""
+    if task is None or _task_out_of_scope(task):
+        return ""
+    name = f"{task.key} “{task.title}”" if task.key else f"“{task.title}”"
+    under = len(_subtree(task)) - 1
+    if under:
+        return f"Delete task {name} and its {under} subtask{'s' if under > 1 else ''}, with their results and logs."
+    return f"Delete task {name} with its result and log."
+
+
 class BlockTaskInput(BaseModel):
     id: str
     reason: str = Field(..., min_length=1)
@@ -740,8 +843,10 @@ __all__ = [
     "list_tasks",
     "update_task",
     "stop_task",
+    "delete_task",
     "block_task",
     "set_task_dependencies",
     "create_sequence",
     "get_task_result",
+    "describe_call",
 ]

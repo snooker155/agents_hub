@@ -63,7 +63,7 @@ _INSIDE_TOOLS = frozenset({
     "run_shell", "run_code",
     # the workspace's tasks and their schedule
     "create_task", "add_subtask", "get_task", "list_tasks", "update_task", "stop_task",
-    "block_task", "set_task_dependencies", "create_sequence", "get_task_result",
+    "delete_task", "block_task", "set_task_dependencies", "create_sequence", "get_task_result",
     "schedule_task", "list_scheduled", "cancel_scheduled", "update_scheduled",
     # other agents of this workspace (each child runs isolated in turn)
     "run_agent_tool", "delegate_task_tool", "wait_for_agent_tool", "get_agent_status_tool",

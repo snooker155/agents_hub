@@ -173,6 +173,7 @@ const FORMATTERS = {
   get_task: (a) => a.id ?? '',
   update_task: (a) => a.id ?? '',
   stop_task: (a) => a.id ?? '',
+  delete_task: (a) => a.id ?? '',
   block_task: (a) => (a.reason ? `${a.id} (${a.reason})` : (a.id ?? '')),
   set_task_dependencies: (a) => a.id ?? '',
   create_sequence: (a) => (Array.isArray(a.task_ids) ? a.task_ids.join(', ') : ''),

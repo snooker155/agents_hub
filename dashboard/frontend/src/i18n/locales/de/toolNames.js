@@ -26,6 +26,7 @@ export default {
   list_tasks: { label: 'Aufgaben auflisten', description: 'Listet Aufgaben in kompakter Form.' },
   update_task: { label: 'Aufgabe ändern', description: 'Ändert Felder einer Aufgabe.' },
   stop_task: { label: 'Aufgabe stoppen', description: 'Setzt eine Aufgabe auf gestoppt.' },
+  delete_task: { label: 'Aufgabe löschen', description: 'Löscht eine Aufgabe mit ihren Unteraufgaben, Ergebnissen und Protokollen.' },
   block_task: { label: 'Aufgabe blockieren', description: 'Blockiert eine Aufgabe mit Begründung.' },
   set_task_dependencies: { label: 'Abhängigkeiten setzen', description: 'Legt fest, welche Aufgaben vorher erledigt sein müssen.' },
   create_sequence: { label: 'Sequenz erstellen', description: 'Ordnet Aufgaben in eine Reihenfolge.' },

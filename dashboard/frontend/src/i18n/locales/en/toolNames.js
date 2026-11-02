@@ -28,6 +28,7 @@ export default {
   list_tasks: { label: 'List Tasks', description: 'List tasks in compact form.' },
   update_task: { label: 'Update Task', description: 'Change task fields.' },
   stop_task: { label: 'Stop Task', description: 'Set a task to stopped.' },
+  delete_task: { label: 'Delete Task', description: 'Delete a task with its subtasks, results and logs.' },
   block_task: { label: 'Block Task', description: 'Block a task with a reason.' },
   set_task_dependencies: { label: 'Set Task Dependencies', description: 'Set which tasks must be done before this one.' },
   create_sequence: { label: 'Create Sequence', description: 'Put tasks into one ordered sequence.' },

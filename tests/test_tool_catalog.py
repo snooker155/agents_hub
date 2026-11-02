@@ -62,7 +62,7 @@ def _tool_objects_by_id() -> dict:
     from tools.graph_builder import GRAPH_BUILDER_TOOLS
     from tools.task_management import (
         create_task, add_subtask, get_task, list_tasks, update_task, stop_task,
-        block_task, set_task_dependencies, create_sequence, get_task_result,
+        delete_task, block_task, set_task_dependencies, create_sequence, get_task_result,
     )
     from tools.langchain_tools import (
         list_agents_tool, assign_agent_tool, assign_flow_tool, start_agent_tool, run_agent_tool,
@@ -119,7 +119,7 @@ def _tool_objects_by_id() -> dict:
         *GEOMETRY_TOOLS, *create_geometry_tools(None),
         *GRAPH_BUILDER_TOOLS,
         create_task, add_subtask, get_task, list_tasks, update_task, stop_task,
-        block_task, set_task_dependencies, create_sequence, get_task_result,
+        delete_task, block_task, set_task_dependencies, create_sequence, get_task_result,
         list_agents_tool, assign_agent_tool, assign_flow_tool, start_agent_tool, run_agent_tool,
         list_flows_tool, run_flow_tool, reject_assignment_tool, stop_agent_tool,
         get_agent_status_tool, wait_for_agent_tool, create_agent_tool,

@@ -43,7 +43,7 @@ NON_IDEMPOTENT_TOOLS: FrozenSet[str] = frozenset({
     "run_shell", "run_code", "browser_act", "git_publish", "git_commit", "git_push",
     "deploy_project", "stop_project_deployment",
     "write_file", "delete_file", "apply_unified_diff", "create_file", "move_file",
-    "create_task", "add_subtask", "update_task", "set_task_dependencies",
+    "create_task", "add_subtask", "update_task", "set_task_dependencies", "delete_task",
     "assign_agent", "start_agent", "run_agent", "run_flow", "trigger_flow", "run_new_flow_tool",
     "send_telegram", "send_message", "notify", "create_notification", "post_webhook",
     "schedule_job", "create_view", "view_serve", "delegate", "run_scheduled_now",
@@ -387,6 +387,8 @@ CAPABILITY_GRANTS: Dict[str, FrozenSet[str]] = {
 REVIEWED_NO_GRANT: FrozenSet[str] = frozenset({
     # task_management group members outside the catalog
     "block_task", "stop_task", "create_sequence",
+    # delete_task returns only the count and the deleted task's id, key and title
+    "delete_task",
     # project-graph builders — write into the workspace's own structure graph
     "add_graph_node", "add_graph_edge", "delete_graph_node", "delete_graph_edge",
     "clear_graph",

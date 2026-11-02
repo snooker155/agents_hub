@@ -325,11 +325,11 @@ def _coordination_specs() -> List[ToolSpec]:
 def _task_management_specs() -> List[ToolSpec]:
     from tools.task_management import (
         create_task, add_subtask, get_task, list_tasks, update_task, stop_task,
-        block_task, set_task_dependencies, create_sequence, get_task_result,
+        delete_task, block_task, set_task_dependencies, create_sequence, get_task_result,
     )
     tools = [
         create_task, add_subtask, get_task, list_tasks, update_task, stop_task,
-        block_task, set_task_dependencies, create_sequence, get_task_result,
+        delete_task, block_task, set_task_dependencies, create_sequence, get_task_result,
     ]
     return [spec_from_tool(t, category="task_management") for t in tools]
 
