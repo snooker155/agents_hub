@@ -514,12 +514,16 @@ const TaskDetails = () => {
   const liveWorking = !!runningSubtask || (task.status === 'in_progress' && !!task.assigned_agent_run_id);
   const doneCount = subtasks.filter(s => s.status === 'done').length;
   const progress = subtasks.length > 0 ? Math.round((doneCount / subtasks.length) * 100) : (task.status === 'done' ? 100 : 0);
+  // Live output is a tab only while an agent works on the task; the page
+  // opens on it then, and on Results otherwise.
+  const agentWorking = liveWorking || task.agent_state === 'running';
+  const shownTab = shownTab === 'live' && !agentWorking ? 'results' : activeTab;
   const TABS = [
-    { id: 'live',      label: t('taskDetails.tabs.live'), Icon: Radio },
+    ...(agentWorking ? [{ id: 'live', label: t('taskDetails.tabs.live'), Icon: Radio }] : []),
     { id: 'results',   label: t('taskDetails.tabs.results'), Icon: FileText },
+    { id: 'execution', label: t('taskDetails.tabs.execution'), Icon: Clock },
     { id: 'subtasks',  label: t('taskDetails.tabs.subtasks', { count: subtasks.length }), Icon: Layers },
     { id: 'activity',  label: t('taskDetails.tabs.activity'), Icon: History },
-    { id: 'execution', label: t('taskDetails.tabs.execution'), Icon: Clock },
     { id: 'logs',      label: t('taskDetails.tabs.logs'), Icon: Terminal },
     { id: 'files',     label: t('taskDetails.tabs.files'), Icon: Folder },
   ];
@@ -731,11 +735,11 @@ const TaskDetails = () => {
                 }
               }}
               className={`inline-flex items-center gap-1.5 px-4 py-2 first:pl-0 text-sm font-semibold border-b-2 transition-colors ${
-                activeTab === tid
+                shownTab === tid
                   ? 'border-indigo-600 text-indigo-700'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
-              aria-current={activeTab === tid ? 'page' : undefined}
+              aria-current={shownTab === tid ? 'page' : undefined}
             >
               <Icon className="w-4 h-4" />
               {label}
@@ -746,10 +750,10 @@ const TaskDetails = () => {
 
       {/* The open tab's area: as tall as the tab, the page scrolls past it. */}
       <div className="min-h-[14rem] flex flex-col">
-      {/* ── Live output tab: always there. An agent working through the
+      {/* ── Live output tab: while an agent works. One working through the
           subtasks runs on each subtask's own session, so the panel follows
           the subtask being worked on, else the task's own session. ── */}
-      {activeTab === 'live' && (
+      {shownTab === 'live' && (
         <div className="h-[34rem] flex flex-col bg-white shadow-sm border border-gray-200 rounded-xl p-6">
           <LiveRunStream
             key={liveSession || 'none'}
@@ -767,7 +771,7 @@ const TaskDetails = () => {
       )}
 
       {/* ── Subtasks tab ── */}
-      {activeTab === 'subtasks' && (
+      {shownTab === 'subtasks' && (
         <SubtasksTab
           agents={agents}
           deletingSubtasks={deletingSubtasks}
@@ -781,23 +785,23 @@ const TaskDetails = () => {
       )}
 
       {/* ── Execution tab ── */}
-      {activeTab === 'execution' && (
+      {shownTab === 'execution' && (
         <ExecutionTab flowLoading={flowLoading} flowRuns={flowRuns} />
       )}
 
       {/* ── Activity tab ── */}
-      {activeTab === 'activity' && (
+      {shownTab === 'activity' && (
         <ActivityTab activityItems={activityItems} runs={executionLog} />
       )}
 
       {/* ── Results tab ── */}
-      {activeTab === 'results' && (
+      {shownTab === 'results' && (
         <ResultsTab hasResults={hasResults} taskResults={taskResults}
           onOpenFile={(path) => { setActiveTab('files'); loadFileContent(path); }} />
       )}
 
       {/* ── Logs tab ── */}
-      {activeTab === 'logs' && (
+      {shownTab === 'logs' && (
         <LogsTab
           activeRunId={logRunId || activeRunId}
           logs={logs}
@@ -807,7 +811,7 @@ const TaskDetails = () => {
       )}
 
       {/* ── Files tab ── */}
-      {activeTab === 'files' && (
+      {shownTab === 'files' && (
         <TaskFilesTab
           task={task}
           onTaskChanged={fetchData}
