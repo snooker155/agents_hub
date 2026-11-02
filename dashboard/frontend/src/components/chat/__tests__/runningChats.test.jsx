@@ -71,6 +71,9 @@ describe('ChatSidebar', () => {
     expect(marked.map((row) => row.textContent)).toEqual([
       expect.stringContaining('mine'), expect.stringContaining('elsewhere'),
     ]);
+    // The spinner stands where the delete button is: a running chat has none.
+    expect(marked.every((row) => !row.querySelector('[title="chat.delete"]'))).toBe(true);
+    expect(rows.find((row) => row.textContent.includes('idle')).querySelector('[title="chat.delete"]')).not.toBeNull();
   });
 
   it('searches the chats: titles at once, then a message hit and an older chat from the server', async () => {

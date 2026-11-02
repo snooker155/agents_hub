@@ -141,16 +141,6 @@ export default function ChatSidebar() {
                   : 'text-gray-600 hover:bg-white hover:shadow-sm'
                 }`}
             >
-              {/* Being answered now: a turn this tab sent (it goes on while
-                  another conversation is open), or anyone else's. A chat at
-                  rest has no icon. */}
-              {(turns?.[conv.id] || runningChats?.has(conv.id)) && (
-                <Loader
-                  className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 animate-spin text-indigo-500"
-                  data-testid="chat-conv-running"
-                  aria-label={t('chat.answering')}
-                />
-              )}
               <div className="flex-1 min-w-0">
                 <div className="truncate leading-5">{conv.title}</div>
                 {conv.match && (
@@ -226,7 +216,16 @@ export default function ChatSidebar() {
                   })()}
                 </div>
               </div>
-              {conv.origin !== 'assistant' && (
+              {/* Being answered now: a turn this tab sent (it goes on while
+                  another conversation is open), or anyone else's. The spinner
+                  takes the delete button's place until the turn ends. */}
+              {(turns?.[conv.id] || runningChats?.has(conv.id)) ? (
+                <Loader
+                  className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 animate-spin text-indigo-500"
+                  data-testid="chat-conv-running"
+                  aria-label={t('chat.answering')}
+                />
+              ) : conv.origin !== 'assistant' && (
                 <button
                   onClick={(e) => deleteConversation(conv.id, e)}
                   className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-gray-400 hover:text-red-500 flex-shrink-0 transition-opacity"
