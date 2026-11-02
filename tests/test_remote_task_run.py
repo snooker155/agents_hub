@@ -86,6 +86,22 @@ def test_a_task_run_with_tools_needs_no_database(acme, tmp_path):
     assert str(getattr(done.status, "value", done.status)) in ("resolved", "review"), done.status
 
 
+def test_a_task_file_reaches_a_run_with_no_database(acme, tmp_path):
+    """A file attached to the task is copied into the working directory at
+    the start, and read_workspace_file reads it by id: both get the bytes
+    through the hub (files.service.read_bytes), never from the row."""
+    from files.service import create_file
+    from tasks.service import create_task
+    record = create_file("acme", "brief.md", b"quarterly numbers: 42", source="upload")
+    task = create_task("read the brief", "summarise brief.md", workspace="acme",
+                       file_ids=[record["file_id"]])
+    script = [{"tool": "read_workspace_file", "args": {"file_id": record["file_id"]}}]
+    text = _run(tmp_path, ["analyst", "--task-id", str(task.id), "--workspace", str(acme)],
+                run_id="run-task-file", script=script, task_id=str(task.id))
+    assert (acme / "task_files" / "brief.md").read_bytes() == b"quarterly numbers: 42"
+    assert "quarterly numbers: 42" in text.split("[tool_start] tool=read_workspace_file", 1)[1]
+
+
 def test_a_gated_call_parks_the_task_through_the_hub(acme, tmp_path):
     """run_shell asks a person first: the decision is stored and the task
     parked awaiting approval, all by the hub."""

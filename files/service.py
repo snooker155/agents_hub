@@ -405,7 +405,13 @@ def _storage_key(file_id: str) -> str:
 def local_path(file_id: str) -> Path:
     """A readable local copy of the file's content, fetched from the object
     store first when this host does not have it. ``KeyError`` when the file
-    is unknown, deleted, or its content is nowhere."""
+    is unknown, deleted, or its content is nowhere.
+
+    A process with no database (an agent container) has neither the row nor
+    the hub's state folder: it gets the bytes through the hub
+    (:func:`read_bytes`) and keeps a copy under its own state root."""
+    if remote_state.is_remote():
+        return _remote_copy(file_id)
     key = _storage_key(file_id)
     path = blobs.ensure_local(key)
     if path is None:
@@ -413,6 +419,18 @@ def local_path(file_id: str) -> Path:
     return Path(path)
 
 
+def _remote_copy(file_id: str) -> Path:
+    record = get_file(str(file_id))
+    if record is None:
+        raise KeyError(file_id)
+    path = AGENTS_HUB_ROOT / FILES_DIR / "_from_hub" / str(record["file_id"]) / disk_name(record["name"])
+    if not path.is_file() or path.stat().st_size != int(record.get("size") or 0):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(read_bytes(record["file_id"]))
+    return path
+
+
+@remote_state.hub_call("file:file_id")
 def read_bytes(file_id: str) -> bytes:
     """The file's content. ``KeyError`` when missing (see :func:`local_path`)."""
     key = _storage_key(file_id)
@@ -674,6 +692,7 @@ def write_folder_file(workspace: str, rel_path: str, data: bytes, *, source: str
     return record
 
 
+@remote_state.hub_call("workspace")
 def unregister_path(workspace: str, rel_path: str) -> bool:
     """Tombstone the record of a workspace file deleted from the folder. The
     content is gone already, so only the row changes. False when the path
