@@ -55,7 +55,7 @@ _KEY = "install"
 STEPS = ("hello", "language", "appearance", "model", "choose_model", "voice", "search", "memory",
          "demo", "done")
 LANGUAGES = ("en", "ru", "de")
-THEMES = ("light", "dark", "system")
+THEMES = ("light", "dark")
 ACTIONS = ("progress", "finish", "restart")
 #: The guided setup's steps these screens already asked about: one still open
 #: when the first run ends was declined there, and the guide starts it skipped.

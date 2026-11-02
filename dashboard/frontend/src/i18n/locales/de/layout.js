@@ -21,10 +21,10 @@ export default {
     iosHint: 'In Safari auf Teilen tippen, dann Zum Home-Bildschirm. Der Hub öffnet sich dann über sein eigenes Symbol im Vollbild.',
   },
   theme: {
-    light: 'Hell',
-    dark: 'Dunkel',
-    system: 'System',
-    tooltip: 'Design: {{theme}} (zum Wechseln klicken)',
+    to: {
+      light: 'Zum hellen Design wechseln',
+      dark: 'Zum dunklen Design wechseln',
+    },
   },
   language: {
     label: 'Sprache',

@@ -21,10 +21,10 @@ export default {
     iosHint: 'In Safari, tap Share, then Add to Home Screen. The hub opens from its own icon, full screen.',
   },
   theme: {
-    light: 'Light',
-    dark: 'Dark',
-    system: 'System',
-    tooltip: 'Theme: {{theme}} (click to cycle)',
+    to: {
+      light: 'Switch to the light theme',
+      dark: 'Switch to the dark theme',
+    },
   },
   language: {
     label: 'Language',

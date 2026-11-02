@@ -15,10 +15,9 @@ export default {
   },
   appearance: {
     title: 'Choose a look',
-    subtitle: 'Light, dark, or following your system.',
+    subtitle: 'Light or dark. It starts as your system has it.',
     light: 'Light',
     dark: 'Dark',
-    system: 'Automatic',
     later: 'You can change it any time in the header.',
   },
   model: {

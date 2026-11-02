@@ -26,7 +26,7 @@ import { checkStoredWorkspace, loadWorkspaceSummary } from '../api/workspaceSumm
 // (a page rendered on its own in a test) sees the built-in setting instead
 // of undefined.
 export const ThemeContext = createContext({
-  theme: 'system', setTheme: () => {}, resolvedMode: 'light',
+  theme: 'light', setTheme: () => {}, resolvedMode: 'light',
 });
 
 /** Dispatched on `window` by WorkspaceContext when the selected workspace

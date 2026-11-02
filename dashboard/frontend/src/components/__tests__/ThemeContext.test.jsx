@@ -143,4 +143,29 @@ describe('ThemeProvider palette resolution', () => {
 
     expect(lightness('--surface-page')).toBeLessThan(0.25);
   });
+
+  it('follows the OS with no choice made, and stops once one is', async () => {
+    let dark = true;
+    const listeners = new Set();
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      matches: dark, media: query,
+      addEventListener: (_, fn) => listeners.add(fn),
+      removeEventListener: (_, fn) => listeners.delete(fn),
+    }));
+    // A value an older build kept counts as no choice.
+    localStorage.setItem('theme', 'system');
+
+    render(<ThemeProvider><Probe /></ThemeProvider>);
+    expect(screen.getByTestId('mode').textContent).toBe('dark');
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+
+    dark = false;
+    await act(async () => { listeners.forEach((fn) => fn()); });
+    expect(screen.getByTestId('mode').textContent).toBe('light');
+
+    await act(async () => { fireEvent.click(screen.getByText('dark')); });
+    expect(localStorage.getItem('theme')).toBe('dark');
+    await act(async () => { listeners.forEach((fn) => fn()); });
+    expect(screen.getByTestId('mode').textContent).toBe('dark');
+  });
 });

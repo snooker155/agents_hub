@@ -1,17 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { ThemeContext, WORKSPACE_EVENT, effectiveMode, repaintPalette, resolvePalette } from './theme';
+import { ThemeContext, WORKSPACE_EVENT, repaintPalette, resolvePalette } from './theme';
 
 function applyTheme(theme) {
-  const root = document.documentElement;
-  if (theme === 'dark') {
-    root.classList.add('dark');
-  } else if (theme === 'light') {
-    root.classList.remove('dark');
-  } else {
-    // system
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    if (prefersDark) root.classList.add('dark');
-    else root.classList.remove('dark');
+  document.documentElement.classList.toggle('dark', theme === 'dark');
+}
+
+const DARK_QUERY = '(prefers-color-scheme: dark)';
+
+function systemMode() {
+  try {
+    return window.matchMedia(DARK_QUERY).matches ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
+}
+
+// Only 'light' or 'dark' is a choice; anything else (nothing stored, or the
+// 'system' an older build kept) means no choice yet, and the OS decides.
+function storedChoice() {
+  try {
+    const v = localStorage.getItem('theme');
+    return v === 'light' || v === 'dark' ? v : null;
+  } catch {
+    return null;
   }
 }
 
@@ -25,7 +36,10 @@ function syncThemeColor() {
 }
 
 export function ThemeProvider({ children }) {
-  const [theme, setThemeState] = useState(() => localStorage.getItem('theme') || 'system');
+  // The theme is light or dark. Until the person picks one, it follows the OS.
+  const [choice, setChoice] = useState(storedChoice);
+  const [system, setSystem] = useState(systemMode);
+  const theme = choice || system;
 
   // One effect, in this order: the `dark` class, then the last known palette
   // repainted for the new mode in the same tick (otherwise the inline
@@ -42,20 +56,15 @@ export function ThemeProvider({ children }) {
     Promise.resolve(resolvePalette(theme)).catch(() => {}).finally(syncThemeColor);
   }, [theme]);
 
-  // Watch system preference changes when theme === 'system': the same three
-  // steps, since the ramp is picked per mode and the OS just changed it.
+  // With no choice made, an OS switch between light and dark switches the page.
   useEffect(() => {
-    if (theme !== 'system') return;
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = () => {
-      applyTheme('system');
-      repaintPalette('system');
-      syncThemeColor();
-      Promise.resolve(resolvePalette('system')).catch(() => {}).finally(syncThemeColor);
-    };
+    if (choice) return undefined;
+    let mq;
+    try { mq = window.matchMedia(DARK_QUERY); } catch { return undefined; }
+    const handler = () => setSystem(systemMode());
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
-  }, [theme]);
+  }, [choice]);
 
   // ThemeProvider sits above WorkspaceProvider in main.jsx, so it cannot read
   // `useWorkspace()` to notice a workspace switch on its own. WorkspaceContext
@@ -68,13 +77,19 @@ export function ThemeProvider({ children }) {
     return () => window.removeEventListener(WORKSPACE_EVENT, onWorkspace);
   }, [theme]);
 
+  // 'light' or 'dark' is kept as the choice; any other value drops it, so the
+  // OS decides again.
   const setTheme = (t) => {
-    setThemeState(t);
-    localStorage.setItem('theme', t);
+    const next = t === 'light' || t === 'dark' ? t : null;
+    setChoice(next);
+    try {
+      if (next) localStorage.setItem('theme', next);
+      else localStorage.removeItem('theme');
+    } catch { /* this tab keeps it */ }
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, resolvedMode: effectiveMode(theme) }}>
+    <ThemeContext.Provider value={{ theme, setTheme, resolvedMode: theme }}>
       {children}
     </ThemeContext.Provider>
   );

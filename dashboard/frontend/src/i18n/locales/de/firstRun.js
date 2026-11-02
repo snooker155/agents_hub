@@ -15,10 +15,9 @@ export default {
   },
   appearance: {
     title: 'Darstellung wählen',
-    subtitle: 'Hell, dunkel oder wie im System.',
+    subtitle: 'Hell oder dunkel. Zu Beginn wie im System eingestellt.',
     light: 'Hell',
     dark: 'Dunkel',
-    system: 'Automatisch',
     later: 'Sie lässt sich jederzeit in der Kopfleiste ändern.',
   },
   model: {

@@ -195,7 +195,7 @@ function OverviewScreen({ data, error, onFinish }) {
                 <div className="space-y-2">
                   <p className="text-sm text-gray-500 flex items-center gap-2"><Palette className="w-4 h-4" />{w('look')}</p>
                   <Pills
-                    items={['light', 'dark', 'system'].map((id) => ({ id, label: t(`firstRun.appearance.${id}`) }))}
+                    items={['light', 'dark'].map((id) => ({ id, label: t(`firstRun.appearance.${id}`) }))}
                     value={theme}
                     onChange={setTheme}
                     testId="welcome-look"

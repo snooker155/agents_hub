@@ -151,10 +151,9 @@ export default function HelpPanel() {
         aria-label={t('help.open')}
         aria-expanded={open}
         aria-controls={PANEL_ID}
-        className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+        className="p-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
       >
         <CircleQuestionMark className="w-4 h-4" strokeWidth={2.25} />
-        <span className="hidden sm:inline">{t('help.button')}</span>
       </button>
 
       {open && (

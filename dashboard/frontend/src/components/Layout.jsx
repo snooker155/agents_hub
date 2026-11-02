@@ -13,7 +13,7 @@ import { policyAllows, policyModels } from './workspace/modelPolicy';
 import {
   loadWorkspaceSummary, patchWorkspaceSummary, subscribeWorkspaceSummary, invalidateAllWorkspaceSummaries,
 } from '../api/workspaceSummary';
-import { LogOut, Settings, Sun, Moon, Monitor, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
+import { LogOut, Settings, Sun, Moon, Radio, Pause, Cpu, ChevronDown, WifiOff, PanelLeftClose, PanelLeftOpen, Menu, X, ListChecks, ChevronsDown, ChevronsUp } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import WatchersIndicator from './WatchersIndicator';
 import SyncIndicator from './SyncIndicator';
@@ -42,12 +42,6 @@ const PROVIDER_CONFIG = {
   ollama:    { label: 'Ollama',    color: 'text-purple-700 bg-purple-50 border-purple-200' },
   lmstudio:  { label: 'LM Studio', color: 'text-teal-700 bg-teal-50 border-teal-200' },
 };
-
-const THEME_OPTIONS = [
-  { value: 'light',  icon: Sun,     labelKey: 'layout.theme.light' },
-  { value: 'dark',   icon: Moon,    labelKey: 'layout.theme.dark' },
-  { value: 'system', icon: Monitor, labelKey: 'layout.theme.system' },
-];
 
 const BUILTIN_PROVIDER_ORDER = ['openai', 'anthropic', 'google', 'ollama', 'lmstudio'];
 
@@ -382,24 +376,19 @@ const Layout = ({ children }) => {
     }
   };
 
-  const cycleTheme = () => {
-    const idx = THEME_OPTIONS.findIndex(o => o.value === theme);
-    const next = THEME_OPTIONS[(idx + 1) % THEME_OPTIONS.length];
-    setTheme(next.value);
-  };
-
-  const currentThemeOption = THEME_OPTIONS.find(o => o.value === theme) || THEME_OPTIONS[2];
-  const ThemeIcon = currentThemeOption.icon;
-
-  // In the header on a wide screen, at the foot of the menu on a phone.
+  // In the header on a wide screen, at the foot of the menu on a phone. The
+  // icon shows the theme a click switches to.
+  const nextTheme = theme === 'dark' ? 'light' : 'dark';
+  const ThemeIcon = nextTheme === 'dark' ? Moon : Sun;
   const themeButton = (
     <button
-      onClick={cycleTheme}
-      title={t('layout.theme.tooltip', { theme: t(currentThemeOption.labelKey) })}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 text-xs font-medium transition-colors"
+      type="button"
+      onClick={() => setTheme(nextTheme)}
+      title={t(`layout.theme.to.${nextTheme}`)}
+      aria-label={t(`layout.theme.to.${nextTheme}`)}
+      className="p-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
     >
       <ThemeIcon className="w-4 h-4" />
-      <span>{t(currentThemeOption.labelKey)}</span>
     </button>
   );
   // Who is signed in, and the way out. Only under AUTH_MODE=multi: in the

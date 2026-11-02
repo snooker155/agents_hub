@@ -53,7 +53,7 @@ function PassLog({ iteration, events, nodeLabels, isDark, defaultOpen }) {
 export default function LoopPassLogs({ runId, iterations, logs, nodeLabels, className = '' }) {
   const { t } = useI18n();
   const { theme } = useTheme();
-  const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  const isDark = theme === 'dark';
   const last = iterations.length ? iterations[iterations.length - 1].iteration : null;
   return (
     <div className={`flex-col overflow-hidden bg-white ${className}`} data-testid="loop-pass-logs">

@@ -196,7 +196,7 @@ export function FlowLog({ logs, stateLogs, initialState = null, selection = '', 
   const bottomRef = useRef(null);
   const didInitialScrollRef = useRef(false);
   const { theme } = useTheme();
-  const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const isDark = theme === 'dark';
 
   // One row per agent node, which turns from running into its outcome
   // (logRows.js); `flow_state` snapshots only feed the runtime-state block.

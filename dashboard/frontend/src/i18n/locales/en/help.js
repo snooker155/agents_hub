@@ -1,5 +1,4 @@
 export default {
-  button: 'Help',
   open: 'Open help',
   openHint: 'Not sure what to do next? Ask here',
   title: 'Help',

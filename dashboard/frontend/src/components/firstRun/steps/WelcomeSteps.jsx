@@ -3,7 +3,7 @@
  * applies the moment it is made, so the next screen is already in it.
  */
 import { useEffect, useState } from 'react';
-import { Languages, Monitor, Moon, Palette, Sun } from 'lucide-react';
+import { Languages, Moon, Palette, Sun } from 'lucide-react';
 import LiveMark from '../../liveMark/LiveMark';
 import { LANGUAGES, useI18n } from '../../../i18n';
 import { useTheme } from '../../theme';
@@ -73,7 +73,7 @@ function Preview({ mode }) {
   );
   return (
     <div className="mt-3 h-20 w-full rounded-lg overflow-hidden border border-gray-200 flex">
-      {mode === 'system' ? <>{pane(false)}{pane(true)}</> : pane(mode === 'dark')}
+      {pane(mode === 'dark')}
     </div>
   );
 }
@@ -81,7 +81,6 @@ function Preview({ mode }) {
 const LOOKS = [
   { id: 'light', icon: Sun },
   { id: 'dark', icon: Moon },
-  { id: 'system', icon: Monitor },
 ];
 
 export function AppearanceStep({ next }) {
@@ -95,7 +94,7 @@ export function AppearanceStep({ next }) {
       testId="first-run-appearance"
       footer={<PrimaryButton onClick={() => next({ theme })} testId="first-run-continue">{t('firstRun.continue')}</PrimaryButton>}
     >
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {LOOKS.map(({ id, icon: Icon }) => (
           <button
             key={id}
