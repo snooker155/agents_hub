@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import ReactFlow, { Background, Controls, Handle, MarkerType, Position } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { ScrollText, X } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { InfoHint } from '../PageLayout';
+import { containerLink } from '../runs/runLinks';
 
 /**
  * ServiceMap: the whole running service as one diagram.
@@ -271,7 +273,7 @@ export function buildGraph(map, t) {
       data: { kind: 'container', title: c.agent_id || c.name,
               sub: [c.owner_kind ? t(`cluster.map.owner.${c.owner_kind}`, { defaultValue: c.owner_kind }) : '',
                     c.workspace].filter(Boolean).join(' · '),
-              status: CONTAINER_STATUS[state] || 'unknown', line: c.name, logOf: { container: c },
+              status: CONTAINER_STATUS[state] || 'unknown', line: c.name, logOf: { container: c }, href: containerLink(c),
               detail: { container: c.name, worker: c.worker, launched_on: c.launched_on, docker_host: c.host,
                         owner: [c.owner_kind, c.owner_id].filter(Boolean).join(' '), workspace: c.workspace,
                         state: c.state || c.status, image: c.image } } });
@@ -429,7 +431,10 @@ export default function ServiceMap({ map, onViewLogs }) {
         <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3" data-testid="map-detail">
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="flex items-center gap-2 text-sm font-bold text-gray-800">
-              <StatusDot status={selected.data.status} /> {selected.data.title}
+              <StatusDot status={selected.data.status} />
+              {selected.data.href
+                ? <Link to={selected.data.href} className="text-indigo-600 hover:underline">{selected.data.title}</Link>
+                : selected.data.title}
               <span className="text-xs font-normal text-gray-500">{t(`cluster.stack.status.${selected.data.status}`)}</span>
               {onViewLogs && selected.data.logOf && (
                 <button onClick={() => onViewLogs(selected.data.logOf)}

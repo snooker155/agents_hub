@@ -27,3 +27,11 @@ export function runLink(run) {
   if (!run.kind) return `/messages/${encodeURIComponent(run.run_id)}`;
   return entityLink({ kind: run.kind, id: run.run_id, parent_id: run.entity_id });
 }
+
+/** The page of whatever a cluster container carries: an instance's own page,
+ * else the run that started it. */
+export function containerLink(c) {
+  if (!c?.owner_id) return null;
+  if (c.owner_kind === 'instance') return `/instances/${c.owner_id}`;
+  return runLink({ run_id: c.owner_id, kind: c.owner_kind === 'run' ? '' : c.owner_kind, entity_id: c.agent_id });
+}

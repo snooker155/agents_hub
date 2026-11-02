@@ -443,6 +443,7 @@ def services_map() -> List[Dict[str, Any]]:
             "service_id": svc["service_id"], "name": svc.get("name"), "kind": svc.get("kind"),
             "agent_id": svc.get("agent_id"), "workspace": svc.get("workspace"),
             "environment_name": svc.get("environment_name"), "status": svc.get("status"),
+            "paused_reason": svc.get("paused_reason"),
             "replicas_min": svc.get("replicas_min"), "replicas_max": svc.get("replicas_max"),
             "replicas": replicas.summary(svc["service_id"]),
         })

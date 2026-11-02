@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { runLink } from '../components/runs/runLinks';
+import { containerLink, runLink } from '../components/runs/runLinks';
+import { StateBadge } from '../components/InstanceList';
+import { STATE_STYLES, displayState } from '../components/instanceUtils';
+import { StatusPill as ServiceStatusPill } from './Services';
 import {
   AlertTriangle, Box, Cpu, Layers, RefreshCw, Repeat, ScrollText, Search, Server, Trash2, Waypoints, X,
 } from 'lucide-react';
@@ -137,6 +140,27 @@ function MemberLogModal({ member, onClose }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// A container's own state (Docker's, or its owner's) in the paint of the
+// instance state it matches.
+const CONTAINER_PAINT = {
+  running: 'active', active: 'active', standby: 'standby',
+  starting: 'starting', queued: 'starting', created: 'starting', restarting: 'starting',
+  stopping: 'stopping', failed: 'failed', error: 'failed', dead: 'failed',
+  exited: 'stopped', stopped: 'stopped', paused: 'stopped',
+};
+
+function ContainerState({ state }) {
+  const { t } = useI18n();
+  const key = String(state || '').toLowerCase();
+  const style = STATE_STYLES[CONTAINER_PAINT[key]] || STATE_STYLES.finished;
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium ${style.badge}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} />
+      {state ? t(`cluster.containerStates.${key}`, { defaultValue: state }) : '—'}
+    </span>
   );
 }
 
@@ -470,7 +494,9 @@ export default function Cluster() {
                   ) },
                   { key: 'agent_id', label: t('cluster.agent'), render: (s) => s.agent_id || t('cluster.runner') },
                   { key: 'workspace', label: t('cluster.workspace') },
-                  { key: 'status', label: t('cluster.status') },
+                  { key: 'status', label: t('cluster.status'), render: (s) => (
+                    <ServiceStatusPill status={s.status} reason={s.paused_reason} t={t} />
+                  ) },
                   { key: 'replicas', label: t('cluster.replicas'), render: (s) => (
                     `${s.replicas?.live ?? 0} / ${s.replicas_min}–${s.replicas_max}`
                   ) },
@@ -492,7 +518,7 @@ export default function Cluster() {
                     </Link>
                   ) },
                   { key: 'workspace', label: t('cluster.workspace') },
-                  { key: 'state', label: t('cluster.status'), render: (n) => n.state || n.status },
+                  { key: 'state', label: t('cluster.status'), render: (n) => <StateBadge state={displayState(n) || n.status} t={t} /> },
                   { key: 'carrier_mode', label: t('cluster.carrierMode'), render: (n) => n.carrier_mode || '—' },
                   { key: 'host', label: t('cluster.host'), render: (n) => <span className="font-mono text-xs">{n.carrier_host || n.host || t('cluster.unknownHost')}</span> },
                 ]}
@@ -505,17 +531,13 @@ export default function Cluster() {
                 columns={[
                   { key: 'name', label: 'name', render: (c) => <span className="font-mono text-xs">{c.name}</span> },
                   { key: 'agent_id', label: t('cluster.agent'), render: (c) => {
-                    if (c.owner_kind === 'instance' && c.owner_id) {
-                      return <Link to={`/instances/${c.owner_id}`} className="text-indigo-600 hover:underline">{c.agent_id || c.owner_id}</Link>;
-                    }
-                    const to = c.owner_id && runLink({
-                      run_id: c.owner_id, kind: c.owner_kind === 'run' ? '' : c.owner_kind, entity_id: c.agent_id });
+                    const to = containerLink(c);
                     if (to) {
                       return <Link to={to} className="text-indigo-600 hover:underline">{c.agent_id || c.owner_id}</Link>;
                     }
                     return c.agent_id || '—';
                   } },
-                  { key: 'state', label: t('cluster.status'), render: (c) => c.state || c.status },
+                  { key: 'state', label: t('cluster.status'), render: (c) => <ContainerState state={c.state || c.status} /> },
                   { key: 'cpu', label: 'CPU', render: (c) => (
                     <span className="text-xs tabular-nums">{c.stats?.cpu_percent != null ? `${c.stats.cpu_percent.toFixed(1)}%` : '—'}</span>
                   ) },

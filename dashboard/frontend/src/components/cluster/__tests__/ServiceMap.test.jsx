@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 import { I18nProvider } from '../../../i18n';
 
@@ -119,7 +120,7 @@ describe('buildGraph on a big cluster', () => {
 });
 
 describe('ServiceMap', () => {
-  const show = () => render(<I18nProvider><ServiceMap map={MAP} /></I18nProvider>);
+  const show = () => render(<MemoryRouter><I18nProvider><ServiceMap map={MAP} /></I18nProvider></MemoryRouter>);
 
   it('renders nodes for members and stack components with their load', () => {
     show();
@@ -173,9 +174,18 @@ describe('ServiceMap', () => {
     expect(screen.getByTestId('node-s:database').firstChild).not.toHaveAttribute('data-selected');
   });
 
+  it('links a picked container to its instance from the card title', () => {
+    show();
+    fireEvent.click(screen.getByTestId('node-c:agents-hub-node-inst_1'));
+    const detail = screen.getByTestId('map-detail');
+    expect(detail.querySelector('a')).toHaveAttribute('href', '/instances/inst_1');
+    fireEvent.click(screen.getByTestId('node-m:wk-1'));
+    expect(screen.getByTestId('map-detail').querySelector('a')).toBeNull();
+  });
+
   it('offers the log of a picked member or container, not of a service', () => {
     const onViewLogs = vi.fn();
-    render(<I18nProvider><ServiceMap map={MAP} onViewLogs={onViewLogs} /></I18nProvider>);
+    render(<MemoryRouter><I18nProvider><ServiceMap map={MAP} onViewLogs={onViewLogs} /></I18nProvider></MemoryRouter>);
     fireEvent.click(screen.getByTestId('node-m:wk-1'));
     fireEvent.click(screen.getByRole('button', { name: /log/i }));
     expect(onViewLogs).toHaveBeenLastCalledWith({ member: expect.objectContaining({ member_id: 'wk-1' }) });
