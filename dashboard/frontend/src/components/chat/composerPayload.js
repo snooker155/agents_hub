@@ -8,6 +8,7 @@ export function attachmentsPayload(attachments, workspace) {
     content: a.file_id ? '' : a.content,
     store_to_workspace: Boolean(a.store_to_workspace && workspace),
     ...(a.file_id ? { file_id: a.file_id } : {}),
+    ...(typeof a.quote_of === 'string' ? { quote_of: a.quote_of } : {}),
   }));
 }
 

@@ -1,4 +1,5 @@
 import { genId } from './turnState';
+import { messageQuotes } from './quote';
 import { stopMessage, streamChat } from '../../api';
 import { targetId } from './targets';
 import { takeMention, teamMentionMembers } from './agentMention';
@@ -222,7 +223,14 @@ export function useChatSend(deps) {
 
     const attachmentLine = buildAttachmentLine(t, { pendingAttachments: attachments, pendingReferences: references });
     const userMsgText = [text, attachmentLine].filter(Boolean).join('\n');
-    const userMsg = { id: genId(), role: 'user', content: userMsgText, ...(voice ? { voice: true } : {}) };
+    // Passages quoted with Discuss ride on the message, shown above its
+    // text; a message of quotes alone is titled by its first passage.
+    const quotes = messageQuotes(attachments);
+    const titleLine = attachmentLine || (quotes[0]?.text || '').trim().split('\n')[0];
+    const userMsg = {
+      id: genId(), role: 'user', content: userMsgText,
+      ...(quotes.length ? { quotes } : {}), ...(voice ? { voice: true } : {}),
+    };
 
     const openConv = background ? backgroundConv : conversations.find((c) => c.id === currentConvId);
     // A copy of a conversation held on a linked hub (docs/hub-link.md) is
@@ -242,7 +250,7 @@ export function useChatSend(deps) {
     if (!convId) {
       convId = genId();
       const newConv = buildNewConversation({
-        convId, text, attachmentLine, t, targetMode: target.targetMode, isFlowMode, isTeamMode,
+        convId, text, attachmentLine: titleLine, t, targetMode: target.targetMode, isFlowMode, isTeamMode,
         selectedAgent: target.selectedAgent, selectedFlow, selectedTeam, selectedWorkspace, selectedProject,
       });
       if (forkFrom) {
@@ -261,7 +269,7 @@ export function useChatSend(deps) {
     }
 
     // Append user message
-    setConversations((prev) => appendUserMessage(prev, convId, userMsg, text, attachmentLine));
+    setConversations((prev) => appendUserMessage(prev, convId, userMsg, text, titleLine));
     // Handed over with @: the conversation is the named agent's from this
     // turn on, and the bubble below says the person chose it. A chat that
     // starts here has nobody to hand over from.
@@ -313,7 +321,7 @@ export function useChatSend(deps) {
     const convRecord = createdConv || conversations.find((c) => c.id === convId);
     const effectiveWorkspace = convRecord?.workspace || selectedWorkspace;
     const historyPayload = buildHistoryPayload(convRecord?.messages);
-    const convTitle = resolveConversationTitle({ text, attachmentLine, convRecord, t });
+    const convTitle = resolveConversationTitle({ text, attachmentLine: titleLine, convRecord, t });
     // The turn's handoffs (the agent gave the conversation to another one, see
     // send/handleAgentResponse), read once the turn is over however it ended.
     const handoffs = [];

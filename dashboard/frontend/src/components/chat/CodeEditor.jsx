@@ -11,6 +11,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirro
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { indentOnInput, bracketMatching } from '@codemirror/language';
 import { cmHighlightExtension, loadLanguageExtension } from '../../lib/highlight';
+import { registerEditor } from '../../lib/editorRegistry';
 
 // `height: 100%` makes the editor fill its host, not just its text: the
 // background and the line-number gutter run to the bottom of the panel, and a
@@ -77,6 +78,8 @@ export default function CodeEditor({ value = '', onChange, language = '', dark =
         parent: hostRef.current,
       });
       viewRef.current = view;
+      // A selection in it can be quoted in the chat by its own lines (chat/quote.js).
+      registerEditor(view);
     })();
     return () => {
       cancelled = true;

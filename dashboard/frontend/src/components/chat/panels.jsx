@@ -177,10 +177,12 @@ function ArtifactContent({ workspace, path }) {
   // A Markdown file reads as the document it is, in the panel itself, not
   // as a code block of its source.
   if (language === 'markdown') {
-    return <div className="px-4 py-3 text-sm text-gray-800" data-testid="artifact-markdown">{renderContent(state.content || '')}</div>;
+    return <div className="px-4 py-3 text-sm text-gray-800" data-testid="artifact-markdown" data-quote-source={path}>{renderContent(state.content || '')}</div>;
   }
-  if (language) return <div className="p-3"><CodeBlock language={language} code={state.content} /></div>;
-  return <pre className="p-3 font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words text-gray-700">{state.content}</pre>;
+  // The file verbatim in its <pre>: a passage selected there is quoted with
+  // its lines (chat/quote.js).
+  if (language) return <div className="p-3" data-quote-source={path} data-quote-lines><CodeBlock language={language} code={state.content} /></div>;
+  return <pre className="p-3 font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words text-gray-700" data-quote-source={path} data-quote-lines>{state.content}</pre>;
 }
 
 /** One changed file: what it holds now (``content``) or what changed (``diff``),
@@ -240,7 +242,7 @@ function ArtifactDetail({ artifact, workspace, mode, onModeChange = null }) {
         {onModeChange ? <ArtifactsModeSwitch mode={mode} onChange={onModeChange} t={t} /> : null}
       </div>
       {showEditor ? (
-        <div className="flex-1 min-h-0 flex flex-col" data-testid="artifact-file-editor">
+        <div className="flex-1 min-h-0 flex flex-col" data-testid="artifact-file-editor" data-quote-source={artifact.path}>
           <FileWorkbench workspace={workspace} path={artifact.path} chat={chat} className="flex-1 min-h-0" />
         </div>
       ) : (
@@ -252,7 +254,7 @@ function ArtifactDetail({ artifact, workspace, mode, onModeChange = null }) {
             {artifact.truncated ? t('chat.fileTooLarge') : t('chat.binaryFile')}
           </div>
         ) : (
-          <div className="py-2"><DiffView diff={artifact.diff} /></div>
+          <div className="py-2" data-quote-source={t('chat.quote.changesTo', { path: artifact.path })}><DiffView diff={artifact.diff} /></div>
         )}
       </div>
       )}
@@ -383,7 +385,11 @@ function ArtifactsPanel({
       ) : selectedFile ? (
         <ArtifactDetail key={selectedFile.path} artifact={selectedFile} workspace={workspace} mode={mode} onModeChange={onModeChange} />
       ) : selectedView ? (
-        <div className="flex-1 min-w-0 overflow-auto p-3" data-testid="artifact-detail">
+        <div
+          className="flex-1 min-w-0 overflow-auto p-3"
+          data-testid="artifact-detail"
+          data-quote-source={selectedView.title || selectedView.kind || t('chat.quote.fallbackSource')}
+        >
           <ViewCard key={selectedView.view_id} viewRef={selectedView} actions={(
             // The view's panel under Artifacts, in the Views folder.
             <Link

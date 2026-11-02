@@ -18,6 +18,10 @@ Two kinds of attachment reach a turn:
   request limit does not apply: the bytes never travel in the request, and
   the prompt caps each attachment's text anyway (``chat.context``).
 
+A third kind, a quote (``quote_of`` set), is a passage the person selected in
+the chat and asked about: text only, counted against the size limits, never
+written anywhere.
+
 Every workspace file a turn uses is remembered against the conversation
 (``files.service.record_use``), which is how a file's "where used" list knows
 about chats.
@@ -154,6 +158,10 @@ def materialize_attachments(request: ChatRequest) -> None:
         if att.file_id:
             _resolve_file_attachment(request, att)
             continue
+        if att.quote_of is not None:
+            # A quoted passage is text in the prompt, not a file.
+            att.content_b64 = None
+            att.store_to_workspace = False
 
         att.filename = safe_attachment_filename(att.filename, idx)
 

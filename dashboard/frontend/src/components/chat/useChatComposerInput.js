@@ -1,4 +1,5 @@
 import { genId } from './turnState';
+import { isQuote, quoteAttachment } from './quote';
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_COUNT, MAX_REFERENCE_COUNT } from './limits';
 import { getContextKinds } from '../../api';
 import { uploadWorkspaceFileObject } from '../../api/files';
@@ -62,6 +63,22 @@ export function useChatComposerInput(deps) {
     }
     e.target.value = '';
   }, [pendingAttachments.length, setAttachmentError, setPendingAttachments]);
+
+  // A passage quoted with Discuss (SelectionDiscuss.jsx): text the prompt
+  // shows as a quote, never a file. The same passage twice is one quote.
+  const addQuote = useCallback(({ text, label }) => {
+    setAttachmentError('');
+    const quote = quoteAttachment({ id: genId(), text, label });
+    setPendingAttachments((prev) => {
+      if (prev.some((a) => isQuote(a) && a.quote_of === label && a.content === quote.content)) return prev;
+      if (prev.length >= MAX_ATTACHMENT_COUNT) {
+        setAttachmentError(`Only ${MAX_ATTACHMENT_COUNT} attachments are allowed per message.`);
+        return prev;
+      }
+      return [...prev, quote];
+    });
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [setAttachmentError, setPendingAttachments, textareaRef]);
 
   const removeAttachment = useCallback((id) => {
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
@@ -157,7 +174,7 @@ export function useChatComposerInput(deps) {
   }, [selectedWorkspace, setPendingAttachments]);
 
   return {
-    resizeTextarea, onPickFiles, removeAttachment, toggleAttachmentStore,
+    resizeTextarea, onPickFiles, addQuote, removeAttachment, toggleAttachmentStore,
     addReferences, removeReference, addWorkspaceFiles,
   };
 }

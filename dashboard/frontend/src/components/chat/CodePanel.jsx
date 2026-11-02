@@ -192,7 +192,11 @@ export function CodeDetail({ code, viewId }) {
     );
   }
   return (
-    <div className="flex-1 min-w-0 flex flex-col" data-testid="artifact-code-detail">
+    <div
+      className="flex-1 min-w-0 flex flex-col"
+      data-testid="artifact-code-detail"
+      data-quote-source={selectedEnvelope.spec?.filename || selectedEnvelope.title || t('chat.quote.fallbackSource')}
+    >
       <CodeWorkbench
         envelope={selectedEnvelope}
         isReply={isReply}

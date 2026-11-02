@@ -220,8 +220,23 @@ def build_attachment_lines(attachments: list) -> list[str]:
     their stored workspace path rather than dumped into the prompt."""
     if not attachments:
         return []
-    lines: list[str] = ["=== Attached files ==="]
-    for idx, att in enumerate(attachments, start=1):
+    quotes = [a for a in attachments if getattr(a, "quote_of", None) is not None]
+    files = [a for a in attachments if getattr(a, "quote_of", None) is None]
+    lines: list[str] = []
+    if quotes:
+        # Passages the person selected (a reply, an artifact, code) and is
+        # asking about: what "this" in the message refers to.
+        lines.append("=== Quoted by the user (the message is about these passages) ===")
+        for idx, att in enumerate(quotes, start=1):
+            source = (att.quote_of or "").strip() or att.filename or "the conversation"
+            content = att.content or ""
+            if len(content) > 40000:
+                content = content[:40000] + "\n...[truncated]"
+            lines.extend([f"[Quote {idx}] from {source}", "```", content, "```", ""])
+    if not files:
+        return lines
+    lines.append("=== Attached files ===")
+    for idx, att in enumerate(files, start=1):
         stored_note = ""
         if getattr(att, "stored_workspace_path", None):
             stored_note = f" (stored at workspace path: {att.stored_workspace_path})"

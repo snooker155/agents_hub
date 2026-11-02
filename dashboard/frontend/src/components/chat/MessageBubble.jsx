@@ -18,6 +18,7 @@ import { SystemNotice } from './BuildMessage';
 import Citations, { CitedText } from './Citations';
 import { MessageEntities, MessageFiles, MessageViews, ResponseButtons } from './messageParts';
 import { MessageChanges } from './entityChanges';
+import { MessageQuotes } from './QuoteBlocks';
 import { AVATAR_NAME_CLS, BUBBLE_SIZES } from './bubbleSizes';
 import { messageViews } from './turnViews';
 import { LiveThoughts } from './reasoning';
@@ -81,7 +82,14 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
             <User className="w-4 h-4" />
           </div>
         )}
-        <div data-prompt-bubble onCopy={copyBubbleText} className={`chat-prompt-bubble ${size.bubble} leading-relaxed bg-indigo-600 text-white rounded-tr-sm`}>
+        <div
+          data-prompt-bubble
+          data-quote-source={t('chat.quote.yourMessage')}
+          onCopy={copyBubbleText}
+          className={`chat-prompt-bubble ${size.bubble} leading-relaxed bg-indigo-600 text-white rounded-tr-sm`}
+        >
+          {/* Passages quoted with Discuss, above what was asked about them. */}
+          <MessageQuotes quotes={msg.quotes} hasText={Boolean(msg.content)} />
           <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
           {/* Said aloud to the Assistant: the line is its transcript. */}
           {msg.voice && (
@@ -173,8 +181,9 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
         )}
       </div>}
 
-      {/* Bubble */}
+      {/* Bubble: a passage selected in it can be quoted (SelectionDiscuss). */}
       <div
+        data-quote-source={agentName ? t('chat.quote.reply', { agent: agentName }) : t('chat.quote.replyPlain')}
         className={`${size.bubble} min-w-0 leading-relaxed bg-white border border-gray-200 text-gray-800 rounded-tl-sm shadow-sm
           ${msg.error && !refusal ? 'border-red-300 bg-red-50 text-red-700' : ''}`}
       >

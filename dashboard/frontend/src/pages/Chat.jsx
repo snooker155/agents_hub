@@ -66,6 +66,8 @@ import ChatTopBar from '../components/chat/ChatTopBar';
 import ChatMessageList from '../components/chat/ChatMessageList';
 import { useChatViewMode } from '../components/chat/viewMode';
 import ChatComposer from '../components/chat/ChatComposer';
+import SelectionDiscuss from '../components/chat/SelectionDiscuss';
+import { quoteLabel } from '../components/chat/quote';
 import { useBackgroundRuns } from '../components/chat/backgroundRunInfo';
 import ChatSidePanel from '../components/chat/ChatSidePanel';
 import useChatTelegram from '../components/chat/useChatTelegram';
@@ -706,13 +708,21 @@ export default function Chat() {
   const artifactCount = Object.keys(shownArtifacts).length + artifactViews.length + codeCount;
 
   const {
-    resizeTextarea, onPickFiles, removeAttachment, toggleAttachmentStore,
+    resizeTextarea, onPickFiles, addQuote, removeAttachment, toggleAttachmentStore,
     addReferences, removeReference, addWorkspaceFiles,
   } = useChatComposerInput({
     attachMenuOpen, contextKinds, pendingAttachments, selectedWorkspace,
     setAttachmentError, setContextKinds, setPendingAttachments, setPendingReferences,
     textareaRef,
   });
+
+  // Discuss over a selection (SelectionDiscuss): the passage goes to the
+  // composer as a quote. From the Artifacts column at full width the
+  // conversation comes back, since that is where the composer is.
+  const quoteSelection = useCallback((pick) => {
+    addQuote({ text: pick.text, label: quoteLabel(t, pick) });
+    setArtifactsFull(false);
+  }, [addQuote, t, setArtifactsFull]);
 
   // ---- new conversation ----
   // Don't create a conversation record yet — just land on the empty start page.
@@ -1018,6 +1028,7 @@ export default function Chat() {
         </div>
       </div>
       <ChatSidePanel />
+      <SelectionDiscuss onQuote={quoteSelection} />
     </div>
     </FileOpenContext.Provider>
     </ChatMathActionsContext.Provider>

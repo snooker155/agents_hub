@@ -12,6 +12,8 @@ import { AttachButton, AttachPickers, PendingAttachments, PendingReferences } fr
 import { MentionChip, MentionMenu } from './MentionMenu';
 import useAgentMention from './useAgentMention';
 import { teamMentionMembers } from './agentMention';
+import { PendingQuotes } from './QuoteBlocks';
+import { isQuote } from './quote';
 
 function isTyping(target) {
   const tag = target?.tagName;
@@ -217,8 +219,10 @@ export default function ChatComposer() {
               onChange={onPickFiles}
             />
             <PendingReferences references={pendingReferences} onRemove={removeReference} disabled={loading} />
+            {/* Passages quoted with Discuss (SelectionDiscuss), then the files. */}
+            <PendingQuotes quotes={pendingAttachments.filter(isQuote)} onRemove={removeAttachment} disabled={loading} />
             <PendingAttachments
-              attachments={pendingAttachments}
+              attachments={pendingAttachments.filter((a) => !isQuote(a))}
               workspace={selectedWorkspace}
               onToggleStore={toggleAttachmentStore}
               onRemove={removeAttachment}

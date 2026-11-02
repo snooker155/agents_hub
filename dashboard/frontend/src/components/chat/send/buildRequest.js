@@ -9,6 +9,7 @@
 
 import { LANGUAGES, translate } from '../../../i18n';
 import { inHistory } from '../steering';
+import { isQuote, withQuotes } from '../quote';
 
 // A conversation title is never allowed to run on; the same cap is used for
 // the auto-title and for the fallback title taken from the first message.
@@ -19,8 +20,10 @@ function truncateTitle(basis, max = 50) {
 // The `chat.attachedEntities` / `chat.attachedFiles` lines shown under the
 // user's typed text so the transcript reflects what was attached, even though
 // the actual attachment payload travels separately in the request body.
-function buildAttachmentLine(t, { pendingAttachments, pendingReferences }) {
-  const hasAttachments = (pendingAttachments || []).length > 0;
+// Quotes are not listed: the bubble shows them (message `quotes`).
+function buildAttachmentLine(t, { pendingAttachments: all, pendingReferences }) {
+  const pendingAttachments = (all || []).filter((a) => !isQuote(a));
+  const hasAttachments = pendingAttachments.length > 0;
   const hasReferences = (pendingReferences || []).length > 0;
   const referenceLine = hasReferences
     ? t('chat.attachedEntities', { entities: pendingReferences.map((r) => r.label || r.id).join(', ') })
@@ -51,13 +54,14 @@ function historyWindowStart(n, keep = HISTORY_MAX, step = HISTORY_STEP) {
   return over <= 0 ? 0 : Math.ceil(over / step) * step;
 }
 
+// A request's quotes go ahead of its text (quote.js withQuotes).
 function buildHistoryPayload(messages) {
   const kept = (messages || [])
-    .filter((m) => (m.role === 'user' || m.role === 'agent') && String(m.content || '').trim())
+    .filter((m) => (m.role === 'user' || m.role === 'agent') && (String(m.content || '').trim() || m.quotes?.length))
     .filter(inHistory);
   return kept
     .slice(historyWindowStart(kept.length))
-    .map((m) => ({ role: m.role, content: String(m.content || '') }));
+    .map((m) => ({ role: m.role, content: withQuotes(String(m.content || ''), m.quotes) }));
 }
 
 // A conversation keeps its first typed title until it's replaced by hand, but
@@ -106,6 +110,8 @@ function buildStreamRequestBody({
       content: a.file_id ? '' : a.content,
       store_to_workspace: Boolean(a.store_to_workspace && selectedWorkspace),
       ...(a.file_id ? { file_id: a.file_id } : {}),
+      // A quoted passage: where it is from (chat/quote.js).
+      ...(isQuote(a) ? { quote_of: a.quote_of } : {}),
     })),
     // Pointers only — the server renders each entity into the prompt at
     // request time (chat/references.py), so nothing stale is sent.

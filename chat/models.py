@@ -32,6 +32,11 @@ class ChatAttachment(BaseModel):
     # uploaded attachment. An upload sent with ``store_to_workspace`` becomes
     # a workspace file and gets its id back here.
     file_id: Optional[str] = None
+    # A passage the person selected in the chat (a reply, an artifact, code)
+    # and asked about: ``content`` is the passage, this says where it is from
+    # ("report.md, lines 12-18", "Reply of researcher"). Never a file, never
+    # stored; the prompt shows it as a quote (``chat.context``).
+    quote_of: Optional[str] = None
 
 
 class ChatReference(BaseModel):
