@@ -32,20 +32,11 @@ const WIDTHS = {
   full: 'max-w-none',
 };
 
-// A phone gets a tighter gutter: 24px a side is an eighth of its width.
+// A phone gets a tighter gutter: 24px a side is an eighth of its width. No
+// bottom padding: a page's content runs to the bottom edge of the window.
 const PADDING = {
-  default: 'px-4 py-4 sm:px-6 sm:py-6',
-  narrow: 'px-4 py-4 sm:px-6 sm:py-6',
-  full: '',
-};
-
-// A page that scrolls ends below the page-chat launcher (bottom-6, 56px tall,
-// PageChatPanel.jsx), so its last block, and a resize handle in that block's
-// corner, can be scrolled out from under the button. A `fill` page manages its
-// own height and keeps the ordinary padding.
-const SCROLL_END = {
-  default: 'pb-24 sm:pb-28',
-  narrow: 'pb-24 sm:pb-28',
+  default: 'px-4 pt-4 sm:px-6 sm:pt-6',
+  narrow: 'px-4 pt-4 sm:px-6 sm:pt-6',
   full: '',
 };
 
@@ -60,7 +51,7 @@ export const PageContainer = ({
       'mx-auto w-full',
       WIDTHS[width] ?? WIDTHS.default,
       PADDING[width] ?? PADDING.default,
-      fill ? 'h-full min-h-0 flex flex-col' : (SCROLL_END[width] ?? SCROLL_END.default),
+      fill && 'h-full min-h-0 flex flex-col',
       className,
     ].filter(Boolean).join(' ')}
   >

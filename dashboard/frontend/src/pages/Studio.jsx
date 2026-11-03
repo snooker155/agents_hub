@@ -294,7 +294,7 @@ export default function Studio() {
 
   if (!viewId) {
     return (
-      <div className="h-full overflow-hidden p-6">
+      <div className="h-full overflow-hidden px-6 pt-6">
         <NewViewPicker onCreate={onCreate} />
       </div>
     );
