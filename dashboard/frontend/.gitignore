@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 
+
+# The demo build (npm run build:demo), copied into site/public/demo/ by the site.
+dist-demo

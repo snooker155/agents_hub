@@ -39,3 +39,5 @@ site/.vitepress/cache/
 # common/state_sync.py: the folder before the last export, and an export in progress
 .agents_hub.prev/
 .agents_hub.syncing/
+# The docs site lives on dev/main only; a checkout of main leaves it here.
+/site/
