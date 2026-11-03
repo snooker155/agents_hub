@@ -2386,6 +2386,7 @@ export type UserCreate = {
   "first_name"?: string;
   "last_name"?: string;
   "language"?: string;
+  "spend_limit_usd"?: number | null;
 };
 
 export type UserPatch = {
@@ -2397,6 +2398,8 @@ export type UserPatch = {
   "last_name"?: string | null;
   "language"?: string | null;
   "spend_limit_usd"?: number | null;
+  "rate_limit_per_minute"?: number | null;
+  "tokens_per_day"?: number | null;
 };
 
 export type ValidationError = {

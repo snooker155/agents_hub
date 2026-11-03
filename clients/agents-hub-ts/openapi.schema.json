@@ -14678,6 +14678,18 @@
             "title": "Role",
             "type": "string"
           },
+          "spend_limit_usd": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spend Limit Usd"
+          },
           "username": {
             "title": "Username",
             "type": "string"
@@ -14757,6 +14769,17 @@
             ],
             "title": "Last Name"
           },
+          "rate_limit_per_minute": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate Limit Per Minute"
+          },
           "role": {
             "anyOf": [
               {
@@ -14778,6 +14801,17 @@
               }
             ],
             "title": "Spend Limit Usd"
+          },
+          "tokens_per_day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Per Day"
           }
         },
         "title": "UserPatch",
@@ -22591,7 +22625,7 @@
     },
     "/api/auth/spend": {
       "get": {
-        "description": "The caller's monthly spend limit, where it comes from and what they\nspent this month (common/user_budget.py).",
+        "description": "The caller's monthly spend limit, where it comes from and what they\nspent this month (common/user_budget.py), and their rate limits\n(common/rate_limit.py).",
         "responses": {
           "200": {
             "content": {
@@ -62431,7 +62465,7 @@
         ]
       },
       "get": {
-        "description": "The folder's files and directories as workspace-relative paths, and\n``ids``: path to file id for each file the registry knows, the id a link\nto the file carries.",
+        "description": "The folder's files and directories as workspace-relative paths, and\n``ids``: path to file id for each file the registry knows, the id a link\nto the file carries. Saved tool outputs (``tool-outputs/``,\nagents/tool_spill.py) are left out: the run page links them by id.",
         "parameters": [
           {
             "in": "path",
