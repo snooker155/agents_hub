@@ -67,7 +67,8 @@ def upgrade(conn: Any, dialect: str) -> None:
     while frontier:
         found = set()
         for run_id, (parent, extra) in runs.items():
-            if parent in frontier and run_id not in charged and _unattributed(extra):
+            if (parent is not None and parent in frontier and run_id not in charged
+                    and _unattributed(extra)):
                 charged[run_id] = charged[parent]
                 found.add(run_id)
         frontier = found
