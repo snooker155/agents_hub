@@ -4,6 +4,13 @@ export default {
   workspaceDefaultAll: 'default (Alle)',
   workspacePersonal: 'Persönlich',
   workspacePersonalOf: '{{name}} (persönlich)',
+  noWorkspace: {
+    title: 'Keine Workspaces verfügbar',
+    body: 'Der Dienst kann ohne mindestens einen Workspace nicht arbeiten. Legen Sie einen persönlichen Workspace an oder bitten Sie einen Administrator, Sie einem Workspace hinzuzufügen.',
+    deleted: 'Ihr persönlicher Workspace wurde gelöscht. Nach Ihrer nächsten Anmeldung wird ein neuer angelegt, oder Sie legen ihn jetzt an.',
+    create: 'Persönlichen Workspace anlegen',
+    failed: 'Der persönliche Workspace konnte nicht angelegt werden',
+  },
   workspacePicker: {
     search: 'Workspace suchen',
     noMatch: 'Kein Workspace passt zu „{{q}}“',

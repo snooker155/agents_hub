@@ -43,11 +43,18 @@ const WorkspaceManager = () => {
 
   useEffect(() => { loadItems(); }, []);
 
-  const handleDelete = async (wsName, e) => {
+  const handleDelete = async (ws, e) => {
     e.stopPropagation();
-    if (!window.confirm(`Delete workspace "${wsName}"? This cannot be undone.`)) return;
+    // A personal workspace is made again at its person's next sign-in, and
+    // the confirmation says so (common/personal_workspace.py).
+    const question = !ws.personal
+      ? t('workspaceManager.confirmDelete', { name: ws.name })
+      : ws.own_personal
+        ? t('workspaceManager.confirmDeleteOwnPersonal')
+        : t('workspaceManager.confirmDeletePersonalOf', { owner: ws.personal_label || ws.personal_of });
+    if (!window.confirm(question)) return;
     try {
-      await deleteWorkspace(wsName);
+      await deleteWorkspace(ws.name);
       fetchData();
     } catch {
       alert(t('workspaceManager.deleteFailed'));
@@ -132,19 +139,20 @@ const WorkspaceManager = () => {
                     </td>
                     <td className="px-6 py-4 text-sm font-medium text-gray-800">{ws.tasks_count}</td>
                     <td className="px-6 py-4 text-right">
-                      {ws.personal ? (
-                        <span className="text-xs text-gray-400 italic">{t('workspaceManager.personalKept')}</span>
-                      ) : ws.name !== 'default' ? (
+                      {/* The backend says who may delete: an admin any but default,
+                          an owner their workspace, a person their personal one;
+                          readers and editors none. */}
+                      {ws.can_delete ? (
                         <button
-                          onClick={(e) => handleDelete(ws.name, e)}
+                          onClick={(e) => handleDelete(ws, e)}
                           className="text-gray-400 hover:text-red-600 transition-colors"
                           title={t('workspaceManager.deleteWorkspace')}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
-                      ) : (
+                      ) : ws.name === 'default' ? (
                         <span className="text-xs text-gray-400 italic">{t('workspaceManager.default')}</span>
-                      )}
+                      ) : null}
                     </td>
                   </tr>
                 ))

@@ -187,6 +187,12 @@ def resolve_thread(request: Request, mode: Optional[str] = None) -> SimpleNamesp
                                service=True, principal=principal)
     from common import personal_workspace
     home = personal_workspace.ensure_personal_workspace(principal.id)
+    if (home == personal_workspace.FALLBACK and not principal.is_admin
+            and personal_workspace.deleted_until_login(principal.id)):
+        # Deleted, and default is not theirs to run in instead.
+        raise HTTPException(status_code=409,
+                            detail="Your personal workspace was deleted; create it again "
+                                   "or sign in anew")
     return SimpleNamespace(entity_id=f"user-{_clean(principal.id)}", home=home,
                            service=False, principal=principal)
 

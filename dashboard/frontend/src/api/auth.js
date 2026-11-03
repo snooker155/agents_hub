@@ -10,6 +10,9 @@ export const authBootstrap = (data) => api.post('/auth/bootstrap', data);
 export const authLogin = (data) => api.post('/auth/login', data);
 export const authLogout = () => api.post('/auth/logout');
 export const getMe = () => api.get('/auth/me');
+// Make the caller's personal workspace again after it was deleted, without
+// waiting for the next sign-in (common/personal_workspace.py).
+export const createPersonalWorkspace = () => api.post('/auth/personal-workspace');
 export const getUsers = () => api.get('/auth/users');
 export const createUser = (data) => api.post('/auth/users', data);
 export const updateUser = (id, data) => api.patch(`/auth/users/${id}`, data);

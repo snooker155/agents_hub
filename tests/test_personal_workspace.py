@@ -147,14 +147,12 @@ def test_services_say_whose_personal_workspace_they_run_in(multi, client):
     assert by_ws[personal_workspace.name_for(root_id)]["workspace_own_personal"]
 
 
-def test_a_personal_workspace_cannot_be_deleted_or_shared(multi, client):
+def test_a_personal_workspace_cannot_be_shared(multi, client):
     root_id, admin = _admin(client)
     bob_id, bob = _member(client, admin)
     carol_id, _ = _member(client, admin, "carol")
     name = personal_workspace.name_for(bob_id)
 
-    assert client.delete(f"/api/workspaces/{name}", headers=bob).status_code == 403
-    assert client.delete(f"/api/workspaces/{name}", headers=admin).status_code == 403
     added = client.put(f"/api/workspaces/{name}/members",
                        json={"user_id": carol_id, "role": "viewer"}, headers=bob)
     assert added.status_code == 403
@@ -163,6 +161,81 @@ def test_a_personal_workspace_cannot_be_deleted_or_shared(multi, client):
     from common import groups
     with pytest.raises(ValueError):
         groups.add_mapping("staff", target="workspace", role="viewer", workspace=name)
+
+
+def test_only_the_person_or_an_admin_deletes_a_personal_workspace(multi, client):
+    _, admin = _admin(client)
+    bob_id, bob = _member(client, admin)
+    _, carol = _member(client, admin, "carol")
+    name = personal_workspace.name_for(bob_id)
+    client.get("/api/auth/me", headers=bob)
+
+    assert client.delete(f"/api/workspaces/{name}", headers=carol).status_code == 403
+    deleted = client.delete(f"/api/workspaces/{name}", headers=admin)
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["personal_of"] == bob_id and deleted.json()["recreated_at_login"]
+    assert identity.workspaces_for_user(bob_id) == []
+
+
+def test_a_deleted_personal_workspace_comes_back_only_at_the_next_sign_in(multi, client):
+    from workspace import get_workspace_folder
+    _, admin = _admin(client)
+    bob_id, bob = _member(client, admin)
+    name = personal_workspace.name_for(bob_id)
+    assert client.get("/api/auth/me", headers=bob).json()["personal_workspace"] == name
+
+    assert client.delete(f"/api/workspaces/{name}", headers=bob).status_code == 200
+    me = client.get("/api/auth/me", headers=bob).json()
+    assert me["personal_workspace"] is None and me["personal_workspace_deleted"]
+    assert me["workspaces"] == []
+    assert client.get("/api/workspaces", headers=bob).json() == []
+    assert get_workspace_folder(name) is None
+
+    client.post("/api/auth/login", json={"username": "bob", "password": PASSWORD})
+    me = client.get("/api/auth/me", headers=bob).json()
+    assert me["personal_workspace"] == name and not me["personal_workspace_deleted"]
+
+
+def test_the_person_can_make_their_personal_workspace_again_at_once(multi, client):
+    _, admin = _admin(client)
+    bob_id, bob = _member(client, admin)
+    name = personal_workspace.name_for(bob_id)
+    client.get("/api/auth/me", headers=bob)
+    assert client.delete(f"/api/workspaces/{name}", headers=bob).status_code == 200
+
+    made = client.post("/api/auth/personal-workspace", headers=bob)
+    assert made.status_code == 200, made.text
+    assert made.json()["name"] == name
+    listed = client.get("/api/workspaces", headers=bob).json()
+    assert [w["name"] for w in listed] == [name] and listed[0]["own_personal"]
+
+
+def test_an_admin_deletes_any_workspace_but_default(multi, client):
+    _, admin = _admin(client)
+    _, bob = _member(client, admin)
+    assert client.post("/api/workspaces", json={"name": "bobs-team"}, headers=bob).status_code == 200
+    assert client.delete("/api/workspaces/bobs-team", headers=admin).status_code == 200
+    assert client.delete("/api/workspaces/default", headers=admin).status_code == 403
+
+
+def test_readers_and_editors_cannot_delete_a_workspace(multi, client):
+    _, admin = _admin(client)
+    bob_id, bob = _member(client, admin)
+    carol_id, carol = _member(client, admin, "carol")
+    assert client.post("/api/workspaces", json={"name": "shared"}, headers=admin).status_code == 200
+    identity.set_member("shared", bob_id, "viewer")
+    identity.set_member("shared", carol_id, "editor")
+
+    for headers in (bob, carol):
+        listed = {w["name"]: w for w in client.get("/api/workspaces", headers=headers).json()}
+        assert listed["shared"]["can_delete"] is False
+        assert client.get("/api/workspaces/shared", headers=headers).json()["can_delete"] is False
+        assert client.delete("/api/workspaces/shared", headers=headers).status_code == 403
+    own = {w["name"]: w for w in client.get("/api/workspaces", headers=bob).json()}
+    assert own[personal_workspace.name_for(bob_id)]["can_delete"] is True
+
+    identity.set_member("shared", carol_id, "owner")
+    assert client.delete("/api/workspaces/shared", headers=carol).status_code == 200
 
 
 def test_the_personal_name_prefix_is_reserved(multi, client):

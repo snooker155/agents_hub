@@ -30,6 +30,7 @@ import { isEmbedded } from './embed';
 import WakeListener from './assistant/WakeListener';
 import InstallAppButton from './InstallAppButton';
 import WorkspacePicker from './WorkspacePicker';
+import NoWorkspaceScreen from './NoWorkspaceScreen';
 
 const SIDEBAR_COLLAPSED_KEY = 'agents_hub_sidebar_collapsed';
 // The project mark, also the browser tab icon (index.html); served from public/.
@@ -416,6 +417,20 @@ const Layout = ({ children }) => {
 
   // A page the assistant opened beside itself ("show on screen"): the page
   // alone, without the sidebar, the header and the panels around it.
+  // A person who reaches no workspace at all (their personal one was deleted
+  // and they belong to no other): nothing works without one, so the screen
+  // says so and offers to make the personal workspace again.
+  if (auth.mode === MULTI && auth.user && workspacesLoaded && workspaces.length === 0) {
+    return (
+      <NoWorkspaceScreen
+        onCreated={(name) => getWorkspaces().then((resp) => {
+          setWorkspaces(resp.data);
+          if (name) setSelectedWorkspace(name);
+        })}
+      />
+    );
+  }
+
   if (isEmbedded()) {
     return <main className="app-shell h-viewport overflow-y-auto">{children}</main>;
   }

@@ -11,8 +11,13 @@ made the first time it is needed and owned by them:
 * named ``personal-<user id>`` and marked ``personal_of: <user id>`` in its
   metadata (the mark is what counts; the prefix is reserved so nobody else can
   create a workspace that looks like one);
-* never deleted, renamed or shared: no other member can be added, no group
-  rule can name it, and SCIM deprovisioning leaves it in place;
+* never renamed or shared: no other member can be added, no group rule can
+  name it, and SCIM deprovisioning leaves it in place;
+* deleted only by the person or an administrator. A deleted one is not made
+  again on the next request: the person's account carries a mark
+  (:data:`DELETED_PREF` in their preferences) until they sign in anew
+  (``identity.open_session`` drops it) or ask for one now
+  (``POST /api/auth/personal-workspace``, :func:`recreate`);
 * falls back to ``default`` for what it does not configure itself: the
   default chat model and its connection settings (:func:`model_source`), and
   the special models (``providers.special.effective``). This is the one place
@@ -37,6 +42,9 @@ PREFIX = "personal-"
 META_KEY = "personal_of"
 #: Where a personal workspace falls back to.
 FALLBACK = "default"
+#: Preference key set on the account when its personal workspace was deleted:
+#: none is made for it again until the next sign-in.
+DELETED_PREF = "personal_workspace_deleted_at"
 
 _lock = threading.Lock()
 #: Personal workspaces this process already made sure of, so the check on
@@ -112,13 +120,52 @@ def _is_person(user_id: str) -> bool:
     return bool(user_id) and user_id not in (LOCAL_OPERATOR_ID, SERVICE_PRINCIPAL.id)
 
 
-def ensure_personal_workspace(user_id: Optional[str]) -> str:
+def deleted_until_login(user_id: Optional[str]) -> bool:
+    """Whether this person's personal workspace was deleted and is not to be
+    made again before they sign in anew."""
+    from common import identity
+    uid = str(user_id or "").strip()
+    return bool(uid) and bool(identity.get_preferences(uid).get(DELETED_PREF))
+
+
+def mark_deleted(user_id: str) -> None:
+    """Note on the account that its personal workspace was deleted, so the
+    next request does not quietly make a new one."""
+    from datetime import datetime, timezone
+    from common import identity
+    uid = str(user_id)
+    prefs = identity.get_preferences(uid)
+    prefs[DELETED_PREF] = datetime.now(timezone.utc).isoformat()
+    identity.set_preferences(uid, prefs)
+    with _lock:
+        _ensured.discard(name_for(uid))
+
+
+def clear_deleted_mark(user_id: str) -> None:
+    """Drop the mark :func:`mark_deleted` left (a new sign-in does)."""
+    from common import identity
+    uid = str(user_id)
+    prefs = identity.get_preferences(uid)
+    if DELETED_PREF in prefs:
+        prefs.pop(DELETED_PREF, None)
+        identity.set_preferences(uid, prefs)
+
+
+def recreate(user_id: str) -> str:
+    """Make the person's personal workspace now, though it was deleted in
+    this session (the "Create personal workspace" button)."""
+    return ensure_personal_workspace(user_id, recreate=True)
+
+
+def ensure_personal_workspace(user_id: Optional[str], *, recreate: bool = False) -> str:
     """The personal workspace of ``user_id``, created on first use.
 
     Idempotent and safe to call on every request: after the first success the
     answer comes from memory. Outside ``multi``, and for anything that is not
     a person (the local operator, the service credential, an unknown id), the
-    answer is ``"default"`` and nothing is created.
+    answer is ``"default"`` and nothing is created. The same answer, and
+    nothing created, for a person whose personal workspace was deleted and
+    who has not signed in since (:func:`mark_deleted`), unless ``recreate``.
     """
     from common import identity
     from common.auth import MULTI, WS_OWNER
@@ -128,14 +175,21 @@ def ensure_personal_workspace(user_id: Optional[str]) -> str:
     if not _is_person(uid):
         return FALLBACK
     name = name_for(uid)
+    from workspace import (create_workspace_folder, get_workspace_folder,
+                           get_workspace_metadata, update_workspace_metadata)
     with _lock:
         if name in _ensured:
-            return name
+            # Another process may have deleted it since this one made sure.
+            if get_workspace_folder(name) is not None:
+                return name
+            _ensured.discard(name)
         user = identity.get_user(uid)
         if user is None:
             return FALLBACK
-        from workspace import (create_workspace_folder, get_workspace_folder,
-                               get_workspace_metadata, update_workspace_metadata)
+        if deleted_until_login(uid):
+            if not recreate:
+                return FALLBACK
+            clear_deleted_mark(uid)
         created = get_workspace_folder(name) is None
         # The creator becomes the owner (workspace.storage claims it for the
         # current user), so create it as the person whatever request this is.
@@ -211,5 +265,6 @@ def forget_cache() -> None:
 __all__ = [
     "PREFIX", "META_KEY", "FALLBACK", "name_for", "is_reserved_name", "owner_of",
     "is_personal", "is_personal_meta", "ensure_personal_workspace", "ensure_for_principal",
-    "model_source", "forget_cache",
+    "model_source", "forget_cache", "DELETED_PREF", "deleted_until_login", "mark_deleted",
+    "clear_deleted_mark", "recreate",
 ]

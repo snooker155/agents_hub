@@ -261,7 +261,14 @@ const WorkspaceDetails = () => {
   useLiveRefetch(fetchData, { enabled: liveUpdates });
 
   const handleDelete = async () => {
-    if (!window.confirm(t('workspaceDetails.confirmDeleteWorkspace', { name: ws.name }))) return;
+    // A personal workspace is made again at its person's next sign-in, and
+    // the confirmation says so (common/personal_workspace.py).
+    const question = !ws.personal
+      ? t('workspaceDetails.confirmDeleteWorkspace', { name: ws.name })
+      : ws.own_personal
+        ? t('workspaceManager.confirmDeleteOwnPersonal')
+        : t('workspaceManager.confirmDeletePersonalOf', { owner: ws.personal_label || ws.personal_of });
+    if (!window.confirm(question)) return;
     try {
       await deleteWorkspace(name);
       navigate('/workspaces');
@@ -613,7 +620,7 @@ const WorkspaceDetails = () => {
         description={ws.path}
         backTo="/workspaces"
         backLabel={t('workspaceDetails.workspaces')}
-        actions={
+        actions={ws.can_delete === false ? null : (
           <button
             onClick={handleDelete}
             className="flex items-center rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-100"
@@ -622,7 +629,7 @@ const WorkspaceDetails = () => {
             <Trash2 className="mr-2 h-4 w-4" />
             {t('workspaceDetails.deleteWorkspace2')}
           </button>
-        }
+        )}
       />
 
       <TabRow

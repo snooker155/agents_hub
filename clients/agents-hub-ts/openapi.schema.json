@@ -22440,6 +22440,25 @@
         ]
       }
     },
+    "/api/auth/personal-workspace": {
+      "post": {
+        "description": "Make the caller's personal workspace again, now rather than at their\nnext sign-in, after it was deleted (common/personal_workspace.py).",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create Personal Workspace",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/auth/preferences": {
       "get": {
         "description": "The caller's own preferences: today just a palette\n(docs/settings.md \"Palette\"), read by the frontend's palette resolution\n(dashboard/frontend/src/components/theme.js) ahead of the workspace\ndefault and the built-in one.",
@@ -61556,6 +61575,7 @@
     },
     "/api/workspaces/{name}": {
       "delete": {
+        "description": "Delete a workspace. Its owners may (the middleware checks the role) and\nan administrator may delete any of them but ``default``, which the service\nfalls back to. A personal workspace is deleted only by the person or an\nadministrator; none is made for that person again until they sign in anew\n(common/personal_workspace.py).",
         "parameters": [
           {
             "in": "path",

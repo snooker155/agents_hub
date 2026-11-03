@@ -88,6 +88,10 @@ request is about.
 
 A safe method (`GET`, `HEAD`) needs any membership; `POST`, `PUT`, `PATCH` and
 `DELETE` need `editor` or better. Administrators bypass membership entirely.
+Deleting a workspace needs `owner`, so readers and editors never see the
+button (`can_delete` on `GET /api/workspaces` and `GET /api/workspaces/{name}`);
+an administrator may delete any workspace except `default`, which the service
+falls back to.
 A request that names no workspace passes the guard for any signed-in account;
 what it then sees is filtered by membership, see
 [Record-level access](#record-level-access).
@@ -149,12 +153,22 @@ gets a personal workspace (`common/personal_workspace.py`):
   workspace first (`own_personal: true`), then `default`, then the rest; an
   administrator sees other people's personal workspaces last, labelled with
   their owner (`personal_label`). The header picker shows it as "Personal".
-- **Never deleted, renamed or shared.** Deleting it is refused for everyone,
-  administrators included, through the API and the `delete_workspace` tool.
-  No member can be added or removed, and no group rule can name it. Names
-  starting with `personal-` are reserved: creating or attaching a workspace
-  with one is refused. SCIM deactivation and deletion leave it in place
-  with its files; an administrator still reaches it.
+- **Never renamed or shared.** No member can be added or removed, and no
+  group rule can name it. Names starting with `personal-` are reserved:
+  creating or attaching a workspace with one is refused. SCIM deactivation
+  and deletion leave it in place with its files; an administrator still
+  reaches it.
+- **Deleted only by the person or an administrator.** `DELETE
+  /api/workspaces/{name}` on it answers 403 for anyone else; the
+  `delete_workspace` agent tool refuses it for everyone. A deleted one is not
+  made again on the next request: the account carries the
+  `personal_workspace_deleted_at` preference until the person signs in anew,
+  which makes a new, empty one, and `GET /api/auth/me` reports
+  `personal_workspace_deleted: true` meanwhile. A person left with no
+  workspace at all sees a screen saying the service cannot work without one,
+  with a "Create personal workspace" button
+  (`POST /api/auth/personal-workspace`, which makes it now). Deleting any
+  workspace also drops its memberships.
 - **Falls back to `default`.** A personal workspace with no default model and
   no connection settings of its own runs with `default`'s
   (`personal_workspace.model_source`, `get_workspace_default_model_config`);

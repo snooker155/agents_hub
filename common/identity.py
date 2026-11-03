@@ -754,6 +754,10 @@ def open_session(user_id: str, *, kind: str = SESSION_PASSWORD, ip: Optional[str
             (_token_hash(token), row["user_id"], _iso(now), _iso(expires), _iso(now),
              session_id, kind, (ip or "")[:64] or None, (user_agent or "")[:256] or None),
         )
+    # A new sign-in brings back a personal workspace the person deleted
+    # (common/personal_workspace.py, "deleted only by the person").
+    from common import personal_workspace
+    personal_workspace.clear_deleted_mark(row["user_id"])
     return {"token": token, "expires_at": _iso(expires), "session_id": session_id,
             "kind": kind, "user": _row_to_user(row)}
 
@@ -1041,6 +1045,15 @@ def remove_member(workspace: str, user_id: str) -> bool:
             "DELETE FROM workspace_members WHERE workspace = ? AND user_id = ?",
             (str(workspace), str(user_id)))
     return True
+
+
+def drop_workspace_members(workspace: str) -> int:
+    """Forget every membership of a workspace that was deleted, so it no
+    longer counts among anyone's workspaces."""
+    with db.transaction() as conn:
+        cursor = conn.execute("DELETE FROM workspace_members WHERE workspace = ?",
+                              (str(workspace),))
+    return int(cursor.rowcount or 0)
 
 
 def workspaces_for_user(user_id: str) -> List[str]:
@@ -1412,7 +1425,7 @@ __all__ = [
     "SOURCE_LOCAL", "SOURCE_OIDC", "SOURCE_SCIM",
     "authorize_request", "bootstrap_code", "bootstrap_code_file", "bootstrap_required", "check_bootstrap_code", "claim_workspace", "client_ip", "forget_bootstrap_code",
     "create_first_admin", "create_user", "current_mode", "current_principal",
-    "current_user_id", "delete_user", "get_preferences", "get_user", "get_user_by_email",
+    "current_user_id", "delete_user", "drop_workspace_members", "get_preferences", "get_user", "get_user_by_email",
     "get_user_by_external", "get_user_by_external_id", "get_user_by_username",
     "hash_password", "is_service_token", "list_members", "list_sessions", "list_users",
     "local_passwords_enabled", "login", "login_throttled",

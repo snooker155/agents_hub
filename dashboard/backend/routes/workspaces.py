@@ -149,6 +149,25 @@ def _calc_task_progress(task, all_tasks):
     return int(round((done / len(subs)) * 100)) if subs else 0
 
 
+def _can_delete(principal, name: str, personal_of: Optional[str]) -> bool:
+    """Whether ``principal`` may delete workspace ``name``: never ``default``;
+    a personal one only the person or an administrator; any other one an
+    administrator or an owner of it. Readers and editors may not. Outside
+    ``multi`` there is one operator, who may delete anything but ``default``."""
+    if name == "default":
+        return False
+    if identity.current_mode() != "multi":
+        return True
+    if principal is None:
+        return False
+    if principal.is_admin:
+        return True
+    if personal_of:
+        return principal.kind == "user" and str(principal.id) == personal_of
+    from common.auth import WS_OWNER
+    return identity.membership_role(name, principal.id) == WS_OWNER
+
+
 @router.get("", response_model=List[WorkspaceListItem])
 async def list_workspaces(request: Request):
     roots = list_workspace_folders()
@@ -171,6 +190,7 @@ async def list_workspaces(request: Request):
     # nothing else; an admin sees all of them. A no-op in the single-operator
     # modes, where there is nobody to hide anything from. See common/identity.py.
     roots = _visible_to_caller(request, roots)
+    principal = identity.request_principal(request)
 
     all_tasks = tasks_service.list_tasks()
     # The agents the Agents page would list there (routes/agents/listing.py)
@@ -213,6 +233,7 @@ async def list_workspaces(request: Request):
             "personal_of": personal_of,
             "personal_label": personal_workspace.owner_label(personal_of) if personal_of else None,
             "own_personal": bool(own_personal) and name == own_personal,
+            "can_delete": _can_delete(principal, name, personal_of),
         })
 
     def _order(item):
@@ -281,7 +302,7 @@ async def attach_workspace(payload: WorkspaceAttach):
 
 
 @router.get("/{name}")
-async def get_workspace(name: str):
+async def get_workspace(request: Request, name: str):
     root = _require_workspace_folder(name)
     all_tasks = tasks_service.list_tasks()
     ws_tasks = [t for t in all_tasks if (t.workspace or "").strip() == root.name and not t.parent_id]
@@ -294,22 +315,39 @@ async def get_workspace(name: str):
 
     metadata = get_workspace_metadata(root.name)
 
+    from common import personal_workspace
+    principal = identity.request_principal(request)
     # files separately via endpoint, here basic info
     return {
         "name": root.name,
         "path": str(root),
         "tasks": tasks_info,
-        "metadata": metadata
+        "metadata": metadata,
+        **personal_workspace.owner_fields(root.name, principal),
+        "can_delete": _can_delete(principal, root.name, personal_workspace.owner_of(root.name)),
     }
 
 
 @router.delete("/{name}")
-async def delete_workspace(name: str):
+async def delete_workspace(request: Request, name: str):
+    """Delete a workspace. Its owners may (the middleware checks the role) and
+    an administrator may delete any of them but ``default``, which the service
+    falls back to. A personal workspace is deleted only by the person or an
+    administrator; none is made for that person again until they sign in anew
+    (common/personal_workspace.py)."""
     if name == "default":
         raise HTTPException(status_code=403, detail="The default workspace cannot be deleted")
     from common import personal_workspace
-    if personal_workspace.is_personal(name):
-        raise HTTPException(status_code=403, detail="A personal workspace cannot be deleted")
+    principal = identity.request_principal(request)
+    personal_of = personal_workspace.owner_of(name)
+    if not _can_delete(principal, name, personal_of):
+        # The middleware already turns away readers and editors; this also
+        # keeps another owner-less caller off someone's personal workspace.
+        raise HTTPException(
+            status_code=403,
+            detail=("Only its owner or an administrator can delete a personal workspace"
+                    if personal_of else
+                    "Only an owner of the workspace or an administrator can delete it"))
     # Detaching only drops the link; the directory behind an attached workspace
     # is the user's and is never deleted from here.
     was_attached = is_attached_workspace(name)
@@ -317,8 +355,15 @@ async def delete_workspace(name: str):
     deleted = delete_workspace_folder(name)
     if not deleted:
         raise HTTPException(status_code=404, detail="Workspace not found")
+    identity.drop_workspace_members(name)
+    if personal_of:
+        personal_workspace.mark_deleted(personal_of)
+    audit.record("workspace.delete", principal=principal, object_type="workspace",
+                 object_id=name, workspace=name, ip=identity.client_ip(request),
+                 details={"personal_of": personal_of} if personal_of else None)
     notify_change("workspaces")
-    return {"deleted": True, "detached": was_attached, "target_kept": target}
+    return {"deleted": True, "detached": was_attached, "target_kept": target,
+            "personal_of": personal_of, "recreated_at_login": bool(personal_of)}
 
 
 def _target_rel_path(name: str, path: Optional[str], file_id: Optional[str]) -> str:

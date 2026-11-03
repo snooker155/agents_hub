@@ -4,6 +4,13 @@ export default {
   workspaceDefaultAll: 'default (All)',
   workspacePersonal: 'Personal',
   workspacePersonalOf: '{{name}} (personal)',
+  noWorkspace: {
+    title: 'No workspaces available',
+    body: 'The service cannot work without at least one workspace. Create a personal workspace, or ask an administrator to add you to one.',
+    deleted: 'Your personal workspace was deleted. A new one will be created after your next sign-in, or you can create it now.',
+    create: 'Create personal workspace',
+    failed: 'Could not create the personal workspace',
+  },
   workspacePicker: {
     search: 'Search workspaces',
     noMatch: 'No workspace matches "{{q}}"',

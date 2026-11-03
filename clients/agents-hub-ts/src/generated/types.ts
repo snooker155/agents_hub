@@ -2994,6 +2994,9 @@ export interface ApiPaths {
   "/api/auth/password": {
     post: { body: PasswordChange; response: unknown };
   };
+  "/api/auth/personal-workspace": {
+    post: { response: unknown };
+  };
   "/api/auth/preferences": {
     get: { response: Record<string, unknown> };
     put: { body: Record<string, unknown>; response: unknown };

@@ -273,6 +273,9 @@ async def me(request: Request):
     if identity.current_mode() == MULTI and principal.kind == "user":
         from common import personal_workspace
         payload["personal_workspace"] = personal_workspace.ensure_for_principal(principal)
+        # Deleted by the person or an administrator, and not made again before
+        # the next sign-in (POST /api/auth/personal-workspace makes it now).
+        payload["personal_workspace_deleted"] = personal_workspace.deleted_until_login(principal.id)
         payload["workspaces"] = identity.workspaces_for_user(principal.id)
         payload["workspace_roles"] = identity.workspace_roles_for_user(principal.id)
         user = identity.get_user(principal.id) or {}
@@ -291,6 +294,23 @@ async def me(request: Request):
         from common import member_menu
         payload["hidden_menu"] = member_menu.hidden_for(principal)
     return payload
+
+
+@router.post("/api/auth/personal-workspace")
+async def create_personal_workspace(request: Request):
+    """Make the caller's personal workspace again, now rather than at their
+    next sign-in, after it was deleted (common/personal_workspace.py)."""
+    _require_multi()
+    principal = _principal(request)
+    if principal is None or principal.kind != "user":
+        raise HTTPException(status_code=403, detail="Only a signed-in person has a personal workspace")
+    from common import personal_workspace
+    name = personal_workspace.recreate(principal.id)
+    if name == personal_workspace.FALLBACK:
+        raise HTTPException(status_code=400, detail="This account cannot have a personal workspace")
+    audit.record("workspace.personal_create", principal=principal, object_type="workspace",
+                 object_id=name, workspace=name, ip=identity.client_ip(request))
+    return {"name": name}
 
 
 # ── users (admin) ────────────────────────────────────────────────────────────
