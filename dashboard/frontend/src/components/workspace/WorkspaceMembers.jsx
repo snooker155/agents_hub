@@ -99,7 +99,7 @@ export default function WorkspaceMembers({ workspace }) {
   const candidates = users.filter((u) => !known.has(u.id));
 
   return (
-    <div className="bg-white p-6 shadow-md rounded-lg mt-6">
+    <div className="bg-white p-6 shadow-md rounded-lg">
       <h3 className="text-lg font-bold mb-1 flex items-center gap-2">
         <Users className="w-5 h-5 text-indigo-600" />
         {t('auth.members.title')}

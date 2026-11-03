@@ -13,6 +13,9 @@ import { WorkspaceContext } from '../../components/workspace';
 const ok = (data) => Promise.resolve({ data });
 
 const updateOverrides = vi.fn(() => ok({}));
+const getMembers = vi.fn(() => ok([]));
+// Single mode unless a test switches it; the Members tab needs multi mode.
+const authState = { mode: 'single', user: null, loading: false };
 
 const AGENTS = [
   { id: 'orchestrator', name: 'Orchestrator', system: true },
@@ -49,13 +52,18 @@ vi.mock('../../api', () => ({
   getWorkspaceFileId: () => ok({}),
   deleteWorkspaceFile: () => ok({}),
   removeFlowFromWorkspace: () => ok({}),
+  getWorkspaceMembers: (...args) => getMembers(...args),
+}));
+vi.mock('../../components/auth', async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAuth: () => authState,
 }));
 vi.mock('../../components/stream', () => ({ useLiveRefetch: () => {} }));
 vi.mock('../../components/theme', () => ({
   useTheme: () => ({ theme: 'light', resolvedMode: 'light' }),
   resolvePalette: () => Promise.resolve(),
 }));
-vi.mock('../../components/workspace/WorkspaceMembers', () => ({ default: () => null }));
+vi.mock('../../components/workspace/WorkspaceMembers', () => ({ default: () => <section>MEMBERS CARD</section> }));
 vi.mock('../../components/workspace/WorkspaceSecrets', () => ({ default: () => <section>SECRETS CARD</section> }));
 vi.mock('../../components/workspace/WorkspaceRoles', () => ({ default: () => <section>ROLES CARD</section> }));
 vi.mock('../../components/settings/ToolPolicySettings', () => ({ default: () => null }));
@@ -129,5 +137,52 @@ describe('WorkspaceDetails settings tab', () => {
     fireEvent.click(within(menu).getByText('Palette'));
     expect(await screen.findByText('Default palette')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/(workspaceDetails|settings)\.[a-zA-Z]/);
+  });
+});
+
+describe('WorkspaceDetails members tab', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    getMembers.mockReset();
+    Object.assign(authState, { mode: 'single', user: null });
+  });
+
+  const tabStrip = () => document.querySelector('nav').textContent;
+
+  it('is not there in single mode, and the Agents tab has no members card', async () => {
+    show();
+    await screen.findByText('Authorized Agents in Workspace');
+    expect(tabStrip()).not.toContain('Members');
+    expect(screen.queryByText('MEMBERS CARD')).toBeNull();
+    expect(getMembers).not.toHaveBeenCalled();
+  });
+
+  it('shows for an owner the members read lets through, and holds the card', async () => {
+    Object.assign(authState, { mode: 'multi', user: { id: 'u1', role: 'user' } });
+    getMembers.mockReturnValue(ok([]));
+    show();
+    await screen.findByText('Authorized Agents in Workspace');
+    expect(screen.queryByText('MEMBERS CARD')).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: /Members/ }));
+    expect(await screen.findByText('MEMBERS CARD')).toBeTruthy();
+    expect(getMembers).toHaveBeenCalledWith('jobs');
+  });
+
+  it('stays hidden for a member the members read refuses', async () => {
+    Object.assign(authState, { mode: 'multi', user: { id: 'u2', role: 'user' } });
+    getMembers.mockReturnValue(Promise.reject({ response: { status: 403 } }));
+    show('en', 'members');
+    // The ?tab=members link falls back to Agents once the read is refused.
+    expect(await screen.findByText('Authorized Agents in Workspace')).toBeTruthy();
+    expect(getMembers).toHaveBeenCalledWith('jobs');
+    expect(tabStrip()).not.toContain('Members');
+    expect(screen.queryByText('MEMBERS CARD')).toBeNull();
+  });
+
+  it('shows for an admin without asking', async () => {
+    Object.assign(authState, { mode: 'multi', user: { id: 'a', role: 'admin' } });
+    show('en', 'members');
+    expect(await screen.findByText('MEMBERS CARD')).toBeTruthy();
+    expect(getMembers).not.toHaveBeenCalled();
   });
 });

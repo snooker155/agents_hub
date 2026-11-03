@@ -2,6 +2,7 @@ export default {
   tabs: {
     files: 'Dateien',
     agents: 'Agenten',
+    members: 'Mitglieder',
     instructions: 'Anweisungen',
     tasks: 'Aufgaben',
     projects: 'Projekte',

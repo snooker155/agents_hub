@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } fro
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
-import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, ShieldAlert, Sparkles, Repeat, Cpu } from 'lucide-react';
+import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides, getWorkspaceMembers } from '../api';
+import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, ShieldAlert, Sparkles, Repeat, Cpu, UserPlus } from 'lucide-react';
 import { isHtmlFile } from '../lib/fileKind';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
@@ -28,7 +28,7 @@ import { TabRow } from '../components/PageTabs';
 import PageLoader from '../components/PageLoader';
 import { useI18n } from '../i18n';
 // Tab ids the page can open, so a ?tab= deep-link can be validated before use.
-const WORKSPACE_TABS = ['files', 'agents', 'instructions', 'tasks', 'projects', 'progress', 'settings'];
+const WORKSPACE_TABS = ['files', 'agents', 'members', 'instructions', 'tasks', 'projects', 'progress', 'settings'];
 
 const isMarkdownPath = (p) => /\.(md|markdown|mdx)$/i.test(String(p || ''));
 
@@ -131,6 +131,30 @@ const WorkspaceDetails = () => {
   const [activeTab, setActiveTab] = useState(
     WORKSPACE_TABS.includes(linkedTab) ? linkedTab : 'files');
   const [agentSearch, setAgentSearch] = useState('');
+  const auth = useAuth();
+  // The Members tab exists only in multi mode and only for a viewer who may
+  // manage membership: an admin, or an owner of this workspace, which only the
+  // backend can tell, so a members read that succeeds is what shows the tab.
+  const multiUser = isMultiUser(auth);
+  const admin = isAdmin(auth);
+  const [memberProbe, setMemberProbe] = useState({ workspace: '', ok: false });
+  useEffect(() => {
+    if (!multiUser || admin || !name) return undefined;
+    let cancelled = false;
+    getWorkspaceMembers(name)
+      .then(() => { if (!cancelled) setMemberProbe({ workspace: name, ok: true }); })
+      .catch(() => { if (!cancelled) setMemberProbe({ workspace: name, ok: false }); });
+    return () => { cancelled = true; };
+  }, [multiUser, admin, name]);
+  const membersPending = multiUser && !admin && memberProbe.workspace !== name;
+  const canManageMembers = multiUser && (admin || (!membersPending && memberProbe.ok));
+  // A ?tab=members link opened by someone the members read refuses (or in
+  // single mode) lands on Agents instead of an empty page.
+  useEffect(() => {
+    if (activeTab !== 'members' || canManageMembers || membersPending) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- falls back once access is known
+    setActiveTab('agents');
+  }, [activeTab, canManageMembers, membersPending]);
   // System agents are in every workspace and cannot be removed, so they only
   // crowd the authorized list; hidden by default, and the choice sticks.
   const [showSystem, setShowSystem] = useState(() => {
@@ -416,6 +440,7 @@ const WorkspaceDetails = () => {
   const tabs = [
     { id: 'files', label: t('workspaceDetails.tabs.files'), icon: FileText },
     { id: 'agents', label: t('workspaceDetails.tabs.agents'), icon: Users },
+    ...(canManageMembers ? [{ id: 'members', label: t('workspaceDetails.tabs.members'), icon: UserPlus }] : []),
     { id: 'instructions', label: t('workspaceDetails.tabs.instructions'), icon: BookOpen },
     { id: 'tasks', label: t('workspaceDetails.tabs.tasks'), icon: CheckSquare },
     { id: 'projects', label: t('workspaceDetails.tabs.projects'), icon: FolderGit2 },
@@ -1157,10 +1182,10 @@ const WorkspaceDetails = () => {
         </div>
       )}
 
-      {/* Who may reach this workspace. Renders nothing outside AUTH_MODE=multi,
-          and nothing for a viewer who is neither an owner of it nor an admin.
+      {/* Who may reach this workspace, on its own tab. The tab is listed only
+          for a viewer who may manage membership (see canManageMembers).
           See components/workspace/WorkspaceMembers.jsx. */}
-      {activeTab === 'agents' && <WorkspaceMembers workspace={name} />}
+      {activeTab === 'members' && canManageMembers && <WorkspaceMembers workspace={name} />}
 
       {activeTab === 'settings' && (
         <WorkspaceSettingsTab
