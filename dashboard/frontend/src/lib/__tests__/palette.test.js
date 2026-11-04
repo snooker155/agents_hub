@@ -104,7 +104,7 @@ describe('applyPalette / clearPalette', () => {
   });
 
   it('drops the colors the previous palette set and the new one does not name', () => {
-    applyPalette({ brand: '#e20074', neutral: '#484f56', ok: '#16a34a', danger: '#dc2626' }, 'light');
+    applyPalette({ brand: '#db2777', neutral: '#484f56', ok: '#16a34a', danger: '#dc2626' }, 'light');
     applyPalette({ brand: '#3f66d8' }, 'light');
     const root = document.documentElement;
     expect(root.style.getPropertyValue('--brand-600')).toMatch(/^#[0-9a-f]{6}$/);
