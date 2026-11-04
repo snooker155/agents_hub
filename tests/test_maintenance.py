@@ -65,6 +65,26 @@ def test_prune_orphan_files_removes_unknown_logs():
     assert (logs / "agent_run_LIVE.log").exists()
 
 
+def test_prune_orphan_files_spares_logs_of_another_database():
+    # A fresh database (a new Postgres before the data is copied in) makes
+    # every log an orphan: nothing is deleted then.
+    from common.paths import AGENTS_HUB_ROOT
+    logs = AGENTS_HUB_ROOT / "run_logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    files = [logs / f"agent_run_FOREIGN{i}.log" for i in range(12)]
+    for f in files:
+        f.write_text("kept", encoding="utf-8")
+    maintenance.prune_orphan_files()
+    assert all(f.exists() for f in files)
+
+
+def test_implausible_orphans():
+    assert not maintenance.implausible_orphans(3, 0)
+    assert not maintenance.implausible_orphans(40, 100)
+    assert maintenance.implausible_orphans(46, 0)
+    assert maintenance.implausible_orphans(60, 20)
+
+
 def test_run_maintenance_is_daily_guarded():
     first = maintenance.run_maintenance()
     assert "skipped" not in first          # first run executes

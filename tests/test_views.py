@@ -753,9 +753,23 @@ def test_compaction_noop_under_threshold():
     assert compact_view_ops(vid) == 0
 
 
-def test_prune_orphan_view_dirs():
+def _own_view_roots(tmp_path, monkeypatch):
+    """Empty view roots for this test: the session shares one AGENTS_HUB_ROOT
+    while each test has its own database, so earlier tests' views would all be
+    orphans here and the prune would (rightly) refuse to touch them."""
+    from common import paths
+    import views.store as store
+    root = tmp_path / "views"
+    monkeypatch.setattr(paths, "VIEWS_ROOT", root)
+    monkeypatch.setattr(paths, "WORKSPACES_ROOT", tmp_path / "workspaces")
+    monkeypatch.setattr(store, "workspace_views_dir",
+                        lambda ws: (tmp_path / "workspaces" / ws / ".views") if ws else root)
+    return root
+
+
+def test_prune_orphan_view_dirs(tmp_path, monkeypatch):
     from views.store import create_live_view, prune_orphan_view_dirs, get_view
-    from common.paths import VIEWS_ROOT
+    VIEWS_ROOT = _own_view_roots(tmp_path, monkeypatch)
     keep = create_live_view("graph", "keep").view_id
     orphan = VIEWS_ROOT / "vw_orphan_xyz"
     orphan.mkdir(parents=True, exist_ok=True)
@@ -763,6 +777,19 @@ def test_prune_orphan_view_dirs():
     assert prune_orphan_view_dirs() >= 1
     assert not orphan.exists()
     assert get_view(keep) is not None                       # real view untouched
+
+
+def test_prune_orphan_view_dirs_spares_views_of_another_database(tmp_path, monkeypatch):
+    # Every view dir without an index row, far more than leftovers could be:
+    # the database is not the one they were written with, so none is deleted.
+    from views.store import prune_orphan_view_dirs
+    VIEWS_ROOT = _own_view_roots(tmp_path, monkeypatch)
+    dirs = [VIEWS_ROOT / f"vw_foreign_{i}" for i in range(12)]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "view.json").write_text("{}")
+    assert prune_orphan_view_dirs() == 0
+    assert all(d.exists() for d in dirs)
 
 
 def test_maintenance_includes_views(monkeypatch):

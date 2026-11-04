@@ -27,6 +27,16 @@ from common.paths import AGENTS_HUB_ROOT
 
 log = logging.getLogger("common.maintenance")
 
+
+def implausible_orphans(orphans: int, known: int) -> bool:
+    """Whether ``orphans`` files without a record, beside ``known`` records,
+    look like a database that is not the one these files belong to rather
+    than leftovers: a fresh or swapped database (a new Postgres before the
+    data was copied in, another .env) makes every file an orphan. Deleting a
+    record removes its files at the same time, so real leftovers are few.
+    The orphan passes delete nothing then and say so in the log."""
+    return orphans > max(10, known)
+
 _MAINTENANCE_INTERVAL_HOURS = 24
 # Only these run states are ever pruned — an in-flight or paused run is kept
 # regardless of age so retention can never delete active work.
@@ -95,20 +105,24 @@ def prune_orphan_files() -> int:
     removed = 0
 
     logs_dir = AGENTS_HUB_ROOT / "run_logs"
-    if logs_dir.is_dir():
-        for f in logs_dir.glob("agent_run_*.log"):
-            run_id = f.stem[len("agent_run_"):]
-            if run_id not in known:
-                try:
-                    f.unlink()
-                    removed += 1
-                except OSError:
-                    log.debug("orphan log delete failed for %s", f, exc_info=True)
-                try:
-                    from common import blobs
-                    blobs.delete(blobs.rel(f))
-                except Exception:  # noqa: BLE001 - best-effort mirror cleanup, must not block pruning
-                    log.debug("blob cleanup failed for %s", f, exc_info=True)
+    orphan_logs = [f for f in logs_dir.glob("agent_run_*.log")
+                   if f.stem[len("agent_run_"):] not in known] if logs_dir.is_dir() else []
+    if implausible_orphans(len(orphan_logs), len(known)):
+        log.warning("not pruning %d run logs without a run record (%d runs known): "
+                    "the database looks like another one than these logs belong to",
+                    len(orphan_logs), len(known))
+        orphan_logs = []
+    for f in orphan_logs:
+        try:
+            f.unlink()
+            removed += 1
+        except OSError:
+            log.debug("orphan log delete failed for %s", f, exc_info=True)
+        try:
+            from common import blobs
+            blobs.delete(blobs.rel(f))
+        except Exception:  # noqa: BLE001 - best-effort mirror cleanup, must not block pruning
+            log.debug("blob cleanup failed for %s", f, exc_info=True)
 
     # Registry snapshots written for run containers (common/snapshot.py):
     # gone once their run has finished.

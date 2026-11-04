@@ -1085,22 +1085,31 @@ def compact_view_ops(view_id: str, keep_tail: int = OP_COMPACT_KEEP_TAIL) -> int
 
 
 def prune_orphan_view_dirs() -> int:
-    """Delete on-disk view dirs (``vw_*``) that have no ``views`` index row."""
+    """Delete on-disk view dirs (``vw_*``) that have no ``views`` index row.
+
+    Nothing is deleted when the orphans are too many to be leftovers
+    (common.maintenance.implausible_orphans): on a database that is not the
+    one the views were written with, such as a fresh Postgres before the data
+    was copied in, every view looks orphaned, and this pass once removed them
+    all.
+    """
+    from common.maintenance import implausible_orphans
     from common.paths import WORKSPACES_ROOT, VIEWS_ROOT
     conn = db.get_conn()
     known = {r["view_id"] for r in conn.execute("SELECT view_id FROM views").fetchall()}
     roots: List[Path] = [VIEWS_ROOT]
     if WORKSPACES_ROOT.is_dir():
         roots.extend(ws / ".views" for ws in WORKSPACES_ROOT.iterdir() if (ws / ".views").is_dir())
-    removed = 0
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for d in root.iterdir():
-            if d.is_dir() and d.name.startswith("vw_") and d.name not in known:
-                shutil.rmtree(d, ignore_errors=True)
-                removed += 1
-    return removed
+    orphans = [d for root in roots if root.is_dir() for d in root.iterdir()
+               if d.is_dir() and d.name.startswith("vw_") and d.name not in known]
+    if implausible_orphans(len(orphans), len(known)):
+        log.warning("not pruning %d view dirs without an index row (%d views known): "
+                    "the database looks like another one than these views belong to",
+                    len(orphans), len(known))
+        return 0
+    for d in orphans:
+        shutil.rmtree(d, ignore_errors=True)
+    return len(orphans)
 
 
 def run_view_maintenance() -> Dict[str, int]:
