@@ -10,6 +10,6 @@ export default {
   runQa: 'Запустить QA',
   runDevops: 'Запустить DevOps',
   runFullGraph: 'Запустить весь граф',
-  selectWorkspaceFirst: 'Сначала выберите рабочее пространство',
+  selectWorkspaceFirst: 'Сначала выберите пространство',
   startFailed: 'Не удалось запустить агента',
 };

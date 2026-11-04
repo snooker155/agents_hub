@@ -18,7 +18,7 @@ export default {
     finished: 'Завершено',
     cost: 'Стоимость',
     children: 'Запуски',
-    workspace: 'Рабочее пространство',
+    workspace: 'Пространство',
     actions: 'Действия',
   },
   untitled: 'Без названия',

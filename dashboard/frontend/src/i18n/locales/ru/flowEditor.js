@@ -205,7 +205,7 @@ export default {
   skipped: 'Пропущен',
   nodePanel: {
     agent: 'Агент',
-    agentMissing: 'Этого агента больше нет в рабочем пространстве.',
+    agentMissing: 'Этого агента больше нет в пространстве.',
     model: 'Модель',
     defaultModel: 'По умолчанию для пространства',
     version: 'Версия',

@@ -35,7 +35,7 @@ export default {
   loadValue: '{{used}} / {{capacity}}',
   maxParallel: 'Лимит',
   maxParallelHint: 'Сколько запросов от этого хаба одновременно. Пусто: без лимита (узел заявил {{announced}}).',
-  workspacesEdit: 'Рабочие пространства',
+  workspacesEdit: 'Пространства',
   workspacesEditHint: 'Через запятую. Пусто означает любое пространство.',
   edit: 'Изменить',
   save: 'Сохранить',

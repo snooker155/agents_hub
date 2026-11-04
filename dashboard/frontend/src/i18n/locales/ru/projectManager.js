@@ -1,6 +1,6 @@
 export default {
   projects: 'Проекты',
-  organizeTasksAndCodeBy: 'Организуйте задачи и код по проектам, связанным с рабочим пространством',
+  organizeTasksAndCodeBy: 'Организуйте задачи и код по проектам, связанным с пространством',
   searchProjects: 'Поиск проектов…',
   loading: 'Загрузка…',
   noProjectsYet: 'Проектов пока нет',
