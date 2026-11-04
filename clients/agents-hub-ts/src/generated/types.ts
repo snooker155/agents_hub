@@ -301,6 +301,11 @@ export type Body_upload_knowledge_file_api_shared_memory__memory_id__files_uploa
   "file": string;
 };
 
+export type Body_upload_project_file_api_projects__project_id__files_upload_post = {
+  "file": string;
+  "path"?: string | null;
+};
+
 export type Body_upload_workspace_file_api_workspaces__name__files_upload_post = {
   "file": string;
   "path"?: string | null;
@@ -2283,6 +2288,12 @@ export type TicketBody = {
   "session_id"?: string | null;
 };
 
+export type TitleIn = {
+  "message": string;
+  "reply"?: string;
+  "agent_id"?: string | null;
+};
+
 export type ToolPolicyUpdate = {
   "tool_policy"?: Record<string, unknown>;
 };
@@ -3187,6 +3198,9 @@ export interface ApiPaths {
   };
   "/api/chats/search": {
     get: { response: unknown };
+  };
+  "/api/chats/suggest-title": {
+    post: { body: TitleIn; response: unknown };
   };
   "/api/chats/{chat_id}": {
     get: { response: unknown };
@@ -4416,6 +4430,10 @@ export interface ApiPaths {
   };
   "/api/projects/{project_id}/files": {
     get: { response: unknown };
+    delete: { response: unknown };
+  };
+  "/api/projects/{project_id}/files/upload": {
+    post: { response: unknown };
   };
   "/api/projects/{project_id}/git-pull": {
     post: { response: unknown };
@@ -5113,6 +5131,9 @@ export interface ApiPaths {
   };
   "/api/trackers/projects/{project_id}/sync": {
     post: { response: unknown };
+  };
+  "/api/trackers/status": {
+    get: { response: unknown };
   };
   "/api/trackers/{provider}/projects": {
     get: { response: unknown };

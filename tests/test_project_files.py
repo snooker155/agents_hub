@@ -130,3 +130,63 @@ def test_a_project_file_is_named_by_its_id(project):
     with pytest.raises(HTTPException) as exc:
         run(projects_routes.get_project_file_id(proj.id, ".env"))
     assert exc.value.status_code == 400
+
+
+def test_upload_puts_a_file_in_the_project_folder_and_delete_removes_it(project):
+    from starlette.datastructures import UploadFile
+    import io
+
+    proj, root = project
+    up = UploadFile(file=io.BytesIO(b"notes"), filename="notes.md")
+    made = run(projects_routes.upload_project_file(proj.id, up, "docs"))
+    assert made["path"] == "docs/notes.md" and made["size"] == 5 and made["file_id"]
+    assert (root / "docs" / "notes.md").read_bytes() == b"notes"
+    assert "docs/notes.md" in run(projects_routes.list_project_files(proj.id))["files"]
+
+    # By its id, as the page names it.
+    gone = run(projects_routes.delete_project_file(proj.id, file_id=made["file_id"]))
+    assert gone == {"deleted": True, "path": "docs/notes.md", "type": "file"}
+    assert not (root / "docs" / "notes.md").exists()
+    with pytest.raises(HTTPException) as err:
+        run(projects_routes.get_project_file_content(proj.id, file_id=made["file_id"]))
+    assert err.value.status_code == 404
+
+
+def test_upload_and_delete_keep_to_the_project_folder(project):
+    from starlette.datastructures import UploadFile
+    import io
+
+    proj, root = project
+    with pytest.raises(HTTPException) as err:
+        run(projects_routes.upload_project_file(
+            proj.id, UploadFile(file=io.BytesIO(b"x"), filename="evil.txt"), "../../outside"))
+    assert err.value.status_code == 400
+    with pytest.raises(HTTPException) as err:
+        run(projects_routes.delete_project_file(proj.id, path="../README.md"))
+    assert err.value.status_code in (403, 404)
+    with pytest.raises(HTTPException) as err:
+        run(projects_routes.delete_project_file("no-such-project", path="README.md"))
+    assert err.value.status_code == 404
+
+
+def test_delete_takes_a_folder_with_its_files_but_never_the_project_folder(project):
+    from starlette.datastructures import UploadFile
+    import io
+
+    proj, root = project
+    made = run(projects_routes.upload_project_file(
+        proj.id, UploadFile(file=io.BytesIO(b"a"), filename="a.md"), "docs/deep"))
+    gone = run(projects_routes.delete_project_file(proj.id, path="docs"))
+    assert gone == {"deleted": True, "path": "docs", "type": "directory"}
+    assert not (root / "docs").exists()
+    # What was in it is gone from the registry too.
+    with pytest.raises(HTTPException) as err:
+        run(projects_routes.get_project_file_content(proj.id, file_id=made["file_id"]))
+    assert err.value.status_code == 404
+    with pytest.raises(HTTPException) as err:
+        run(projects_routes.delete_project_file(proj.id, path="."))
+    assert err.value.status_code == 400
+    with pytest.raises(HTTPException) as err:
+        run(projects_routes.delete_project_file(proj.id, path="../.."))
+    assert err.value.status_code == 403
+    assert (root / "README.md").exists()

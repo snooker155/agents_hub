@@ -12,6 +12,7 @@ Endpoints:
 - GET  /api/trackers/projects/{project_id}        — the project's tracker config
 - PUT  /api/trackers/projects/{project_id}        — set provider/remote_id/url
 - POST /api/trackers/projects/{project_id}/sync   — import/refresh tracker issues as tasks
+- GET  /api/trackers/status                      — which trackers have credentials, for a picker
 - GET  /api/trackers/{provider}/projects          — Jira projects / Linear teams, for a picker
 
 A sync uses the tracker connector of the project's workspace (its own, else
@@ -98,6 +99,25 @@ async def sync_project_tracker(project_id: str, request: Request):
         return await asyncio.to_thread(sync_tracker_issues, project)
     except (TrackerError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/status")
+async def tracker_status(workspace: Optional[str] = None):
+    """Which trackers are connected for ``?workspace=``: whether the
+    connector in effect there (its own, else the default workspace's) has the
+    credentials a client needs. Building the client says so without a call to
+    the tracker; whether the credentials still work is the Connectors page's
+    connection test."""
+    from common.workspace_context import normalize_workspace_name
+    ws = normalize_workspace_name(workspace or "") or "default"
+    status = {}
+    for provider in ("jira", "linear"):
+        try:
+            await asyncio.to_thread(get_provider, provider, ws)
+            status[provider] = {"configured": True}
+        except TrackerError:
+            status[provider] = {"configured": False}
+    return status
 
 
 @router.get("/{provider}/projects")

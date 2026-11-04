@@ -126,6 +126,15 @@ export const getProjectFileContent = (id, ref) => api.get(`/projects/${id}/file-
 export const getProjectFileBlob = (id, ref) =>
   api.get(`/projects/${id}/file-raw`, { params: projectFileParams(ref), responseType: 'blob' });
 export const getProjectFileId = (id, path) => api.get(`/projects/${id}/file-id`, { params: { path } });
+// A file into the project's folder (under ``path``, a folder of it, when given),
+// and one out of it by ``ref`` as above.
+export const uploadProjectFile = (id, file, path = '') => {
+  const form = new FormData();
+  form.append('file', file);
+  if (path) form.append('path', path);
+  return api.post(`/projects/${id}/files/upload`, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+};
+export const deleteProjectFile = (id, ref) => api.delete(`/projects/${id}/files`, { params: projectFileParams(ref) });
 export const importProjectFromRepo = (data) => api.post('/projects/import-from-repo', data);
 export const connectProjectRepo = (id, data) => api.post(`/projects/${id}/connect-repo`, data);
 export const syncProjectIssues = (id) => api.post(`/projects/${id}/sync-issues`);

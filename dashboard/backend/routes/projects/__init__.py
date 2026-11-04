@@ -33,6 +33,8 @@ from .files import (  # noqa: F401
     get_project_file_id,
     get_project_file_content,
     get_project_file_raw,
+    upload_project_file,
+    delete_project_file,
     _EXTRACT_SCRIPT,
     _detect_port_from_source,
     get_spec_from_code,

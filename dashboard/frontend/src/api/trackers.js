@@ -10,3 +10,7 @@ export const setProjectTracker = (projectId, data) => api.put(`/trackers/project
 export const syncProjectTracker = (projectId) => api.post(`/trackers/projects/${projectId}/sync`);
 export const listTrackerProjects = (provider, workspace) =>
   api.get(`/trackers/${provider}/projects`, { params: workspace ? { workspace } : {} });
+// Which trackers have credentials in effect for ``workspace`` (its own, else
+// the default's): {jira: {configured}, linear: {configured}}.
+export const getTrackerStatus = (workspace) =>
+  api.get('/trackers/status', { params: workspace ? { workspace } : {} });

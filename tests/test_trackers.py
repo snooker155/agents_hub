@@ -292,6 +292,38 @@ def test_put_tracker_config_validates():
     assert resp.json()["provider"] == "jira"
 
 
+# ── route: GET /api/trackers/status says which trackers are connected ────
+
+def test_tracker_status_reports_which_providers_have_credentials(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import routes.trackers as trackers_route
+    from connectors.trackers.providers import TrackerError
+
+    seen = []
+
+    def fake_get_provider(provider, workspace=None):
+        seen.append((provider, workspace))
+        if provider == "jira":
+            return object()
+        raise TrackerError("Linear is not configured.")
+
+    monkeypatch.setattr(trackers_route, "get_provider", fake_get_provider)
+    app = FastAPI()
+    app.include_router(trackers_route.router)
+    client = TestClient(app)
+
+    resp = client.get("/api/trackers/status", params={"workspace": "team"})
+    assert resp.status_code == 200
+    assert resp.json() == {"jira": {"configured": True}, "linear": {"configured": False}}
+    assert seen == [("jira", "team"), ("linear", "team")]
+
+    # No workspace: the default's connector.
+    seen.clear()
+    client.get("/api/trackers/status")
+    assert {w for _, w in seen} == {"default"}
+
+
 # ── tools: not-configured error ──────────────────────────────────────────
 
 def test_tracker_list_issues_tool_returns_not_configured_error():

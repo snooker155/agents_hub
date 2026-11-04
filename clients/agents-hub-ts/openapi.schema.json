@@ -1718,6 +1718,32 @@
         "title": "Body_upload_knowledge_file_api_shared_memory__memory_id__files_upload_post",
         "type": "object"
       },
+      "Body_upload_project_file_api_projects__project_id__files_upload_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "",
+            "title": "Path"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_project_file_api_projects__project_id__files_upload_post",
+        "type": "object"
+      },
       "Body_upload_workspace_file_api_workspaces__name__files_upload_post": {
         "properties": {
           "file": {
@@ -13988,6 +14014,36 @@
         "title": "TicketBody",
         "type": "object"
       },
+      "TitleIn": {
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "message": {
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "reply": {
+            "default": "",
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "TitleIn",
+        "type": "object"
+      },
       "ToolPolicyUpdate": {
         "properties": {
           "tool_policy": {
@@ -25384,6 +25440,45 @@
           }
         },
         "summary": "Search Chats",
+        "tags": [
+          "chats"
+        ]
+      }
+    },
+    "/api/chats/suggest-title": {
+      "post": {
+        "description": "A title for a new conversation, named by the model of ``agent_id``\nfrom its first message and the start of the answer (chat/titles.py).\n``{\"title\": null}`` when no model answers: the page keeps the title it has.\nNothing is stored here; the page saves the title with the conversation.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TitleIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Suggest Title",
         "tags": [
           "chats"
         ]
@@ -46035,6 +46130,76 @@
       }
     },
     "/api/projects/{project_id}/files": {
+      "delete": {
+        "description": "Delete one file of the project's folder (by ``file_id`` or ``path``)\nor one of its folders with everything in it (by ``path``), the way a\nworkspace's are (routes/workspaces.py); never the project folder itself.\nThe registry records of what went are tombstoned, so a link to it\nanswers 404.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Path"
+            }
+          },
+          {
+            "in": "query",
+            "name": "file_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Project File",
+        "tags": [
+          "projects"
+        ]
+      },
       "get": {
         "description": "List the files inside the project's subfolder: hidden entries and\ndependency or build folders (node_modules, venv, dist...) left out,\nat most 5000. ``truncated`` says the list was cut.",
         "parameters": [
@@ -46069,6 +46234,56 @@
           }
         },
         "summary": "List Project Files",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/files/upload": {
+      "post": {
+        "description": "Upload a file into the project's folder, optionally under ``path``, a\nfolder relative to it; the way a workspace upload is\n(routes/workspaces.py), the file registered so a link can name it by id.\nPath traversal is refused.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_project_file_api_projects__project_id__files_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Project File",
         "tags": [
           "projects"
         ]
@@ -58334,6 +58549,53 @@
           }
         },
         "summary": "Sync Project Tracker",
+        "tags": [
+          "trackers"
+        ]
+      }
+    },
+    "/api/trackers/status": {
+      "get": {
+        "description": "Which trackers are connected for ``?workspace=``: whether the\nconnector in effect there (its own, else the default workspace's) has the\ncredentials a client needs. Building the client says so without a call to\nthe tracker; whether the credentials still work is the Connectors page's\nconnection test.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workspace"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tracker Status",
         "tags": [
           "trackers"
         ]

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, APIRouter, HTTPException
+from fastapi import Depends, APIRouter, File, Form, HTTPException, UploadFile
 
 from tasks import service as tasks_service
 from workspace import project_folder_name
@@ -159,6 +159,108 @@ async def get_project_file_content(project_id: str, path: Optional[str] = None, 
         raise HTTPException(status_code=404, detail="Project folder not found")
     return {"path": target.relative_to(root).as_posix(), "size": size, "content": preview["text"], "kind": preview["kind"],
             "mime_type": preview["mime_type"], "truncated": preview["truncated"]}
+
+
+def _project_folder(project_id: str):
+    """The project and its folder, made if it is not there yet, for a write:
+    or an HTTP error when the project or its workspace is gone."""
+    from workspace import get_workspace_folder
+
+    project = store().get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    ws = get_workspace_folder(project.workspace)
+    if ws is None:
+        raise HTTPException(status_code=404, detail="Project folder not found")
+    root = (ws / project_folder_name(project.name)).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return project, root
+
+
+@router.post("/{project_id}/files/upload")
+async def upload_project_file(project_id: str, file: UploadFile = File(...), path: Optional[str] = Form("")):
+    """Upload a file into the project's folder, optionally under ``path``, a
+    folder relative to it; the way a workspace upload is
+    (routes/workspaces.py), the file registered so a link can name it by id.
+    Path traversal is refused."""
+    from files import service as files_service
+
+    project, root = _project_folder(project_id)
+    filename = Path(file.filename or "").name
+    if not filename:
+        raise HTTPException(status_code=400, detail="A valid filename is required")
+    rel_dir = (path or "").strip().strip("/")
+    dest = (root / rel_dir / filename).resolve()
+    try:
+        dest.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        content = await file.read()
+        dest.write_bytes(content)
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
+        raise HTTPException(status_code=500, detail=str(e))
+    rel = dest.relative_to(root).as_posix()
+    in_ws = f"{project_folder_name(project.name)}/{rel}"
+    file_id = None
+    try:
+        if files_service.is_indexable(in_ws):
+            file_id = files_service.register_path(project.workspace, in_ws, source="upload")["file_id"]
+    except files_service.FileError:
+        pass  # over a limit or under a skipped folder: the file is there, without an id
+    return {"path": rel, "size": len(content), "file_id": file_id}
+
+
+@router.delete("/{project_id}/files")
+async def delete_project_file(project_id: str, path: Optional[str] = None, file_id: Optional[str] = None):
+    """Delete one file of the project's folder (by ``file_id`` or ``path``)
+    or one of its folders with everything in it (by ``path``), the way a
+    workspace's are (routes/workspaces.py); never the project folder itself.
+    The registry records of what went are tombstoned, so a link to it
+    answers 404."""
+    import shutil
+    from files import service as files_service
+
+    rel_dir = (path or "").strip().strip("/")
+    project = store().get(project_id)
+    root = _project_root_path(project) if project else None
+    folder = None
+    if not (file_id or "").strip() and rel_dir and root is not None:
+        candidate = (root / rel_dir).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Path outside project folder")
+        if candidate.is_dir():
+            folder = candidate
+    if folder is not None:
+        if folder == root:
+            raise HTTPException(status_code=400, detail="The project folder itself cannot be deleted")
+        rel = folder.relative_to(root).as_posix()
+        try:
+            shutil.rmtree(folder)
+        except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
+            raise HTTPException(status_code=500, detail=str(e))
+        try:
+            files_service.unregister_tree(project.workspace, f"{project_folder_name(project.name)}/{rel}")
+        except files_service.FileError:
+            pass  # a folder the registry never followed has no records to tombstone
+        return {"deleted": True, "path": rel, "type": "directory"}
+
+    target = _project_file(project_id, path, file_id)
+    project = store().get(project_id)
+    root = _project_root_path(project)
+    rel = target.relative_to(root).as_posix()
+    try:
+        target.unlink()
+    except Exception as e:  # noqa: BLE001 - reported to the client as an HTTP error
+        raise HTTPException(status_code=500, detail=str(e))
+    try:
+        files_service.unregister_path(project.workspace, f"{project_folder_name(project.name)}/{rel}")
+    except files_service.FileError:
+        pass  # a path the registry never follows has no record to tombstone
+    return {"deleted": True, "path": rel, "type": "file"}
 
 
 @router.get("/{project_id}/file-raw")
