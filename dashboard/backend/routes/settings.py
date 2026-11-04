@@ -640,7 +640,7 @@ async def test_provider(data: TestProviderRequest, request: Request = cast(Reque
                 key = data.api_key or env.get("OPENAI_API_KEY") or _cfg.openai_api_key or ""
                 base = (data.base_url or env.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
                 if not key:
-                    return {"ok": False, "error": "No API key configured"}
+                    return {"ok": False, "reason": "not_configured", "error": "No API key configured"}
                 resp = await client.get(f"{base}/models", headers={"Authorization": f"Bearer {key}"})
                 resp.raise_for_status()
                 # No cap: the list is sorted alphabetically, so truncating it hid
@@ -655,7 +655,7 @@ async def test_provider(data: TestProviderRequest, request: Request = cast(Reque
             elif data.provider == "anthropic":
                 key = data.api_key or env.get("ANTHROPIC_API_KEY") or ""
                 if not key:
-                    return {"ok": False, "error": "No API key configured"}
+                    return {"ok": False, "reason": "not_configured", "error": "No API key configured"}
                 resp = await client.get(
                     "https://api.anthropic.com/v1/models",
                     headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
@@ -676,7 +676,7 @@ async def test_provider(data: TestProviderRequest, request: Request = cast(Reque
             elif data.provider == "google":
                 key = data.api_key or env.get("GOOGLE_API_KEY") or ""
                 if not key:
-                    return {"ok": False, "error": "No API key configured"}
+                    return {"ok": False, "reason": "not_configured", "error": "No API key configured"}
                 resp = await client.get(
                     f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
                 )
@@ -695,7 +695,7 @@ async def test_provider(data: TestProviderRequest, request: Request = cast(Reque
                 adapter = get_adapter(backend.get("adapter") or "openai")
                 base = host_service_url(data.base_url or backend.get("base_url") or "").rstrip("/")
                 if not base:
-                    return {"ok": False, "error": "No base URL configured for this backend"}
+                    return {"ok": False, "reason": "not_configured", "error": "No base URL configured for this backend"}
                 if not adapter or not adapter.openai_compatible:
                     # Non-OpenAI adapters can't be auto-probed; the user enters
                     # models manually in the catalog.
@@ -772,18 +772,22 @@ async def test_provider(data: TestProviderRequest, request: Request = cast(Reque
             else:
                 raise HTTPException(status_code=400, detail=f"Unknown provider: {data.provider}")
 
+    # ``reason`` says which kind of failure, for the model picker's colour:
+    # ``unreachable`` and ``not_configured`` (the service does not answer or
+    # is not set up: red), ``rejected`` and ``failed`` (it was reached, or
+    # tried, but the connection did not go through: yellow).
     except httpx.ConnectError:
-        return {"ok": False, "error": "Connection refused – is the service running?"}
+        return {"ok": False, "reason": "unreachable", "error": "Connection refused – is the service running?"}
     except httpx.TimeoutException:
-        return {"ok": False, "error": "Timed out after 8 s"}
+        return {"ok": False, "reason": "unreachable", "error": "Timed out after 8 s"}
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 401:
-            return {"ok": False, "error": "Invalid API key (401 Unauthorized)"}
+            return {"ok": False, "reason": "rejected", "error": "Invalid API key (401 Unauthorized)"}
         if exc.response.status_code == 403:
-            return {"ok": False, "error": "Access denied (403 Forbidden)"}
-        return {"ok": False, "error": f"HTTP {exc.response.status_code}"}
+            return {"ok": False, "reason": "rejected", "error": "Access denied (403 Forbidden)"}
+        return {"ok": False, "reason": "rejected", "error": f"HTTP {exc.response.status_code}"}
     except Exception as exc:  # noqa: BLE001 - failure is reported to the caller as a status, not raised
-        return {"ok": False, "error": str(exc)[:200]}
+        return {"ok": False, "reason": "failed", "error": str(exc)[:200]}
 
 
 # ── Custom model backends ─────────────────────────────────────────────────────
