@@ -69,7 +69,7 @@ Account → Palette, set 2 to 4 base colors (a brand color, a neutral tint, a
 success accent and a danger accent, the last three optional) and everything
 else (11 shades per color, panels, borders, text) is computed from them with a
 fixed lightness curve in OKLCH, so contrast holds in both light and dark mode
-(`src/lib/palette.js`). Five presets ship (Navy, the default; Magenta, Telekom
+(`src/lib/palette.js`). Five presets ship (Navy, the default; Magenta,
 magenta on graphite; Forest; Slate; Sunset), plus Custom for anything else, and
 Reset removes the personal override.
 

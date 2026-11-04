@@ -127,6 +127,42 @@ def _hide_agents(responses: Dict[str, Any]) -> None:
                               if not (isinstance(a, dict) and a.get("id") in HIDDEN_AGENT_IDS)]
 
 
+# Where the published demo says the service lives: the image's WORKDIR and
+# its state root, in place of the checkout and the throwaway state root of the
+# machine the recording was made on (whose paths carry its login name).
+DEMO_REPO_ROOT = "/app"
+DEMO_STATE_ROOT = "/app/.agents_hub"
+
+
+def _machine_roots() -> List[tuple]:
+    """(machine path, demo path) pairs, longest first, each with its resolved
+    form too (macOS reports /var/folders under /private)."""
+    import os
+
+    pairs = []
+    for raw, demo in ((os.environ.get("AGENTS_HUB_ROOT") or "", DEMO_STATE_ROOT),
+                      (str(REPO_ROOT), DEMO_REPO_ROOT)):
+        if not raw:
+            continue
+        for form in {raw.rstrip("/"), str(Path(raw).resolve())}:
+            pairs.append((form, demo))
+    return sorted(pairs, key=lambda p: len(p[0]), reverse=True)
+
+
+def _hide_machine_paths(value: Any, roots: List[tuple]) -> Any:
+    """``value`` with every machine path in its strings (keys included)
+    rewritten to the demo's."""
+    if isinstance(value, str):
+        for machine, demo in roots:
+            value = value.replace(machine, demo)
+        return value
+    if isinstance(value, list):
+        return [_hide_machine_paths(v, roots) for v in value]
+    if isinstance(value, dict):
+        return {_hide_machine_paths(k, roots): _hide_machine_paths(v, roots) for k, v in value.items()}
+    return value
+
+
 def _neutralise_machine_checks(responses: Dict[str, Any]) -> None:
     doctor = responses.get("GET /api/health/doctor")
     if not isinstance(doctor, dict) or not isinstance(doctor.get("checks"), list):
@@ -305,6 +341,8 @@ def build_fixtures(out_dir: Path) -> Dict[str, Any]:
         _record(client, responses, "GET", f"/api/files/{fid}/usage", required=False)
 
     _hide_agents(responses)
+    roots = _machine_roots()
+    responses = _hide_machine_paths(responses, roots)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     fixtures_path = out_dir / "fixtures.json"
@@ -344,7 +382,7 @@ def build_fixtures(out_dir: Path) -> Dict[str, Any]:
     # would otherwise carry.
     streams_path = out_dir / "streams.json"
     streams_path.write_text(
-        json.dumps(streams, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(_hide_machine_paths(streams, roots), ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     return {

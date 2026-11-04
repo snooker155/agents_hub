@@ -328,6 +328,14 @@ def test_export_script_produces_both_files(tmp_path):
     assert summary["services"] == 1
     assert summary["files"] == 6
 
+    # No path of the machine the recording ran on (its login name is in them):
+    # the checkout and the state root read as the image's.
+    import os
+    for text in (fixtures_path.read_text(encoding="utf-8"), streams_path.read_text(encoding="utf-8")):
+        assert str(export_demo_fixtures.REPO_ROOT) not in text
+        assert os.environ["AGENTS_HUB_ROOT"] not in text
+        assert str(Path(os.environ["AGENTS_HUB_ROOT"]).resolve()) not in text
+
     # The published demo hides the playground's quest designer from every
     # agent list, and lists the one published demo agent on the marketplace.
     for key in ("GET /api/agents", "GET /api/agents?workspace=demo",

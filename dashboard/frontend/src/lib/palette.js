@@ -288,7 +288,7 @@ function hueTokensFromAccent(hex, mode) {
 export const PRESET_ORDER = ['navy', 'magenta', 'forest', 'slate', 'sunset'];
 export const PRESETS = {
   navy: { brand: '#3f66d8', neutral: '#64748b', ok: '#16a34a', danger: '#dc2626' },
-  // Telekom magenta on a graphite neutral: the palette the zerno workspace runs on.
+  // Magenta on a graphite neutral: the palette the zerno workspace runs on.
   magenta: { brand: '#e20074', neutral: '#484f56', ok: '#16a34a', danger: '#dc2626' },
   forest: { brand: '#166534', neutral: '#57534e', ok: '#65a30d', danger: '#b91c1c' },
   slate: { brand: '#334155', neutral: '#64748b', ok: '#059669', danger: '#e11d48' },
