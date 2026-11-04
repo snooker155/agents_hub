@@ -90,6 +90,10 @@ export const getChatLive = (chatId) => api.get(`/chats/${chatId}/live`);
 // The conversations being answered right now, whoever started the turn: the
 // Chat page marks them in its list (refetched on `chat_turns.changed`).
 export const getRunningChats = () => api.get('/chats/running');
+// A title for a conversation from its first message and answer, named by the
+// chat agent's model (chat/titles.py); `{ title: null }` when none came.
+export const suggestChatTitle = ({ message, reply, agentId }) =>
+  api.post('/chats/suggest-title', { message, reply, agent_id: agentId || null });
 // The flows, loops and teams the agent started from this chat that are still
 // going, with their progress and the channels they stream on.
 export const getChatBackground = (chatId) => api.get(`/chats/${chatId}/background`);

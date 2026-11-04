@@ -77,6 +77,12 @@ class ImportIn(BaseModel):
     chats: List[Dict[str, Any]] = []
 
 
+class TitleIn(BaseModel):
+    message: str = Field(..., min_length=1)
+    reply: str = ""
+    agent_id: Optional[str] = None
+
+
 @router.get("")
 async def list_chats(
     request: Request,
@@ -159,6 +165,16 @@ async def search_chats(request: Request, q: str = "", workspace: Optional[str] =
     principal = identity.request_principal(request)
     return await asyncio.to_thread(chat_store.search_chats, q, workspace=workspace, limit=limit,
                                    keep=lambda chat: _chat_visible(principal, chat))
+
+
+@router.post("/suggest-title")
+async def suggest_title(payload: TitleIn):
+    """A title for a new conversation, named by the model of ``agent_id``
+    from its first message and the start of the answer (chat/titles.py).
+    ``{"title": null}`` when no model answers: the page keeps the title it has.
+    Nothing is stored here; the page saves the title with the conversation."""
+    from chat.titles import suggest_title as name_chat
+    return {"title": await name_chat(payload.message, payload.reply, payload.agent_id)}
 
 
 @router.get("/running")
