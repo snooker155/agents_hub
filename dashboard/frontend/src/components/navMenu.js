@@ -26,7 +26,7 @@
  * one place to ask.
  */
 import {
-  Waypoints, LayoutDashboard, CheckSquare, UserCog, KeyRound, Folder, Database, Factory, Wrench, Users, Workflow, Bot,
+  Waypoints, LayoutDashboard, CheckSquare, UserCog, Folder, Database, Factory, Wrench, Users, Workflow, Bot,
   Activity, PlayCircle, MessageCircle, ScrollText, Settings, Network, Cpu, FolderGit2, Box, Boxes, Store,
   CalendarClock, BookOpen, Brain, DollarSign, Images, FlaskConical, Gamepad2, Repeat, UsersRound,
   GraduationCap, Globe, Share2, Link2, Plug, Layers, Container, CalendarCog, ShieldCheck, BadgeCheck,
@@ -183,8 +183,8 @@ export function buildMenu({ t, auth, features = {} }) {
         // Accounts exist only under AUTH_MODE=multi, and only an administrator
         // manages them.
         isAdmin(auth) && { name: t('nav.users'), path: '/users', icon: UserCog, home: '/settings' },
-        // The viewer's own sessions and API keys.
-        auth?.mode === MULTI && auth?.user && { name: t('nav.account'), path: '/account', icon: KeyRound, simple: true },
+        // The viewer's own profile, sessions and API keys are not a row: they
+        // open from the account menu at the foot of the sidebar (AccountMenu).
         { name: t('nav.settings'), path: '/settings', icon: Settings, simple: true },
         { name: t('nav.docs'), path: '/docs', icon: BookOpen, simple: true },
       ],

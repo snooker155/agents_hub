@@ -54,7 +54,7 @@ export default {
   settings: 'Настройки',
   users: 'Учётные записи',
   audit: 'Аудит',
-  account: 'Аккаунт',
+  account: 'Профиль',
   comingSoon: 'скоро',
   comingSoonTitle: 'Скоро будет',
   comingSoonItem: '{{name}} — скоро',

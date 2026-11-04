@@ -39,6 +39,23 @@ export default {
     label: 'Язык',
     tooltip: 'Язык интерфейса',
   },
+  // The account block at the foot of the menu (components/AccountMenu.jsx).
+  account: {
+    menu: 'Меню аккаунта',
+    operator: 'Оператор',
+    personalization: 'Персонализация',
+    help: 'Помощь',
+    theme: 'Тема оформления',
+    themes: {
+      light: 'Светлая',
+      dark: 'Тёмная',
+    },
+    menuMode: 'Меню',
+    menuModes: {
+      simple: 'Простое',
+      full: 'Полное',
+    },
+  },
   live: {
     online: 'Онлайн',
     paused: 'Пауза',
@@ -48,12 +65,12 @@ export default {
     resume: 'Возобновить живые обновления',
   },
   modelPicker: {
-    defaultSuffix: '(по умолчанию)',
     inheritedSuffix: '(из {{workspace}})',
     defaultBadge: 'по умолчанию',
     legend: 'Индикаторы:',
     legendAvailable: 'доступен',
     legendUnreachable: 'недоступен',
+    legendFailed: 'не подключается',
     legendUntested: 'не проверен',
   },
   titles: {
@@ -73,7 +90,7 @@ export default {
     skills: 'Каталог навыков',
     webLogs: 'Веб-запросы',
     tools: 'MCP-инструменты',
-    workspaces: 'Рабочие пространства',
+    workspaces: 'Пространства',
     workspaceDetails: 'Детали пространства',
     memory: 'Память',
     artifacts: 'Артефакты',

@@ -17,7 +17,11 @@ const fmt = (iso) => {
  * change and the agents that react to it. Hidden until the workspace has at
  * least one watcher, like the connections card on the Dashboard.
  */
-export default function WatchersIndicator() {
+// `className` and `panelClassName` place the panel (see NotificationBell).
+export default function WatchersIndicator({
+  className = 'relative',
+  panelClassName = 'header-sheet absolute right-0 top-full mt-2 w-96',
+}) {
   const { workspaceFilter } = useWorkspace();
   const { t } = useI18n();
   const [summary, setSummary] = useState(null);
@@ -45,7 +49,7 @@ export default function WatchersIndicator() {
   const { active, errors, watchers } = summary;
 
   return (
-    <div className="relative" ref={ref} data-testid="watchers-indicator">
+    <div className={className} ref={ref} data-testid="watchers-indicator">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -65,7 +69,7 @@ export default function WatchersIndicator() {
       </button>
 
       {open && (
-        <div className="header-sheet absolute right-0 top-full mt-2 w-96 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+        <div className={`${panelClassName} bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden`}>
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
             <span className="text-sm font-semibold text-gray-900">
               {t('watchers.indicator.title', { active, total: summary.total })}

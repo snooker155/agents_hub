@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { ChevronLeft, Info } from 'lucide-react';
 import { useI18n } from '../i18n';
+import { PhoneTitleSlot } from './phoneTitleSlot';
 
 // ─── Shared page chrome ───────────────────────────────────────────────────────
 // Every page in the dashboard is built from the same two pieces so that widths,
@@ -32,11 +33,13 @@ const WIDTHS = {
   full: 'max-w-none',
 };
 
-// A phone gets a tighter gutter: 24px a side is an eighth of its width. No
-// bottom padding: a page's content runs to the bottom edge of the window.
+// A phone gets a tighter gutter: 24px a side is an eighth of its width, and
+// the top bar over the page already holds its title (sm:phone: is a phone on
+// its side, which counts as sm). No bottom padding: a page's content runs to
+// the bottom edge of the window.
 const PADDING = {
-  default: 'px-4 pt-4 sm:px-6 sm:pt-6',
-  narrow: 'px-4 pt-4 sm:px-6 sm:pt-6',
+  default: 'px-4 pt-3 sm:px-6 sm:pt-6 sm:phone:pt-3',
+  narrow: 'px-4 pt-3 sm:px-6 sm:pt-6 sm:phone:pt-3',
   full: '',
 };
 
@@ -140,12 +143,46 @@ export const InfoHint = ({ text, label, align = 'left', className = '' }) => {
   );
 };
 
+// The header's first line, drawn into the phone's top bar: the way back, the
+// page's icon, the title and its ⓘ, and the page's actions on the right.
+const BarTitle = ({ slot, icon: Icon, backTo, back, title, description, barBadges, actions, t }) => createPortal(
+  <>
+    {backTo && (
+      <Link
+        to={backTo}
+        title={back}
+        aria-label={back}
+        className="-ml-1 inline-flex shrink-0 items-center rounded-lg p-1 text-gray-500 transition-colors hover:bg-gray-100 hover:text-indigo-600"
+      >
+        <ChevronLeft className="h-5 w-5" />
+      </Link>
+    )}
+    {Icon && <Icon className="h-4 w-4 shrink-0 text-indigo-600" />}
+    <h1 className="min-w-0 truncate text-base font-bold text-gray-900">{title}</h1>
+    {/* -ml-1: the ⓘ's own padding is its gap from the title. */}
+    <InfoHint text={description} label={t('common.aboutPage')} className="-ml-1" />
+    {barBadges && <div className="flex shrink-0 items-center gap-1">{barBadges}</div>}
+    {/* A button with an icon keeps the icon alone up here (its text set to
+        nothing), a text-only one its text; short of room they give way first
+        (shrink-[100]) and scroll, the title after them. */}
+    {actions && (
+      <div className="ml-auto flex min-w-0 shrink-[100] items-center gap-1.5 overflow-x-auto pl-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0 [&_:is(button,a):has(svg)]:gap-0 [&_:is(button,a):has(svg)]:text-[0px] [&_:is(button,a):has(svg)]:px-2 [&_:is(button,a)_svg]:m-0">
+        {actions}
+      </div>
+    )}
+  </>,
+  slot,
+);
+
 export const PageHeader = ({
   icon: Icon,
   title,
   description,
   actions,
   badges,
+  // The few badges that say what state the thing is in (a project's type and
+  // status): beside the title in a phone's top bar, before `badges` elsewhere.
+  barBadges,
   backTo,
   backLabel,
   className = '',
@@ -153,6 +190,21 @@ export const PageHeader = ({
 }) => {
   const { t } = useI18n();
   const back = backLabel ?? t('common.back');
+  // On a phone the first line (the way back, the title, the actions) goes up
+  // into the top bar; the page keeps its badges, and no header at all when it
+  // has none.
+  const slot = useContext(PhoneTitleSlot);
+  if (slot) {
+    const barTitle = <BarTitle slot={slot} icon={Icon} backTo={backTo} back={back} title={title} description={description} barBadges={barBadges} actions={actions} t={t} />;
+    if (!badges && !children) return barTitle;
+    return (
+      <header className={`${/(^|\s)mb-/.test(className) ? '' : 'mb-2'} shrink-0 ${className}`}>
+        {barTitle}
+        {badges && <div className="flex min-w-0 items-center gap-2 flex-wrap">{badges}</div>}
+        {children}
+      </header>
+    );
+  }
   return (
   // The default bottom margin steps aside when the caller sets its own, so a
   // header dropped into a `gap-*` flex column does not stack two gaps.
@@ -176,9 +228,11 @@ export const PageHeader = ({
             <span className="hidden sm:inline">{back}</span>
           </Link>
         )}
-        {backTo && <span className="shrink-0 text-gray-300">/</span>}
+        {/* On a phone the icon tile and the slash before it give their
+            width to the title and its badges. */}
+        {backTo && <span className="hidden sm:inline shrink-0 text-gray-300">/</span>}
         {Icon && (
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-600">
+          <span className="hidden sm:flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-600">
             <Icon className="h-5 w-5" />
           </span>
         )}
@@ -195,8 +249,9 @@ export const PageHeader = ({
             <InfoHint
               text={description}
               label={t('common.aboutPage')}
-              className="translate-y-[1.5px]"
+              className="-ml-1 translate-y-[1.5px]"
             />
+            {barBadges}
             {badges}
           </div>
         </div>
@@ -211,6 +266,31 @@ export const PageHeader = ({
   </header>
   );
 };
+
+// A header action: icon and label on a wide screen, the icon alone on a phone
+// (the `phone:` variant, either way up), where the label is its tooltip and
+// its accessible name, so a row of actions stays one short line.
+// `primary` is the page's main action (filled), `outline` a secondary one.
+const ICON_BUTTON_TONES = {
+  primary: 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700',
+  outline: 'border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50',
+  plain: 'border-gray-300 text-gray-600 bg-white hover:text-indigo-700 hover:border-indigo-300',
+};
+
+export const HeaderIconButton = ({ icon: Icon, label, tone = 'plain', className = '', ...rest }) => (
+  <button
+    type="button"
+    title={label}
+    aria-label={label}
+    className={`inline-flex h-9 shrink-0 items-center justify-center gap-1.5 px-3 phone:w-9 phone:px-0 rounded-lg border text-sm font-medium transition-colors ${
+      ICON_BUTTON_TONES[tone] ?? ICON_BUTTON_TONES.plain
+    } ${className}`}
+    {...rest}
+  >
+    <Icon className="w-4 h-4 shrink-0" />
+    <span className="phone:hidden whitespace-nowrap">{label}</span>
+  </button>
+);
 
 // Full-bleed app surfaces (flow canvas, studio, a single view) have no room for
 // the tall <PageHeader>. They use this compact bar instead — same gutter, same
@@ -233,6 +313,21 @@ export const AppBar = ({
 }) => {
   const { t } = useI18n();
   const back = backLabel ?? t('common.back');
+  // On a phone the first line (the way back, the title, the actions) goes up
+  // into the top bar, as PageHeader's does; this bar keeps the badges and the
+  // switch, and is not drawn when it has neither.
+  const slot = useContext(PhoneTitleSlot);
+  if (slot) {
+    const barTitle = <BarTitle slot={slot} icon={Icon} backTo={backTo} back={back} title={title} description={subtitle} actions={actions} t={t} />;
+    if (!badges && !center) return barTitle;
+    return (
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-gray-200 bg-white px-3">
+        {barTitle}
+        {badges && <div className="flex min-w-0 items-center gap-2">{badges}</div>}
+        {center && <div className="flex min-w-0 shrink items-center overflow-x-auto">{center}</div>}
+      </div>
+    );
+  }
   return (
   <div className="flex h-14 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-3 sm:px-6">
     <div className={`flex min-w-0 items-center gap-2 ${titleClassName}`}>

@@ -4,14 +4,15 @@ import { useI18n } from '../i18n';
 import { install, useInstallMode } from '../lib/pwa';
 
 /**
- * Install the dashboard as an app (docs/pwa.md), at the foot of the menu.
+ * Install the dashboard as an app (docs/pwa.md), a row of the account menu
+ * (`menuItem`) or of the sidebar.
  *
  * Shown only when there is something to do: Chrome, Edge and Android offer an
  * install dialog of their own, which the button opens; Safari on an iPhone has
  * no such dialog, so the button explains the two taps instead. Installed
  * already, or a browser that offers neither: nothing is drawn.
  */
-export default function InstallAppButton({ compact = false }) {
+export default function InstallAppButton({ compact = false, menuItem = false }) {
   const { t } = useI18n();
   const mode = useInstallMode();
   const [hint, setHint] = useState(false);
@@ -26,13 +27,16 @@ export default function InstallAppButton({ compact = false }) {
     <div className="relative">
       <button
         type="button"
+        role={menuItem ? 'menuitem' : undefined}
         onClick={onClick}
         title={compact ? t('layout.install.button') : undefined}
-        className={`w-full flex items-center py-2.5 text-sm font-medium text-indigo-600 hover:bg-indigo-50 transition-colors ${
-          compact ? 'justify-center px-2' : 'px-6 gap-3'
-        }`}
+        className={menuItem
+          ? 'w-full flex items-center gap-3 px-4 py-2.5 text-sm text-indigo-600 hover:bg-gray-100 transition-colors text-left'
+          : `w-full flex items-center py-2.5 text-sm font-medium text-indigo-600 hover:bg-indigo-50 transition-colors ${
+            compact ? 'justify-center px-2' : 'px-6 gap-3'
+          }`}
       >
-        <Download className="w-5 h-5 shrink-0" />
+        <Download className={`${menuItem ? 'w-4 h-4' : 'w-5 h-5'} shrink-0`} />
         {!compact && <span>{t('layout.install.button')}</span>}
       </button>
       {hint && (

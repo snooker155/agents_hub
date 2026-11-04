@@ -28,7 +28,7 @@ That is the escape hatch, and it is one-way.
 - **Service Agent** — the service itself: health, logs, failures, spend. See
   [service-health](service-health.md).
 - **Prompt Engineer** — writes prompts for use outside this product.
-- **Support**: the Help button in the header. Explains the product, reads what
+- **Support**: Help in the account menu. Explains the product, reads what
   is set up and what is missing, and suggests the next steps with links. Reads
   only; changes nothing. See [help](help.md).
 - **Assistant**: a person's own assistant. The Main Agent (it `extends` it)

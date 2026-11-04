@@ -2,7 +2,7 @@
 // (dashboard/backend/routes/account.py, docs/api-keys.md). Visible only in
 // AUTH_MODE=multi, on /account.
 export default {
-  title: 'Account',
+  title: 'Profile',
   description: 'Your own profile, sessions and personal API keys.',
 
   spend: {
@@ -18,7 +18,7 @@ export default {
     rateSources: { key: 'this key\'s own', user: 'your own', hub: 'the default for everyone' },
   },
   profile: {
-    title: 'Profile',
+    title: 'Personal details',
     username: 'User name',
     displayName: 'Display name',
     email: 'Email',

@@ -67,8 +67,8 @@ the conversation.
 What the agents learn about the person they work with: one private pool per
 user and workspace, shared by every agent in that workspace that has it
 switched on (`memory/personal.py`). It is set per workspace, for the
-workspace picked in the header, on the Memory page's Personal memory tab
-(`/memory?tab=personal`, `&workspace=<name>` switches the header first):
+workspace picked at the top of the menu, on the Memory page's Personal memory tab
+(`/memory?tab=personal`, `&workspace=<name>` switches the workspace first):
 
 - **The workspace switch.** Off hides and refuses the chat's "save formula"
   and locks the agents' switches.

@@ -12,6 +12,7 @@ const ok = (data) => Promise.resolve({ data });
 const updateWorkspaceModel = vi.fn(() => ok({}));
 let catalog;
 let summary;
+let providerTest;
 
 vi.mock('../workspace', () => ({
   useWorkspace: () => ({ selectedWorkspace: 'ws1', setSelectedWorkspace: () => {}, liveUpdates: true, toggleLiveUpdates: () => {} }),
@@ -25,7 +26,7 @@ vi.mock('../auth', async (importOriginal) => ({
 vi.mock('../../api', () => ({
   getWorkspaces: () => ok([{ name: 'ws1' }]),
   updateWorkspaceModel: (...args) => updateWorkspaceModel(...args),
-  testProvider: () => ok({ ok: true }),
+  testProvider: () => ok(providerTest),
   getModelsCatalog: () => ok(catalog),
   getModelReasoning: () => ok({ profile: null }),
 }));
@@ -38,7 +39,7 @@ vi.mock('../../api/workspaceSummary', () => ({
 vi.mock('../setup/useSetupGuide', () => ({ default: () => ({ guide: null, act: () => {} }) }));
 const Nothing = () => null;
 for (const path of ['../NotificationBell', '../WatchersIndicator', '../SyncIndicator', '../vault/SyncedDataBanner',
-  '../LanguageSwitcher', '../workspace/IsolationBadge', '../docs/OnboardingModal', '../pageChat/PageChatPanel',
+  '../workspace/IsolationBadge', '../docs/OnboardingModal', '../pageChat/PageChatPanel',
   '../help/HelpPanel', '../assistant/WakeListener', '../InstallAppButton', '../WorkspacePicker']) {
   vi.doMock(path, () => ({ default: Nothing }));
 }
@@ -59,6 +60,7 @@ const picker = () => screen.getByRole('button', { name: /gpt-4o|claude/ });
 
 beforeEach(() => {
   updateWorkspaceModel.mockClear();
+  providerTest = { ok: true };
   catalog = { providers: { openai: { default: 'gpt-4o', models: [model('gpt-4o')] } } };
   summary = { model: {
     global_default: { provider: 'openai', model: 'gpt-4o' },
@@ -94,5 +96,27 @@ describe('header model picker', () => {
     expect(within(claude).queryByText('✓')).toBeNull();
     fireEvent.click(claude);
     await waitFor(() => expect(updateWorkspaceModel).toHaveBeenCalledWith('ws1', { provider: 'anthropic', model: 'claude-opus-5-5' }));
+  });
+});
+
+describe('model chip status', () => {
+  it('is red when the service does not answer or is off', async () => {
+    providerTest = { ok: false, reason: 'unreachable', error: 'Connection refused' };
+    renderHeader();
+    await waitFor(() => expect(picker()).toHaveAttribute('data-health', 'down'));
+    expect(picker().className).toContain('bg-red-50');
+  });
+
+  it('is yellow when connecting fails', async () => {
+    providerTest = { ok: false, reason: 'rejected', error: 'Invalid API key (401 Unauthorized)' };
+    renderHeader();
+    await waitFor(() => expect(picker()).toHaveAttribute('data-health', 'failed'));
+    expect(picker().className).toContain('bg-amber-50');
+  });
+
+  it('keeps the provider colour when the model is available', async () => {
+    renderHeader();
+    await waitFor(() => expect(picker()).toHaveAttribute('data-health', 'ok'));
+    expect(picker().className).toContain('bg-green-50');
   });
 });

@@ -1,7 +1,10 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, useLayoutEffect, useRef, useState } from 'react';
+import { PHONE_ROW_BLEED, PHONE_ROW_PAD } from '../lib/phone';
 
 // Tabs the pages share:
 //
+// - TabStrip: a row of underlined tabs, one sideways-scrolling line on a
+//   phone.
 // - TabRow: a page's underlined tab row with its controls on the right; the
 //   controls drop under the tabs once the two no longer fit on one line.
 // - PaneTab: one segment of a switch set in a gray pill
@@ -55,6 +58,107 @@ export function ColumnTab({ active, onClick, icon: Icon, label }) {
 }
 
 
+// The tab a strip has open: the pages mark it with aria-current or
+// aria-selected.
+const ACTIVE_TAB = '[aria-current="page"], [aria-selected="true"]';
+
+// The strip's edges fade where more tabs hide past them.
+function fadeMask(left, right) {
+  if (!left && !right) return undefined;
+  const stops = `${left ? 'transparent 0, black 24px' : 'black 0'}, ${right ? 'black calc(100% - 24px), transparent 100%' : 'black 100%'}`;
+  const mask = `linear-gradient(to right, ${stops})`;
+  return { maskImage: mask, WebkitMaskImage: mask };
+}
+
+/** A row of underlined tabs. On a phone it is one line that scrolls sideways,
+    its edges fading where more tabs hide, and the open tab is brought into
+    view: wrapped, a page's tabs took several rows of the screen before any of
+    its content. From sm up the tabs wrap onto a second line when they run out
+    of room, unless `wrap` is off, when the strip scrolls there too. */
+export const TabStrip = forwardRef(function TabStrip(
+  { children, className = 'gap-2', wrap = true, as: Tag = 'nav', ...rest }, outerRef,
+) {
+  const ref = useRef(null);
+  const activeRef = useRef(null);
+  const [fade, setFade] = useState({ left: false, right: false });
+
+  const setRef = (el) => {
+    ref.current = el;
+    if (typeof outerRef === 'function') outerRef(el);
+    else if (outerRef) outerRef.current = el;
+  };
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const max = el.scrollWidth - el.clientWidth;
+      const left = max > 1 && el.scrollLeft > 1;
+      const right = max > 1 && el.scrollLeft < max - 1;
+      setFade((f) => (f.left === left && f.right === right ? f : { left, right }));
+    };
+    // The open tab is kept in view. When it changes the strip moves only as
+    // far as it must, not on every render, so a page that refreshes does not
+    // pull the strip from under a finger. When the strip changes width (the
+    // row drops its controls to a line of their own, the phone turns), it
+    // goes back to the furthest left that still shows the open tab.
+    const reveal = (resized = false) => {
+      const tab = el.querySelector(ACTIVE_TAB);
+      if (!tab || (!resized && tab === activeRef.current)) return;
+      // Mid-relayout (a tab row making room for its controls) the strip can
+      // be squeezed to nothing for a moment; it is placed once it has room.
+      if (el.clientWidth < tab.offsetWidth) return;
+      activeRef.current = tab;
+      const start = tab.getBoundingClientRect().left - el.getBoundingClientRect().left + el.scrollLeft;
+      const end = start + tab.offsetWidth;
+      // A glimpse of the neighbouring tab, so the strip reads as scrollable.
+      const lo = Math.max(0, end + 32 - el.clientWidth);
+      const hi = Math.max(lo, start - 32);
+      const next = resized ? lo : Math.min(Math.max(el.scrollLeft, lo), hi);
+      if (Math.abs(next - el.scrollLeft) > 1) el.scrollLeft = next;
+    };
+    reveal();
+    measure();
+    el.addEventListener('scroll', measure, { passive: true });
+    const observers = [];
+    if (typeof ResizeObserver !== 'undefined') {
+      const resize = new ResizeObserver(() => { reveal(true); measure(); });
+      resize.observe(el);
+      observers.push(resize);
+    }
+    // A change of tab is placed on the next frame, once the page has laid
+    // out whatever the new tab brought with it.
+    let frame = 0;
+    const settle = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => { reveal(); measure(); });
+    };
+    if (typeof MutationObserver !== 'undefined') {
+      const mutate = new MutationObserver(settle);
+      mutate.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-current', 'aria-selected'] });
+      observers.push(mutate);
+    }
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener('scroll', measure);
+      observers.forEach((o) => o.disconnect());
+    };
+  }, []);
+
+  return (
+    <Tag
+      ref={setRef}
+      style={fadeMask(fade.left, fade.right)}
+      className={`flex -mb-px overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0 [&>*]:whitespace-nowrap ${
+        wrap ? 'sm:flex-wrap sm:overflow-visible' : ''} ${className}`}
+      {...rest}
+    >
+      {children}
+    </Tag>
+  );
+});
+
+
 // The width a row's children ask for laid out on one line, whatever the row
 // does with them now: stacked, the tabs wrap, so the row's own width says
 // nothing about whether they would fit beside the controls.
@@ -99,15 +203,17 @@ export function TabRow({ tabs, actions, navClassName = 'gap-2', className = '' }
     return () => { resize.disconnect(); mutate.disconnect(); };
   }, [hasActions]);
 
+  // On a phone the line under the tabs runs edge to edge, and the tabs scroll
+  // to the screen's edge (lib/phone.js).
   return (
-    <div ref={rowRef} className={`${stacked ? '' : 'flex items-end justify-between gap-3 border-b border-gray-200'} ${className}`}>
-      <div className={stacked ? 'border-b border-gray-200' : 'min-w-0'}>
-        <nav ref={navRef} className={`flex flex-wrap -mb-px ${navClassName}`}>{tabs}</nav>
+    <div ref={rowRef} className={`${stacked ? '' : `flex items-end justify-between gap-3 border-b border-gray-200 ${PHONE_ROW_BLEED}`} ${className}`}>
+      <div className={stacked ? `border-b border-gray-200 ${PHONE_ROW_BLEED}` : 'min-w-0'}>
+        <TabStrip ref={navRef} className={`${navClassName} ${PHONE_ROW_PAD}`}>{tabs}</TabStrip>
       </div>
       {hasActions && (
         <div
           ref={actionsRef}
-          className={stacked ? 'flex flex-wrap items-center justify-end gap-2 pt-2 pb-4' : 'flex items-center gap-2 self-center shrink-0'}
+          className={stacked ? 'flex flex-wrap items-center justify-end gap-2 pt-2 pb-4' : 'flex items-center gap-2 self-center shrink-0 max-sm:pr-4 sm:phone:pr-6'}
         >
           {actions}
         </div>

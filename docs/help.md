@@ -1,6 +1,6 @@
 # Help
 
-The **Help** button in the header, on every page. It opens a panel with the
+**Help** in the account menu (the account at the foot of the sidebar), on every page. It opens a panel with the
 **Support** agent, for when you are lost: you do not know what a feature is for,
 where it lives, or what to do next.
 

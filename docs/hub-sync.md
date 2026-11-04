@@ -139,7 +139,7 @@ hub cannot slip in a plain record of its own.
   go on syncing, and the pass reports which workspaces waited. Forgetting
   the key on this hub turns sync off while any workspace is encrypted, and
   each workspace keeps its choice for when a key is set again.
-- **The header shows it.** While sync is on, a pill in the header says
+- **The menu shows it.** While sync is on, a pill at the foot of the sidebar says
   whether any workspace is encrypted, when the last pass ran, and whether something
   needs attention; a red pill means the key is locked on this hub.
 
@@ -162,7 +162,7 @@ records the other way is refused, so a space is never half readable.
 | --- | --- |
 | Settings, Remote hub, Sync | Mappings with an Encrypt box each, the key, Sync now, conflicts. The card is there before the hub is linked, and says to link it first |
 | A workspace, Settings, Remote hub sync | Whether this workspace syncs, into which space, and whether it is encrypted |
-| `GET /api/hublink/sync` | Status, readable by anyone signed in (the header); others than administrators see only the workspaces they can see, and whether the last pass failed instead of its error text |
+| `GET /api/hublink/sync` | Status, readable by anyone signed in (the sync pill in the menu); others than administrators see only the workspaces they can see, and whether the last pass failed instead of its error text |
 | `GET /api/hublink/sync/conflicts` | Conflicts, cut the same way for others than administrators |
 | `PUT /api/hublink/sync` | `{enabled, encrypt_all, mappings: [{workspace, space, encrypted}]}`, administrators. `encrypt_all` true seals every mapping; left out, it stays as it was. A mapping without `encrypted` takes the top-level `encrypted` (the older form) |
 | `PUT /api/hublink/sync/workspaces/{workspace}` | `{synced, space, encrypted}`: one workspace's mapping, the others and the on/off switch untouched; administrators. Refused in clear while every workspace is encrypted |

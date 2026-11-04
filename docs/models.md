@@ -46,7 +46,7 @@ With a policy in place:
 
 - the workspace's default model is the policy's, and the workspace default
   route refuses to change it;
-- the header's model picker offers only the policy's models; the global
+- the menu's model picker offers only the policy's models; the global
   default is not one of them;
 - an agent's own model may be set only to an allowed model of its workspace
   (and of the workspace the page is on);
@@ -58,10 +58,10 @@ With a policy in place:
   default instead, with that provider's own endpoint and key
   (`agents/agent_factory.py`);
 - `temperature`, `effort` and `max_tokens`, when set, beat the agent's own
-  values and the header's effort.
+  values and the model picker's effort.
 
 A policy of one model makes that model the workspace's global model: its
-default, the only choice in the header, and the only model any agent there
+default, the only choice in the model picker, and the only model any agent there
 runs on.
 
 The policy also makes the workspace's [special models](special-models.md)
@@ -74,7 +74,7 @@ workspace's (`inherited_from: "default"` in the answer), so working in one's
 own workspace does not step around the hub's policy. An administrator can
 give a personal workspace a policy of its own, which then applies instead.
 
-Setting a policy clears the header's choice when the policy does not allow
+Setting a policy clears the model picker's choice when the policy does not allow
 it. The model catalog itself (which models are enabled, their prices,
 temperatures and efforts) is the administrator's to change in `multi` mode.
 
@@ -142,12 +142,12 @@ How much a model reasons before it answers is a model setting, like the
 temperature. Resolution, most specific first:
 
 1. the agent's own effort (its Model tab)
-2. the effort chosen in the header's model picker for the workspace, for agents
+2. the effort chosen in the menu's model picker for the workspace, for agents
    that inherit the model too (an agent with a model of its own skips it)
 3. the model's effort on this page (the Reasoning effort column)
 4. the provider's default, sent explicitly so the reasoning summary is asked for
 
-The header's choice is stored apart from the model (`model_effort` in the
+The model picker's choice is stored apart from the model (`model_effort` in the
 workspace record), so it outlives a model switch. A personal workspace that
 chose none takes `default`'s.
 
@@ -198,7 +198,7 @@ provider `hub-local`, enabled, and disabled again when it is unloaded. See
 
 Images, video, speech, transcription and models of a workspace's own are not
 chat models and are not in the catalog. The tab **Special models** picks them
-for the workspace chosen in the header, the same form as that workspace's
+for the workspace chosen at the top of the menu, the same form as that workspace's
 settings. See [special models](special-models.md).
 
 Related: [settings](settings.md), [costs](costs.md), [local models](local-models.md), [special models](special-models.md).

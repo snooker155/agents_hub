@@ -59,6 +59,8 @@ export default {
   showLess: 'Weniger anzeigen',
   expand: 'Ausklappen',
   collapse: 'Einklappen',
+  fullScreen: 'Vollbild',
+  exitFullScreen: 'Vollbild verlassen',
   expandAll: 'Alle ausklappen',
   collapseAll: 'Alle einklappen',
   yes: 'Ja',

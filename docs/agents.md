@@ -25,7 +25,7 @@ with temperature, max tokens and reasoning effort, all on the Model tab.
 
 The reasoning effort sets how much the model reasons on its own, which the
 chat shows as a thought above the answer. Inherit (the default) takes the
-effort chosen in the header's model picker when the model is inherited too,
+effort chosen in the menu's model picker when the model is inherited too,
 then the model's default on the [models](models.md) page, then the provider's.
 The choices are the ones the model accepts (gpt-5: minimal to high; gpt-5.2
 and later: none to xhigh; Claude Opus 5.5: low to max), and a value another

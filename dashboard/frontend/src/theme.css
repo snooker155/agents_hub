@@ -301,6 +301,7 @@ html.dark {
 :where(html) .bg-indigo-100,
 :where(html) .bg-purple-100,
 :where(html) .bg-violet-100,
+:where(html) .group:hover .group-hover\:bg-indigo-100,
 :where(html) .hover\:bg-indigo-100:hover,
 :where(html) .hover\:bg-violet-100:hover { background-color: var(--brand-100); }
 :where(html) .bg-fuchsia-200,
@@ -382,6 +383,7 @@ html.dark {
 :where(html) .divide-indigo-200 > :not([hidden]) ~ :not([hidden]),
 :where(html) .divide-purple-200 > :not([hidden]) ~ :not([hidden]),
 :where(html) .divide-violet-200 > :not([hidden]) ~ :not([hidden]),
+:where(html) .group:hover .group-hover\:border-indigo-200,
 :where(html) .hover\:border-indigo-200:hover { border-color: var(--brand-200); }
 :where(html) .border-fuchsia-300,
 :where(html) .border-indigo-300,
@@ -391,7 +393,6 @@ html.dark {
 :where(html) .divide-indigo-300 > :not([hidden]) ~ :not([hidden]),
 :where(html) .divide-purple-300 > :not([hidden]) ~ :not([hidden]),
 :where(html) .divide-violet-300 > :not([hidden]) ~ :not([hidden]),
-:where(html) .focus\:border-indigo-300:focus,
 :where(html) .group:hover .group-hover\:border-indigo-300,
 :where(html) .hover\:border-indigo-300:hover,
 :where(html) .hover\:border-violet-300:hover { border-color: var(--brand-300); }
@@ -465,6 +466,7 @@ html.dark {
 :where(html) .fill-indigo-50 { fill: var(--brand-50); }
 :where(html) .fill-indigo-500 { fill: var(--brand-500); }
 :where(html) .focus-visible\:ring-indigo-200:focus-visible,
+:where(html) .focus-within\:ring-indigo-200:focus-within,
 :where(html) .ring-fuchsia-200,
 :where(html) .ring-indigo-200,
 :where(html) .ring-purple-200,
@@ -488,11 +490,6 @@ html.dark {
 :where(html) .ring-indigo-500,
 :where(html) .ring-purple-500,
 :where(html) .ring-violet-500 { --tw-ring-color: var(--brand-500); }
-:where(html) .focus\:ring-indigo-100:focus,
-:where(html) .ring-fuchsia-100,
-:where(html) .ring-indigo-100,
-:where(html) .ring-purple-100,
-:where(html) .ring-violet-100 { --tw-ring-color: var(--brand-100); }
 :where(html) .from-indigo-50 { --tw-gradient-from: #eef3ff var(--tw-gradient-from-position); --tw-gradient-to: rgba(238, 243, 255, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html) .from-indigo-600 { --tw-gradient-from: #2a4fbd var(--tw-gradient-from-position); --tw-gradient-to: rgba(42, 79, 189, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html) .group:hover .group-hover\:text-indigo-400,
@@ -530,6 +527,10 @@ html.dark {
 :where(html) .text-indigo-900,
 :where(html) .text-purple-900,
 :where(html) .text-violet-900 { color: var(--brand-900); }
+:where(html) .ring-fuchsia-100,
+:where(html) .ring-indigo-100,
+:where(html) .ring-purple-100,
+:where(html) .ring-violet-100 { --tw-ring-color: var(--brand-100); }
 :where(html) .ring-fuchsia-50,
 :where(html) .ring-indigo-50,
 :where(html) .ring-purple-50,
@@ -615,6 +616,7 @@ html.dark {
 :where(html.dark) .bg-indigo-100,
 :where(html.dark) .bg-purple-100,
 :where(html.dark) .bg-violet-100,
+:where(html.dark) .group:hover .group-hover\:bg-indigo-100,
 :where(html.dark) .hover\:bg-indigo-100:hover,
 :where(html.dark) .hover\:bg-violet-100:hover { background-color: var(--brand-bg-100); }
 :where(html.dark) .bg-fuchsia-200,
@@ -853,6 +855,7 @@ html.dark {
 :where(html.dark) .divide-indigo-200 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-purple-200 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-violet-200 > :not([hidden]) ~ :not([hidden]),
+:where(html.dark) .group:hover .group-hover\:border-indigo-200,
 :where(html.dark) .hover\:border-indigo-200:hover { border-color: var(--brand-border-200); }
 :where(html.dark) .border-fuchsia-300,
 :where(html.dark) .border-indigo-300,
@@ -862,7 +865,6 @@ html.dark {
 :where(html.dark) .divide-indigo-300 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-purple-300 > :not([hidden]) ~ :not([hidden]),
 :where(html.dark) .divide-violet-300 > :not([hidden]) ~ :not([hidden]),
-:where(html.dark) .focus\:border-indigo-300:focus,
 :where(html.dark) .group:hover .group-hover\:border-indigo-300,
 :where(html.dark) .hover\:border-indigo-300:hover,
 :where(html.dark) .hover\:border-violet-300:hover { border-color: var(--brand-border-300); }
@@ -1187,6 +1189,7 @@ html.dark {
 :where(html.dark) .fill-gray-700 { fill: var(--neutral-text-700); }
 :where(html.dark) .fill-indigo-500 { fill: var(--brand-text-500); }
 :where(html.dark) .focus-visible\:ring-indigo-200:focus-visible,
+:where(html.dark) .focus-within\:ring-indigo-200:focus-within,
 :where(html.dark) .ring-fuchsia-200,
 :where(html.dark) .ring-indigo-200,
 :where(html.dark) .ring-purple-200,
@@ -1210,11 +1213,6 @@ html.dark {
 :where(html.dark) .ring-indigo-500,
 :where(html.dark) .ring-purple-500,
 :where(html.dark) .ring-violet-500 { --tw-ring-color: var(--brand-border-500); }
-:where(html.dark) .focus\:ring-indigo-100:focus,
-:where(html.dark) .ring-fuchsia-100,
-:where(html.dark) .ring-indigo-100,
-:where(html.dark) .ring-purple-100,
-:where(html.dark) .ring-violet-100 { --tw-ring-color: var(--brand-border-100); }
 :where(html.dark) .from-indigo-50 { --tw-gradient-from: rgba(63, 102, 216, 0.16) var(--tw-gradient-from-position); --tw-gradient-to: transparent var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html.dark) .from-indigo-600 { --tw-gradient-from: #3159cc var(--tw-gradient-from-position); --tw-gradient-to: rgba(49, 89, 204, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
 :where(html.dark) .group:hover .group-hover\:text-indigo-500,
@@ -1340,6 +1338,10 @@ html.dark {
 :where(html.dark) .ring-emerald-200 { --tw-ring-color: rgba(var(--hue-emerald-rgb), 0.36); }
 :where(html.dark) .ring-emerald-300 { --tw-ring-color: rgba(var(--hue-emerald-rgb), 0.46); }
 :where(html.dark) .ring-emerald-50 { --tw-ring-color: rgba(var(--hue-emerald-rgb), 0.18); }
+:where(html.dark) .ring-fuchsia-100,
+:where(html.dark) .ring-indigo-100,
+:where(html.dark) .ring-purple-100,
+:where(html.dark) .ring-violet-100 { --tw-ring-color: var(--brand-border-100); }
 :where(html.dark) .ring-fuchsia-50,
 :where(html.dark) .ring-indigo-50,
 :where(html.dark) .ring-purple-50,
@@ -1507,6 +1509,7 @@ html.dark {
 /* ── white / black surfaces ───────────────────────────────────────────── */
 :where(html.dark) .bg-white,
 :where(html.dark) .hover\:bg-white:hover,
+:where(html.dark) .group:hover .group-hover\:bg-white,
 :where(html.dark) .focus\:bg-white:focus { background-color: var(--surface-card); }
 
 :where(html.dark) .bg-white\/95 { background-color: rgba(18, 26, 43, 0.95); }

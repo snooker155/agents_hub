@@ -25,7 +25,15 @@ function timeAgo(iso, t) {
   return t('components.notifications.daysAgo', { count: Math.round(mins / (60 * 24)) });
 }
 
-export default function NotificationBell() {
+// `className` is the wrapper's (the panel is placed against it unless the
+// caller drops `relative` to place it against a wider box), `panelClassName`
+// the panel's position and width: at the foot of the sidebar it opens beside
+// the menu rather than under the button.
+export default function NotificationBell({
+  className = 'relative',
+  buttonClassName = 'p-2 rounded-lg border border-gray-200',
+  panelClassName = 'header-sheet absolute right-0 top-full mt-2 w-96',
+}) {
   const { workspaceFilter } = useWorkspace();
   const { t } = useI18n();
   const toast = useToast();
@@ -124,11 +132,12 @@ export default function NotificationBell() {
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className={className} ref={dropdownRef}>
       <button
         onClick={toggle}
         title={t('components.notifications.tooltip')}
-        className="relative p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+        aria-label={t('components.notifications.tooltip')}
+        className={`relative ${buttonClassName} text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors`}
       >
         <Bell className="w-4 h-4" />
         {unread > 0 && (
@@ -139,7 +148,7 @@ export default function NotificationBell() {
       </button>
 
       {open && (
-        <div className="header-sheet absolute right-0 top-full mt-2 w-96 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+        <div className={`${panelClassName} bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden`}>
           <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
             <span className="text-sm font-semibold text-gray-900">{t('components.notifications.title')}</span>
             {unread > 0 && (

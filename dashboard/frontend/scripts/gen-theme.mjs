@@ -354,6 +354,7 @@ const EXTRAS = `
 /* ── white / black surfaces ───────────────────────────────────────────── */
 :where(html.dark) .bg-white,
 :where(html.dark) .hover\\:bg-white:hover,
+:where(html.dark) .group:hover .group-hover\\:bg-white,
 :where(html.dark) .focus\\:bg-white:focus { background-color: var(--surface-card); }
 
 :where(html.dark) .bg-white\\/95 { background-color: rgba(18, 26, 43, 0.95); }

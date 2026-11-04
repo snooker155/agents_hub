@@ -54,7 +54,7 @@ export default {
   settings: 'Settings',
   users: 'Accounts',
   audit: 'Audit',
-  account: 'Account',
+  account: 'Profile',
   comingSoon: 'coming soon',
   comingSoonTitle: 'Coming soon',
   comingSoonItem: '{{name}} — coming soon',

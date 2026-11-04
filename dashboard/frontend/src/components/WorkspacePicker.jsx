@@ -1,18 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, ChevronDown, FolderOpen, Search, Settings2 } from 'lucide-react';
+import { Check, ChevronDown, Folder, FolderOpen, Search, Settings2 } from 'lucide-react';
 import { useI18n } from '../i18n';
 
 /**
- * The header's workspace switch: a button with the current workspace, and a
+ * The workspace switch under the logo: a button with the current workspace, and a
  * panel that lists every workspace with a search over the names. Arrow keys
  * move, Enter picks, Escape closes.
  *
  * `workspaces` is `GET /api/workspaces` ({name, tasks_count, attached});
  * `label(ws)` is the shown name (the default workspace has a caption of its
  * own); `onChange(name)` switches.
+ *
+ * `variant` is `block` (the button fills its column, the open sidebar) or
+ * `icon` (a folder icon alone, the folded sidebar); `panelClassName` places
+ * the panel (beside the folded sidebar, across the phone drawer).
  */
-export default function WorkspacePicker({ workspaces, value, onChange, label, compact = false }) {
+export default function WorkspacePicker({
+  workspaces, value, onChange, label, compact = false, variant = 'inline',
+  panelClassName = 'header-sheet absolute left-0 top-full mt-1.5 w-72',
+}) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -42,12 +49,22 @@ export default function WorkspacePicker({ workspaces, value, onChange, label, co
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  // Keep the highlighted row in view while arrowing through a long list.
-  useEffect(() => {
-    if (!open) return;
-    const row = listRef.current?.querySelector(`[data-index="${active}"]`);
+  // Keep the highlighted row in view: the current workspace when the list
+  // opens, and each row the arrow keys move to. Not a row the mouse rests on:
+  // scrolling under the pointer would move the list away from it.
+  const reveal = (index) => {
+    const row = listRef.current?.querySelector(`[data-index="${index}"]`);
     if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest' });
-  }, [active, open]);
+  };
+  useEffect(() => {
+    if (open) reveal(active);
+    // Only on opening: later moves come from the keys, which reveal themselves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const moveTo = (index) => {
+    setActive(index);
+    reveal(index);
+  };
 
   const openPanel = () => {
     setQuery('');
@@ -62,8 +79,8 @@ export default function WorkspacePicker({ workspaces, value, onChange, label, co
   };
 
   const onKeyDown = (e) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(matches.length - 1, i + 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(0, i - 1)); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveTo(Math.min(matches.length - 1, active + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveTo(Math.max(0, active - 1)); }
     else if (e.key === 'Enter') { e.preventDefault(); pick(matches[active]); }
     else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
   };
@@ -76,19 +93,28 @@ export default function WorkspacePicker({ workspaces, value, onChange, label, co
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={t('layout.workspaceLabel')}
-        className={`flex items-center gap-2 min-w-0 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
+        title={variant === 'icon' && current ? label(current) : undefined}
+        className={`flex items-center gap-2 min-w-0 rounded-lg border text-sm font-semibold transition-colors ${
+          variant === 'icon' ? 'p-2 justify-center' : 'px-3 py-1.5'
+        } ${variant === 'block' ? 'w-full' : ''} ${
           open ? 'border-indigo-300 bg-indigo-50/50' : 'border-gray-200 bg-gray-50 hover:bg-white hover:border-gray-300'
         }`}
       >
-        <span className={`truncate text-gray-800 ${compact ? 'max-w-[7rem]' : 'max-w-[14rem]'}`}>
-          {current ? label(current) : '—'}
-        </span>
-        <ChevronDown className={`w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+        {variant === 'icon' ? (
+          <Folder className="w-4 h-4 text-gray-600" />
+        ) : (
+          <>
+            <span className={`truncate text-gray-800 ${variant === 'block' ? 'flex-1 text-left' : compact ? 'max-w-[7rem]' : 'max-w-[14rem]'}`}>
+              {current ? label(current) : '—'}
+            </span>
+            <ChevronDown className={`w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+          </>
+        )}
       </button>
 
       {open && (
-        <div className="header-sheet absolute left-0 top-full mt-1.5 w-72 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100">
+        <div className={`${panelClassName} bg-gray-100 border border-gray-300 rounded-xl shadow-xl z-50 overflow-hidden`}>
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-300">
             <Search className="w-4 h-4 text-gray-400 shrink-0" />
             <input
               ref={inputRef}
@@ -121,7 +147,7 @@ export default function WorkspacePicker({ workspaces, value, onChange, label, co
                   onMouseEnter={() => setActive(i)}
                   onClick={() => pick(ws)}
                   className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
-                    i === active ? 'bg-gray-50' : ''
+                    i === active ? 'bg-gray-200' : ''
                   }`}
                 >
                   <span className="min-w-0 flex-1">
@@ -146,7 +172,7 @@ export default function WorkspacePicker({ workspaces, value, onChange, label, co
           <Link
             to="/workspaces"
             onClick={() => setOpen(false)}
-            className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-600 border-t border-gray-100 hover:bg-gray-50 hover:text-indigo-700"
+            className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-700 border-t border-gray-300 hover:bg-gray-200 hover:text-indigo-700"
           >
             <Settings2 className="w-3.5 h-3.5" /> {t('layout.workspacePicker.manage')}
           </Link>

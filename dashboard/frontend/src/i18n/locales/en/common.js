@@ -60,6 +60,8 @@ export default {
   showLess: 'Show less',
   expand: 'Expand',
   collapse: 'Collapse',
+  fullScreen: 'Full screen',
+  exitFullScreen: 'Leave full screen',
   expandAll: 'Expand all',
   collapseAll: 'Collapse all',
   yes: 'Yes',

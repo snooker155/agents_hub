@@ -37,6 +37,23 @@ export default {
     label: 'Sprache',
     tooltip: 'Sprache der Oberfläche',
   },
+  // The account block at the foot of the menu (components/AccountMenu.jsx).
+  account: {
+    menu: 'Kontomenü',
+    operator: 'Betreiber',
+    personalization: 'Personalisierung',
+    help: 'Hilfe',
+    theme: 'Design',
+    themes: {
+      light: 'Hell',
+      dark: 'Dunkel',
+    },
+    menuMode: 'Menü',
+    menuModes: {
+      simple: 'Einfach',
+      full: 'Vollständig',
+    },
+  },
   live: {
     online: 'Live',
     paused: 'Pausiert',
@@ -46,12 +63,12 @@ export default {
     resume: 'Live-Updates fortsetzen',
   },
   modelPicker: {
-    defaultSuffix: '(Standard)',
     inheritedSuffix: '(aus {{workspace}})',
     defaultBadge: 'Standard',
     legend: 'Punkte:',
     legendAvailable: 'verfügbar',
     legendUnreachable: 'nicht erreichbar',
+    legendFailed: 'Verbindung fehlgeschlagen',
     legendUntested: 'ungetestet',
   },
   titles: {

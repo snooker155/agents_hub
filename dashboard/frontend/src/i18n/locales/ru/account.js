@@ -2,7 +2,7 @@
 // (dashboard/backend/routes/account.py, docs/api-keys.md). Видна только в
 // AUTH_MODE=multi, на /account.
 export default {
-  title: 'Аккаунт',
+  title: 'Профиль',
   description: 'Ваш профиль, сессии и персональные API-ключи.',
 
   spend: {
@@ -18,7 +18,7 @@ export default {
     rateSources: { key: 'свой у этого ключа', user: 'ваш собственный', hub: 'общий для всех' },
   },
   profile: {
-    title: 'Профиль',
+    title: 'Личные данные',
     username: 'Имя пользователя',
     displayName: 'Отображаемое имя',
     email: 'Email',
@@ -31,7 +31,7 @@ export default {
     role: 'Глобальная роль',
     groups: 'Группы',
     noGroups: 'Нет',
-    workspaces: 'Рабочие пространства',
+    workspaces: 'Пространства',
     noWorkspaces: 'Пока нет',
     edit: 'Изменить',
     editTitle: 'Изменить профиль',
@@ -46,7 +46,7 @@ export default {
 
   palette: {
     title: 'Палитра',
-    description: 'Выберите от 2 до 4 базовых цветов: всё остальное (оттенки, панели, границы) считается из них. Действует лично для вас, поверх палитры рабочего пространства по умолчанию.',
+    description: 'Выберите от 2 до 4 базовых цветов: всё остальное (оттенки, панели, границы) считается из них. Действует лично для вас, поверх палитры пространства по умолчанию.',
     loadFailed: 'Не удалось загрузить палитру.',
     saveFailed: 'Не удалось сохранить палитру.',
     brand: 'Основной цвет',
@@ -112,8 +112,8 @@ export default {
     copied: 'Скопировано.',
     name: 'Название',
     namePlaceholder: 'например, CLI на ноутбуке',
-    workspaces: 'Рабочие пространства',
-    allWorkspaces: 'Все мои рабочие пространства',
+    workspaces: 'Пространства',
+    allWorkspaces: 'Все мои пространства',
     expires: 'Истекает',
     expiresOptions: {
       d30: '30 дней',

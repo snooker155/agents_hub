@@ -80,14 +80,23 @@ function HelpReply({ text, onNavigate, onTour }) {
  * chat's corner button stands down (EntityChat counts as an inline chat), so
  * the two never stack on the same edge.
  */
-export default function HelpPanel() {
+// Opened by its own button, or, with `open` and `onOpenChange`, by whoever
+// holds the state: the account menu at the foot of the sidebar, which passes
+// `showButton={false}` since its Help row is the button.
+export default function HelpPanel({ open: openProp, onOpenChange, showButton = true }) {
   const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const { selectedWorkspace } = useWorkspace();
   const pageChat = usePageChatPanel();
   const tour = useWelcomeTour();
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : ownOpen;
+  const setOpen = useCallback((next) => {
+    if (controlled) onOpenChange?.(next);
+    else setOwnOpen(next);
+  }, [controlled, onOpenChange]);
   const [wide, setWideState] = useState(readWide);
   const [clearSlot, setClearSlot] = useState(null);
   const buttonRef = useRef(null);
@@ -96,7 +105,7 @@ export default function HelpPanel() {
   const close = useCallback(() => {
     setOpen(false);
     buttonRef.current?.focus();
-  }, []);
+  }, [setOpen]);
 
   const toggleWide = () => {
     setWideState((w) => {
@@ -107,7 +116,7 @@ export default function HelpPanel() {
 
   const toggle = () => {
     if (!open) pageChat.setOpen(false);
-    setOpen((o) => !o);
+    setOpen(!open);
   };
 
   // Escape closes the panel from anywhere inside it.
@@ -123,7 +132,7 @@ export default function HelpPanel() {
   const startTour = useCallback(() => {
     setOpen(false);
     tour.start();
-  }, [tour]);
+  }, [tour, setOpen]);
 
   const goTo = useCallback((to) => navigate(to), [navigate]);
   const renderReply = useCallback(
@@ -143,6 +152,7 @@ export default function HelpPanel() {
 
   return (
     <>
+      {showButton && (
       <button
         ref={buttonRef}
         type="button"
@@ -155,6 +165,7 @@ export default function HelpPanel() {
       >
         <CircleQuestionMark className="w-4 h-4" strokeWidth={2.25} />
       </button>
+      )}
 
       {open && (
         <aside

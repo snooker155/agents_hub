@@ -12,7 +12,13 @@ const POLL_MS = 30000;
  * leaves for the linked hub and in what form, sealed or readable there.
  * Renders nothing until sync is on.
  */
-export default function SyncIndicator() {
+// `className` and `panelClassName` place the panel (see NotificationBell);
+// `compact` keeps the icon alone, for the folded sidebar.
+export default function SyncIndicator({
+  className = 'relative',
+  panelClassName = 'header-sheet absolute right-0 top-full mt-2 w-80',
+  compact = false,
+}) {
   const { t, language } = useI18n();
   const auth = useAuth();
   const canRun = auth?.mode !== MULTI || isAdmin(auth);
@@ -68,7 +74,7 @@ export default function SyncIndicator() {
     : status.encrypted ? t('hubSync.indicator.encrypted') : t('hubSync.indicator.plain');
 
   return (
-    <div className="relative" ref={ref} data-testid="sync-indicator" data-tone={tone}>
+    <div className={className} ref={ref} data-testid="sync-indicator" data-tone={tone}>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -76,12 +82,12 @@ export default function SyncIndicator() {
         className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg border text-xs font-medium transition-colors ${toneCls}`}
       >
         <Icon className={`w-4 h-4 ${running ? 'animate-spin' : ''}`} />
-        <span className="hidden sm:inline" data-testid="sync-label">{label}</span>
+        <span className={compact ? 'sr-only' : 'hidden sm:inline'} data-testid="sync-label">{label}</span>
         {(warn || locked) && <AlertTriangle className="w-3.5 h-3.5" />}
       </button>
 
       {open && (
-        <div className="header-sheet absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-xl shadow-lg z-50 p-4 space-y-3 text-sm">
+        <div className={`${panelClassName} max-w-[calc(100vw-2rem)] bg-white border border-gray-200 rounded-xl shadow-lg z-50 p-4 space-y-3 text-sm`}>
           <div className="font-semibold text-gray-900">{t('hubSync.indicator.tooltip')}</div>
           <div className="text-xs text-gray-600 break-all">
             {t('hubSync.indicator.remote')}: <span className="font-medium text-gray-800">{status.remote_name || status.remote}</span>

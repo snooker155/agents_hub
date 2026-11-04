@@ -279,17 +279,43 @@ html.dark .react-flow__minimap-mask {
 
 /* The prompt a reply answers, held at the top of the transcript while its turn
    scrolls by (chat/useChatScroll). The slot itself lets clicks through to what
-   scrolls under it; only the bubble is live. Held, a long prompt folds to two
-   lines (line height 1.625rem, padding 0.75rem) and lifts off the page. */
+   scrolls under it; only the bubble is live. Held, a prompt shows its text
+   alone, folded to three whole lines with an ellipsis (a click goes back to it
+   in full), and lifts off the page. */
 .chat-turn-prompt .chat-prompt-bubble {
   pointer-events: auto;
   transition: box-shadow 150ms ease;
 }
 .chat-turn-prompt[data-stuck="true"] .chat-prompt-bubble {
-  max-height: 4.75rem;
-  overflow: hidden;
   cursor: pointer;
   box-shadow: 0 10px 24px -10px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(0 0 0 / 0.05);
+}
+.chat-turn-prompt[data-stuck="true"] .chat-prompt-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+.chat-turn-prompt[data-stuck="true"] .chat-prompt-extra {
+  display: none;
+}
+
+/* A narrow transcript (the chat beside an open panel, a small window) is laid
+   out as on a phone: no avatars, and answers and prompts the whole width. The
+   prompts still hold at the top while their turn scrolls by. The classes come
+   from chat/bubbleSizes.js. */
+.chat-transcript {
+  container: chat-transcript / inline-size;
+}
+@container chat-transcript (max-width: 42rem) {
+  .chat-transcript .chat-narrow-hide {
+    display: none;
+  }
+  .chat-transcript .chat-narrow-fill {
+    flex: 1 1 0%;
+    max-width: 100%;
+  }
 }
 
 /* The page's selection tint is the brand colour the prompt bubble is filled

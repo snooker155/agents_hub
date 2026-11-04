@@ -36,6 +36,24 @@ describe('WorkspacePicker', () => {
     expect(options[0].textContent).toContain('1 task');
   });
 
+  it('scrolls to a row for the arrow keys, never for the mouse', () => {
+    const scrolled = vi.fn();
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function scroll() { scrolled(this.textContent); };
+    try {
+      show();
+      fireEvent.click(screen.getByRole('button', { name: /workspace/i }));
+      scrolled.mockClear();
+      const options = screen.getAllByRole('option');
+      fireEvent.mouseEnter(options[0]);
+      expect(scrolled).not.toHaveBeenCalled();
+      fireEvent.keyDown(screen.getByRole('textbox'), { key: 'ArrowDown' });
+      expect(scrolled).toHaveBeenCalledWith(expect.stringContaining('Login system'));
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
   it('searches and picks with the keyboard', () => {
     const onChange = show();
     fireEvent.click(screen.getByRole('button', { name: /workspace/i }));

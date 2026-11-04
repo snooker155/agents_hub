@@ -80,8 +80,9 @@ describe('navMenu', () => {
     expect(paths(buildMenu({ t, auth: multiAdmin }))).toEqual(expect.arrayContaining(['/health', '/users', '/audit']));
   });
 
-  it('account stays in the simple menu for a signed in user', () => {
-    expect(paths(visibleGroups(buildMenu({ t, auth: multiUser }), SIMPLE))).toContain('/account');
+  it('the profile is not a menu row: it opens from the account menu', () => {
+    expect(paths(buildMenu({ t, auth: multiUser }))).not.toContain('/account');
+    expect(paths(buildMenu({ t, auth: multiAdmin }))).not.toContain('/account');
   });
 
   it('playground row follows the feature flag', () => {

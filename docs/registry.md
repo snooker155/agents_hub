@@ -72,7 +72,7 @@ answer to it. Anyone can request a catalog entry; an admin approves or blocks.
 
 ## The page
 
-The page follows the workspace picked in the top bar. In `default` it is the
+The page follows the workspace picked at the top of the menu. In `default` it is the
 hub's view: every workspace's items, which workspaces each one is in, a filter
 by workspace and the two hub toggles. In any other workspace it shows only that
 workspace's own items (`GET /api/registry?workspace=<name>`: the agents and
