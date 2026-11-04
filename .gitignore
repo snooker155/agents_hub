@@ -3,6 +3,9 @@ tasks.json
 # The pinned Python resolution is meant to be committed; see its header.
 !requirements.lock
 .env
+# Saved variants of .env (.env.multi, backups) hold the same secrets.
+.env.*
+!.env.example
 .agents_hub/
 orchestrator/state/
 __pycache__/
