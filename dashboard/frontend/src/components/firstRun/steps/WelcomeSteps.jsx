@@ -65,7 +65,7 @@ function Preview({ mode }) {
       <div className="flex-1 flex flex-col gap-1">
         <div className={`h-2 rounded ${dark ? 'bg-[#2a3a5c]' : 'bg-gray-200'}`} />
         <div className={`h-2 w-2/3 rounded ${dark ? 'bg-[#2a3a5c]' : 'bg-gray-200'}`} />
-        <div className="h-2 w-1/3 rounded bg-[#ea3390]" />
+        <div className="h-2 w-1/3 rounded bg-[#e34292]" />
       </div>
     </div>
   );

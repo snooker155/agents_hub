@@ -11,7 +11,7 @@ import { useThemeColors } from '../../lib/themeColors';
 const MATH_COLOR_SPEC = {
   axis: ['--border-default', '#e2e8f0'],
   axisDark: ['--neutral-700', '#334155'],
-  curve: ['--brand-500', '#ea3390'],
+  curve: ['--brand-500', '#e34292'],
   label: ['--text-muted', '#64748b'],
   labelDark: ['--neutral-400', '#94a3b8'],
 };

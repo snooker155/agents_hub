@@ -211,7 +211,7 @@ function ControlInput({ c, value, onChange, onAction }) {
         </select>
       );
     case 'color':
-      return <input type="color" value={value ?? cssVar('--brand-600', '#e20074')} onChange={(e) => onChange(e.target.value)} className="h-8 w-16 rounded" />;
+      return <input type="color" value={value ?? cssVar('--brand-600', '#db2777')} onChange={(e) => onChange(e.target.value)} className="h-8 w-16 rounded" />;
     case 'button':
       return (
         <button

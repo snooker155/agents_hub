@@ -14,7 +14,7 @@ const SIM_COLOR_SPEC = {
   obstacle: ['--neutral-300', '#cbd5e1'],
   obstacleDark: ['--neutral-700', '#334155'],
   goal: ['--hue-green-400', '#22c55e'],
-  agent: ['--brand-500', '#ea3390'],
+  agent: ['--brand-500', '#e34292'],
 };
 
 // A simulation view backed by the precise server tier (spec.compute set by

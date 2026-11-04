@@ -69,7 +69,7 @@ function draw(ctx, W, H, channels, dark) {
         for (let i = 0; i < pot.length; i++) { const x = (i / (pot.length - 1)) * W; const y = H / 2 - pot[i] * H * 0.35; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
         ctx.stroke();
       }
-      ctx.fillStyle = 'rgba(226,0,116,0.55)'; ctx.strokeStyle = '#ff8fc6'; ctx.lineWidth = 1.5;
+      ctx.fillStyle = 'rgba(219,39,119,0.55)'; ctx.strokeStyle = '#fa94c7'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(0, H);
       for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * W; const y = H - norm(vals[i]) * H * 0.9; ctx.lineTo(x, y); }
       ctx.lineTo(W, H); ctx.closePath(); ctx.fill();

@@ -131,7 +131,7 @@ describe('the magenta and neutral presets', () => {
   });
 
   it('draws a style from the stylesheet, not from computed ramps', () => {
-    applyPalette({ brand: '#e20074' }, 'dark');
+    applyPalette({ brand: '#db2777' }, 'dark');
     expect(root.style.getPropertyValue('--brand-600')).not.toBe('');
     applyPalette(PRESETS.magenta, 'dark');
     expect(root.classList.contains('style-magenta')).toBe(true);

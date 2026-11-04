@@ -51,7 +51,7 @@ const TYPE_STYLE = {
   start: { fill: 'var(--ok, #16a34a)', shape: 'circle' },
   end: { fill: 'var(--danger, #dc2626)', shape: 'circle' },
   gateway: { fill: 'var(--warn, #d97706)', shape: 'diamond' },
-  task: { fill: 'var(--brand-600, #e20074)', shape: 'rect' },
+  task: { fill: 'var(--brand-600, #db2777)', shape: 'rect' },
 };
 const EDGE_STROKE = 'var(--neutral-400, #94a3b8)';
 const EDGE_TEXT = 'var(--text-muted, #64748b)';

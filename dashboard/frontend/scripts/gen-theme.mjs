@@ -23,40 +23,40 @@ const SRC = join(ROOT, 'src');
 
 /* ── palettes ───────────────────────────────────────────────────────────── */
 
-// Magenta brand ramp, 600 is the brand colour itself (#E20074).
+// Magenta brand ramp, 600 is the brand colour itself (#DB2777).
 // Replaces indigo/violet/purple/fuchsia in light mode.
 const BRAND_LIGHT = {
-  50: '#fef1f8', 100: '#fde1ef', 200: '#fac4df', 300: '#f598c6', 400: '#f063a8',
-  500: '#ea3390', 600: '#e20074', 700: '#c00063', 800: '#9e0052', 900: '#7a0040',
-  950: '#4a0027',
+  50: '#fef2f9', 100: '#fce3f0', 200: '#f8c6e0', 300: '#f19cc7', 400: '#ea6ba9',
+  500: '#e34292', 600: '#db2777', 700: '#ba2065', 800: '#991854', 900: '#761041',
+  950: '#470628',
 };
-const BRAND_RGB = '226, 0, 116'; // #e20074
+const BRAND_RGB = '219, 39, 119'; // #db2777
 
 // Brand in dark mode: text tiers lighten, tint backgrounds become translucent.
 const BRAND_DARK = {
   bg: {
     50: `rgba(${BRAND_RGB}, 0.16)`, 100: `rgba(${BRAND_RGB}, 0.26)`,
-    200: `rgba(${BRAND_RGB}, 0.34)`, 300: '#b8005f', 400: '#b8005f',
-    500: '#e20074', 600: '#c9006a', 700: '#a3005a', 800: '#800048',
-    900: '#4d002c', 950: '#2b0019',
+    200: `rgba(${BRAND_RGB}, 0.34)`, 300: '#b21e61', 400: '#b21e61',
+    500: '#db2777', 600: '#c3226c', 700: '#9e195c', 800: '#7c1249',
+    900: '#4a072c', 950: '#290219',
   },
   text: {
-    300: '#ffa8d4', 400: '#ff9dcd', 500: '#ff8cc4', 600: '#ff8fc6',
-    700: '#ffa8d4', 800: '#ffc2e1', 900: '#ffd9ec', 950: '#ffeaf4',
+    300: '#fbacd5', 400: '#fba1ce', 500: '#fa91c5', 600: '#fa94c7',
+    700: '#fbacd5', 800: '#fcc5e2', 900: '#fedbed', 950: '#ffebf5',
   },
   border: {
     50: `rgba(${BRAND_RGB}, 0.22)`, 100: `rgba(${BRAND_RGB}, 0.30)`,
     200: `rgba(${BRAND_RGB}, 0.40)`, 300: `rgba(${BRAND_RGB}, 0.52)`,
-    400: '#f0389a', 500: '#e20074', 600: '#c9006a', 700: '#a3005a',
-    800: '#800048', 900: '#4d002c',
+    400: '#e9479b', 500: '#db2777', 600: '#c3226c', 700: '#9e195c',
+    800: '#7c1249', 900: '#4a072c',
   },
 };
 
 // Same ramp inverted, for inline styles that read var(--brand-N) directly.
 const BRAND_DARK_VARS = {
-  50: '#2b0019', 100: '#3d0024', 200: '#57003a', 300: '#a3005a', 400: '#c9006a',
-  500: '#e20074', 600: '#f0389a', 700: '#ff8fc6', 800: '#ffc2e1', 900: '#ffd9ec',
-  950: '#ffeaf4',
+  50: '#290219', 100: '#3b0424', 200: '#54093a', 300: '#9e195c', 400: '#c3226c',
+  500: '#db2777', 600: '#e9479b', 700: '#fa94c7', 800: '#fcc5e2', 900: '#fedbed',
+  950: '#ffebf5',
 };
 
 const BRAND_HUES = ['indigo', 'violet', 'purple', 'fuchsia'];
@@ -496,13 +496,13 @@ ${Object.entries(HUES).map(([name, h]) => `  --hue-${name}-rgb: ${h.rgb};\n  --h
   /* Chart marks (validated with the dataviz palette checks for this surface):
      the accent series, the de-emphasised rest, three categorical slots,
      gridlines and the unfilled track of a meter. */
-  --chart-accent:   #e20074;
+  --chart-accent:   #db2777;
   --chart-muted:    #d4d4d4;
-  --chart-cat-1:    #e20074;
+  --chart-cat-1:    #db2777;
   --chart-cat-2:    #2f6fd0;
   --chart-cat-3:    #1baf7a;
   --chart-grid:     #ebebeb;
-  --chart-track:    #fde1ef;
+  --chart-track:    #fce3f0;
 }
 
 html.dark {
@@ -525,16 +525,16 @@ html.dark {
   --text-faint:      #9a9a9a;
   --text-inverse:    #1b1b1b;
 
-  --chart-accent:   #f0389a;
+  --chart-accent:   #e9479b;
   --chart-muted:    #4a4a4a;
-  --chart-cat-1:    #f0389a;
+  --chart-cat-1:    #e9479b;
   --chart-cat-2:    #5b9bf0;
   --chart-cat-3:    #199e70;
   --chart-grid:     #262626;
-  --chart-track:    #57003a;
+  --chart-track:    #54093a;
 
 ${Object.entries(BRAND_DARK_VARS).map(([s, v]) => `  --brand-${s}: ${v};`).join('\n')}
-  --brand:           #e20074;
+  --brand:           #db2777;
   --brand-contrast:  #ffffff;
   --brand-rgb:       ${BRAND_RGB};
 
@@ -557,12 +557,12 @@ ${Object.entries(HUES).map(([name, h]) => `  --hue-${name}-rgb: ${h.rgb};\n  --h
   --ok:      #6ee7b7;
   --warn:    #fcd34d;
   --danger:  #fca5a5;
-  --info:    #ff8fc6;
+  --info:    #fa94c7;
 
   --ok-surface:     rgba(34, 197, 94, 0.24);
   --warn-surface:   rgba(234, 179, 8, 0.28);
   --danger-surface: rgba(239, 68, 68, 0.24);
-  --info-surface:   rgba(226, 0, 116, 0.28);
+  --info-surface:   rgba(219, 39, 119, 0.28);
 }
 `;
 

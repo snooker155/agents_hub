@@ -30,7 +30,7 @@ function toElements(spec) {
 // resolved through useThemeColors and re-read when the palette or theme
 // changes. Fallbacks are the literals this renderer always shipped.
 const GRAPH_COLOR_SPEC = {
-  node: ['--brand-600', '#e20074'],
+  node: ['--brand-600', '#db2777'],
   nodeDark: ['--brand-700', '#6b90ff'],
   text: ['--text-primary', '#111827'],
   selected: ['--hue-amber-400', '#f59e0b'],

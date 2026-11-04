@@ -33,20 +33,20 @@
   --text-faint:      #9b9b9b;
   --text-inverse:    #fafafa;
 
-  --brand-50: #fef1f8;
-  --brand-100: #fde1ef;
-  --brand-200: #fac4df;
-  --brand-300: #f598c6;
-  --brand-400: #f063a8;
-  --brand-500: #ea3390;
-  --brand-600: #e20074;
-  --brand-700: #c00063;
-  --brand-800: #9e0052;
-  --brand-900: #7a0040;
-  --brand-950: #4a0027;
-  --brand:           #e20074;
+  --brand-50: #fef2f9;
+  --brand-100: #fce3f0;
+  --brand-200: #f8c6e0;
+  --brand-300: #f19cc7;
+  --brand-400: #ea6ba9;
+  --brand-500: #e34292;
+  --brand-600: #db2777;
+  --brand-700: #ba2065;
+  --brand-800: #991854;
+  --brand-900: #761041;
+  --brand-950: #470628;
+  --brand:           #db2777;
   --brand-contrast:  #ffffff;
-  --brand-rgb:       226, 0, 116;
+  --brand-rgb:       219, 39, 119;
 
   --neutral-50: #fafafa;
   --neutral-100: #f5f5f5;
@@ -103,23 +103,23 @@
   --ok:      #15803d;
   --warn:    #b45309;
   --danger:  #b91c1c;
-  --info:    #e20074;
+  --info:    #db2777;
 
   --ok-surface:     #dcfce7;
   --warn-surface:   #fef08a;
   --danger-surface: #fee2e2;
-  --info-surface:   #fde1ef;
+  --info-surface:   #fce3f0;
 
   /* Chart marks (validated with the dataviz palette checks for this surface):
      the accent series, the de-emphasised rest, three categorical slots,
      gridlines and the unfilled track of a meter. */
-  --chart-accent:   #e20074;
+  --chart-accent:   #db2777;
   --chart-muted:    #d4d4d4;
-  --chart-cat-1:    #e20074;
+  --chart-cat-1:    #db2777;
   --chart-cat-2:    #2f6fd0;
   --chart-cat-3:    #1baf7a;
   --chart-grid:     #ebebeb;
-  --chart-track:    #fde1ef;
+  --chart-track:    #fce3f0;
 }
 
 html.dark {
@@ -142,62 +142,62 @@ html.dark {
   --text-faint:      #9a9a9a;
   --text-inverse:    #1b1b1b;
 
-  --chart-accent:   #f0389a;
+  --chart-accent:   #e9479b;
   --chart-muted:    #4a4a4a;
-  --chart-cat-1:    #f0389a;
+  --chart-cat-1:    #e9479b;
   --chart-cat-2:    #5b9bf0;
   --chart-cat-3:    #199e70;
   --chart-grid:     #262626;
-  --chart-track:    #57003a;
+  --chart-track:    #54093a;
 
-  --brand-50: #2b0019;
-  --brand-100: #3d0024;
-  --brand-200: #57003a;
-  --brand-300: #a3005a;
-  --brand-400: #c9006a;
-  --brand-500: #e20074;
-  --brand-600: #f0389a;
-  --brand-700: #ff8fc6;
-  --brand-800: #ffc2e1;
-  --brand-900: #ffd9ec;
-  --brand-950: #ffeaf4;
-  --brand:           #e20074;
+  --brand-50: #290219;
+  --brand-100: #3b0424;
+  --brand-200: #54093a;
+  --brand-300: #9e195c;
+  --brand-400: #c3226c;
+  --brand-500: #db2777;
+  --brand-600: #e9479b;
+  --brand-700: #fa94c7;
+  --brand-800: #fcc5e2;
+  --brand-900: #fedbed;
+  --brand-950: #ffebf5;
+  --brand:           #db2777;
   --brand-contrast:  #ffffff;
-  --brand-rgb:       226, 0, 116;
+  --brand-rgb:       219, 39, 119;
 
   /* The three brand/neutral roles the dark-theme matrix below paints with:
      bg (tint fills), text (labels on a dark page) and border (rings, dividers).
      Defaults are exactly BRAND_DARK / NEUTRAL_DARK above — this just gives
      each entry a custom property so applyPalette() can move it at runtime. */
-  --brand-bg-50: rgba(226, 0, 116, 0.16);
-  --brand-bg-100: rgba(226, 0, 116, 0.26);
-  --brand-bg-200: rgba(226, 0, 116, 0.34);
-  --brand-bg-300: #b8005f;
-  --brand-bg-400: #b8005f;
-  --brand-bg-500: #e20074;
-  --brand-bg-600: #c9006a;
-  --brand-bg-700: #a3005a;
-  --brand-bg-800: #800048;
-  --brand-bg-900: #4d002c;
-  --brand-bg-950: #2b0019;
-  --brand-text-300: #ffa8d4;
-  --brand-text-400: #ff9dcd;
-  --brand-text-500: #ff8cc4;
-  --brand-text-600: #ff8fc6;
-  --brand-text-700: #ffa8d4;
-  --brand-text-800: #ffc2e1;
-  --brand-text-900: #ffd9ec;
-  --brand-text-950: #ffeaf4;
-  --brand-border-50: rgba(226, 0, 116, 0.22);
-  --brand-border-100: rgba(226, 0, 116, 0.30);
-  --brand-border-200: rgba(226, 0, 116, 0.40);
-  --brand-border-300: rgba(226, 0, 116, 0.52);
-  --brand-border-400: #f0389a;
-  --brand-border-500: #e20074;
-  --brand-border-600: #c9006a;
-  --brand-border-700: #a3005a;
-  --brand-border-800: #800048;
-  --brand-border-900: #4d002c;
+  --brand-bg-50: rgba(219, 39, 119, 0.16);
+  --brand-bg-100: rgba(219, 39, 119, 0.26);
+  --brand-bg-200: rgba(219, 39, 119, 0.34);
+  --brand-bg-300: #b21e61;
+  --brand-bg-400: #b21e61;
+  --brand-bg-500: #db2777;
+  --brand-bg-600: #c3226c;
+  --brand-bg-700: #9e195c;
+  --brand-bg-800: #7c1249;
+  --brand-bg-900: #4a072c;
+  --brand-bg-950: #290219;
+  --brand-text-300: #fbacd5;
+  --brand-text-400: #fba1ce;
+  --brand-text-500: #fa91c5;
+  --brand-text-600: #fa94c7;
+  --brand-text-700: #fbacd5;
+  --brand-text-800: #fcc5e2;
+  --brand-text-900: #fedbed;
+  --brand-text-950: #ffebf5;
+  --brand-border-50: rgba(219, 39, 119, 0.22);
+  --brand-border-100: rgba(219, 39, 119, 0.30);
+  --brand-border-200: rgba(219, 39, 119, 0.40);
+  --brand-border-300: rgba(219, 39, 119, 0.52);
+  --brand-border-400: #e9479b;
+  --brand-border-500: #db2777;
+  --brand-border-600: #c3226c;
+  --brand-border-700: #9e195c;
+  --brand-border-800: #7c1249;
+  --brand-border-900: #4a072c;
 
   --neutral-bg-50: #121212;
   --neutral-bg-100: #1e1e1e;
@@ -285,12 +285,12 @@ html.dark {
   --ok:      #6ee7b7;
   --warn:    #fcd34d;
   --danger:  #fca5a5;
-  --info:    #ff8fc6;
+  --info:    #fa94c7;
 
   --ok-surface:     rgba(34, 197, 94, 0.24);
   --warn-surface:   rgba(234, 179, 8, 0.28);
   --danger-surface: rgba(239, 68, 68, 0.24);
-  --info-surface:   rgba(226, 0, 116, 0.28);
+  --info-surface:   rgba(219, 39, 119, 0.28);
 }
 
 
@@ -332,6 +332,7 @@ html.dark {
 :where(html) .bg-indigo-600,
 :where(html) .bg-purple-600,
 :where(html) .bg-violet-600,
+:where(html) .disabled\:hover\:bg-indigo-600:disabled:hover,
 :where(html) .hover\:bg-indigo-600:hover,
 :where(html) .peer:checked ~ .peer-checked\:bg-indigo-600 { background-color: var(--brand-600); }
 :where(html) .bg-fuchsia-700,
@@ -354,15 +355,15 @@ html.dark {
 :where(html) .bg-purple-950,
 :where(html) .bg-violet-950 { background-color: var(--brand-950); }
 :where(html) .bg-indigo-50\/30,
-:where(html) .bg-purple-50\/30 { background-color: rgba(254, 241, 248, 0.30); }
+:where(html) .bg-purple-50\/30 { background-color: rgba(254, 242, 249, 0.30); }
 :where(html) .bg-indigo-50\/40,
 :where(html) .bg-violet-50\/40,
-:where(html) .hover\:bg-indigo-50\/40:hover { background-color: rgba(254, 241, 248, 0.40); }
+:where(html) .hover\:bg-indigo-50\/40:hover { background-color: rgba(254, 242, 249, 0.40); }
 :where(html) .bg-indigo-50\/50,
-:where(html) .bg-violet-50\/50 { background-color: rgba(254, 241, 248, 0.50); }
-:where(html) .bg-indigo-50\/60 { background-color: rgba(254, 241, 248, 0.60); }
-:where(html) .bg-indigo-50\/70 { background-color: rgba(254, 241, 248, 0.70); }
-:where(html) .bg-indigo-50\/90 { background-color: rgba(254, 241, 248, 0.90); }
+:where(html) .bg-violet-50\/50 { background-color: rgba(254, 242, 249, 0.50); }
+:where(html) .bg-indigo-50\/60 { background-color: rgba(254, 242, 249, 0.60); }
+:where(html) .bg-indigo-50\/70 { background-color: rgba(254, 242, 249, 0.70); }
+:where(html) .bg-indigo-50\/90 { background-color: rgba(254, 242, 249, 0.90); }
 :where(html) .border-fuchsia-100,
 :where(html) .border-indigo-100,
 :where(html) .border-purple-100,
@@ -631,6 +632,7 @@ html.dark {
 :where(html.dark) .bg-indigo-600,
 :where(html.dark) .bg-purple-600,
 :where(html.dark) .bg-violet-600,
+:where(html.dark) .disabled\:hover\:bg-indigo-600:disabled:hover,
 :where(html.dark) .hover\:bg-indigo-600:hover,
 :where(html.dark) .peer:checked ~ .peer-checked\:bg-indigo-600 { background-color: var(--brand-bg-600); }
 :where(html.dark) .bg-fuchsia-700,
@@ -735,15 +737,15 @@ html.dark {
 :where(html.dark) .bg-green-50,
 :where(html.dark) .hover\:bg-green-50:hover { background-color: rgba(var(--hue-green-rgb), 0.14); }
 :where(html.dark) .bg-indigo-50\/30,
-:where(html.dark) .bg-purple-50\/30 { background-color: rgba(226, 0, 116, 0.048); }
+:where(html.dark) .bg-purple-50\/30 { background-color: rgba(219, 39, 119, 0.048); }
 :where(html.dark) .bg-indigo-50\/40,
 :where(html.dark) .bg-violet-50\/40,
-:where(html.dark) .hover\:bg-indigo-50\/40:hover { background-color: rgba(226, 0, 116, 0.064); }
+:where(html.dark) .hover\:bg-indigo-50\/40:hover { background-color: rgba(219, 39, 119, 0.064); }
 :where(html.dark) .bg-indigo-50\/50,
-:where(html.dark) .bg-violet-50\/50 { background-color: rgba(226, 0, 116, 0.080); }
-:where(html.dark) .bg-indigo-50\/60 { background-color: rgba(226, 0, 116, 0.096); }
-:where(html.dark) .bg-indigo-50\/70 { background-color: rgba(226, 0, 116, 0.112); }
-:where(html.dark) .bg-indigo-50\/90 { background-color: rgba(226, 0, 116, 0.144); }
+:where(html.dark) .bg-violet-50\/50 { background-color: rgba(219, 39, 119, 0.080); }
+:where(html.dark) .bg-indigo-50\/60 { background-color: rgba(219, 39, 119, 0.096); }
+:where(html.dark) .bg-indigo-50\/70 { background-color: rgba(219, 39, 119, 0.112); }
+:where(html.dark) .bg-indigo-50\/90 { background-color: rgba(219, 39, 119, 0.144); }
 :where(html.dark) .bg-lime-100 { background-color: rgba(var(--hue-lime-rgb), 0.22); }
 :where(html.dark) .bg-lime-200 { background-color: rgba(var(--hue-lime-rgb), 0.30); }
 :where(html.dark) .bg-lime-50 { background-color: rgba(var(--hue-lime-rgb), 0.14); }
@@ -1102,8 +1104,8 @@ html.dark {
 :where(html.dark) .divide-yellow-50 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(var(--hue-yellow-rgb), 0.18); }
 :where(html) .dark .dark\:bg-gray-800\/50 { background-color: rgba(22, 22, 22, 0.50); }
 :where(html) .dark .dark\:bg-gray-800\/95 { background-color: rgba(22, 22, 22, 0.95); }
-:where(html) .dark .dark\:bg-indigo-900\/20 { background-color: rgba(77, 0, 44, 0.20); }
-:where(html) .dark .dark\:bg-indigo-900\/30 { background-color: rgba(77, 0, 44, 0.30); }
+:where(html) .dark .dark\:bg-indigo-900\/20 { background-color: rgba(74, 7, 44, 0.20); }
+:where(html) .dark .dark\:bg-indigo-900\/30 { background-color: rgba(74, 7, 44, 0.30); }
 :where(html) .dark .dark\:bg-slate-800\/40 { background-color: rgba(22, 22, 22, 0.40); }
 :where(html) .dark .dark\:bg-slate-800\/60 { background-color: rgba(22, 22, 22, 0.60); }
 :where(html) .dark .dark\:from-gray-900 { --tw-gradient-from: #0d0d0d var(--tw-gradient-from-position); --tw-gradient-to: rgba(13, 13, 13, 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }

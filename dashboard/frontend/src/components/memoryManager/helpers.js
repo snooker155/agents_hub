@@ -59,7 +59,7 @@ function hueRgb(name, fallback) {
 
 export function graphTypePalette() {
   return [
-    [cssVar('--brand-500', '#ea3390'), cssVar('--brand-50', '#fef1f8')],
+    [cssVar('--brand-500', '#e34292'), cssVar('--brand-50', '#fef2f9')],
     [hueRgb('emerald', '16, 185, 129'), '#ecfdf5'],
     [hueRgb('amber', '245, 158, 11'), '#fffbeb'],
     [hueRgb('red', '239, 68, 68'), '#fef2f2'],

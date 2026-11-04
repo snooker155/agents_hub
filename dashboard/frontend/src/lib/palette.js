@@ -257,7 +257,7 @@ export const STYLES = ['magenta', 'neutral'];
 export const DEFAULT_PRESET = 'magenta';
 export const PRESET_ORDER = ['magenta', 'neutral', 'forest', 'slate', 'sunset'];
 export const PRESETS = {
-  magenta: { brand: '#e20074', neutral: '#737373', ok: '#16a34a', danger: '#dc2626', style: 'magenta' },
+  magenta: { brand: '#db2777', neutral: '#737373', ok: '#16a34a', danger: '#dc2626', style: 'magenta' },
   neutral: { brand: '#262626', neutral: '#737373', ok: '#16a34a', danger: '#dc2626', style: 'neutral' },
   forest: { brand: '#166534', neutral: '#57534e', ok: '#65a30d', danger: '#b91c1c' },
   slate: { brand: '#334155', neutral: '#64748b', ok: '#059669', danger: '#e11d48' },
