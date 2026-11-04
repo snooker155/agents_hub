@@ -102,9 +102,9 @@ export function TaskLinksRow({ depTasks, dependents = [], parentTask, linkState,
 export function TaskKeyRow({ task }) {
   const { t } = useI18n();
   return (
-    <div className="flex items-center gap-4 flex-wrap">
+    <div className="flex items-center gap-x-4 gap-y-1 flex-wrap">
       {task.key && <span className="text-xs text-gray-400">{t('taskDetails.key')} <span className="font-semibold text-gray-500">{task.key}</span></span>}
-      <span className="text-xs text-gray-400">{t('taskDetails.id')} <span className="">{task.id}</span></span>
+      <span className="text-xs text-gray-400 break-all">{t('taskDetails.id')} <span className="">{task.id}</span></span>
       <span className="text-xs text-gray-400">{t('taskDetails.createdAt')}: {new Date(task.created_at).toLocaleString()}</span>
       {task.assigned_agent_type && (
         <span className="flex items-center gap-1 text-xs text-gray-500">

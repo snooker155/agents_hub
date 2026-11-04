@@ -27,6 +27,7 @@ import WorkspaceSpecialModels from '../components/workspace/WorkspaceSpecialMode
 import PageLoader from '../components/PageLoader';
 import ServerStatus from '../components/models/ServerStatus';
 import useLocalServers from '../components/models/useLocalServers';
+import { PHONE_ROW_BLEED, PHONE_ROW_PAD } from '../lib/phone';
 const BUILTIN_PROVIDERS = ['openai', 'anthropic', 'google', 'ollama', 'lmstudio'];
 
 const PROVIDER_CONFIG = {
@@ -892,7 +893,7 @@ export default function Models() {
         title={t('models.models')}
         description={t('models.theCatalogOfProvidersAnd')}
       />
-      <div className="flex items-center gap-1 border-b border-gray-200 overflow-x-auto">
+      <div className={`flex items-center gap-1 border-b border-gray-200 overflow-x-auto ${PHONE_ROW_BLEED} ${PHONE_ROW_PAD}`}>
         {TABS.map((tabDef) => {
           const Icon = tabDef.icon;
           const active = tab === tabDef.id;

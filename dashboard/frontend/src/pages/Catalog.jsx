@@ -20,6 +20,8 @@ import {
   CATALOG_KINDS, browseCatalog, catalogError, getCatalogDiff, getCatalogItem, getCatalogSettings,
   getCatalogUpdates, installCatalogItem, planCatalogInstall, updateCatalogItem,
 } from '../api/catalog';
+import { TabStrip } from '../components/PageTabs';
+import { PHONE_ROW_BLEED, PHONE_ROW_PAD } from '../lib/phone';
 
 const btnPrimary = 'flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50';
 const btnSecondary = 'flex items-center gap-1.5 border border-gray-300 hover:bg-gray-50 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-700 disabled:opacity-50';
@@ -342,13 +344,15 @@ export default function Catalog() {
       )}
       {active && (
         <div className="space-y-4">
-          <div className="flex flex-wrap gap-1 border-b border-gray-200" role="tablist">
-            {[...kinds, 'updates'].map((k) => (
-              <button key={k} type="button" role="tab" aria-selected={current === k} onClick={() => switchTab(k)} data-testid={`catalog-tab-${k}`}
-                className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${current === k ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-                {t(`catalog.tabs.${k}`)}
-              </button>
-            ))}
+          <div className={`border-b border-gray-200 ${PHONE_ROW_BLEED}`}>
+            <TabStrip className={`gap-1 ${PHONE_ROW_PAD}`} role="tablist">
+              {[...kinds, 'updates'].map((k) => (
+                <button key={k} type="button" role="tab" aria-selected={current === k} onClick={() => switchTab(k)} data-testid={`catalog-tab-${k}`}
+                  className={`px-3 py-2 text-sm font-medium border-b-2 ${current === k ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                  {t(`catalog.tabs.${k}`)}
+                </button>
+              ))}
+            </TabStrip>
           </div>
           {current !== 'updates' && (
             <input className={field} value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('catalog.search')} aria-label={t('catalog.search')} data-testid="catalog-search" />

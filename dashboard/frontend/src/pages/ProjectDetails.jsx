@@ -4,7 +4,7 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   getProject, updateProject, deleteProject, getProjectTasks,
   cloneProjectRepo, getProjectGitStatus, pullProjectRepo,
-  getProjectFiles, getProjectFileContent, getProjectFileBlob, getProjectFileId,
+  getProjectFiles, getProjectFileContent, getProjectFileBlob, getProjectFileId, uploadProjectFile, deleteProjectFile,
   syncProjectIssues, publishProjectBranch,
 } from '../api';
 import ImportRepoModal from '../components/ImportRepoModal';
@@ -22,7 +22,8 @@ import {
   RefreshCw, Play, Download, ExternalLink, CheckSquare, AlertCircle,
   Edit3, Save, X, Send, Code2, BookOpen, FileText, Tag, Clock,
   ArrowUpDown, Terminal, Folder, FolderOpen, ChevronRight, ChevronDown,
-  Search, ChevronUp, Zap, Link2, PanelRightOpen, PanelRightClose, ListTodo, Trash2, Eye,
+  Search, ChevronUp, Zap, Link2, PanelRightOpen, PanelRightClose, Trash2, Eye,
+  Smartphone, Upload, Loader2,
 } from 'lucide-react';
 
 import { ActivityText } from '../components/task/ActivityEntry';
@@ -34,6 +35,10 @@ import { usePageChatHost } from '../components/pageChat/pageChat';
 import { useI18n } from '../i18n';
 import { useToast, errorDetail } from '../components/toast';
 import PageLoader from '../components/PageLoader';
+import { PHONE_BLEED, PHONE_SOURCE_EDGE, usePhone } from '../lib/phone';
+import { FULL_SCREEN_CLS, useFullScreen } from '../lib/fullScreen';
+import FullScreenButton from '../components/FullScreenButton';
+import ConfirmModal from '../components/ConfirmModal';
 const TABS = ['Overview', 'Tasks', 'Architecture', 'Files'];
 
 // ── File tree helpers ──────────────────────────────────────────
@@ -100,6 +105,26 @@ export default function ProjectDetails() {
   // file by its registry id, a path from an old link still opens.
   const [searchParams, setSearchParams] = useSearchParams();
   const linkedFile = searchParams.get('file') || '';
+
+  // On a phone the Files tab is the list alone, and a picked file opens on a
+  // screen of its own: ?file= in the address, pushed, so the phone's back
+  // gesture returns to the list as the file's back arrow does.
+  const phone = usePhone();
+  const pushedFileRef = useRef(false);
+  // The open file over the whole screen (its bar's button, Escape back).
+  const [fileFull, toggleFileFull] = useFullScreen();
+  const closeFile = () => {
+    if (pushedFileRef.current) {
+      pushedFileRef.current = false;
+      navigate(-1);
+      return;
+    }
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('file');
+      return next;
+    }, { replace: true });
+  };
   // ?tab=<name> opens that tab: a task opened from the Tasks tab links back
   // with ?tab=Tasks (task/taskBack.js).
   const [activeTab, setActiveTab] = useState(linkedFile ? 'Files' : (searchParams.get('tab') || 'Overview'));
@@ -110,8 +135,6 @@ export default function ProjectDetails() {
   const planner = usePageChatHost(activeTab === 'Tasks' ? { title: t('flowPlannerChat.taskPlanner') } : null);
   // "Generate from architecture" opens the planner and asks it for a plan;
   // the panel clears this once the run starts (PlannerChat).
-  const [generateRequested, setGenerateRequested] = useState(false);
-  const onGenerateStarted = useCallback(() => setGenerateRequested(false), []);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
@@ -160,19 +183,30 @@ export default function ProjectDetails() {
   const [syncingIssues, setSyncingIssues] = useState(false);
 
 
+  // The edit modal starts from the project as saved, each time it opens.
+  const openEdit = () => {
+    setEditForm({
+      name: project.name,
+      description: project.description || '',
+      status: project.status,
+      type: project.type,
+      tags: (project.tags || []).join(', '),
+      repo_url: project.repo?.url || '',
+      repo_branch: project.repo?.branch || 'main',
+    });
+    setEditing(true);
+  };
+  useEffect(() => {
+    if (!editing) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setEditing(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [editing]);
+
   const fetchProject = useCallback(async () => {
     try {
       const resp = await getProject(id);
       setProject(resp.data);
-      setEditForm({
-        name: resp.data.name,
-        description: resp.data.description || '',
-        status: resp.data.status,
-        type: resp.data.type,
-        tags: (resp.data.tags || []).join(', '),
-        repo_url: resp.data.repo?.url || '',
-        repo_branch: resp.data.repo?.branch || 'main',
-      });
     } catch {
       navigate('/projects');
     } finally {
@@ -208,7 +242,7 @@ export default function ProjectDetails() {
 
   // Opens a file; ``link`` puts its id in the address, for a file the user
   // picked or a link opened, not for the first one shown.
-  const loadFileContent = useCallback(async (path, { link = false } = {}) => {
+  const loadFileContent = useCallback(async (path, { link = false, push = false } = {}) => {
     if (!path) return;
     // A click on another file while this one loads wins: older answers are dropped.
     const request = ++fileRequest.current;
@@ -227,7 +261,8 @@ export default function ProjectDetails() {
         if (fileId) next.set('file', fileId);
         else next.delete('file');
         return next;
-      }, { replace: true });
+      }, { replace: !push });
+      if (push) pushedFileRef.current = true;
     }
     const ref = fileId ? { fileId } : path;
     try {
@@ -287,6 +322,54 @@ export default function ProjectDetails() {
       setFilesLoading(false);
     }
   }, [id, loadFileContent, t, linkedFile]);
+
+  // Files put into the project's folder from here, and one taken out of it:
+  // the open one (its bar's button) or, on a wide screen, any in the list (a
+  // row's button on hover); asked for again in a modal. An upload opens what
+  // it put.
+  const fileInputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+  // What the delete modal asks about, { path, folder }, null while it is
+  // closed. A folder goes with everything in it.
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const uploadFiles = async (list) => {
+    const picked = Array.from(list || []);
+    if (!picked.length) return;
+    setUploading(true);
+    let last = '';
+    try {
+      for (const f of picked) {
+        const { data } = await uploadProjectFile(id, f);
+        last = data?.path || last;
+      }
+    } catch (e) {
+      toast.error(t('projectDetails.errors.uploadFile'), errorDetail(e));
+    } finally {
+      setUploading(false);
+    }
+    await loadFiles();
+    if (last) loadFileContent(last, { link: true, push: phone && !linkedFile });
+  };
+  const deleteFile = async ({ path, folder }) => {
+    setConfirmDelete(null);
+    try {
+      // A folder goes by its path; a file by its id when it has one.
+      await deleteProjectFile(id, folder ? path : fileRef(path));
+    } catch (e) {
+      toast.error(t('projectDetails.errors.deleteFile'), errorDetail(e));
+      return;
+    }
+    toast.success(t(folder ? 'projectDetails.folderDeleted' : 'projectDetails.fileDeleted'));
+    if (folder ? selectedFilePath.startsWith(`${path}/`) : path === selectedFilePath) {
+      setSelectedFilePath('');
+      setSelectedFile(null);
+      setSelectedFileSize(0);
+      // The address no longer names it (on a phone, back to the list); the
+      // first file of the list read again opens on a wide screen.
+      if (linkedFile) closeFile();
+    }
+    loadFiles();
+  };
 
   const loadTasks = async () => {
     setTasksLoading(true);
@@ -458,33 +541,66 @@ export default function ProjectDetails() {
   const renderFileNodes = (nodes, depth = 0) => nodes.map((node) => {
     if (node.type === 'dir') {
       const open = expandedFolders.has(node.path);
+      // A folder's row, with the same delete button on hover as a file's.
       return (
         <div key={node.path}>
-          <button
-            type="button"
-            onClick={() => toggleFolder(node.path)}
-            className="flex items-center gap-1 w-full text-left px-2 py-1 hover:bg-gray-50 rounded text-sm text-gray-700"
-            style={{ paddingLeft: `${depth * 12 + 8}px` }}
-          >
-            {open ? <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" /> : <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />}
-            {open ? <FolderOpen className="w-4 h-4 text-indigo-400 shrink-0" /> : <Folder className="w-4 h-4 text-indigo-300 shrink-0" />}
-            <span className="truncate">{node.name}</span>
-          </button>
+          <div className="group flex items-center rounded hover:bg-gray-50">
+            <button
+              type="button"
+              onClick={() => toggleFolder(node.path)}
+              className="flex min-w-0 flex-1 items-center gap-1 text-left px-2 py-1 text-sm text-gray-700"
+              style={{ paddingLeft: `${depth * 12 + 8}px` }}
+              title={node.path}
+            >
+              {open ? <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" /> : <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />}
+              {open ? <FolderOpen className="w-4 h-4 text-indigo-400 shrink-0" /> : <Folder className="w-4 h-4 text-indigo-300 shrink-0" />}
+              <span className="truncate">{node.name}</span>
+            </button>
+            {!phone && (
+              <button
+                type="button"
+                onClick={() => setConfirmDelete({ path: node.path, folder: true })}
+                title={t('projectDetails.deleteFolder')}
+                aria-label={`${t('projectDetails.deleteFolder')}: ${node.name}`}
+                className="mr-1 shrink-0 p-1 rounded text-gray-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 focus:opacity-100"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
           {open && renderFileNodes(node.children, depth + 1)}
         </div>
       );
     }
+    // A file's row; on a wide screen a delete button shows on hover (on a
+    // phone the open file's bar has it).
     return (
-      <button
+      <div
         key={node.path}
-        type="button"
-        onClick={() => loadFileContent(node.path, { link: true })}
-        className={`flex items-center gap-1 w-full text-left px-2 py-1 rounded text-sm truncate ${selectedFilePath === node.path ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
-        style={{ paddingLeft: `${depth * 12 + 20}px` }}
+        className={`group flex items-center rounded ${selectedFilePath === node.path ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
       >
-        <FileText className="w-3.5 h-3.5 shrink-0 text-gray-400" />
-        <span className="truncate">{node.name}</span>
-      </button>
+        <button
+          type="button"
+          onClick={() => loadFileContent(node.path, { link: true, push: phone && !linkedFile })}
+          className="flex min-w-0 flex-1 items-center gap-1 text-left px-2 py-1 text-sm"
+          style={{ paddingLeft: `${depth * 12 + 20}px` }}
+          title={node.path}
+        >
+          <FileText className="w-3.5 h-3.5 shrink-0 text-gray-400" />
+          <span className="truncate">{node.name}</span>
+        </button>
+        {!phone && (
+          <button
+            type="button"
+            onClick={() => setConfirmDelete({ path: node.path })}
+            title={t('projectDetails.deleteFile')}
+            aria-label={`${t('projectDetails.deleteFile')}: ${node.name}`}
+            className="mr-1 shrink-0 p-1 rounded text-gray-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 focus:opacity-100"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
     );
   });
 
@@ -498,16 +614,20 @@ export default function ProjectDetails() {
       <PageHeader
         icon={FolderGit2}
         title={project.name}
-        description={!editing ? project.description : undefined}
+        description={project.description}
         backTo="/projects"
         backLabel={t('projectDetails.projects')}
-        badges={!editing && (
+        barBadges={(
               <>
                 <span className="shrink-0 text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">{project.type}</span>
                 <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
                   project.status === 'active' ? 'bg-green-100 text-green-700' :
                   project.status === 'completed' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
                 }`}>{project.status}</span>
+              </>
+            )}
+        badges={(
+              <>
                 {onDefaultWorkspace && (
                   <span className="shrink-0 text-xs text-gray-400">{t('projectDetails.workspace')} <strong>{project.workspace}</strong></span>
                 )}
@@ -524,17 +644,28 @@ export default function ProjectDetails() {
                 ))}
               </>
             )}
-        actions={!editing && (
-          <button onClick={() => setEditing(true)}
-            className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
-            <Edit3 className="w-4 h-4" /> {t('projectDetails.edit')}
+        actions={(
+          <button onClick={openEdit}
+            title={t('projectDetails.edit')} aria-label={t('projectDetails.edit')}
+            className="flex items-center gap-1.5 px-3 phone:px-2.5 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+            <Edit3 className="w-4 h-4" /> <span className="phone:hidden">{t('projectDetails.edit')}</span>
           </button>
         )}
       />
 
-      <div className={editing ? 'mb-6' : ''}>
-        {editing && (
-          <div className="space-y-4 rounded-xl border border-gray-200 bg-white p-6">
+      {/* Changing the project: a modal over the page, its tabs left as they
+          were. Escape or the backdrop closes it without saving. */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setEditing(false); }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="project-edit-title"
+            className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-6 py-4">
+              <h2 id="project-edit-title" className="text-lg font-bold text-gray-900">{t('projectDetails.editProject')}</h2>
+              <button type="button" onClick={() => setEditing(false)} aria-label={t('projectDetails.cancel')}
+                className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+            </div>
+          <div className="space-y-4 overflow-y-auto p-6">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-500 mb-1">{t('projectDetails.name')}</label>
@@ -594,11 +725,12 @@ export default function ProjectDetails() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center justify-between gap-2">
+          </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 px-6 py-4">
               <div className="flex gap-2">
                 <button onClick={handleSave} disabled={saving}
                   className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium">
-                  <Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}
+                  <Save className="w-3.5 h-3.5" /> {saving ? t('common.saving') : t('common.save')}
                 </button>
                 <button onClick={() => setEditing(false)}
                   className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">
@@ -612,8 +744,8 @@ export default function ProjectDetails() {
               </button>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <TabRow
@@ -637,505 +769,558 @@ export default function ProjectDetails() {
               {t(`projectDetails.tabs.${tab.toLowerCase()}`)}
             </button>
           ))}
-        actions={activeTab === 'Tasks' && <div ref={setTaskToolbar} className="flex items-center" />}
+        actions={activeTab === 'Tasks' && <div ref={setTaskToolbar} className="flex items-center w-full sm:w-auto" />}
       />
 
-      {/* Tab Content */}
-      {activeTab === 'Overview' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <CheckSquare className="w-4 h-4 text-indigo-500" /> {t('projectDetails.tasks')}
-            </h3>
-            <div className="text-3xl font-bold text-gray-900">{project.tasks_count ?? 0}</div>
-            <Link to={`/tasks?project=${project.id}`} className="text-xs text-indigo-600 hover:underline mt-1 block">
-              {t('projectDetails.viewAllTasks')}
-            </Link>
+      {/* The open tab's content; on a phone it runs edge to edge. */}
+      <div className={`${activeTab === 'Tasks' || activeTab === 'Files' ? 'flex-1 min-h-0 flex flex-col' : ''} ${PHONE_BLEED}`}>
+        {/* Tab Content */}
+        {activeTab === 'Overview' && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <CheckSquare className="w-4 h-4 text-indigo-500" /> {t('projectDetails.tasks')}
+              </h3>
+              <div className="text-3xl font-bold text-gray-900">{project.tasks_count ?? 0}</div>
+              <Link to={`/tasks?project=${project.id}`} className="text-xs text-indigo-600 hover:underline mt-1 block">
+                {t('projectDetails.viewAllTasks')}
+              </Link>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <GitBranch className="w-4 h-4 text-gray-500" /> {t('projectDetails.repository')}
+              </h3>
+              {project.repo?.type !== 'none' ? (
+                <>
+                  <p className="text-sm text-gray-600 font-medium capitalize">{project.repo?.type}</p>
+                  {project.repo?.url && <p className="text-xs text-gray-400 truncate">{project.repo.url}</p>}
+                  <p className="text-xs text-gray-400">{t('projectDetails.branch')}: {project.repo?.branch}</p>
+                </>
+              ) : (
+                <p className="text-sm text-gray-400 italic">{t('projectDetails.noRepoConfigured')}</p>
+              )}
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-gray-400" /> {t('projectDetails.info')}
+              </h3>
+              <p className="text-xs text-gray-500">{t('projectDetails.created')}</p>
+              <p className="text-sm text-gray-700">{new Date(project.created_at).toLocaleDateString()}</p>
+              <p className="text-xs text-gray-500 mt-2">{t('projectDetails.updated')}</p>
+              <p className="text-sm text-gray-700">{new Date(project.updated_at).toLocaleDateString()}</p>
+            </div>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <GitBranch className="w-4 h-4 text-gray-500" /> {t('projectDetails.repository')}
-            </h3>
-            {project.repo?.type !== 'none' ? (
-              <>
-                <p className="text-sm text-gray-600 font-medium capitalize">{project.repo?.type}</p>
-                {project.repo?.url && <p className="text-xs text-gray-400 truncate">{project.repo.url}</p>}
-                <p className="text-xs text-gray-400">{t('projectDetails.branch')}: {project.repo?.branch}</p>
-              </>
-            ) : (
-              <p className="text-sm text-gray-400 italic">{t('projectDetails.noRepoConfigured')}</p>
+        )}
+
+        {activeTab === 'Tasks' && (
+          <div className="flex-1 min-h-0 flex gap-3">
+            <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
+              <TaskBoard
+                workspace={project.workspace}
+                projectId={project.id}
+                selectedWorkspace={project.workspace}
+                showWorkspaceColumn={false}
+                liveUpdates={liveUpdates}
+                toolbarTarget={taskToolbar}
+                // After the board's search box, before its List/Kanban and New task.
+                extraControls={<>
+                  {/* On a phone the corner chat button is the one way in. */}
+                  <button onClick={planner.toggle} aria-pressed={planner.open}
+                    className={`flex phone:hidden items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      planner.open ? 'text-emerald-700 bg-emerald-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
+                    title={planner.open ? t('flowPlannerChat.hidePlanner') : t('projectDetails.showTheTaskPlanner')}>
+                    {planner.open ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />} <span className="hidden sm:inline">{t('projectDetails.planner')}</span>
+                  </button>
+                </>}
+              />
+            </div>
+            {planner.slot && createPortal(
+              <PlannerChat projectId={project.id} onGenerated={loadTasks}
+                tools={planner.tools} />,
+              planner.slot,
             )}
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-gray-400" /> {t('projectDetails.info')}
-            </h3>
-            <p className="text-xs text-gray-500">{t('projectDetails.created')}</p>
-            <p className="text-sm text-gray-700">{new Date(project.created_at).toLocaleDateString()}</p>
-            <p className="text-xs text-gray-500 mt-2">{t('projectDetails.updated')}</p>
-            <p className="text-sm text-gray-700">{new Date(project.updated_at).toLocaleDateString()}</p>
-          </div>
-        </div>
-      )}
+        )}
 
-      {activeTab === 'Tasks' && (
-        <div className="flex-1 min-h-0 flex gap-3">
-          <div className="flex-1 min-w-0 min-h-0 overflow-y-auto">
-            <TaskBoard
-              workspace={project.workspace}
-              projectId={project.id}
-              selectedWorkspace={project.workspace}
-              showWorkspaceColumn={false}
-              liveUpdates={liveUpdates}
-              toolbarTarget={taskToolbar}
-              // After the board's search box, before its List/Kanban and New task.
-              extraControls={<>
-                <button onClick={() => { planner.setOpen(true); setGenerateRequested(true); }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-emerald-600 hover:bg-emerald-50"
-                  title={t('flowPlannerChat.createAFullTaskPlan')}>
-                  <ListTodo className="w-4 h-4" /> {t('flowPlannerChat.generateFromArchitecture')}
-                </button>
-                <button onClick={planner.toggle} aria-pressed={planner.open}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    planner.open ? 'text-emerald-700 bg-emerald-50' : 'text-emerald-600 hover:bg-emerald-50'}`}
-                  title={planner.open ? t('flowPlannerChat.hidePlanner') : t('projectDetails.showTheTaskPlanner')}>
-                  {planner.open ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />} {t('projectDetails.planner')}
-                </button>
-              </>}
-            />
-          </div>
-          {planner.slot && createPortal(
-            <PlannerChat projectId={project.id} onGenerated={loadTasks}
-              tools={planner.tools}
-              generateRequested={generateRequested}
-              onGenerateStarted={onGenerateStarted} />,
-            planner.slot,
-          )}
-        </div>
-      )}
+        {activeTab === 'Overview' && (() => {
+          // Every task status, with the colours and names the task pages use
+          // (task/taskUtils.js), done first; a resolved or reviewed task is
+          // shown as what it is, not as an unknown grey word.
+          const statusOrder = ['done', ...ALL_STATUSES.map((s) => s.value).filter((v) => v !== 'done')];
+          const statusLabel = (s) => t(`taskStatus.${statusCfg(s).value}`);
+          const total = tasks.length;
+          const doneCnt = tasks.filter(t => t.status === 'done').length;
+          const pct = total > 0 ? Math.round((doneCnt / total) * 100) : 0;
+          const byCounts = {};
+          tasks.forEach(t => { byCounts[t.status] = (byCounts[t.status] || 0) + 1; });
 
-      {activeTab === 'Overview' && (() => {
-        // Every task status, with the colours and names the task pages use
-        // (task/taskUtils.js), done first; a resolved or reviewed task is
-        // shown as what it is, not as an unknown grey word.
-        const statusOrder = ['done', ...ALL_STATUSES.map((s) => s.value).filter((v) => v !== 'done')];
-        const statusLabel = (s) => t(`taskStatus.${statusCfg(s).value}`);
-        const total = tasks.length;
-        const doneCnt = tasks.filter(t => t.status === 'done').length;
-        const pct = total > 0 ? Math.round((doneCnt / total) * 100) : 0;
-        const byCounts = {};
-        tasks.forEach(t => { byCounts[t.status] = (byCounts[t.status] || 0) + 1; });
-
-        return (
-          <div className="space-y-6 mt-6">
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                {t('projectDetails.projectProgress')}
-              </h3>
-              {tasksLoading ? (
-                <PageLoader size="sm" label={t('projectDetails.loading')} />
-              ) : total === 0 ? (
-                <div className="text-center py-8 text-gray-400">
-                  <CheckSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">{t('projectDetails.noTasksInThisProject')}</p>
-                </div>
-              ) : (
-                <>
-                  <div className="flex items-end justify-between mb-2">
-                    <span className="text-3xl font-bold text-gray-900">{pct}%</span>
-                    <span className="text-sm text-gray-500">{t('projectDetails.tasksDone', { done: doneCnt, total })}</span>
+          return (
+            <div className="space-y-6 mt-6">
+              <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                  {t('projectDetails.projectProgress')}
+                </h3>
+                {tasksLoading ? (
+                  <PageLoader size="sm" label={t('projectDetails.loading')} />
+                ) : total === 0 ? (
+                  <div className="text-center py-8 text-gray-400">
+                    <CheckSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">{t('projectDetails.noTasksInThisProject')}</p>
                   </div>
-                  <div className="w-full bg-gray-100 rounded-full h-3 mb-6">
-                    <div className="bg-green-500 h-3 rounded-full transition-all" style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 mb-6">
-                    {statusOrder.map(s => {
-                      const cnt = byCounts[s] || 0;
-                      if (!cnt) return null;
-                      return (
-                        <div key={s} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-gray-100 bg-gray-50">
-                          <StatusBadge status={s} size="xs" />
-                          <span className="text-sm font-bold text-gray-700">{cnt}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Task list */}
-                  <div className="border-t border-gray-100 pt-4 mb-6">
-                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">{t('projectDetails.tasks')}</h4>
-                    {/* Small cards: a task here is its name and where it stands. */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-                      {tasks.map(task => {
-                        const cfg = statusCfg(task.status);
+                ) : (
+                  <>
+                    <div className="flex items-end justify-between mb-2">
+                      <span className="text-3xl font-bold text-gray-900">{pct}%</span>
+                      <span className="text-sm text-gray-500">{t('projectDetails.tasksDone', { done: doneCnt, total })}</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-3 mb-6">
+                      <div className="bg-green-500 h-3 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 mb-6">
+                      {statusOrder.map(s => {
+                        const cnt = byCounts[s] || 0;
+                        if (!cnt) return null;
                         return (
-                          <Link
-                            key={task.id}
-                            to={`/tasks/${task.id}`}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:border-indigo-300 hover:shadow-sm transition-all min-w-0"
-                          >
-                            <span className={`w-1 self-stretch rounded-full shrink-0 ${cfg.dot}`} />
-                            <span className="text-sm text-gray-800 truncate flex-1" title={task.title}>{task.title}</span>
-                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0 ${cfg.bg} ${cfg.text}`} title={statusLabel(task.status)}>
-                              {statusLabel(task.status)}
-                            </span>
-                          </Link>
+                          <div key={s} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg border border-gray-100 bg-gray-50">
+                            <StatusBadge status={s} size="xs" />
+                            <span className="text-sm font-bold text-gray-700">{cnt}</span>
+                          </div>
                         );
                       })}
                     </div>
-                  </div>
 
-                  {/* Activity log */}
-                  {(() => {
-                    const logEntries = tasks.flatMap(t =>
-                      (t.activity_log || []).map(e => ({ ...e, taskTitle: t.title, taskId: t.id }))
-                    ).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                    if (!logEntries.length) return null;
-                    const typeStyle = {
-                      created: { dot: 'bg-indigo-400', text: 'text-indigo-600' },
-                      status_change: { dot: 'bg-yellow-400', text: 'text-yellow-700' },
-                      agent_assigned: { dot: 'bg-blue-400', text: 'text-blue-700' },
-                      agent_state: { dot: 'bg-purple-400', text: 'text-purple-700' },
-                      agent_cleared: { dot: 'bg-gray-400', text: 'text-gray-500' },
-                    };
-                    return (
-                      <div className="border-t border-gray-100 pt-4">
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">{t('projectDetails.activityLog')}</h4>
-                        <div className="space-y-0 max-h-80 overflow-y-auto">
-                          {logEntries.map((e, i) => {
-                            const style = typeStyle[e.type] || { dot: 'bg-gray-300' };
-                            const ts = new Date(e.timestamp);
-                            return (
-                              <div key={i} className="flex gap-3 pb-3">
-                                <div className="flex flex-col items-center">
-                                  <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${style.dot}`} />
-                                  {i < logEntries.length - 1 && <span className="w-px flex-1 bg-gray-100 mt-1" />}
-                                </div>
-                                <div className="pb-1 min-w-0">
-                                  <div className="flex items-baseline gap-2 flex-wrap">
-                                    <span className="text-xs text-gray-700"><ActivityText entry={e} agent={entryAgent(e)} /></span>
-                                    <Link to={`/tasks/${e.taskId}`} className="text-xs text-gray-400 hover:text-indigo-500 truncate max-w-xs">{e.taskTitle}</Link>
-                                  </div>
-                                  <span className="text-[10px] text-gray-400">{ts.toLocaleString()}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                    {/* Task list */}
+                    <div className="border-t border-gray-100 pt-4 mb-6">
+                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">{t('projectDetails.tasks')}</h4>
+                      {/* Small cards: a task here is its name and where it stands. */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+                        {tasks.map(task => {
+                          const cfg = statusCfg(task.status);
+                          return (
+                            <Link
+                              key={task.id}
+                              to={`/tasks/${task.id}`}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:border-indigo-300 hover:shadow-sm transition-all min-w-0"
+                            >
+                              <span className={`w-1 self-stretch rounded-full shrink-0 ${cfg.dot}`} />
+                              <span className="text-sm text-gray-800 truncate flex-1" title={task.title}>{task.title}</span>
+                              <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0 ${cfg.bg} ${cfg.text}`} title={statusLabel(task.status)}>
+                                {statusLabel(task.status)}
+                              </span>
+                            </Link>
+                          );
+                        })}
                       </div>
-                    );
-                  })()}
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })()}
+                    </div>
 
-      {activeTab === 'Architecture' && (
-        <ProjectGraph projectId={project.id} />
-      )}
-
-      {activeTab === 'Files' && (
-        /* The whole height of the page: the tree and the file each scroll
-           on their own inside it, and run to the card's edges (padding on
-           top only). */
-        <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden pt-6 flex-1 min-h-0 flex flex-col">
-          <h3 className="text-base font-semibold text-gray-800 mb-4 px-6 flex items-center gap-2 shrink-0">
-            <FileText className="w-5 h-5 text-indigo-500" /> {t('projectDetails.projectFiles')}
-          </h3>
-          {filesLoading ? (
-            <p className="text-sm text-gray-400 px-6 pb-6">{t('projectDetails.loadingFiles')}</p>
-          ) : filesError ? (
-            <p className="text-sm text-red-500 px-6 pb-6">{filesError}</p>
-          ) : files.length ? (
-            // One block: the list, a divider, the file.
-            <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border-t border-gray-200 overflow-hidden">
-              <div className="lg:col-span-4 p-2 min-h-0 overflow-y-auto border-b lg:border-b-0 lg:border-r border-gray-200">
-                {renderFileNodes(fileTree)}
+                    {/* Activity log */}
+                    {(() => {
+                      const logEntries = tasks.flatMap(t =>
+                        (t.activity_log || []).map(e => ({ ...e, taskTitle: t.title, taskId: t.id }))
+                      ).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                      if (!logEntries.length) return null;
+                      const typeStyle = {
+                        created: { dot: 'bg-indigo-400', text: 'text-indigo-600' },
+                        status_change: { dot: 'bg-yellow-400', text: 'text-yellow-700' },
+                        agent_assigned: { dot: 'bg-blue-400', text: 'text-blue-700' },
+                        agent_state: { dot: 'bg-purple-400', text: 'text-purple-700' },
+                        agent_cleared: { dot: 'bg-gray-400', text: 'text-gray-500' },
+                      };
+                      return (
+                        <div className="border-t border-gray-100 pt-4">
+                          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">{t('projectDetails.activityLog')}</h4>
+                          <div className="space-y-0 max-h-80 overflow-y-auto">
+                            {logEntries.map((e, i) => {
+                              const style = typeStyle[e.type] || { dot: 'bg-gray-300' };
+                              const ts = new Date(e.timestamp);
+                              return (
+                                <div key={i} className="flex gap-3 pb-3">
+                                  <div className="flex flex-col items-center">
+                                    <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${style.dot}`} />
+                                    {i < logEntries.length - 1 && <span className="w-px flex-1 bg-gray-100 mt-1" />}
+                                  </div>
+                                  <div className="pb-1 min-w-0">
+                                    <div className="flex items-baseline gap-2 flex-wrap">
+                                      <span className="text-xs text-gray-700"><ActivityText entry={e} agent={entryAgent(e)} /></span>
+                                      <Link to={`/tasks/${e.taskId}`} className="text-xs text-gray-400 hover:text-indigo-500 truncate max-w-xs">{e.taskTitle}</Link>
+                                    </div>
+                                    <span className="text-[10px] text-gray-400">{ts.toLocaleString()}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
               </div>
-              <div className="lg:col-span-8 min-w-0 min-h-0 flex flex-col">
-                <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 shrink-0 flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-xs text-gray-500">{t('projectDetails.selectedFile')}</div>
-                    <div className="text-sm text-gray-700 truncate">{selectedFilePath || '-'}</div>
-                    {selectedFileSize > 0 && (
-                      <div className="text-xs text-gray-400 mt-0.5">{t('projectDetails.bytes', { count: selectedFileSize })}</div>
+            </div>
+          );
+        })()}
+
+        {/* On a phone the diagram runs edge to edge (the page's gutter undone,
+            the card's side borders and corners dropped); held upright, a line
+            asks for the phone on its side. */}
+        {activeTab === 'Architecture' && (
+          <div className="phone:[&>div]:rounded-none phone:[&>div]:border-x-0">
+            <p className="hidden phone:portrait:flex items-center gap-2 px-4 py-2 mb-2 text-sm text-indigo-700 bg-indigo-50 border-y border-indigo-100">
+              <Smartphone className="w-4 h-4 shrink-0 rotate-90" /> {t('projectDetails.rotateForArchitecture')}
+            </p>
+            <ProjectGraph projectId={project.id} />
+          </div>
+        )}
+
+        {activeTab === 'Files' && (
+          /* The whole height of the page: the tree and the file each scroll
+             on their own inside it, and run to the card's edges (padding on
+             top only). */
+          <div className="bg-white shadow-sm border border-gray-200 rounded-xl overflow-hidden pt-6 flex-1 min-h-0 flex flex-col">
+            <div className="mb-4 px-6 flex items-center gap-2 shrink-0">
+              <h3 className="min-w-0 flex-1 text-base font-semibold text-gray-800 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-indigo-500" /> {t('projectDetails.projectFiles')}
+              </h3>
+              <input ref={fileInputRef} type="file" multiple className="hidden" data-testid="project-file-input"
+                onChange={(e) => { uploadFiles(e.target.files); e.target.value = ''; }} />
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                title={t('projectDetails.uploadFile')} aria-label={t('projectDetails.uploadFile')}
+                className="inline-flex shrink-0 items-center gap-1.5 bg-indigo-600 text-white px-3 phone:px-2 py-1.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50">
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                <span className="phone:hidden">{uploading ? t('projectDetails.uploading') : t('projectDetails.uploadFile')}</span>
+              </button>
+            </div>
+            {confirmDelete && (
+              <ConfirmModal
+                title={t(confirmDelete.folder ? 'projectDetails.deleteFolderConfirmTitle' : 'projectDetails.deleteFileConfirmTitle',
+                  { name: confirmDelete.path.split('/').pop() })}
+                confirmLabel={t('projectDetails.deleteFile')}
+                cancelLabel={t('projectDetails.cancel')}
+                icon={Trash2}
+                danger
+                onConfirm={() => deleteFile(confirmDelete)}
+                onCancel={() => setConfirmDelete(null)}
+              >
+                {confirmDelete.folder
+                  ? t('projectDetails.deleteFolderConfirmBody', {
+                    path: confirmDelete.path,
+                    count: files.filter((f) => f.startsWith(`${confirmDelete.path}/`)).length,
+                  })
+                  : t('projectDetails.deleteFileConfirmBody', { path: confirmDelete.path })}
+              </ConfirmModal>
+            )}
+            {filesLoading ? (
+              <p className="text-sm text-gray-400 px-6 pb-6">{t('projectDetails.loadingFiles')}</p>
+            ) : filesError ? (
+              <p className="text-sm text-red-500 px-6 pb-6">{filesError}</p>
+            ) : files.length ? (
+              // One block: the list, a divider, the file.
+              <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border-t border-gray-200 overflow-hidden">
+                <div className={`lg:col-span-4 p-2 min-h-0 overflow-y-auto border-b lg:border-b-0 lg:border-r border-gray-200 ${phone && linkedFile ? 'hidden' : ''}`}>
+                  {renderFileNodes(fileTree)}
+                </div>
+                <div className={fileFull ? FULL_SCREEN_CLS : `lg:col-span-8 min-w-0 min-h-0 flex flex-col ${phone && !linkedFile ? 'hidden' : ''}`}>
+                  <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 shrink-0 flex flex-wrap items-center justify-between gap-2">
+                    {phone && (
+                      <button type="button" onClick={closeFile} title={t('common.back')} aria-label={t('common.back')}
+                        className="-ml-2 p-1.5 rounded-lg text-gray-500 hover:bg-white shrink-0">
+                        <ChevronLeft className="w-5 h-5" />
+                      </button>
+                    )}
+                    <div className="min-w-[8rem] flex-1">
+                      <div className="hidden sm:block text-xs text-gray-500">{t('projectDetails.selectedFile')}</div>
+                      <div className="text-sm text-gray-700 truncate">{selectedFilePath || '-'}</div>
+                      {selectedFileSize > 0 && (
+                        <div className="text-xs text-gray-400 mt-0.5">{t('projectDetails.bytes', { count: selectedFileSize })}</div>
+                      )}
+                    </div>
+                    {selectedFilePath && selectedFile && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        {hasSourceView(viewedFile) && (
+                          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
+                            <button
+                              type="button"
+                              onClick={() => setFileSourceView(false)}
+                              title={t('projectDetails.fileView.rendered')}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors ${!fileSourceView ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            >
+                              <Eye className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('projectDetails.fileView.rendered')}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFileSourceView(true)}
+                              title={t(isPdfFile(viewedFile) ? 'projectDetails.fileView.text' : 'projectDetails.fileView.source')}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors border-l border-gray-200 ${fileSourceView ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            >
+                              <Code2 className="w-3.5 h-3.5" /> <span className="phone:hidden">{t(isPdfFile(viewedFile) ? 'projectDetails.fileView.text' : 'projectDetails.fileView.source')}</span>
+                            </button>
+                          </div>
+                        )}
+                        <FullScreenButton on={fileFull} onToggle={toggleFileFull} />
+                        <button
+                          type="button"
+                          onClick={downloadSelectedFile}
+                          title={t('projectDetails.fileView.download')}
+                          aria-label={t('projectDetails.fileView.download')}
+                          className="inline-flex items-center p-1.5 text-gray-600 border border-gray-200 rounded-lg hover:bg-white"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDelete({ path: selectedFilePath })}
+                          title={t('projectDetails.deleteFile')}
+                          aria-label={t('projectDetails.deleteFile')}
+                          className="inline-flex items-center gap-1.5 px-2.5 phone:px-1.5 py-1 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span className="phone:hidden">{t('projectDetails.deleteFile')}</span>
+                        </button>
+                      </div>
                     )}
                   </div>
-                  {selectedFilePath && selectedFile && (
-                    <div className="flex items-center gap-2 shrink-0">
-                      {hasSourceView(viewedFile) && (
-                        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
-                          <button
-                            type="button"
-                            onClick={() => setFileSourceView(false)}
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors ${!fileSourceView ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                          >
-                            <Eye className="w-3.5 h-3.5" /> {t('projectDetails.fileView.rendered')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFileSourceView(true)}
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors border-l border-gray-200 ${fileSourceView ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                          >
-                            <Code2 className="w-3.5 h-3.5" /> {t(isPdfFile(viewedFile) ? 'projectDetails.fileView.text' : 'projectDetails.fileView.source')}
-                          </button>
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={downloadSelectedFile}
-                        title={t('projectDetails.fileView.download')}
-                        aria-label={t('projectDetails.fileView.download')}
-                        className="inline-flex items-center p-1.5 text-gray-600 border border-gray-200 rounded-lg hover:bg-white"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div className={`${framed ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
-                  {fileContentLoading ? (
-                    <p className="text-sm text-gray-500 p-4">{t('projectDetails.loading')}</p>
-                  ) : fileContentError ? (
-                    <p className="text-sm text-red-600 p-4">{fileContentError}</p>
-                  ) : selectedFilePath && selectedFile ? (
-                    <FileViewer
-                      name={selectedFilePath} mimeType={selectedFile.mimeType} url={selectedFileUrl}
-                      text={selectedFile.text} kind={selectedFile.kind} truncated={selectedFile.truncated}
-                      source={fileSourceView} frameClassName="w-full h-full border-0 bg-white"
-                      codeClassName=""
-                    />
-                  ) : (
-                    <p className="text-sm text-gray-500">{t('projectDetails.selectAFileToPreview')}</p>
-                  )}
+                  <div className={`${framed ? '' : `p-4 ${PHONE_SOURCE_EDGE}`} flex-1 min-h-0 overflow-auto`}>
+                    {fileContentLoading ? (
+                      <p className="text-sm text-gray-500 p-4">{t('projectDetails.loading')}</p>
+                    ) : fileContentError ? (
+                      <p className="text-sm text-red-600 p-4">{fileContentError}</p>
+                    ) : selectedFilePath && selectedFile ? (
+                      <FileViewer
+                        name={selectedFilePath} mimeType={selectedFile.mimeType} url={selectedFileUrl}
+                        text={selectedFile.text} kind={selectedFile.kind} truncated={selectedFile.truncated}
+                        source={fileSourceView} frameClassName="w-full h-full border-0 bg-white"
+                        codeClassName=""
+                      />
+                    ) : (
+                      <p className="text-sm text-gray-500">{t('projectDetails.selectAFileToPreview')}</p>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400 px-6 pb-6">{t('projectDetails.noFilesFoundInThis')}</p>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'Repository' && (
-        <div className="space-y-4">
-          {/* Actions */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <div className="flex items-center gap-3 flex-wrap">
-              <h3 className="text-sm font-semibold text-gray-700 flex-1">
-                <GitBranch className="w-4 h-4 inline mr-1.5 text-gray-500" />
-                {project.repo?.type !== 'none' ? `${project.repo?.type} — ${project.repo?.url || t('projectDetails.noUrl')}` : t('projectDetails.noRepoConfigured')}
-              </h3>
-              {!isConnectedRepo && (
-                <button
-                  onClick={() => setShowConnect(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50"
-                >
-                  <Link2 className="w-3.5 h-3.5" /> {t('projectDetails.connectRepository')}
-                </button>
-              )}
-              {canPublishBranch && (
-                <button
-                  onClick={() => { setShowPublish(true); setPublishError(''); setPrUrl(''); setPushResult(null); }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50"
-                >
-                  <Send className="w-3.5 h-3.5" /> {t('projectDetails.publish.button')}
-                </button>
-              )}
-              {isConnectedRepo && (
-                <button
-                  onClick={handleSyncIssues} disabled={syncingIssues}
-                  className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50 disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${syncingIssues ? 'animate-spin' : ''}`} /> {syncingIssues ? t('projectDetails.syncing') : t('projectDetails.syncIssues')}
-                </button>
-              )}
-              {project.repo?.url && (
-                <>
-                  <button
-                    onClick={handleClone} disabled={cloning}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                  >
-                    <Download className="w-3.5 h-3.5" /> {cloning ? 'Cloning…' : 'Clone'}
-                  </button>
-                  <button
-                    onClick={handlePull} disabled={pulling}
-                    className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    <ArrowUpDown className="w-3.5 h-3.5" /> {pulling ? 'Pulling…' : 'Pull'}
-                  </button>
-                </>
-              )}
-              <button onClick={loadGitStatus} className="p-1.5 text-gray-400 hover:text-gray-600 rounded">
-                <RefreshCw className="w-4 h-4" />
-              </button>
-            </div>
-            {gitMsg && (
-              <div className={`mt-3 p-3 rounded-lg text-xs whitespace-pre-wrap ${
-                gitMsg.toLowerCase().includes('fail') || gitMsg.toLowerCase().includes('error')
-                  ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
-              }`}>{gitMsg}</div>
+            ) : (
+              <p className="text-sm text-gray-400 px-6 pb-6">{t('projectDetails.noFilesFoundInThis')}</p>
             )}
           </div>
+        )}
 
-          <TrackerCard projectId={project.id} workspace={project.workspace} />
-
-          {gitLoading ? (
-            <PageLoader size="sm" label={t('projectDetails.loadingGitStatus')} />
-          ) : gitStatus ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                  {t('projectDetails.branch')}: <span className="text-gray-900 normal-case font-bold">{gitStatus.branch || t('common.unknown')}</span>
-                </h4>
-                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('projectDetails.status')}</h4>
-                <pre className="text-xs bg-gray-50 rounded-lg p-3 whitespace-pre-wrap text-gray-700 max-h-48 overflow-y-auto">
-                  {gitStatus.status || t('projectDetails.cleanWorkingTree')}
-                </pre>
+        {activeTab === 'Repository' && (
+          <div className="space-y-4">
+            {/* Actions */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h3 className="text-sm font-semibold text-gray-700 flex-1">
+                  <GitBranch className="w-4 h-4 inline mr-1.5 text-gray-500" />
+                  {project.repo?.type !== 'none' ? `${project.repo?.type} — ${project.repo?.url || t('projectDetails.noUrl')}` : t('projectDetails.noRepoConfigured')}
+                </h3>
+                {!isConnectedRepo && (
+                  <button title={t('projectDetails.connectRepository')}
+                    onClick={() => setShowConnect(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50"
+                  >
+                    <Link2 className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('projectDetails.connectRepository')}</span>
+                  </button>
+                )}
+                {canPublishBranch && (
+                  <button title={t('projectDetails.publish.button')}
+                    onClick={() => { setShowPublish(true); setPublishError(''); setPrUrl(''); setPushResult(null); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50"
+                  >
+                    <Send className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('projectDetails.publish.button')}</span>
+                  </button>
+                )}
+                {isConnectedRepo && (
+                  <button title={t('projectDetails.syncIssues')}
+                    onClick={handleSyncIssues} disabled={syncingIssues}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-50 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${syncingIssues ? 'animate-spin' : ''}`} /> <span className="phone:hidden">{syncingIssues ? t('projectDetails.syncing') : t('projectDetails.syncIssues')}</span>
+                  </button>
+                )}
+                {project.repo?.url && (
+                  <>
+                    <button title={'Clone'}
+                      onClick={handleClone} disabled={cloning}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      <Download className="w-3.5 h-3.5" /> <span className="phone:hidden">{cloning ? 'Cloning…' : 'Clone'}</span>
+                    </button>
+                    <button title={'Pull'}
+                      onClick={handlePull} disabled={pulling}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-xs font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      <ArrowUpDown className="w-3.5 h-3.5" /> <span className="phone:hidden">{pulling ? 'Pulling…' : 'Pull'}</span>
+                    </button>
+                  </>
+                )}
+                <button onClick={loadGitStatus} title={t('common.refresh')} aria-label={t('common.refresh')} className="p-1.5 text-gray-400 hover:text-gray-600 rounded">
+                  <RefreshCw className="w-4 h-4" />
+                </button>
               </div>
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('projectDetails.recentCommits')}</h4>
-                <pre className="text-xs bg-gray-50 rounded-lg p-3 whitespace-pre-wrap text-gray-700 max-h-48 overflow-y-auto">
-                  {gitStatus.recent_commits || t('projectDetails.noCommits')}
-                </pre>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-400">
-              <Terminal className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">{t('projectDetails.noLocalRepoFoundClone')}</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'Deploy' && (
-        <DeployPanel project={project} />
-      )}
-
-      {/* Publish branch modal */}
-      {showPublish && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg bg-white rounded-xl shadow-lg border border-gray-200">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
-              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
-                <Send className="w-4 h-4 text-indigo-600" /> {t('projectDetails.publish.title')}
-              </h3>
-              <button onClick={() => setShowPublish(false)} className="text-gray-400 hover:text-gray-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <form onSubmit={handlePublish} className="p-5 space-y-4">
-              {!isConnectedRepo && (
-                <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2">
-                  {t('projectDetails.publish.noProviderNotice')}
-                </p>
+              {gitMsg && (
+                <div className={`mt-3 p-3 rounded-lg text-xs whitespace-pre-wrap ${
+                  gitMsg.toLowerCase().includes('fail') || gitMsg.toLowerCase().includes('error')
+                    ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
+                }`}>{gitMsg}</div>
               )}
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">
-                  {isConnectedRepo ? t('projectDetails.publish.prTitle') : t('projectDetails.publish.commitMessage')}
-                </label>
-                <input
-                  required
-                  value={publishForm.title}
-                  onChange={e => setPublishForm(f => ({ ...f, title: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                />
-              </div>
-              {isConnectedRepo && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.body')}</label>
-                  <textarea
-                    rows={4}
-                    value={publishForm.body}
-                    onChange={e => setPublishForm(f => ({ ...f, body: e.target.value }))}
-                    placeholder={t('projectDetails.publish.bodyPlaceholder')}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  />
+            </div>
+
+            <TrackerCard projectId={project.id} workspace={project.workspace} />
+
+            {gitLoading ? (
+              <PageLoader size="sm" label={t('projectDetails.loadingGitStatus')} />
+            ) : gitStatus ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white rounded-xl border border-gray-200 p-5">
+                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                    {t('projectDetails.branch')}: <span className="text-gray-900 normal-case font-bold">{gitStatus.branch || t('common.unknown')}</span>
+                  </h4>
+                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('projectDetails.status')}</h4>
+                  <pre className="text-xs bg-gray-50 rounded-lg p-3 whitespace-pre-wrap text-gray-700 max-h-48 overflow-y-auto">
+                    {gitStatus.status || t('projectDetails.cleanWorkingTree')}
+                  </pre>
                 </div>
-              )}
-              <div className={isConnectedRepo ? 'grid grid-cols-2 gap-3' : ''}>
+                <div className="bg-white rounded-xl border border-gray-200 p-5">
+                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('projectDetails.recentCommits')}</h4>
+                  <pre className="text-xs bg-gray-50 rounded-lg p-3 whitespace-pre-wrap text-gray-700 max-h-48 overflow-y-auto">
+                    {gitStatus.recent_commits || t('projectDetails.noCommits')}
+                  </pre>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-400">
+                <Terminal className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">{t('projectDetails.noLocalRepoFoundClone')}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'Deploy' && (
+          <DeployPanel project={project} />
+        )}
+
+        {/* Publish branch modal */}
+        {showPublish && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-lg bg-white rounded-xl shadow-lg border border-gray-200">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                  <Send className="w-4 h-4 text-indigo-600" /> {t('projectDetails.publish.title')}
+                </h3>
+                <button onClick={() => setShowPublish(false)} className="text-gray-400 hover:text-gray-600">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <form onSubmit={handlePublish} className="p-5 space-y-4">
+                {!isConnectedRepo && (
+                  <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-2">
+                    {t('projectDetails.publish.noProviderNotice')}
+                  </p>
+                )}
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.branch')}</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    {isConnectedRepo ? t('projectDetails.publish.prTitle') : t('projectDetails.publish.commitMessage')}
+                  </label>
                   <input
-                    value={publishForm.branch}
-                    onChange={e => setPublishForm(f => ({ ...f, branch: e.target.value }))}
-                    placeholder={t('projectDetails.publish.optional')}
+                    required
+                    value={publishForm.title}
+                    onChange={e => setPublishForm(f => ({ ...f, title: e.target.value }))}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                   />
                 </div>
                 {isConnectedRepo && (
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.base')}</label>
-                    <input
-                      value={publishForm.base}
-                      onChange={e => setPublishForm(f => ({ ...f, base: e.target.value }))}
-                      placeholder={t('projectDetails.publish.optional')}
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.body')}</label>
+                    <textarea
+                      rows={4}
+                      value={publishForm.body}
+                      onChange={e => setPublishForm(f => ({ ...f, body: e.target.value }))}
+                      placeholder={t('projectDetails.publish.bodyPlaceholder')}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
                     />
                   </div>
                 )}
-              </div>
-              {isConnectedRepo && (
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={publishForm.draft}
-                    onChange={e => setPublishForm(f => ({ ...f, draft: e.target.checked }))}
-                    className="accent-indigo-600"
-                  />
-                  {t('projectDetails.publish.draft')}
-                </label>
-              )}
+                <div className={isConnectedRepo ? 'grid grid-cols-2 gap-3' : ''}>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.branch')}</label>
+                    <input
+                      value={publishForm.branch}
+                      onChange={e => setPublishForm(f => ({ ...f, branch: e.target.value }))}
+                      placeholder={t('projectDetails.publish.optional')}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    />
+                  </div>
+                  {isConnectedRepo && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">{t('projectDetails.publish.base')}</label>
+                      <input
+                        value={publishForm.base}
+                        onChange={e => setPublishForm(f => ({ ...f, base: e.target.value }))}
+                        placeholder={t('projectDetails.publish.optional')}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                      />
+                    </div>
+                  )}
+                </div>
+                {isConnectedRepo && (
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={publishForm.draft}
+                      onChange={e => setPublishForm(f => ({ ...f, draft: e.target.checked }))}
+                      className="accent-indigo-600"
+                    />
+                    {t('projectDetails.publish.draft')}
+                  </label>
+                )}
 
-              {publishError && (
-                <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{publishError}</p>
-              )}
-              {prUrl && (
-                <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
-                  {t('projectDetails.publish.opened')}{' '}
-                  <a href={prUrl} target="_blank" rel="noreferrer" className="underline font-medium">{prUrl}</a>
-                </p>
-              )}
-              {pushResult && (
-                <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
-                  {t('projectDetails.publish.pushedBranch', { branch: pushResult.branch, remote: pushResult.remote })}
-                </p>
-              )}
+                {publishError && (
+                  <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2">{publishError}</p>
+                )}
+                {prUrl && (
+                  <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
+                    {t('projectDetails.publish.opened')}{' '}
+                    <a href={prUrl} target="_blank" rel="noreferrer" className="underline font-medium">{prUrl}</a>
+                  </p>
+                )}
+                {pushResult && (
+                  <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
+                    {t('projectDetails.publish.pushedBranch', { branch: pushResult.branch, remote: pushResult.remote })}
+                  </p>
+                )}
 
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowPublish(false)}
-                  className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50"
-                >
-                  {t('common.close')}
-                </button>
-                <button
-                  type="submit"
-                  disabled={publishing || !publishForm.title.trim()}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  {publishing ? t('projectDetails.publish.publishing') : t('projectDetails.publish.button')}
-                </button>
-              </div>
-            </form>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowPublish(false)}
+                    className="px-3 py-1.5 text-xs font-medium border border-gray-200 rounded-lg hover:bg-gray-50"
+                  >
+                    {t('common.close')}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={publishing || !publishForm.title.trim()}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    {publishing ? t('projectDetails.publish.publishing') : t('projectDetails.publish.button')}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Connect repository modal */}
-      {showConnect && (
-        <ImportRepoModal
-          mode="connect"
-          project={project}
-          onClose={() => setShowConnect(false)}
-          onDone={handleConnected}
-        />
-      )}
+        {/* Connect repository modal */}
+        {showConnect && (
+          <ImportRepoModal
+            mode="connect"
+            project={project}
+            onClose={() => setShowConnect(false)}
+            onDone={handleConnected}
+          />
+        )}
+      </div>
     </PageContainer>
   );
 }

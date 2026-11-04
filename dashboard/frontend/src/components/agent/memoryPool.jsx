@@ -5,6 +5,7 @@ import {
 import { getMemoryGraphStats, listMemoryEpisodes } from '../../api';
 import { useI18n } from '../../i18n';
 import { poolDescription, poolName } from '../memoryManager/helpers';
+import { TabStrip } from '../PageTabs';
 
 // ── The agent's primary pool, read only ──────────────────────────────────────
 // Every kind of memory the pool holds, one tab each, the way the Memory page
@@ -214,24 +215,26 @@ function MemoryPoolDetails({ pool, withWorkspace = false }) {
         </a>
       </div>
 
-      <div className="flex flex-wrap gap-1 border-b border-gray-200" role="tablist">
-        {tabs.map(({ id, label, icon: Icon, count }) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            onClick={() => setTab(id)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              tab === id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <Icon className="w-4 h-4" /> {label}
-            {count !== null && (
-              <span className={`text-xs px-1.5 py-0.5 rounded-full ${tab === id ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-500'}`}>{count}</span>
-            )}
-          </button>
-        ))}
+      <div className="border-b border-gray-200">
+        <TabStrip className="gap-1" role="tablist">
+          {tabs.map(({ id, label, icon: Icon, count }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => setTab(id)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                tab === id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Icon className="w-4 h-4" /> {label}
+              {count !== null && (
+                <span className={`text-xs px-1.5 py-0.5 rounded-full ${tab === id ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-500'}`}>{count}</span>
+              )}
+            </button>
+          ))}
+        </TabStrip>
       </div>
 
       {tab === 'blocks' && <Blocks blocks={blocks} t={t} />}

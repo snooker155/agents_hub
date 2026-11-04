@@ -12,6 +12,7 @@ import DateInput from '../components/DateInput';
 import { usePageChatSubject } from '../components/pageChat/pageChat';
 import PageLoader from '../components/PageLoader';
 import CostRunsTab from '../components/costs/CostRunsTab';
+import { PHONE_ROW_BLEED, PHONE_ROW_PAD } from '../lib/phone';
 const card = 'bg-white p-6 rounded-xl shadow-sm border border-gray-100';
 const inputCls = 'border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none';
 
@@ -305,7 +306,7 @@ export default function Costs() {
       {/* Tabs sit flush on their content: the page's space-y gap applies to
           this block as a whole, the blocks inside a tab keep their own. */}
       <div>
-      <div className="flex items-center gap-1 border-b border-gray-200 overflow-x-auto">
+      <div className={`flex items-center gap-1 border-b border-gray-200 overflow-x-auto ${PHONE_ROW_BLEED} ${PHONE_ROW_PAD}`}>
         {[
           { id: 'overview', label: t('costs.tabs.overview'), icon: PieChart },
           { id: 'runs', label: t('costs.tabs.runs'), icon: ListOrdered },

@@ -27,6 +27,7 @@ import { InfoHint } from '../PageLayout';
 import { MemoryHistoryPanel } from './MemoryHistoryPanel';
 import { MemoryConsolidationPanel } from './MemoryConsolidationPanel';
 import ChatMarkdown from '../chat/ChatMarkdown';
+import { TabStrip } from '../PageTabs';
 
 function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
   const { t } = useI18n();
@@ -554,25 +555,28 @@ function PoolsTab({ memories, onRefresh, workspaceFilter, onPoolSelected }) {
             </div>
 
             {/* Content type tabs */}
-            <div className="flex border-b border-gray-100 bg-gray-50 px-4">
-              {CONTENT_TABS.map(tab => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => {
-                      setContentTab(tab.id);
-                      setViewingNote(null); setShowAddNote(false); setEditingNote(null);
-                    }}
-                    className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
-                      contentTab === tab.id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" /> {tab.label}
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${contentTab === tab.id ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'}`}>{tab.count}</span>
-                  </button>
-                );
-              })}
+            <div className="border-b border-gray-100 bg-gray-50 px-4">
+              <TabStrip className="">
+                {CONTENT_TABS.map(tab => {
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => {
+                        setContentTab(tab.id);
+                        setViewingNote(null); setShowAddNote(false); setEditingNote(null);
+                      }}
+                      aria-current={contentTab === tab.id ? 'page' : undefined}
+                      className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                        contentTab === tab.id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" /> {tab.label}
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${contentTab === tab.id ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'}`}>{tab.count}</span>
+                    </button>
+                  );
+                })}
+              </TabStrip>
             </div>
 
             {/* Blocks tab — the always-in-context layer of the prompt */}

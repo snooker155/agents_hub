@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useWorkspace } from '../components/workspace';
 import { useLiveRefetch } from '../components/stream';
 import { getWorkspace, getWorkspaceFilesByName, getWorkspaceFileContent, getAgents, addAgentToWorkspace, removeAgentFromWorkspace, deleteWorkspace, getProjects, getWorkspaceInstructions, updateWorkspaceInstructions, uploadWorkspaceFile, getWorkspaceFileRawUrl, getWorkspaceFileId, deleteWorkspaceFile, listFlows, removeFlowFromWorkspace, getWorkspaceSettingsOverrides, updateWorkspaceSettingsOverrides, getWorkspaceMembers } from '../api';
-import { ChevronDown, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, ShieldAlert, Sparkles, Repeat, Cpu, UserPlus } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Folder, FolderOpen, FileText, Users, ShoppingBag, Plus, Trash2, Shield, Search, CheckSquare, AlertTriangle, Lock, FolderGit2, Globe, Server, BarChart2, BookOpen, Save, Check, Upload, Eye, Code2, Workflow, Palette as PaletteIcon, RefreshCw, Loader, Settings as SettingsIcon, ShieldAlert, Sparkles, Repeat, Cpu, UserPlus } from 'lucide-react';
 import { isHtmlFile } from '../lib/fileKind';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import TaskBoard from '../components/TaskBoard';
@@ -27,6 +27,9 @@ import { PageContainer, PageHeader } from '../components/PageLayout';
 import { TabRow } from '../components/PageTabs';
 import PageLoader from '../components/PageLoader';
 import { useI18n } from '../i18n';
+import { PHONE_BLEED, PHONE_SOURCE_EDGE, usePhone } from '../lib/phone';
+import { FULL_SCREEN_CLS, useFullScreen } from '../lib/fullScreen';
+import FullScreenButton from '../components/FullScreenButton';
 // Tab ids the page can open, so a ?tab= deep-link can be validated before use.
 const WORKSPACE_TABS = ['files', 'agents', 'members', 'instructions', 'tasks', 'projects', 'progress', 'settings'];
 
@@ -112,6 +115,26 @@ const WorkspaceDetails = () => {
   const linkedTab = searchParams.get('tab') || '';
   const linkedFile = searchParams.get('file') || '';
   const { liveUpdates } = useWorkspace();
+  // On a phone the Files tab is the list alone, and a picked file opens on a
+  // screen of its own: ?file= in the address, pushed, so the phone's back
+  // gesture returns to the list as the file's back arrow does.
+  const phone = usePhone();
+  const pushedFileRef = React.useRef(false);
+  // The open file over the whole screen (its bar's button, Escape back).
+  const [fileFull, toggleFileFull] = useFullScreen();
+  const closeFile = () => {
+    if (pushedFileRef.current) {
+      pushedFileRef.current = false;
+      navigate(-1);
+      return;
+    }
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('file');
+      return next;
+    }, { replace: true });
+  };
+
   const [ws, setWs] = useState(null);
   const [files, setFiles] = useState([]);
   const [folders, setFolders] = useState([]);
@@ -323,7 +346,7 @@ const WorkspaceDetails = () => {
 
   // Opens a file; ``link`` puts its id in the address (?file=<id>), for a
   // file the user picked or a link opened, not for the first one shown.
-  const loadFileContent = useCallback(async (path, { link = false } = {}) => {
+  const loadFileContent = useCallback(async (path, { link = false, push = false } = {}) => {
     if (!path) return;
     setSelectedFilePath(path);
     setFileContentLoading(true);
@@ -336,7 +359,8 @@ const WorkspaceDetails = () => {
         if (fileId) next.set('file', fileId);
         else next.delete('file');
         return next;
-      }, { replace: true });
+      }, { replace: !push });
+      if (push) pushedFileRef.current = true;
     }
     try {
       const resp = await getWorkspaceFileContent(name, fileId ? { fileId } : path);
@@ -588,7 +612,7 @@ const WorkspaceDetails = () => {
               parentDirPaths(node.path).forEach((dir) => next.add(dir));
               return next;
             });
-            loadFileContent(node.path, { link: true });
+            loadFileContent(node.path, { link: true, push: phone && !linkedFile });
           }}
           className="flex items-center gap-1.5 min-w-0 flex-1 text-left"
           title={node.path}
@@ -654,597 +678,610 @@ const WorkspaceDetails = () => {
               </button>
             );
           })}
-        actions={activeTab === 'tasks' && <div ref={setTaskToolbar} className="flex items-center" />}
+        actions={activeTab === 'tasks' && <div ref={setTaskToolbar} className="flex items-center w-full sm:w-auto" />}
       />
 
-      {activeTab === 'tasks' && (
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <TaskBoard
-            workspace={name}
-            selectedWorkspace={name}
-            showWorkspaceColumn={false}
-            liveUpdates={liveUpdates}
-            toolbarTarget={taskToolbar}
-          />
-        </div>
-      )}
-
-      {activeTab === 'projects' && (
-        <div className="bg-white p-6 shadow-md rounded-lg">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold flex items-center gap-2">
-              <FolderGit2 className="w-5 h-5 text-indigo-500" /> {t('workspaceDetails.projects')}
-            </h3>
-            <Link
-              to="/projects"
-              className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-            >
-              {t('workspaceDetails.manageAllProjects')}
-            </Link>
+      {/* The open tab's content; on a phone it runs edge to edge. */}
+      <div className={`${activeTab === 'files' || activeTab === 'tasks' || activeTab === 'settings' ? 'flex-1 min-h-0 flex flex-col' : ''} ${PHONE_BLEED}`}>
+        {activeTab === 'tasks' && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <TaskBoard
+              workspace={name}
+              selectedWorkspace={name}
+              showWorkspaceColumn={false}
+              liveUpdates={liveUpdates}
+              toolbarTarget={taskToolbar}
+            />
           </div>
-          {wsProjects.length === 0 ? (
-            <div className="text-center py-10 text-gray-400">
-              <FolderGit2 className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">{t('workspaceDetails.noProjectsInThisWorkspace')}</p>
+        )}
+
+        {activeTab === 'projects' && (
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <FolderGit2 className="w-5 h-5 text-indigo-500" /> {t('workspaceDetails.projects')}
+              </h3>
               <Link
                 to="/projects"
-                className="mt-2 inline-block text-xs text-indigo-600 hover:underline"
+                className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
               >
-                {t('workspaceDetails.createAProject')}
+                {t('workspaceDetails.manageAllProjects')}
               </Link>
             </div>
-          ) : (
-            <div className={PROJECT_GRID}>
-              {wsProjects.map(project => <ProjectCard key={project.id} project={project} />)}
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'progress' && (() => {
-        const allTasks = ws?.tasks || [];
-        const statusOrder = ['done', 'in_progress', 'ready', 'blocked', 'stopped', 'todo'];
-        const statusLabels = {
-          done: t('workspaceDetails.taskStatuses.done'),
-          in_progress: t('workspaceDetails.taskStatuses.in_progress'),
-          ready: t('workspaceDetails.taskStatuses.ready'),
-          blocked: t('workspaceDetails.taskStatuses.blocked'),
-          stopped: t('workspaceDetails.taskStatuses.stopped'),
-          todo: t('workspaceDetails.taskStatuses.todo'),
-        };
-        const statusColors = {
-          done: { bar: 'bg-green-500', badge: 'bg-green-100 text-green-700' },
-          in_progress: { bar: 'bg-yellow-400', badge: 'bg-yellow-100 text-yellow-700' },
-          ready: { bar: 'bg-blue-400', badge: 'bg-blue-100 text-blue-700' },
-          blocked: { bar: 'bg-red-500', badge: 'bg-red-100 text-red-700' },
-          stopped: { bar: 'bg-gray-400', badge: 'bg-gray-100 text-gray-500' },
-          todo: { bar: 'bg-gray-300', badge: 'bg-gray-100 text-gray-500' },
-        };
-        const total = allTasks.length;
-        const doneCnt = allTasks.filter(t => t.status === 'done').length;
-        const pct = total > 0 ? Math.round((doneCnt / total) * 100) : 0;
-
-        const byCounts = {};
-        allTasks.forEach(t => { byCounts[t.status] = (byCounts[t.status] || 0) + 1; });
-
-        // Group by project
-        const byProject = {};
-        allTasks.forEach(t => {
-          const key = t.project_id || '__none__';
-          if (!byProject[key]) byProject[key] = { tasks: [], name: null };
-          byProject[key].tasks.push(t);
-        });
-        wsProjects.forEach(p => { if (byProject[p.id]) byProject[p.id].name = p.name; });
-
-        return (
-          <div className="space-y-6">
-            {/* Summary card */}
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                <BarChart2 className="w-4 h-4 text-indigo-500" /> {t('workspaceDetails.overallProgress')}
-              </h3>
-              {total === 0 ? (
-                <p className="text-sm text-gray-400">{t('workspaceDetails.noTasksInThisWorkspace')}</p>
-              ) : (
-                <>
-                  <div className="flex items-end justify-between mb-2">
-                    <span className="text-3xl font-bold text-gray-900">{pct}%</span>
-                    <span className="text-sm text-gray-500">{t('workspaceDetails.tasksDone', { done: doneCnt, total })}</span>
-                  </div>
-                  <div className="w-full bg-gray-100 rounded-full h-3 mb-6">
-                    <div className="bg-green-500 h-3 rounded-full transition-all" style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {statusOrder.map(s => {
-                      const cnt = byCounts[s] || 0;
-                      if (!cnt) return null;
-                      const color = statusColors[s] || { badge: 'bg-gray-100 text-gray-500', bar: 'bg-gray-300' };
-                      return (
-                        <div key={s} className="flex items-center justify-between p-3 rounded-lg border border-gray-100 bg-gray-50">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${color.badge}`}>
-                            {statusLabels[s] || s}
-                          </span>
-                          <span className="text-sm font-bold text-gray-700">{cnt}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
-
-            {/* By project */}
-            {Object.keys(byProject).length > 0 && total > 0 && (
-              <div className="bg-white rounded-xl border border-gray-200 p-6">
-                <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                  <FolderGit2 className="w-4 h-4 text-indigo-500" /> {t('workspaceDetails.progressByProject')}
-                </h3>
-                <div className="space-y-4">
-                  {Object.entries(byProject).map(([projectId, { tasks, name }]) => {
-                    const ptotal = tasks.length;
-                    const pdone = tasks.filter(t => t.status === 'done').length;
-                    const ppct = ptotal > 0 ? Math.round((pdone / ptotal) * 100) : 0;
-                    const label = projectId === '__none__' ? t('workspaceDetails.noProject') : (name || projectId.slice(0, 8) + '…');
-                    return (
-                      <div key={projectId}>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
-                            {projectId !== '__none__' && <FolderGit2 className="w-3.5 h-3.5 text-indigo-400" />}
-                            {projectId !== '__none__' ? (
-                              <Link to={`/projects/${projectId}`} className="hover:text-indigo-600">{label}</Link>
-                            ) : label}
-                          </span>
-                          <span className="text-xs text-gray-500">{t('workspaceDetails.doneOfTotal', { done: pdone, total: ptotal })} · {ppct}%</span>
-                        </div>
-                        <div className="w-full bg-gray-100 rounded-full h-2">
-                          <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${ppct}%` }} />
-                        </div>
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {statusOrder.map(s => {
-                            const cnt = tasks.filter(t => t.status === s).length;
-                            if (!cnt) return null;
-                            const color = statusColors[s] || { badge: 'bg-gray-100 text-gray-500' };
-                            return (
-                              <span key={s} className={`text-xs px-1.5 py-0.5 rounded-full ${color.badge}`}>
-                                {statusLabels[s] || s}: {cnt}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+            {wsProjects.length === 0 ? (
+              <div className="text-center py-10 text-gray-400">
+                <FolderGit2 className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">{t('workspaceDetails.noProjectsInThisWorkspace')}</p>
+                <Link
+                  to="/projects"
+                  className="mt-2 inline-block text-xs text-indigo-600 hover:underline"
+                >
+                  {t('workspaceDetails.createAProject')}
+                </Link>
+              </div>
+            ) : (
+              <div className={PROJECT_GRID}>
+                {wsProjects.map(project => <ProjectCard key={project.id} project={project} />)}
               </div>
             )}
+          </div>
+        )}
 
-            {/* Activity log */}
-            {total > 0 && (() => {
-              const logEntries = allTasks.flatMap(t =>
-                (t.activity_log || []).map(e => ({ ...e, taskTitle: t.title, taskId: t.id }))
-              ).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-              if (!logEntries.length) return null;
-              const typeStyle = {
-                created: { dot: 'bg-indigo-400', text: 'text-indigo-600' },
-                status_change: { dot: 'bg-yellow-400', text: 'text-yellow-700' },
-                agent_assigned: { dot: 'bg-blue-400', text: 'text-blue-700' },
-                agent_state: { dot: 'bg-purple-400', text: 'text-purple-700' },
-                agent_cleared: { dot: 'bg-gray-400', text: 'text-gray-500' },
-              };
-              return (
-                <div className="bg-white rounded-xl border border-gray-200 p-6">
-                  <h3 className="text-base font-semibold text-gray-800 mb-4">{t('workspaceDetails.activityLog')}</h3>
-                  <div className="space-y-0 max-h-96 overflow-y-auto">
-                    {logEntries.map((e, i) => {
-                      const style = typeStyle[e.type] || { dot: 'bg-gray-300', text: 'text-gray-600' };
-                      const ts = new Date(e.timestamp);
-                      return (
-                        <div key={i} className="flex gap-3 pb-3">
-                          <div className="flex flex-col items-center">
-                            <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${style.dot}`} />
-                            {i < logEntries.length - 1 && <span className="w-px flex-1 bg-gray-100 mt-1" />}
+        {activeTab === 'progress' && (() => {
+          const allTasks = ws?.tasks || [];
+          const statusOrder = ['done', 'in_progress', 'ready', 'blocked', 'stopped', 'todo'];
+          const statusLabels = {
+            done: t('workspaceDetails.taskStatuses.done'),
+            in_progress: t('workspaceDetails.taskStatuses.in_progress'),
+            ready: t('workspaceDetails.taskStatuses.ready'),
+            blocked: t('workspaceDetails.taskStatuses.blocked'),
+            stopped: t('workspaceDetails.taskStatuses.stopped'),
+            todo: t('workspaceDetails.taskStatuses.todo'),
+          };
+          const statusColors = {
+            done: { bar: 'bg-green-500', badge: 'bg-green-100 text-green-700' },
+            in_progress: { bar: 'bg-yellow-400', badge: 'bg-yellow-100 text-yellow-700' },
+            ready: { bar: 'bg-blue-400', badge: 'bg-blue-100 text-blue-700' },
+            blocked: { bar: 'bg-red-500', badge: 'bg-red-100 text-red-700' },
+            stopped: { bar: 'bg-gray-400', badge: 'bg-gray-100 text-gray-500' },
+            todo: { bar: 'bg-gray-300', badge: 'bg-gray-100 text-gray-500' },
+          };
+          const total = allTasks.length;
+          const doneCnt = allTasks.filter(t => t.status === 'done').length;
+          const pct = total > 0 ? Math.round((doneCnt / total) * 100) : 0;
+
+          const byCounts = {};
+          allTasks.forEach(t => { byCounts[t.status] = (byCounts[t.status] || 0) + 1; });
+
+          // Group by project
+          const byProject = {};
+          allTasks.forEach(t => {
+            const key = t.project_id || '__none__';
+            if (!byProject[key]) byProject[key] = { tasks: [], name: null };
+            byProject[key].tasks.push(t);
+          });
+          wsProjects.forEach(p => { if (byProject[p.id]) byProject[p.id].name = p.name; });
+
+          return (
+            <div className="space-y-6">
+              {/* Summary card */}
+              <div className="bg-white rounded-xl border border-gray-200 p-6">
+                <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                  <BarChart2 className="w-4 h-4 text-indigo-500" /> {t('workspaceDetails.overallProgress')}
+                </h3>
+                {total === 0 ? (
+                  <p className="text-sm text-gray-400">{t('workspaceDetails.noTasksInThisWorkspace')}</p>
+                ) : (
+                  <>
+                    <div className="flex items-end justify-between mb-2">
+                      <span className="text-3xl font-bold text-gray-900">{pct}%</span>
+                      <span className="text-sm text-gray-500">{t('workspaceDetails.tasksDone', { done: doneCnt, total })}</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-3 mb-6">
+                      <div className="bg-green-500 h-3 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {statusOrder.map(s => {
+                        const cnt = byCounts[s] || 0;
+                        if (!cnt) return null;
+                        const color = statusColors[s] || { badge: 'bg-gray-100 text-gray-500', bar: 'bg-gray-300' };
+                        return (
+                          <div key={s} className="flex items-center justify-between p-3 rounded-lg border border-gray-100 bg-gray-50">
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${color.badge}`}>
+                              {statusLabels[s] || s}
+                            </span>
+                            <span className="text-sm font-bold text-gray-700">{cnt}</span>
                           </div>
-                          <div className="pb-1 min-w-0">
-                            <div className="flex items-baseline gap-2 flex-wrap">
-                              <span className={`text-xs font-medium ${style.text}`}>{e.message}</span>
-                              <Link to={`/tasks/${e.taskId}`} className="text-xs text-gray-400 hover:text-indigo-500 truncate max-w-xs">{e.taskTitle}</Link>
-                            </div>
-                            <span className="text-[10px] text-gray-400">{ts.toLocaleString()}</span>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* By project */}
+              {Object.keys(byProject).length > 0 && total > 0 && (
+                <div className="bg-white rounded-xl border border-gray-200 p-6">
+                  <h3 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <FolderGit2 className="w-4 h-4 text-indigo-500" /> {t('workspaceDetails.progressByProject')}
+                  </h3>
+                  <div className="space-y-4">
+                    {Object.entries(byProject).map(([projectId, { tasks, name }]) => {
+                      const ptotal = tasks.length;
+                      const pdone = tasks.filter(t => t.status === 'done').length;
+                      const ppct = ptotal > 0 ? Math.round((pdone / ptotal) * 100) : 0;
+                      const label = projectId === '__none__' ? t('workspaceDetails.noProject') : (name || projectId.slice(0, 8) + '…');
+                      return (
+                        <div key={projectId}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                              {projectId !== '__none__' && <FolderGit2 className="w-3.5 h-3.5 text-indigo-400" />}
+                              {projectId !== '__none__' ? (
+                                <Link to={`/projects/${projectId}`} className="hover:text-indigo-600">{label}</Link>
+                              ) : label}
+                            </span>
+                            <span className="text-xs text-gray-500">{t('workspaceDetails.doneOfTotal', { done: pdone, total: ptotal })} · {ppct}%</span>
+                          </div>
+                          <div className="w-full bg-gray-100 rounded-full h-2">
+                            <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${ppct}%` }} />
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {statusOrder.map(s => {
+                              const cnt = tasks.filter(t => t.status === s).length;
+                              if (!cnt) return null;
+                              const color = statusColors[s] || { badge: 'bg-gray-100 text-gray-500' };
+                              return (
+                                <span key={s} className={`text-xs px-1.5 py-0.5 rounded-full ${color.badge}`}>
+                                  {statusLabels[s] || s}: {cnt}
+                                </span>
+                              );
+                            })}
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
-              );
-            })()}
-          </div>
-        );
-      })()}
+              )}
 
-      {activeTab === 'files' && (
-        // Padding on top only: the tree and the file run to the card's edges.
-        <div className="bg-white pt-6 shadow-md rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
-          <div className="flex items-center justify-between mb-4 px-6 shrink-0">
-            <h3 className="text-lg font-bold flex items-center">
-              <FileText className="w-5 h-5 mr-2" />
-              {t('workspaceDetails.files')}
-            </h3>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => handleUploadFiles(e.target.files)}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="inline-flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50"
-            >
-              <Upload className="w-4 h-4" />
-              {uploading ? t('workspaceDetails.uploading') : t('workspaceDetails.uploadFile')}
-            </button>
-          </div>
-          {(files.length || folders.length) ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border-t border-gray-200 overflow-hidden">
-              {/* One block: the tree, a divider, the file. The tree is a
-                  picker; the file is the thing being read. Two of twelve
-                  columns is enough for names, and the other ten stop wrapping
-                  every other line of the file beside it. */}
-              <div className="lg:col-span-2 p-2 overflow-auto min-h-0 border-b lg:border-b-0 lg:border-r border-gray-200">
-                {renderFileNodes(fileTree)}
-              </div>
-              <div className="lg:col-span-10 min-w-0 flex flex-col min-h-0">
-                <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between gap-2 shrink-0">
-                  <div className="min-w-0">
-                    <div className="text-xs text-gray-500">{t('workspaceDetails.selectedFile')}</div>
-                    <div className="text-sm text-gray-700 truncate flex items-center gap-2">
-                      <span className="truncate">{selectedFilePath || '-'}</span>
-                      {selectedFileIsPdf && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-600 shrink-0">
-                          <FileText className="w-2.5 h-2.5" /> {t('workspaceDetails.pdf')}
-                        </span>
+              {/* Activity log */}
+              {total > 0 && (() => {
+                const logEntries = allTasks.flatMap(t =>
+                  (t.activity_log || []).map(e => ({ ...e, taskTitle: t.title, taskId: t.id }))
+                ).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                if (!logEntries.length) return null;
+                const typeStyle = {
+                  created: { dot: 'bg-indigo-400', text: 'text-indigo-600' },
+                  status_change: { dot: 'bg-yellow-400', text: 'text-yellow-700' },
+                  agent_assigned: { dot: 'bg-blue-400', text: 'text-blue-700' },
+                  agent_state: { dot: 'bg-purple-400', text: 'text-purple-700' },
+                  agent_cleared: { dot: 'bg-gray-400', text: 'text-gray-500' },
+                };
+                return (
+                  <div className="bg-white rounded-xl border border-gray-200 p-6">
+                    <h3 className="text-base font-semibold text-gray-800 mb-4">{t('workspaceDetails.activityLog')}</h3>
+                    <div className="space-y-0 max-h-96 overflow-y-auto">
+                      {logEntries.map((e, i) => {
+                        const style = typeStyle[e.type] || { dot: 'bg-gray-300', text: 'text-gray-600' };
+                        const ts = new Date(e.timestamp);
+                        return (
+                          <div key={i} className="flex gap-3 pb-3">
+                            <div className="flex flex-col items-center">
+                              <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${style.dot}`} />
+                              {i < logEntries.length - 1 && <span className="w-px flex-1 bg-gray-100 mt-1" />}
+                            </div>
+                            <div className="pb-1 min-w-0">
+                              <div className="flex items-baseline gap-2 flex-wrap">
+                                <span className={`text-xs font-medium ${style.text}`}>{e.message}</span>
+                                <Link to={`/tasks/${e.taskId}`} className="text-xs text-gray-400 hover:text-indigo-500 truncate max-w-xs">{e.taskTitle}</Link>
+                              </div>
+                              <span className="text-[10px] text-gray-400">{ts.toLocaleString()}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
+
+        {activeTab === 'files' && (
+          // Padding on top only: the tree and the file run to the card's edges.
+          <div className="bg-white pt-6 shadow-md rounded-lg overflow-hidden flex flex-col flex-1 min-h-0">
+            <div className="flex items-center justify-between mb-4 px-6 shrink-0">
+              <h3 className="text-lg font-bold flex items-center">
+                <FileText className="w-5 h-5 mr-2" />
+                {t('workspaceDetails.files')}
+              </h3>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => handleUploadFiles(e.target.files)}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                title={t('workspaceDetails.uploadFile')}
+                aria-label={t('workspaceDetails.uploadFile')}
+                className="inline-flex items-center gap-1.5 bg-indigo-600 text-white px-3 phone:px-2 py-1.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+              >
+                <Upload className="w-4 h-4" />
+                <span className="phone:hidden">{uploading ? t('workspaceDetails.uploading') : t('workspaceDetails.uploadFile')}</span>
+              </button>
+            </div>
+            {(files.length || folders.length) ? (
+              <div className="grid grid-cols-1 lg:grid-cols-12 flex-1 min-h-0 border-t border-gray-200 overflow-hidden">
+                {/* One block: the tree, a divider, the file. The tree is a
+                    picker; the file is the thing being read. Two of twelve
+                    columns is enough for names, and the other ten stop wrapping
+                    every other line of the file beside it. */}
+                <div className={`lg:col-span-2 p-2 overflow-auto min-h-0 border-b lg:border-b-0 lg:border-r border-gray-200 ${phone && linkedFile ? 'hidden' : ''}`}>
+                  {renderFileNodes(fileTree)}
+                </div>
+                <div className={fileFull ? FULL_SCREEN_CLS : `lg:col-span-10 min-w-0 flex flex-col min-h-0 ${phone && !linkedFile ? 'hidden' : ''}`}>
+                  <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                    {phone && (
+                      <button type="button" onClick={closeFile} title={t('common.back')} aria-label={t('common.back')}
+                        className="-ml-2 p-1.5 rounded-lg text-gray-500 hover:bg-white shrink-0">
+                        <ChevronLeft className="w-5 h-5" />
+                      </button>
+                    )}
+                    <div className="min-w-[8rem] flex-1">
+                      <div className="hidden sm:block text-xs text-gray-500">{t('workspaceDetails.selectedFile')}</div>
+                      <div className="text-sm text-gray-700 truncate flex items-center gap-2">
+                        <span className="truncate">{selectedFilePath || '-'}</span>
+                        {selectedFileIsPdf && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-100 text-red-600 shrink-0">
+                            <FileText className="w-2.5 h-2.5" /> {t('workspaceDetails.pdf')}
+                          </span>
+                        )}
+                      </div>
+                      {selectedFileSize > 0 && (
+                        <div className="text-xs text-gray-400 mt-0.5">{t('workspaceDetails.bytes', { count: selectedFileSize })}</div>
                       )}
                     </div>
-                    {selectedFileSize > 0 && (
-                      <div className="text-xs text-gray-400 mt-0.5">{t('workspaceDetails.bytes', { count: selectedFileSize })}</div>
-                    )}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {selectedFileIsPdf && (
+                        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
+                          <button
+                            type="button"
+                            onClick={() => setPdfViewMode('render')}
+                            className={`px-2.5 py-1 transition-colors ${pdfViewMode === 'render' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                          >
+                            {t('workspaceDetails.render')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPdfViewMode('text')}
+                            className={`px-2.5 py-1 transition-colors border-l border-gray-200 ${pdfViewMode === 'text' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                          >
+                            {t('workspaceDetails.text')}
+                          </button>
+                        </div>
+                      )}
+                      {!selectedFileIsPdf && (isMarkdownPath(selectedFilePath) || isHtmlFile({ name: selectedFilePath })) && (
+                        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
+                          <button
+                            type="button"
+                            onClick={() => setMdViewMode('rendered')}
+                            title={t('workspaceDetails.rendered')}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors ${mdViewMode === 'rendered' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                          >
+                            <Eye className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('workspaceDetails.rendered')}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMdViewMode('raw')}
+                            title={t('workspaceDetails.raw')}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors border-l border-gray-200 ${mdViewMode === 'raw' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                          >
+                            <Code2 className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('workspaceDetails.raw')}</span>
+                          </button>
+                        </div>
+                      )}
+                      <FullScreenButton on={fileFull} onToggle={toggleFileFull} />
+                      <button
+                        type="button"
+                        onClick={handleDeleteSelectedFile}
+                        disabled={!selectedFilePath || fileDeleting}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={selectedFilePath ? t('workspaceDetails.deleteSelectedFile') : t('workspaceDetails.selectFileToDelete')}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span className="phone:hidden">{fileDeleting ? t('common.deleting') : t('common.delete')}</span>
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {selectedFileIsPdf && (
-                      <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
-                        <button
-                          type="button"
-                          onClick={() => setPdfViewMode('render')}
-                          className={`px-2.5 py-1 transition-colors ${pdfViewMode === 'render' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                        >
-                          {t('workspaceDetails.render')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPdfViewMode('text')}
-                          className={`px-2.5 py-1 transition-colors border-l border-gray-200 ${pdfViewMode === 'text' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                        >
-                          {t('workspaceDetails.text')}
-                        </button>
-                      </div>
+                  <div className={`${(selectedFileIsPdf && pdfViewMode === 'render') || (isHtmlFile({ name: selectedFilePath }) && mdViewMode === 'rendered') ? '' : `p-4 ${PHONE_SOURCE_EDGE}`} flex-1 min-h-0 overflow-auto`}>
+                    {fileContentLoading ? (
+                      <p className="text-sm text-gray-500 p-4">{t('workspaceDetails.loadingFileContent')}</p>
+                    ) : fileContentError ? (
+                      <p className="text-sm text-red-600 p-4">{fileContentError}</p>
+                    ) : selectedFilePath && selectedFileIsPdf && pdfViewMode === 'render' ? (
+                      <iframe
+                        title={selectedFilePath}
+                        src={getWorkspaceFileRawUrl(name, fileIds[selectedFilePath] ? { fileId: fileIds[selectedFilePath] } : selectedFilePath)}
+                        className="w-full h-full border-0"
+                      />
+                    ) : selectedFilePath && isMarkdownPath(selectedFilePath) && mdViewMode === 'rendered' ? (
+                      <MarkdownRenderer content={selectedFileContent} />
+                    ) : selectedFilePath && isHtmlFile({ name: selectedFilePath }) && mdViewMode === 'rendered' ? (
+                      // The page as a browser shows it, sandboxed (no scripts),
+                      // like an HTML file on a project's Files tab.
+                      <iframe
+                        title={selectedFilePath}
+                        srcDoc={selectedFileContent}
+                        sandbox=""
+                        className="w-full h-full min-h-[60vh] border-0 bg-white block"
+                      />
+                    ) : selectedFilePath ? (
+                      <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words">{selectedFileContent}</pre>
+                    ) : (
+                      <p className="text-sm text-gray-500">{t('workspaceDetails.selectAFileToPreview')}</p>
                     )}
-                    {!selectedFileIsPdf && (isMarkdownPath(selectedFilePath) || isHtmlFile({ name: selectedFilePath })) && (
-                      <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
-                        <button
-                          type="button"
-                          onClick={() => setMdViewMode('rendered')}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors ${mdViewMode === 'rendered' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                        >
-                          <Eye className="w-3.5 h-3.5" /> {t('workspaceDetails.rendered')}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setMdViewMode('raw')}
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 transition-colors border-l border-gray-200 ${mdViewMode === 'raw' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                        >
-                          <Code2 className="w-3.5 h-3.5" /> {t('workspaceDetails.raw')}
-                        </button>
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={handleDeleteSelectedFile}
-                      disabled={!selectedFilePath || fileDeleting}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
-                      title={selectedFilePath ? t('workspaceDetails.deleteSelectedFile') : t('workspaceDetails.selectFileToDelete')}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      {fileDeleting ? t('common.deleting') : t('common.delete')}
-                    </button>
                   </div>
                 </div>
-                <div className={`${(selectedFileIsPdf && pdfViewMode === 'render') || (isHtmlFile({ name: selectedFilePath }) && mdViewMode === 'rendered') ? '' : 'p-4'} flex-1 min-h-0 overflow-auto`}>
-                  {fileContentLoading ? (
-                    <p className="text-sm text-gray-500 p-4">{t('workspaceDetails.loadingFileContent')}</p>
-                  ) : fileContentError ? (
-                    <p className="text-sm text-red-600 p-4">{fileContentError}</p>
-                  ) : selectedFilePath && selectedFileIsPdf && pdfViewMode === 'render' ? (
-                    <iframe
-                      title={selectedFilePath}
-                      src={getWorkspaceFileRawUrl(name, fileIds[selectedFilePath] ? { fileId: fileIds[selectedFilePath] } : selectedFilePath)}
-                      className="w-full h-full border-0"
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm px-6 pb-6">{t('workspaceDetails.noFilesFound')}</p>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'agents' && (
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <h3 className="text-lg font-bold mb-6 flex items-center border-b pb-4">
+              <ShoppingBag className="w-6 h-6 mr-2 text-indigo-600" />
+              {t('workspaceDetails.agentsHeading')}
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              {/* Active Agents */}
+              <div>
+                <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
+                  <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center">
+                    <Users className="w-4 h-4 mr-2" />
+                    {t('workspaceDetails.authorizedAgentsInWorkspace')}
+                  </h4>
+                  <label
+                    className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none"
+                    title={t('workspaceDetails.showSystemAgentsHint')}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showSystem}
+                      onChange={(e) => toggleSystem(e.target.checked)}
+                      className="w-3.5 h-3.5 accent-indigo-600 cursor-pointer"
                     />
-                  ) : selectedFilePath && isMarkdownPath(selectedFilePath) && mdViewMode === 'rendered' ? (
-                    <MarkdownRenderer content={selectedFileContent} />
-                  ) : selectedFilePath && isHtmlFile({ name: selectedFilePath }) && mdViewMode === 'rendered' ? (
-                    // The page as a browser shows it, sandboxed (no scripts),
-                    // like an HTML file on a project's Files tab.
-                    <iframe
-                      title={selectedFilePath}
-                      srcDoc={selectedFileContent}
-                      sandbox=""
-                      className="w-full h-full min-h-[60vh] border-0 bg-white block"
-                    />
-                  ) : selectedFilePath ? (
-                    <pre className="text-xs text-gray-800 whitespace-pre-wrap break-words">{selectedFileContent}</pre>
+                    {t('workspaceDetails.showSystemAgents')}
+                    {systemAllowedCount > 0 && <span className="text-gray-400">({systemAllowedCount})</span>}
+                  </label>
+                </div>
+                <div className="space-y-3">
+                  {shownAllowedAgentIds.length ? (
+                    shownAllowedAgentIds.map(agentId => {
+                      const agent = agentById.get(agentId);
+                      const isSystem = agent?.system === true;
+                      return (
+                        <div key={agentId} className="flex items-center justify-between p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
+                          <div className="flex items-center space-x-3">
+                            <div className="p-2 bg-white rounded-lg text-indigo-600 shadow-sm">
+                              <Shield className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="text-sm font-bold text-indigo-900 flex items-center gap-1.5">
+                                {agent?.name || agentId}
+                                {isSystem && (
+                                  <span className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-200 text-indigo-700">
+                                    <Lock className="w-2.5 h-2.5" />
+                                    {t('workspaceDetails.system')}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-indigo-400">{agentId}</div>
+                            </div>
+                          </div>
+                          {isSystem ? (
+                            <span
+                              className="p-2 text-indigo-200 cursor-not-allowed"
+                              title={t('workspaceDetails.systemAgentRequiredInEvery')}
+                            >
+                              <Lock className="w-4 h-4" />
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleRemoveAgent(agentId)}
+                              className="p-2 text-indigo-300 hover:text-red-500 transition-colors"
+                              title={t('workspaceDetails.removeFromWorkspace')}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
                   ) : (
-                    <p className="text-sm text-gray-500">{t('workspaceDetails.selectAFileToPreview')}</p>
+                    <p className="text-gray-500 text-sm italic">
+                      {allowedAgentIds.length ? t('workspaceDetails.onlySystemAgentsAuthorized') : t('workspaceDetails.noAgentsAuthorizedForThis')}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Marketplace */}
+              <div>
+                <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
+                  <Plus className="w-4 h-4 mr-2" />
+                  {t('workspaceDetails.availableFromMarketplace')}
+                </h4>
+                <div className="mb-3 relative">
+                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={agentSearch}
+                    onChange={(e) => setAgentSearch(e.target.value)}
+                    placeholder={t('workspaceDetails.findAgentByNameId')}
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg outline-none"
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-3">
+                  {filteredMarketAgents.length ? (
+                    filteredMarketAgents.map(agent => {
+                      const isDisabled = agent.default_workspace_only && name !== 'default';
+                      const disabledTitle = isDisabled ? t('workspaceDetails.defaultWorkspaceOnlyTitle') : undefined;
+                      return (
+                        <div
+                          key={agent.id}
+                          className={`flex items-center justify-between p-3 border rounded-xl transition-colors ${
+                            isDisabled
+                              ? 'border-gray-100 bg-gray-50 opacity-60'
+                              : 'border-gray-100 hover:bg-gray-50'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-3">
+                            <div className="p-2 bg-gray-100 rounded-lg text-gray-400 font-bold text-[10px]">
+                              {(agent.domain ?? agent.name ?? agent.id ?? '?')
+                                .toString()
+                                .slice(0, 3)
+                                .toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+                                {agent.name}
+                                {isDisabled && <Lock className="w-3 h-3 text-gray-400" />}
+                              </div>
+                              <div className="text-[10px] text-gray-400 line-clamp-1">
+                                {isDisabled ? t('workspaceDetails.defaultWorkspaceOnly') : agent.description}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => !isDisabled && handleAddAgent(agent.id)}
+                            disabled={isDisabled}
+                            title={disabledTitle}
+                            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all shadow-sm ${
+                              isDisabled
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
+                                : 'bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-600 hover:text-white'
+                            }`}
+                          >
+                            {isDisabled ? t('workspaceDetails.restricted') : t('workspaceDetails.addAgent')}
+                          </button>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="text-gray-500 text-sm italic">
+                      {agentSearch.trim() ? t('workspaceDetails.noMarketAgentsMatch') : t('workspaceDetails.noMarketAgents')}
+                    </p>
                   )}
                 </div>
               </div>
             </div>
-          ) : (
-            <p className="text-gray-500 text-sm px-6 pb-6">{t('workspaceDetails.noFilesFound')}</p>
-          )}
-        </div>
-      )}
 
-      {activeTab === 'agents' && (
-        <div className="bg-white p-6 shadow-md rounded-lg">
-          <h3 className="text-lg font-bold mb-6 flex items-center border-b pb-4">
-            <ShoppingBag className="w-6 h-6 mr-2 text-indigo-600" />
-            {t('workspaceDetails.agentsHeading')}
-          </h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* Active Agents */}
-            <div>
-              <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-                <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest flex items-center">
-                  <Users className="w-4 h-4 mr-2" />
-                  {t('workspaceDetails.authorizedAgentsInWorkspace')}
-                </h4>
-                <label
-                  className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none"
-                  title={t('workspaceDetails.showSystemAgentsHint')}
-                >
-                  <input
-                    type="checkbox"
-                    checked={showSystem}
-                    onChange={(e) => toggleSystem(e.target.checked)}
-                    className="w-3.5 h-3.5 accent-indigo-600 cursor-pointer"
-                  />
-                  {t('workspaceDetails.showSystemAgents')}
-                  {systemAllowedCount > 0 && <span className="text-gray-400">({systemAllowedCount})</span>}
-                </label>
-              </div>
-              <div className="space-y-3">
-                {shownAllowedAgentIds.length ? (
-                  shownAllowedAgentIds.map(agentId => {
-                    const agent = agentById.get(agentId);
-                    const isSystem = agent?.system === true;
-                    return (
-                      <div key={agentId} className="flex items-center justify-between p-3 bg-indigo-50 border border-indigo-100 rounded-xl">
-                        <div className="flex items-center space-x-3">
-                          <div className="p-2 bg-white rounded-lg text-indigo-600 shadow-sm">
-                            <Shield className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="text-sm font-bold text-indigo-900 flex items-center gap-1.5">
-                              {agent?.name || agentId}
-                              {isSystem && (
-                                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-indigo-200 text-indigo-700">
-                                  <Lock className="w-2.5 h-2.5" />
-                                  {t('workspaceDetails.system')}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[10px] text-indigo-400">{agentId}</div>
-                          </div>
-                        </div>
-                        {isSystem ? (
-                          <span
-                            className="p-2 text-indigo-200 cursor-not-allowed"
-                            title={t('workspaceDetails.systemAgentRequiredInEvery')}
-                          >
-                            <Lock className="w-4 h-4" />
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => handleRemoveAgent(agentId)}
-                            className="p-2 text-indigo-300 hover:text-red-500 transition-colors"
-                            title={t('workspaceDetails.removeFromWorkspace')}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p className="text-gray-500 text-sm italic">
-                    {allowedAgentIds.length ? t('workspaceDetails.onlySystemAgentsAuthorized') : t('workspaceDetails.noAgentsAuthorizedForThis')}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Marketplace */}
-            <div>
+            {/* Authorized Flows */}
+            <div className="mt-8 pt-6 border-t">
               <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-                <Plus className="w-4 h-4 mr-2" />
-                {t('workspaceDetails.availableFromMarketplace')}
+                <Workflow className="w-4 h-4 mr-2" />
+                {t('workspaceDetails.authorizedFlowsInWorkspace')}
               </h4>
-              <div className="mb-3 relative">
-                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={agentSearch}
-                  onChange={(e) => setAgentSearch(e.target.value)}
-                  placeholder={t('workspaceDetails.findAgentByNameId')}
-                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg outline-none"
-                />
-              </div>
-              <div className="grid grid-cols-1 gap-3">
-                {filteredMarketAgents.length ? (
-                  filteredMarketAgents.map(agent => {
-                    const isDisabled = agent.default_workspace_only && name !== 'default';
-                    const disabledTitle = isDisabled ? t('workspaceDetails.defaultWorkspaceOnlyTitle') : undefined;
+              <div className="space-y-3">
+                {ws.metadata?.allowed_flows?.length ? (
+                  ws.metadata.allowed_flows.map(flowId => {
+                    const flow = allFlows.find(f => f.id === flowId);
                     return (
-                      <div
-                        key={agent.id}
-                        className={`flex items-center justify-between p-3 border rounded-xl transition-colors ${
-                          isDisabled
-                            ? 'border-gray-100 bg-gray-50 opacity-60'
-                            : 'border-gray-100 hover:bg-gray-50'
-                        }`}
-                      >
+                      <div key={flowId} className="flex items-center justify-between p-3 bg-purple-50 border border-purple-100 rounded-xl">
                         <div className="flex items-center space-x-3">
-                          <div className="p-2 bg-gray-100 rounded-lg text-gray-400 font-bold text-[10px]">
-                            {(agent.domain ?? agent.name ?? agent.id ?? '?')
-                              .toString()
-                              .slice(0, 3)
-                              .toUpperCase()}
+                          <div className="p-2 bg-white rounded-lg text-purple-600 shadow-sm">
+                            <Workflow className="w-4 h-4" />
                           </div>
                           <div>
-                            <div className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
-                              {agent.name}
-                              {isDisabled && <Lock className="w-3 h-3 text-gray-400" />}
-                            </div>
-                            <div className="text-[10px] text-gray-400 line-clamp-1">
-                              {isDisabled ? t('workspaceDetails.defaultWorkspaceOnly') : agent.description}
-                            </div>
+                            <div className="text-sm font-bold text-purple-900">{flow?.name || flowId}</div>
+                            <div className="text-[10px] text-purple-400">{flowId}</div>
                           </div>
                         </div>
                         <button
-                          onClick={() => !isDisabled && handleAddAgent(agent.id)}
-                          disabled={isDisabled}
-                          title={disabledTitle}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all shadow-sm ${
-                            isDisabled
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
-                              : 'bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-600 hover:text-white'
-                          }`}
+                          onClick={() => handleRemoveFlow(flowId)}
+                          className="p-2 text-purple-300 hover:text-red-500 transition-colors"
+                          title={t('workspaceDetails.revokeFlowFromWorkspace')}
                         >
-                          {isDisabled ? t('workspaceDetails.restricted') : t('workspaceDetails.addAgent')}
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     );
                   })
                 ) : (
                   <p className="text-gray-500 text-sm italic">
-                    {agentSearch.trim() ? t('workspaceDetails.noMarketAgentsMatch') : t('workspaceDetails.noMarketAgents')}
+                    {t('workspaceDetails.noFlowsAuthorized')}
                   </p>
                 )}
               </div>
             </div>
           </div>
+        )}
 
-          {/* Authorized Flows */}
-          <div className="mt-8 pt-6 border-t">
-            <h4 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center">
-              <Workflow className="w-4 h-4 mr-2" />
-              {t('workspaceDetails.authorizedFlowsInWorkspace')}
-            </h4>
-            <div className="space-y-3">
-              {ws.metadata?.allowed_flows?.length ? (
-                ws.metadata.allowed_flows.map(flowId => {
-                  const flow = allFlows.find(f => f.id === flowId);
-                  return (
-                    <div key={flowId} className="flex items-center justify-between p-3 bg-purple-50 border border-purple-100 rounded-xl">
-                      <div className="flex items-center space-x-3">
-                        <div className="p-2 bg-white rounded-lg text-purple-600 shadow-sm">
-                          <Workflow className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-sm font-bold text-purple-900">{flow?.name || flowId}</div>
-                          <div className="text-[10px] text-purple-400">{flowId}</div>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleRemoveFlow(flowId)}
-                        className="p-2 text-purple-300 hover:text-red-500 transition-colors"
-                        title={t('workspaceDetails.revokeFlowFromWorkspace')}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  );
-                })
-              ) : (
-                <p className="text-gray-500 text-sm italic">
-                  {t('workspaceDetails.noFlowsAuthorized')}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+        {/* Who may reach this workspace, on its own tab. The tab is listed only
+            for a viewer who may manage membership (see canManageMembers).
+            See components/workspace/WorkspaceMembers.jsx. */}
+        {activeTab === 'members' && canManageMembers && <WorkspaceMembers workspace={name} />}
 
-      {/* Who may reach this workspace, on its own tab. The tab is listed only
-          for a viewer who may manage membership (see canManageMembers).
-          See components/workspace/WorkspaceMembers.jsx. */}
-      {activeTab === 'members' && canManageMembers && <WorkspaceMembers workspace={name} />}
-
-      {activeTab === 'settings' && (
-        <WorkspaceSettingsTab
-          workspace={name}
-          agentRecords={allowedAgentIds.map((id) => agentById.get(id) || { id })}
-        />
-      )}
-
-      {activeTab === 'instructions' && (
-        <div className="bg-white p-6 shadow-md rounded-lg">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-indigo-500" />
-                {t('workspaceDetails.workspaceInstructions')}
-              </h3>
-              <p className="text-sm text-gray-500 mt-0.5">
-                {t('workspaceDetails.instructionsDescription')}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleSaveInstructions}
-              disabled={instructionsSaving || instructionsDraft === instructions}
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
-                instructionsSaved
-                  ? 'bg-green-600 text-white'
-                  : instructionsDraft === instructions
-                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
-              }`}
-            >
-              {instructionsSaved ? (
-                <><Check className="w-4 h-4" /> {t('workspaceDetails.saved')}</>
-              ) : (
-                <><Save className="w-4 h-4" /> {instructionsSaving ? t('workspaceDetails.saving') : t('workspaceDetails.save')}</>
-              )}
-            </button>
-          </div>
-          <textarea
-            value={instructionsDraft}
-            onChange={(e) => setInstructionsDraft(e.target.value)}
-            rows={20}
-            placeholder={t('workspaceDetails.instructionsPlaceholder', { name })}
-            className="w-full font-mono text-sm border border-gray-200 rounded-lg px-4 py-3 outline-none resize-y leading-relaxed"
+        {activeTab === 'settings' && (
+          <WorkspaceSettingsTab
+            workspace={name}
+            agentRecords={allowedAgentIds.map((id) => agentById.get(id) || { id })}
           />
-          {instructions && instructionsDraft !== instructions && (
-            <p className="text-xs text-amber-600 mt-2">{t('workspaceDetails.youHaveUnsavedChanges')}</p>
-          )}
-        </div>
-      )}
+        )}
 
+        {activeTab === 'instructions' && (
+          <div className="bg-white p-6 shadow-md rounded-lg">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-bold flex items-center gap-2">
+                  <BookOpen className="w-5 h-5 text-indigo-500" />
+                  {t('workspaceDetails.workspaceInstructions')}
+                </h3>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {t('workspaceDetails.instructionsDescription')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveInstructions}
+                disabled={instructionsSaving || instructionsDraft === instructions}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                  instructionsSaved
+                    ? 'bg-green-600 text-white'
+                    : instructionsDraft === instructions
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                }`}
+              >
+                {instructionsSaved ? (
+                  <><Check className="w-4 h-4" /> {t('workspaceDetails.saved')}</>
+                ) : (
+                  <><Save className="w-4 h-4" /> {instructionsSaving ? t('workspaceDetails.saving') : t('workspaceDetails.save')}</>
+                )}
+              </button>
+            </div>
+            <textarea
+              value={instructionsDraft}
+              onChange={(e) => setInstructionsDraft(e.target.value)}
+              rows={20}
+              placeholder={t('workspaceDetails.instructionsPlaceholder', { name })}
+              className="w-full font-mono text-sm border border-gray-200 rounded-lg px-4 py-3 outline-none resize-y leading-relaxed"
+            />
+            {instructions && instructionsDraft !== instructions && (
+              <p className="text-xs text-amber-600 mt-2">{t('workspaceDetails.youHaveUnsavedChanges')}</p>
+            )}
+          </div>
+        )}
+      </div>
     </PageContainer>
   );
 };

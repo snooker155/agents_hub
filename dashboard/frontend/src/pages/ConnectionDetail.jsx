@@ -16,8 +16,9 @@ import {
 
 import {
   answerConnectionRun, deleteConnection, getConnection, pruneConnection,
-  rotateConnectionToken, updateConnection,
+  rotateConnectionToken, updateConnection, listConnections,
 } from '../api';
+import useWorkspaceSwitchGuard, { listHolds } from '../components/useWorkspaceSwitchGuard';
 import GraphMirror from '../components/GraphMirror';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useWorkspace } from '../components/workspace';
@@ -25,6 +26,8 @@ import { CopyButton, SetupSnippet } from '../components/ConnectionSetup';
 import { ImportedMark } from '../components/RunOriginBadges';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import { TabStrip } from '../components/PageTabs';
+import { PHONE_ROW_BLEED, PHONE_ROW_PAD } from '../lib/phone';
 
 /**
  * One connection: its shape, what it has been running, and its credential.
@@ -195,6 +198,12 @@ export default function ConnectionDetail() {
   // Sent with every call on this page: a connection that belongs to another
   // workspace answers 404, which is what stops this page acting on one.
   const { selectedWorkspace } = useWorkspace();
+  // A switch to a workspace whose connection list does not hold this one goes
+  // to that list.
+  const { checking } = useWorkspaceSwitchGuard({
+    listPath: '/connections',
+    isPresent: (workspace) => listConnections(workspace).then(({ data }) => listHolds(data.connections, connectionId)),
+  });
   const [data, setData] = useState(null);
   const [runs, setRuns] = useState([]);
   const [tab, setTab] = useState('overview');
@@ -296,7 +305,7 @@ export default function ConnectionDetail() {
       </PageContainer>
     );
   }
-  if (!data) {
+  if (!data || checking) {
     return <PageContainer><PageLoader size="lg" label={t('connections.loading')} /></PageContainer>;
   }
 
@@ -350,18 +359,21 @@ export default function ConnectionDetail() {
         <Stat label={t('connections.statLastSeen')} value={fmtWhen(data.last_seen)} small />
       </div>
 
-      <div className="flex items-center gap-1 border-b border-gray-200">
-        {TABS.map((name) => (
-          <button
-            key={name}
-            onClick={() => setTab(name)}
-            className={`px-3 py-2 text-sm font-semibold border-b-2 -mb-px ${
-              tab === name ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {t(`connections.tabs.${name}`)}
-          </button>
-        ))}
+      <div className={`border-b border-gray-200 ${PHONE_ROW_BLEED}`}>
+        <TabStrip className={`gap-1 ${PHONE_ROW_PAD}`}>
+          {TABS.map((name) => (
+            <button
+              key={name}
+              onClick={() => setTab(name)}
+              aria-current={tab === name ? 'page' : undefined}
+              className={`px-3 py-2 text-sm font-semibold border-b-2 ${
+                tab === name ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {t(`connections.tabs.${name}`)}
+            </button>
+          ))}
+        </TabStrip>
       </div>
 
       {error && <p className="text-sm text-red-600 mb-3">{error}</p>}

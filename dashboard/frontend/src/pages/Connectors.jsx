@@ -18,6 +18,8 @@ import { listConnectionProposals } from '../api/connectionProposals';
 import { PageContainer, PageHeader } from '../components/PageLayout';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
+import { TabStrip } from '../components/PageTabs';
+import { PHONE_ROW_BLEED, PHONE_ROW_PAD } from '../lib/phone';
 
 /**
  * Connectors: services this hub reaches out to.
@@ -123,22 +125,25 @@ export default function Connectors() {
 
       <ProposedConnections />
 
-      <div className="flex flex-wrap gap-1 border-b border-gray-200">
-        {TABS.map(({ id, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setActive(id)}
-            className={`flex items-center gap-2 px-3 py-2 text-sm font-semibold border-b-2 -mb-px ${
-              active === id
-                ? 'border-indigo-600 text-indigo-700'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <Icon className="w-4 h-4" />
-            {t(`connectors.tabs.${id}`)}
-          </button>
-        ))}
+      <div className={`border-b border-gray-200 ${PHONE_ROW_BLEED}`}>
+        <TabStrip className={`gap-1 ${PHONE_ROW_PAD}`}>
+          {TABS.map(({ id, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActive(id)}
+              aria-current={active === id ? 'page' : undefined}
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-semibold border-b-2 ${
+                active === id
+                  ? 'border-indigo-600 text-indigo-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {t(`connectors.tabs.${id}`)}
+            </button>
+          ))}
+        </TabStrip>
       </div>
 
       <Component />

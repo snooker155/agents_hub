@@ -20,7 +20,7 @@ import {
   Download,
 } from 'lucide-react';
 
-import { PageContainer, PageHeader } from '../components/PageLayout';
+import { HeaderIconButton, PageContainer, PageHeader } from '../components/PageLayout';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 
@@ -165,20 +165,20 @@ export default function ProjectManager() {
         title={t('projectManager.projects')}
         description={t('projectManager.organizeTasksAndCodeBy')}
         actions={<>
-          <ChatToggle open={chat.open} onToggle={chat.toggle}
+          <ChatToggle open={chat.open} onToggle={chat.toggle} iconOnly
                       label={t('projectManager.registryChat')} />
-          <button
+          <HeaderIconButton
+            icon={Download}
+            tone="outline"
+            label={t('projectManager.importFromRepo')}
             onClick={openImport}
-            className="flex items-center gap-2 px-4 py-2 border border-indigo-200 text-indigo-700 rounded-lg hover:bg-indigo-50 text-sm font-medium"
-          >
-            <Download className="w-4 h-4" /> {t('projectManager.importFromRepo')}
-          </button>
-          <button
+          />
+          <HeaderIconButton
+            icon={Plus}
+            tone="primary"
+            label={t('projectManager.newProject')}
             onClick={() => { setForm({ ...DEFAULT_FORM, workspace: selectedWorkspace || '' }); setShowCreate(true); }}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
-          >
-            <Plus className="w-4 h-4" /> {t('projectManager.newProject')}
-          </button>
+          />
         </>}
       />
 
@@ -190,17 +190,17 @@ export default function ProjectManager() {
 
       {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
             placeholder={t('projectManager.searchProjects')}
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-56"
+            className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none w-full sm:w-56"
           />
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           {['all', ...Object.keys(TYPE_CONFIG)].map(t => (
             <button
               key={t}

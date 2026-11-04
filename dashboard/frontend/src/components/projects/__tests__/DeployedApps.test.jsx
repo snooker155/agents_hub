@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -47,5 +47,17 @@ describe('DeployedApps', () => {
     const { container } = show(undefined);
     await Promise.resolve();
     expect(container.querySelector('[data-testid="deployed-apps"]')).toBeNull();
+  });
+
+  it('shows nothing while no app is alive', async () => {
+    listDeployedApps.mockImplementationOnce(() => Promise.resolve({ data: { items: [
+      { id: 'd2', project_id: 'p2', name: 'Blog', status: 'stopped', mode: 'docker', services: [], workspace: 'acme', links: {} },
+      { id: 'd3', project_id: 'p3', name: 'Wiki', status: 'failed', mode: 'local', services: [], workspace: 'acme', links: {} },
+    ] } }));
+    const { container } = show('acme');
+    await waitFor(() => expect(listDeployedApps).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(container.querySelector('[data-testid="deployed-apps"]')).toBeNull();
+    expect(screen.queryByText('Blog')).toBeNull();
   });
 });

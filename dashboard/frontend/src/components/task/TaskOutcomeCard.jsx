@@ -312,7 +312,7 @@ export default function TaskOutcomeCard({ task, onChanged }) {
 
   if (!effective && !editing) {
     return (
-      <div className="bg-white shadow-sm border border-gray-200 rounded-xl px-4 py-3 mb-6 flex items-center gap-3 flex-wrap">
+      <div className="bg-white shadow-sm border border-gray-200 rounded-xl px-4 py-3 mb-6 flex items-center gap-3 phone:gap-y-1 flex-wrap">
         <Target className="w-4 h-4 text-gray-400 shrink-0" />
         <span className="text-sm font-semibold text-gray-800 inline-flex items-center gap-1">
           {t('outcomes.title')}
@@ -321,9 +321,10 @@ export default function TaskOutcomeCard({ task, onChanged }) {
         <button
           type="button"
           onClick={startEdit}
-          className="ml-auto inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
+          title={t('outcomes.add')}
+          className="ml-auto inline-flex items-center gap-1 px-3 py-1.5 phone:px-2 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
         >
-          <Plus className="w-3.5 h-3.5" /> {t('outcomes.add')}
+          <Plus className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('outcomes.add')}</span>
         </button>
         <div className="w-full">{toggle}</div>
         {error && <p className="w-full text-sm text-red-600">{error}</p>}
@@ -334,7 +335,7 @@ export default function TaskOutcomeCard({ task, onChanged }) {
   const graderOptions = form.grader && !models.includes(form.grader) ? [form.grader, ...models] : models;
 
   return (
-    <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-5 mb-6" data-testid="task-outcome-card">
+    <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-5 phone:p-4 mb-6" data-testid="task-outcome-card">
       <div className="flex items-center gap-3 flex-wrap">
         <Target className="w-4 h-4 text-indigo-600 shrink-0" />
         <h3 className="text-sm font-bold text-gray-900">{t('outcomes.title')}</h3>
@@ -357,18 +358,19 @@ export default function TaskOutcomeCard({ task, onChanged }) {
               onClick={gradeNow}
               disabled={!!busy}
               title={t('outcomes.gradeNowHint')}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1 px-3 py-1.5 phone:px-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50"
             >
               {busy === 'grade' ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-              {busy === 'grade' ? t('outcomes.grading') : t('outcomes.gradeNow')}
+              <span className="phone:hidden">{busy === 'grade' ? t('outcomes.grading') : t('outcomes.gradeNow')}</span>
             </button>
             <button
               type="button"
               onClick={startEdit}
-              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
+              title={fromAgent ? t('outcomes.add') : t('outcomes.edit')}
+              className="inline-flex items-center gap-1 px-3 py-1.5 phone:px-2 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
             >
               {fromAgent ? <Plus className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
-              {fromAgent ? t('outcomes.add') : t('outcomes.edit')}
+              <span className="phone:hidden">{fromAgent ? t('outcomes.add') : t('outcomes.edit')}</span>
             </button>
           </div>
         )}

@@ -104,9 +104,11 @@ export function SubtaskRow({ st, tasksById, onDelete, onStatusChange, onAssign, 
   const executor = st.assigned_agent_type ? executorLabel(st) : null;
 
   return (
-    <li className="flex items-center gap-3 px-1 py-2 hover:bg-gray-50 transition-colors">
+    // On a phone the key and title take the first line whole, and the
+    // priority, status and actions go under it.
+    <li className="flex items-center gap-3 phone:flex-wrap phone:gap-x-2 phone:gap-y-1.5 px-1 py-2 hover:bg-gray-50 transition-colors">
       <div
-        className="flex-1 min-w-0 flex items-baseline gap-2 cursor-pointer"
+        className="flex-1 min-w-0 phone:basis-full flex items-baseline gap-2 cursor-pointer"
         onClick={open}
         title={st.description || undefined}
       >
@@ -137,7 +139,7 @@ export function SubtaskRow({ st, tasksById, onDelete, onStatusChange, onAssign, 
         <StatusDropdown current={st.status} onChange={(v) => onStatusChange(st.id, v)} />
       </div>
 
-      <div className="flex items-center gap-0.5 flex-shrink-0">
+      <div className="flex items-center gap-0.5 flex-shrink-0 phone:ml-auto">
         <button
           onClick={open}
           className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"

@@ -14,16 +14,17 @@ import { useI18n } from '../../i18n';
 export function SubtasksTab({ agents, deletingSubtasks, handleDeleteSubtask, openAssign, patch, setShowAddSubtask, subtasks, tasksById }) {
   const { t } = useI18n();
   return (
-    <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
+    <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 phone:p-4">
       {/* As tall as the heading alone (h-6), so the title sits where the other
           tabs' titles sit; the taller button overhangs into the card padding. */}
       <div className="flex items-center justify-between mb-4 h-6">
         <h3 className="text-base font-semibold text-gray-800">{t('taskDetails.subtasks')}</h3>
         <button
           onClick={() => setShowAddSubtask(true)}
+          title={t('taskDetails.addSubtask')}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
         >
-          <Plus className="w-4 h-4" /> {t('taskDetails.addSubtask')}
+          <Plus className="w-4 h-4" /> <span className="phone:hidden">{t('taskDetails.addSubtask')}</span>
         </button>
       </div>
 
@@ -56,7 +57,7 @@ export function ExecutionTab({ flowLoading, flowRuns }) {
   const { t } = useI18n();
   const fill = flowLoading || flowRuns.length > 0;
   return (
-    <div className={`${fill ? 'flex-1' : ''} flex flex-col bg-white shadow-sm border border-gray-200 rounded-xl p-6`}>
+    <div className={`${fill ? 'flex-1' : ''} flex flex-col bg-white shadow-sm border border-gray-200 rounded-xl p-6 phone:p-4`}>
       {/* Execution flow pane — same agent-process view as the Chat page */}
       <div className="shrink-0 flex items-center justify-between gap-2 mb-4 flex-wrap">
         <h3 className="text-base font-semibold text-gray-800">{t('taskDetails.executionFlow')}</h3>
@@ -103,7 +104,7 @@ export function ExecutionTab({ flowLoading, flowRuns }) {
 export function ActivityTab({ activityItems, runs = [] }) {
   const { t } = useI18n();
   return (
-    <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
+    <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 phone:p-4">
       <h3 className="text-base font-semibold text-gray-800 mb-4">{t('taskDetails.taskActivity')}</h3>
       {activityItems.length > 0 ? (
         <div className="space-y-3">
@@ -129,7 +130,7 @@ export function ActivityTab({ activityItems, runs = [] }) {
 export function ResultsTab({ hasResults, taskResults, onOpenFile }) {
   const { t } = useI18n();
   return (
-    <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6">
+    <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 phone:p-4">
       <h3 className="text-base font-semibold text-gray-800 mb-4">{t('taskDetails.agentResults')}</h3>
       {hasResults ? (
         // Each agent's result in a frame of its own, newest first.
@@ -158,7 +159,7 @@ export function LogsTab({ activeRunId, logs, runs = [], onSelectRun }) {
   return (
     // As tall as the log: the page scrolls, not the block.
     <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col">
-      <div className="bg-gray-800 px-4 py-2.5 flex items-center justify-between gap-3">
+      <div className="bg-gray-800 px-4 py-2.5 flex items-center justify-between gap-3 min-w-0">
         <span className="flex items-center gap-2 text-gray-300 text-sm font-medium shrink-0">
           <Terminal className="w-4 h-4" /> {t('taskDetails.agentLogs')}
         </span>
@@ -175,7 +176,7 @@ export function LogsTab({ activeRunId, logs, runs = [], onSelectRun }) {
           <span className="text-xs text-gray-500">{t('taskDetails.run')}: {activeRunId.slice(0, 8)}</span>
         )}
       </div>
-      <div className="p-4 overflow-x-auto text-xs text-green-400 bg-black leading-relaxed">
+      <div className="p-4 phone:p-3 overflow-x-auto text-xs text-green-400 bg-black leading-relaxed">
         {logs
           ? <pre className="whitespace-pre-wrap">{logs}</pre>
           : <p className="text-gray-600 italic">{t('taskDetails.noLogsAvailable')}</p>

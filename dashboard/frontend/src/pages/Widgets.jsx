@@ -21,6 +21,7 @@ import WidgetPreview from '../components/widgets/WidgetPreview';
 import WidgetConversations from '../components/widgets/WidgetConversations';
 import { ACCENT_SWATCHES, FALLBACK_OPTIONS } from '../components/widgets/widgetUtils';
 import PageLoader from '../components/PageLoader';
+import { TabStrip } from '../components/PageTabs';
 
 const TABS = ['embed', 'preview', 'conversations', 'settings'];
 
@@ -171,16 +172,18 @@ export default function Widgets() {
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
-              <div role="tablist" className="flex gap-1 px-4 mt-3 border-b border-gray-100">
-                {TABS.map((key) => (
-                  <button key={key} type="button" role="tab" aria-selected={tab === key}
-                    id={`widget-tab-${key}`} aria-controls={`widget-panel-${key}`}
-                    onClick={() => setTab(key)}
-                    className={`px-3 py-2 text-sm -mb-px border-b-2 ${
-                      tab === key ? 'border-indigo-600 text-indigo-700 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-                    {t(`widgets.tabs.${key}`)}
-                  </button>
-                ))}
+              <div className="px-4 mt-3 border-b border-gray-100">
+                <TabStrip className="gap-1" role="tablist">
+                  {TABS.map((key) => (
+                    <button key={key} type="button" role="tab" aria-selected={tab === key}
+                      id={`widget-tab-${key}`} aria-controls={`widget-panel-${key}`}
+                      onClick={() => setTab(key)}
+                      className={`px-3 py-2 text-sm border-b-2 ${
+                        tab === key ? 'border-indigo-600 text-indigo-700 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                      {t(`widgets.tabs.${key}`)}
+                    </button>
+                  ))}
+                </TabStrip>
               </div>
               <div role="tabpanel" id={`widget-panel-${tab}`} aria-labelledby={`widget-tab-${tab}`} className="p-4">
                 {tab === 'embed' && <WidgetEmbed widget={selected} onChanged={replace} />}

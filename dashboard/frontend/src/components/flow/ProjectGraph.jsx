@@ -10,10 +10,10 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import {
-  RefreshCw, Boxes, GitBranch, Sparkles, Save, Undo2,
+  RefreshCw, Boxes, GitBranch, Sparkles, Save, Eraser,
   PanelRightClose, PanelRightOpen,
   Send, PlusCircle, Trash2, Network, X, Pencil, Square,
-  FileText, Globe, MessageSquarePlus,
+  FileText, Globe, MessageSquarePlus, Maximize2, Minimize2,
 } from 'lucide-react';
 import {
   getProjectGraph, saveProjectGraph, resetProjectGraph, relayoutProjectGraph,
@@ -34,6 +34,8 @@ import { useChatSessions } from '../chatSessions';
 import { hasContextReading, useContextUsage } from '../contextUsage';
 import { useI18n } from '../../i18n';
 import { usePageChatHost } from '../pageChat/pageChat';
+import { useThemeColors } from '../../lib/themeColors';
+import ConfirmModal from '../ConfirmModal';
 
 // `icon` (a lucide component), `borderStyle`, and `radius` are optional per-kind
 // tweaks; styleNode applies them. Most kinds are a plain rounded box.
@@ -124,6 +126,10 @@ function makeEdge(source, target, label = '') {
 }
 
 // ── Inspector for the selected node/edge (manual editing) ──────────────────
+// The canvas's dot grid, as the flow canvas draws it (FlowCanvas.jsx): a
+// theme token, so it stays visible in the dark theme too.
+const CANVAS_COLOR_SPEC = { gridDot: ['--neutral-300', '#cbd5e1'] };
+
 const FIELD = 'w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 focus:outline-none';
 
 function GraphInspector({ sel, node, edge, nodes, onPatchNode, onPatchEdge, onDelete, onClose }) {
@@ -136,17 +142,20 @@ function GraphInspector({ sel, node, edge, nodes, onPatchNode, onPatchEdge, onDe
   const nameOf = (id) => nodes.find((n) => n.id === id)?.data?.name || id;
 
   return (
-    <div className="absolute top-3 right-3 z-20 w-64 bg-white rounded-lg border border-gray-200 shadow-lg">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100">
+    // Never taller than the canvas: its fields scroll inside it. On a phone,
+    // where a canvas on its side is short and every field is 16px, the node's
+    // four fields go two by two in a wider panel.
+    <div className="absolute top-3 right-3 z-20 w-64 phone:w-[min(26rem,calc(100%-1.5rem))] max-h-[calc(100%-1.5rem)] flex flex-col bg-white rounded-lg border border-gray-200 shadow-lg">
+      <div className="flex shrink-0 items-center justify-between px-3 py-2 border-b border-gray-100">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
           <Pencil className="w-3.5 h-3.5 text-indigo-500" /> {sel.kind === 'node' ? t('flowProjectGraph.editNode') : t('flowProjectGraph.editEdge')}
         </div>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600" title={t('flowProjectGraph.close')}><X className="w-4 h-4" /></button>
       </div>
 
-      <div className="p-3 space-y-3">
+      <div className="min-h-0 overflow-y-auto p-3 space-y-3 phone:space-y-2">
         {sel.kind === 'node' ? (
-          <>
+          <div className="space-y-3 phone:space-y-0 phone:grid phone:grid-cols-2 phone:gap-2">
             <div>
               <label className="block text-[11px] font-medium text-gray-500 mb-1">{t('flowProjectGraph.name')}</label>
               <input className={FIELD} value={node.data?.name || ''} autoFocus
@@ -171,7 +180,7 @@ function GraphInspector({ sel, node, edge, nodes, onPatchNode, onPatchEdge, onDe
                 placeholder={t('flowProjectGraph.keepsRelatedNodesTogether')}
                 onChange={(e) => onPatchNode({ group: e.target.value })} />
             </div>
-          </>
+          </div>
         ) : (
           <>
             <div className="text-[11px] text-gray-500">
@@ -190,7 +199,7 @@ function GraphInspector({ sel, node, edge, nodes, onPatchNode, onPatchEdge, onDe
 
         <button onClick={onDelete}
           className="w-full flex items-center justify-center gap-1.5 text-xs font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-md px-2 py-1.5">
-          <Trash2 className="w-3.5 h-3.5" /> Delete {sel.kind}
+          <Trash2 className="w-3.5 h-3.5" /> {t(sel.kind === 'node' ? 'flowProjectGraph.deleteNode' : 'flowProjectGraph.deleteEdge')}
         </button>
       </div>
     </div>
@@ -198,6 +207,7 @@ function GraphInspector({ sel, node, edge, nodes, onPatchNode, onPatchEdge, onDe
 }
 
 function ProjectGraph({ projectId }) {
+  const canvasColors = useThemeColors(CANVAS_COLOR_SPEC);
   const { t } = useI18n();
   const [view, setView] = useState('process');   // process view first
   const [nodes, setNodes] = useState([]);
@@ -497,7 +507,11 @@ function ProjectGraph({ projectId }) {
     runChat(m);
   }, [input, runChat]);
 
+  // Generate rebuilds the whole graph through the agent: asked for again in a
+  // modal, as Reset is.
+  const [confirmGenerate, setConfirmGenerate] = useState(false);
   const onGenerate = useCallback(() => {
+    setConfirmGenerate(false);
     runChat(view === 'process'
       ? t('flowProjectGraph.buildProcessPrompt')
       : t('flowProjectGraph.buildArchitecturePrompt'));
@@ -529,7 +543,10 @@ function ProjectGraph({ projectId }) {
     } finally { setSaving(false); }
   }, [projectId, view, nodes, edges]);
 
+  // Reset throws the canvas and its chat away: asked for again in a modal.
+  const [confirmReset, setConfirmReset] = useState(false);
   const handleReset = useCallback(async () => {
+    setConfirmReset(false);
     setError('');
     try {
       await resetProjectGraph(projectId, view);
@@ -597,6 +614,19 @@ function ProjectGraph({ projectId }) {
   // and the scroller's own bottom padding is left free for the card to sit in.
   const rootRef = useRef(null);
   const [height, setHeight] = useState(0);
+  // The canvas, with its buttons, can take the whole screen: laid over the
+  // page (z-[45]: over the top bar and the menu column, z-40, and under the
+  // page chat's button and panel, z-[46], so the chat still opens over it).
+  // Escape or the button again puts it back; either way the graph is fitted
+  // to the new size.
+  const [fullScreen, setFullScreen] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => rfRef.current?.fitView({ padding: 0.2 }), 60);
+    if (!fullScreen) return () => clearTimeout(id);
+    const onKey = (e) => { if (e.key === 'Escape') setFullScreen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => { clearTimeout(id); document.removeEventListener('keydown', onKey); };
+  }, [fullScreen]);
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return undefined;
@@ -656,7 +686,36 @@ function ProjectGraph({ projectId }) {
   const emptyCanvas = nodes.length === 0 && !loading;
 
   return (
-    <div ref={rootRef} className="bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col" style={{ height: height || undefined }}>
+    <div ref={rootRef}
+      className={fullScreen
+        ? 'fixed inset-0 z-[45] bg-white overflow-hidden flex flex-col pt-safe pb-safe px-safe'
+        : 'bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col'}
+      style={{ height: fullScreen ? undefined : (height || undefined) }}>
+      {confirmGenerate && (
+        <ConfirmModal
+          title={t('flowProjectGraph.generateConfirmTitle', { view: t(`flowProjectGraph.tabs.${view}`) })}
+          confirmLabel={t('flowProjectGraph.generate')}
+          cancelLabel={t('common.cancel')}
+          icon={Sparkles}
+          onConfirm={onGenerate}
+          onCancel={() => setConfirmGenerate(false)}
+        >
+          {t('flowProjectGraph.generateConfirmBody')}
+        </ConfirmModal>
+      )}
+      {confirmReset && (
+        <ConfirmModal
+          title={t('flowProjectGraph.resetConfirmTitle', { view: t(`flowProjectGraph.tabs.${view}`) })}
+          confirmLabel={t('flowProjectGraph.reset')}
+          cancelLabel={t('common.cancel')}
+          icon={Eraser}
+          danger
+          onConfirm={handleReset}
+          onCancel={() => setConfirmReset(false)}
+        >
+          {t('flowProjectGraph.resetConfirmBody')}
+        </ConfirmModal>
+      )}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <div className="flex gap-1">
@@ -672,25 +731,27 @@ function ProjectGraph({ projectId }) {
           {dirty && <span className="text-[11px] text-amber-600">{t('flowProjectGraph.unsaved')}</span>}
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <button onClick={onGenerate} disabled={anyBusy}
+        {/* On a phone, held either way, the actions keep their icons alone
+            (the name is the tooltip), so the row fits the screen. */}
+        <div className="flex flex-wrap items-center gap-1.5 phone:gap-1 phone:[&>button]:px-2">
+          <button onClick={() => setConfirmGenerate(true)} disabled={anyBusy}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-violet-600 hover:bg-violet-50 disabled:opacity-50"
             title={t('flowProjectGraph.letTheAgentBuildThe')}>
-            <Sparkles className={`w-4 h-4 ${busy ? 'animate-pulse' : ''}`} /> {busy ? 'Building…' : 'Generate'}
+            <Sparkles className={`w-4 h-4 ${busy ? 'animate-pulse' : ''}`} /> <span className="phone:hidden">{busy ? t('flowProjectGraph.building') : t('flowProjectGraph.generate')}</span>
           </button>
           <button onClick={addNode} disabled={anyBusy}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40"
             title={t('flowProjectGraph.addANodeManuallyThen')}>
-            <PlusCircle className="w-4 h-4" /> {t('flowProjectGraph.addNode')}</button>
+            <PlusCircle className="w-4 h-4" /> <span className="phone:hidden">{t('flowProjectGraph.addNode')}</span></button>
           <button onClick={handleSave} disabled={saving || !dirty}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-40"
-            title={t('flowProjectGraph.saveEdits')}><Save className="w-4 h-4" /> {t('flowProjectGraph.save')}</button>
+            title={t('flowProjectGraph.saveEdits')}><Save className="w-4 h-4" /> <span className="phone:hidden">{t('flowProjectGraph.save')}</span></button>
           <button onClick={handleRelayout} disabled={anyBusy || nodes.length === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-            title={t('flowProjectGraph.autoArrangeNodesConnectionAware')}><Network className="w-4 h-4" /> {t('flowProjectGraph.arrange')}</button>
-          <button onClick={handleReset} disabled={anyBusy}
+            title={t('flowProjectGraph.autoArrangeNodesConnectionAware')}><Network className="w-4 h-4" /> <span className="phone:hidden">{t('flowProjectGraph.arrange')}</span></button>
+          <button onClick={() => setConfirmReset(true)} disabled={anyBusy}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-            title={t('flowProjectGraph.clearTheGraphAndChat')}><Undo2 className="w-4 h-4" /> {t('flowProjectGraph.reset')}</button>
+            title={t('flowProjectGraph.clearTheGraphAndChat')}><Eraser className="w-4 h-4" /> <span className="phone:hidden">{t('flowProjectGraph.reset')}</span></button>
           <button onClick={() => load(view)} disabled={anyBusy}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-gray-500 hover:bg-gray-50 disabled:opacity-50"
             title={t('flowProjectGraph.reload')}><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></button>
@@ -700,6 +761,13 @@ function ProjectGraph({ projectId }) {
             className="px-3 py-1.5 rounded-md text-sm text-gray-500 hover:bg-gray-50"
             title={chatHost.open ? t('flowProjectGraph.hideChat') : t('flowProjectGraph.showChat')}>
             {chatHost.open ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+          </button>
+          {/* The whole screen for the canvas. */}
+          <button onClick={() => setFullScreen((v) => !v)} aria-pressed={fullScreen}
+            className="inline-flex items-center px-3 py-1.5 rounded-md text-sm text-gray-500 hover:bg-gray-50"
+            title={fullScreen ? t('flowProjectGraph.exitFullScreen') : t('flowProjectGraph.fullScreen')}
+            aria-label={fullScreen ? t('flowProjectGraph.exitFullScreen') : t('flowProjectGraph.fullScreen')}>
+            {fullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
         </div>
       </div>
@@ -726,7 +794,7 @@ function ProjectGraph({ projectId }) {
               deleteKeyCode={['Backspace', 'Delete']}
               fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.2}
               proOptions={{ hideAttribution: true }}>
-              <Background gap={16} color="#eef2f7" />
+              <Background gap={24} size={2.5} color={canvasColors.gridDot} />
               <Controls showInteractive={false} />
               <MiniMap pannable zoomable nodeStrokeWidth={2} />
             </ReactFlow>
@@ -751,9 +819,9 @@ function ProjectGraph({ projectId }) {
         {chatHost.tools && createPortal(
           <>
             {messages.length > 0 && !historyOpen && (
-              <button onClick={clearChat} disabled={busy} title={t('entityChat.clearChat')}
-                className="inline-flex items-center gap-1 text-[11px] font-normal text-gray-400 hover:text-indigo-600 disabled:opacity-40">
-                <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
+              <button onClick={clearChat} disabled={busy} title={t('entityChat.clearChat')} aria-label={t('entityChat.clear')}
+                className="inline-flex items-center gap-1 px-1 py-0.5 rounded-md text-[11px] font-normal text-gray-400 hover:text-indigo-600 hover:bg-gray-50 disabled:opacity-40">
+                <MessageSquarePlus className="w-3.5 h-3.5 phone:w-4 phone:h-4" /> <span className="phone:hidden">{t('entityChat.clear')}</span>
               </button>
             )}
             {sessionHistory.hasHistory && (

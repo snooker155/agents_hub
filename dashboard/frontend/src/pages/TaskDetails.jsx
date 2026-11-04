@@ -37,6 +37,8 @@ import { buildFileTree, confirmStatusChange, parentDirPaths } from '../component
 import { errorDetail, useToast } from '../components/toast';
 import { useWorkspace } from '../components/workspace';
 import { useI18n } from '../i18n';
+import { TabStrip } from '../components/PageTabs';
+import { PHONE_BLEED, PHONE_ROW_BLEED, PHONE_ROW_PAD, usePhone } from '../lib/phone';
 
 // A stable empty list, so memoised children do not see a new array per render.
 const EMPTY_FLOW_RUNS = [];
@@ -52,6 +54,7 @@ const TaskDetails = () => {
   // tasks this page links to keep that way back (task/taskBack.js).
   const backState = forwardBack(useLocation());
   const backTo = backState?.backTo;
+  const phone = usePhone();
   const { clientId } = useStream();
   const { liveUpdates, selectedWorkspace } = useWorkspace();
   // The task's workspace is redundant when a specific workspace is selected in
@@ -552,38 +555,40 @@ const TaskDetails = () => {
           <InlineEdit
             value={task.title}
             onSave={v => patch({ title: v })}
-            className="text-2xl font-bold"
+            className="text-2xl phone:text-base font-bold"
           />
         }
-        badges={task.key && (
+        // On a phone the key stays on the card's first line only: under the
+        // top bar it would be a line of its own saying the same.
+        badges={task.key && !phone && (
           <span className="text-sm font-semibold text-gray-400 flex-shrink-0">{task.key}</span>
         )}
         actions={<>
             {subtasks.length > 0 && task.status === 'in_progress' && (
-              <button onClick={handlePauseContainer} className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white rounded-lg text-sm hover:bg-amber-600">
+              <button title={t('taskDetails.pause')} onClick={handlePauseContainer} className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white rounded-lg text-sm hover:bg-amber-600">
                 <Pause className="w-4 h-4" /> {t('taskDetails.pause')}
               </button>
             )}
             {subtasks.length > 0 && task.status === 'stopped' && (
-              <button onClick={handleResumeContainer} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+              <button title={t('taskDetails.resume')} onClick={handleResumeContainer} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
                 <Play className="w-4 h-4" /> {t('taskDetails.resume')}
               </button>
             )}
             {task.agent_state === 'pending_approval' ? (
               <>
-                <button onClick={handleApproveAssignment} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+                <button title={t('taskDetails.approve')} onClick={handleApproveAssignment} className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
                   <ThumbsUp className="w-4 h-4" /> {t('taskDetails.approve')}
                 </button>
-                <button onClick={handleRejectAssignment} className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-700 rounded-lg text-sm hover:bg-red-100">
+                <button title={t('taskDetails.reject')} onClick={handleRejectAssignment} className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-700 rounded-lg text-sm hover:bg-red-100">
                   <ThumbsDown className="w-4 h-4" /> {t('taskDetails.reject')}
                 </button>
               </>
             ) : task.agent_state === 'running' ? (
-              <button onClick={handleStopAgent} className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700">
+              <button title={t('taskDetails.stopAgent')} onClick={handleStopAgent} className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700">
                 <Square className="w-4 h-4" /> {t('taskDetails.stopAgent')}
               </button>
             ) : (
-              <button onClick={() => openAssign()} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+              <button title={t('taskDetails.assignAgent2')} onClick={() => openAssign()} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
                 <Play className="w-4 h-4" /> {t('taskDetails.assignAgent2')}
               </button>
             )}
@@ -593,19 +598,19 @@ const TaskDetails = () => {
               <button
                 onClick={handleRunDecomposer}
                 disabled={task.status !== 'todo'}
-                title={task.status !== 'todo' ? t('taskDetails.decomposeOnlyTodo') : undefined}
+                title={task.status !== 'todo' ? t('taskDetails.decomposeOnlyTodo') : t('taskDetails.decompose')}
                 className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-emerald-600"
               >
                 <Split className="w-4 h-4" /> {t('taskDetails.decompose')}
               </button>
             )}
-            <button onClick={handleDeleteTask} disabled={deletingTask} className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-700 rounded-lg text-sm hover:bg-red-100 disabled:opacity-50">
+            <button onClick={handleDeleteTask} disabled={deletingTask} title={t('common.delete')} className="flex items-center gap-1.5 px-3 py-2 bg-red-50 text-red-700 rounded-lg text-sm hover:bg-red-100 disabled:opacity-50">
               <Trash2 className="w-4 h-4" />
               {deletingTask ? t('common.deleting') : t('common.delete')}
             </button>
         </>}
       >
-        <div className="flex items-center flex-wrap gap-2 mt-3">
+        <div className="flex items-center flex-wrap gap-2 mt-3 phone:mt-0">
           <StatusDropdown current={task.status} onChange={v => { if (confirmStatusChange(t, task, v)) patch({ status: v }); }} />
           <PriorityDropdown current={task.priority} onChange={v => patch({ priority: v })} />
           <DueDateField current={task.due_at} overdue={task.overdue} onChange={v => patch({ due_at: v })} />
@@ -623,9 +628,9 @@ const TaskDetails = () => {
           {saving && <Loader className="w-3.5 h-3.5 text-gray-400 animate-spin" />}
           {/* Subtask progress, on the line with status, priority and due date. */}
           {subtasks.length > 0 && (
-            <div className="ml-auto flex items-center gap-2 text-xs text-gray-500" title={t('taskDetails.progress')}>
+            <div className="ml-auto phone:ml-0 phone:w-full flex items-center gap-2 text-xs text-gray-500" title={t('taskDetails.progress')}>
               <span className="whitespace-nowrap">{t('taskDetails.subtasksDone', { done: doneCount, total: subtasks.length, pct: progress })}</span>
-              <div className="w-32 sm:w-48 bg-gray-200 rounded-full h-2">
+              <div className="w-32 sm:w-48 phone:!w-auto phone:flex-1 bg-gray-200 rounded-full h-2">
                 <div className="bg-indigo-500 h-2 rounded-full transition-all" style={{ width: `${progress}%` }} />
               </div>
             </div>
@@ -633,10 +638,11 @@ const TaskDetails = () => {
         </div>
       </PageHeader>
 
-      {/* The cards' own bottom margins are dropped for an even gap. */}
-      <div className="flex flex-col gap-4 [&>*]:mb-0">
+      {/* The cards' own bottom margins are dropped for an even gap; on a
+          phone they run edge to edge (PHONE_BLEED). */}
+      <div className={`flex flex-col gap-4 phone:gap-3 [&>*]:mb-0 ${PHONE_BLEED}`}>
       {/* Main task card */}
-      <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 mb-6">
+      <div className="bg-white shadow-sm border border-gray-200 rounded-xl p-6 phone:p-4 mb-6">
         {/* Key, id, creation time and executor */}
         <TaskKeyRow task={task} />
 
@@ -712,8 +718,8 @@ const TaskDetails = () => {
       </div>
 
       {/* Tabs */}
-      <div className="shrink-0 mt-2 border-b border-gray-200">
-        <nav className="flex flex-wrap gap-2 -mb-px">
+      <div className={`shrink-0 mt-2 border-b border-gray-200 ${PHONE_ROW_BLEED}`}>
+        <TabStrip className={`gap-2 ${PHONE_ROW_PAD}`}>
           {TABS.map(({ id: tid, label, Icon }) => (
             <button
               key={tid}
@@ -750,16 +756,17 @@ const TaskDetails = () => {
               {label}
             </button>
           ))}
-        </nav>
+        </TabStrip>
       </div>
 
-      {/* The open tab's area: as tall as the tab, the page scrolls past it. */}
-      <div className="min-h-[14rem] flex flex-col">
+      {/* The open tab's area: as tall as the tab, the page scrolls past it.
+          On a phone the tab's card runs edge to edge, like the cards above. */}
+      <div className={`min-h-[14rem] flex flex-col ${PHONE_BLEED}`}>
       {/* ── Live output tab: while an agent works. One working through the
           subtasks runs on each subtask's own session, so the panel follows
           the subtask being worked on, else the task's own session. ── */}
       {shownTab === 'live' && (
-        <div className="h-[34rem] flex flex-col bg-white shadow-sm border border-gray-200 rounded-xl p-6">
+        <div className="h-[34rem] phone:h-[70vh] flex flex-col bg-white shadow-sm border border-gray-200 rounded-xl p-6 phone:p-3">
           <LiveRunStream
             key={liveSession || 'none'}
             sessionId={liveSession}

@@ -7,7 +7,8 @@ import {
   getLoop, updateLoop, deleteLoop, estimateLoop, startLoop, getLoopRuns, getLoopRun,
   getLoopIterations, getLoopRunLog, stopLoopRun, resumeLoopRun, deleteLoopRun, getFlow, listFlows, getAgents,
 } from '../api';
-import { getLoopChat, clearLoopChat, stopLoopChat, loopChatUrl } from '../api';
+import { getLoopChat, clearLoopChat, stopLoopChat, loopChatUrl, getLoops } from '../api';
+import useWorkspaceSwitchGuard, { listHolds } from '../components/useWorkspaceSwitchGuard';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import InPanelNote from '../components/pageChat/InPanelNote';
 import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
@@ -62,6 +63,12 @@ export default function LoopDetail() {
   const navigate = useNavigate();
   const { loopId, runId: routeRunId } = useParams();
   const { selectedWorkspace } = useWorkspace();
+  // A switch to a workspace whose loop list does not hold this loop goes to
+  // that list; one that holds it reloads its flows and agents.
+  const { checking } = useWorkspaceSwitchGuard({
+    listPath: '/loops',
+    isPresent: (workspace) => getLoops(workspace).then(({ data }) => listHolds(data.loops, loopId, 'loop_id')),
+  });
 
   const [loop, setLoop] = useState(null);
   const [draft, setDraft] = useState(null);
@@ -407,7 +414,7 @@ export default function LoopDetail() {
   usePageChat(loopChat);
   const { inlineSuppressed: panelHoldsChat } = usePageChatPanel();
 
-  if (!loop || !draft) {
+  if (!loop || !draft || checking) {
     return <div className="h-full bg-white"><PageLoader /></div>;
   }
 

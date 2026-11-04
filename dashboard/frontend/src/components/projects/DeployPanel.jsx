@@ -435,33 +435,33 @@ export default function DeployPanel({ project }) {
         {dep.last_error && dep.status === 'failed' && <span className="text-xs text-red-600 break-all">{dep.last_error}</span>}
         {dep.status === 'unhealthy' && <span className="text-xs text-orange-700">{t('projectDeploy.notRespondingHint')}</span>}
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <button type="button" disabled={!!busy || active} onClick={() => act('detect', () => detectProjectDeployment(projectId), t('projectDeploy.detected'))}
+          <button type="button" title={t('projectDeploy.detect')} disabled={!!busy || active} onClick={() => act('detect', () => detectProjectDeployment(projectId), t('projectDeploy.detected'))}
             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-            <Search className="w-3.5 h-3.5" /> {t('projectDeploy.detect')}
+            <Search className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('projectDeploy.detect')}</span>
           </button>
-          <button type="button" onClick={() => setShowConfig((v) => !v)}
+          <button type="button" title={t('projectDeploy.configure')} onClick={() => setShowConfig((v) => !v)}
             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-700 hover:bg-gray-50">
-            {showConfig ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />} {t('projectDeploy.configure')}
+            {showConfig ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />} <span className="phone:hidden">{t('projectDeploy.configure')}</span>
           </button>
           {running ? (
             <>
-              <button type="button" disabled={!!busy || active} onClick={() => act('restart', () => restartProjectDeployment(projectId))}
+              <button type="button" title={t('projectDeploy.restart')} disabled={!!busy || active} onClick={() => act('restart', () => restartProjectDeployment(projectId))}
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-                <RotateCw className="w-3.5 h-3.5" /> {t('projectDeploy.restart')}
+                <RotateCw className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('projectDeploy.restart')}</span>
               </button>
-              <button type="button" disabled={!!busy || active} onClick={() => act('rebuild', () => deployProject(projectId, true))}
+              <button type="button" title={t('projectDeploy.rebuild')} disabled={!!busy || active} onClick={() => act('rebuild', () => deployProject(projectId, true))}
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-                <Hammer className="w-3.5 h-3.5" /> {t('projectDeploy.rebuild')}
+                <Hammer className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('projectDeploy.rebuild')}</span>
               </button>
-              <button type="button" disabled={!!busy} onClick={() => act('stop', () => stopProjectDeployment(projectId), t('projectDeploy.stoppedToast'))}
+              <button type="button" title={t('projectDeploy.stop')} disabled={!!busy} onClick={() => act('stop', () => stopProjectDeployment(projectId), t('projectDeploy.stoppedToast'))}
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 disabled:opacity-50">
-                {busy === 'stop' ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />} {t('projectDeploy.stop')}
+                {busy === 'stop' ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />} <span className="phone:hidden">{t('projectDeploy.stop')}</span>
               </button>
             </>
           ) : (
-            <button type="button" disabled={!!busy || active || !(dep.services || []).length} onClick={() => act('deploy', () => deployProject(projectId, true))}
+            <button type="button" title={t('projectDeploy.deploy')} disabled={!!busy || active || !(dep.services || []).length} onClick={() => act('deploy', () => deployProject(projectId, true))}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50">
-              {busy === 'deploy' || active ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Rocket className="w-3.5 h-3.5" />} {t('projectDeploy.deploy')}
+              {busy === 'deploy' || active ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Rocket className="w-3.5 h-3.5" />} <span className="phone:hidden">{t('projectDeploy.deploy')}</span>
             </button>
           )}
         </div>
@@ -559,8 +559,8 @@ export default function DeployPanel({ project }) {
           <a href={externalHref} target="_blank" rel="noopener noreferrer" className={`text-gray-400 hover:text-indigo-600 p-1 ${running ? '' : 'pointer-events-none opacity-40'}`} title={t('projectDeploy.openExternal')}>
             <ExternalLink className="w-4 h-4" />
           </a>
-          <Link to={browserHref} className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-50 ${running ? '' : 'pointer-events-none opacity-40'}`}>
-            <Globe className="w-3.5 h-3.5" /> {t('projectDeploy.openInAgentBrowser')}
+          <Link to={browserHref} title={t('projectDeploy.openInAgentBrowser')} className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-50 ${running ? '' : 'pointer-events-none opacity-40'}`}>
+            <Globe className="w-3.5 h-3.5" /> <span className="phone:hidden">{t('projectDeploy.openInAgentBrowser')}</span>
           </Link>
         </div>
         {!links.external_absolute && <p className="text-[11px] text-gray-400">{t('projectDeploy.relativeLinkHint')}</p>}

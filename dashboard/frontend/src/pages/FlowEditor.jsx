@@ -13,6 +13,8 @@ import { GraphStateBlock } from '../components/flowEditor/RuntimeState';
 import { useFlowDocument } from '../components/flowEditor/useFlowDocument';
 import { upstreamOutputKeys } from '../components/flowEditor/graphHelpers';
 import PageLoader from '../components/PageLoader';
+import useWorkspaceSwitchGuard, { listHolds } from '../components/useWorkspaceSwitchGuard';
+import { listFlows } from '../api';
 
 // The flow editor (/flows/:flowId/edit): the graph and nothing that runs it.
 // Left, the registry palette (one abstract agent node plus processors,
@@ -26,6 +28,12 @@ function FlowEditor() {
   const navigate = useNavigate();
   const { flowId } = useParams();
   const { selectedWorkspace } = useWorkspace();
+  // A switch to a workspace whose flow list does not hold this flow goes to
+  // that list.
+  const { checking } = useWorkspaceSwitchGuard({
+    listPath: '/flows',
+    isPresent: (_workspace, filter) => listFlows(filter).then(({ data }) => listHolds(data, flowId)),
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [flow, setFlow] = useState(null);
@@ -55,7 +63,7 @@ function FlowEditor() {
     navigate(`/flows/${flowId}`);
   };
 
-  if (loading || !flow) {
+  if (loading || checking || !flow) {
     return (
       <div className="h-full bg-white"><PageLoader /></div>
     );

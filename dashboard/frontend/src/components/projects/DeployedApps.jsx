@@ -1,13 +1,17 @@
 /**
  * The apps the hub runs for projects (docs/project-deployments.md), on the
  * Projects page: each opens on its project, a running one also at its share
- * address. Hidden while there are none.
+ * address. Hidden while none of them is alive: an app that is stopped,
+ * failed or paused alone does not make the list.
  */
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listDeployedApps } from '../../api';
 import { useWorkspace } from '../workspace';
 import { DeployStatusPill } from './DeployPanel';
+
+// Statuses of an app whose process is up or coming up.
+const ALIVE = new Set(['running', 'starting', 'building', 'unhealthy']);
 
 export default function DeployedApps({ t }) {
   const { workspaceFilter } = useWorkspace();
@@ -22,7 +26,7 @@ export default function DeployedApps({ t }) {
     const timer = setInterval(load, 10000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [workspace]);
-  if (!apps.length) return null;
+  if (!apps.some((app) => ALIVE.has(app.status))) return null;
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" data-testid="deployed-apps">
       <div className="px-4 py-2 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider">

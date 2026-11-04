@@ -24,6 +24,8 @@ import ProcessTab from '../components/instances/ProcessTab';
 import AccessTab from '../components/instances/AccessTab';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import { TabStrip } from '../components/PageTabs';
+import { PHONE_ROW_BLEED, PHONE_ROW_PAD } from '../lib/phone';
 
 /*
  * One live agent copy.
@@ -556,25 +558,28 @@ export default function InstanceDetail() {
         <Stat label={t('instanceDetail.stats.lastActivity')} value={relativeTime(instance.last_activity_at, t)} />
       </div>
 
-      <div className="flex items-center gap-1 border-b border-gray-200">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-3 py-2 text-sm inline-flex items-center gap-1.5 border-b-2 -mb-px ${
-              activeTab === tab.id
-                ? 'border-indigo-600 text-indigo-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            <tab.icon className="w-3.5 h-3.5" />{t(`instanceDetail.tabs.${tab.key}`)}
-          </button>
-        ))}
+      <div className={`flex items-center gap-1 border-b border-gray-200 ${PHONE_ROW_BLEED} max-sm:pr-4 sm:phone:pr-6`}>
+        <TabStrip className={`gap-1 min-w-0 ${PHONE_ROW_PAD}`} wrap={false}>
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              aria-current={activeTab === tab.id ? 'page' : undefined}
+              className={`px-3 py-2 text-sm inline-flex items-center gap-1.5 border-b-2 ${
+                activeTab === tab.id
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <tab.icon className="w-3.5 h-3.5" />{t(`instanceDetail.tabs.${tab.key}`)}
+            </button>
+          ))}
+        </TabStrip>
         {/* The conversation's view, in the tab row: a row of its own left a
             gap between the tabs and the conversation. */}
         {activeTab === 'timeline' && (journal.length > 0 || liveMessages.length > 0) && (
-          <div className="ml-auto pb-1">
+          <div className="ml-auto shrink-0 pb-1">
             <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
           </div>
         )}

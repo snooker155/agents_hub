@@ -41,6 +41,8 @@ import {
   FolderOpen, FolderSync, Images, Info, LayoutGrid, List, ListTree, Loader, RefreshCw, Search, Trash2, Upload, X,
 } from 'lucide-react';
 import { PageContainer, PageHeader } from '../components/PageLayout';
+import CompactSelect from '../components/CompactSelect';
+import { PHONE_BLEED } from '../lib/phone';
 import FileViewer from '../components/files/FileViewer';
 import { frameType, isImageFile, needsBytes, objectUrl } from '../lib/fileKind';
 import { codeLanguageFor } from '../lib/codeLanguage';
@@ -1199,18 +1201,16 @@ export default function Artifacts() {
       <input ref={inputRef} type="file" multiple className="hidden" data-testid="files-upload-input"
         onChange={(e) => { uploadAll(e.target.files); e.target.value = ''; }} />
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[12rem]">
+      <div className="flex flex-wrap items-center gap-3 phone:gap-2">
+        <div className="relative flex-1 min-w-[12rem] phone:min-w-[7rem]">
           <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('files.searchPlaceholder')}
             aria-label={t('files.searchPlaceholder')}
             className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-gray-300 rounded-lg focus:outline-none" />
         </div>
-        <select value={source} onChange={(e) => setSource(e.target.value)} aria-label={t('files.columns.source')}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white">
-          <option value="">{t('files.allSources')}</option>
-          {[...SOURCES, 'view'].map((s) => <option key={s} value={s}>{t(`files.sources.${s}`)}</option>)}
-        </select>
+        <CompactSelect value={source} onChange={setSource} label={t('files.columns.source')}
+          options={[{ value: '', label: t('files.allSources') },
+            ...[...SOURCES, 'view'].map((s) => ({ value: s, label: t(`files.sources.${s}`) }))]} />
         {(limits.max_file_bytes || usageLine) && (
           <span className="text-xs text-gray-400 hidden md:inline">
             {limits.max_file_bytes ? t('files.maxFile', { size: formatBytes(limits.max_file_bytes) }) : ''}
@@ -1231,7 +1231,7 @@ export default function Artifacts() {
       {/* The list, and the open panel beside it (over it on a narrow
           screen). The wrapper, not the scrolling list, holds the panel, so the
           panel stays put while the list scrolls. */}
-      <div className="relative flex-1 lg:min-h-0 flex flex-col lg:flex-row lg:gap-4">
+      <div className={`relative flex-1 lg:min-h-0 flex flex-col lg:flex-row lg:gap-4 ${PHONE_BLEED}`}>
         <div
           className={`relative flex-1 min-w-0 bg-white rounded-xl border overflow-hidden lg:min-h-0 lg:overflow-y-auto ${
             dragging ? (canDrop ? 'border-indigo-400' : 'border-red-300') : 'border-gray-200'}`}

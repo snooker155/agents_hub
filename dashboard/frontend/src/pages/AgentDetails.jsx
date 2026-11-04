@@ -7,6 +7,7 @@ import { Activity, Radio, History, Wrench, Terminal, ExternalLink, CheckCircle, 
 import { checkCombination, CAPABILITY_LABELS } from '../lib/capabilities';
 import { toolCategoryLabel, toolLabel } from '../lib/toolText';
 import ImportedAgentPanel from '../components/ImportedAgentPanel';
+import useWorkspaceSwitchGuard, { listHolds } from '../components/useWorkspaceSwitchGuard';
 import { getAgent, getAgents, getAgentDelegates, updateAgentDelegates, getAgentCapabilityOverride, updateAgentCapabilityOverride, getAgentAutoTools, getAgentEpisodicConfig, getSessions, getMessages, updateAgentMemory, eraseAgentMemory, updateAgentTools, updateAgentDescription, getAgentReasoning, getCustomBackends, getServices, getAgentDefinition, updateAgentDefinition, restoreShippedDefinition, getTasks, getTools, getWorkspaces, getSharedMemories, getSharedMemory, getAgentWorkspaceCapacities, setWorkspaceAgentCapacity, removeWorkspaceAgentCapacity, setDefaultChatAgent, clearDefaultChatAgent, updateAgentSharing, getAgentPersonalMemory } from '../api';
 import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { ChatToggle } from '../components/ChatColumn';
@@ -64,6 +65,12 @@ const AgentDetails = () => {
   const toast = useToast();
   const { id } = useParams();
   const { selectedWorkspace, workspaceFilter, liveUpdates } = useWorkspace();
+  // A switch to a workspace whose agent list does not hold this agent goes to
+  // that list; one that holds it reloads what the page shows for it there.
+  const { checking } = useWorkspaceSwitchGuard({
+    listPath: '/agents',
+    isPresent: (_workspace, filter) => getAgents(filter).then(({ data }) => listHolds(data, id)),
+  });
   const auth = useAuth();
   // The definition chat lives in the floating page chat panel: the header
   // button and the corner launcher open the same panel, the same conversation.
@@ -733,7 +740,7 @@ const AgentDetails = () => {
   };
 
 
-  if (loading) return <PageLoader size="lg" label={t('agentDetails.loadingAgentDetails')} />;
+  if (loading || checking) return <PageLoader size="lg" label={t('agentDetails.loadingAgentDetails')} />;
   if (!agent) return <div className="text-center py-10">{t('agentDetails.agentNotFound')}</div>;
 
   // A system agent is changed by an administrator only; members keep to its
@@ -978,6 +985,7 @@ const AgentDetails = () => {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
+                aria-current={isActive ? 'page' : undefined}
                 className={`inline-flex items-center px-4 py-2 first:pl-0 text-sm font-semibold border-b-2 transition-colors ${
                   isActive
                     ? 'border-indigo-600 text-indigo-700'

@@ -5,7 +5,8 @@ import {
   MessageSquare, Pencil, Pin, Play, Plus, Square, Workflow,
   DollarSign,
 } from 'lucide-react';
-import { deleteFlowChat, getAgents, getFlow, getTasks, updateFlow } from '../api';
+import { deleteFlowChat, getAgents, getFlow, getTasks, listFlows, updateFlow } from '../api';
+import useWorkspaceSwitchGuard, { listHolds } from '../components/useWorkspaceSwitchGuard';
 import { useWorkspace } from '../components/workspace';
 import CreateTaskModal from '../components/CreateTaskModal';
 import FlowCanvas from '../components/flow/FlowCanvas';
@@ -31,6 +32,7 @@ import { isUnchosenAgent, normalizeNode } from '../components/flowEditor/graphHe
 import PageLoader from '../components/PageLoader';
 import { ColumnTab, PaneTab } from '../components/PageTabs';
 import FlowTaskList from '../components/flowEditor/FlowTaskList';
+import { PHONE_QUERY } from '../lib/phone';
 
 const STATUS_STYLES = {
   running: 'bg-cyan-50 text-cyan-700',
@@ -59,6 +61,12 @@ function FlowRun() {
   // flow (App.jsx); the bare `/flows/<id>` is a new chat.
   const { flowId, runGroup: routeGroup } = useParams();
   const { selectedWorkspace, liveUpdates } = useWorkspace();
+  // A switch to a workspace whose flow list does not hold this flow goes to
+  // that list; one that holds it reloads the flow, its agents and its runs.
+  const { checking } = useWorkspaceSwitchGuard({
+    listPath: '/flows',
+    isPresent: (_workspace, filter) => listFlows(filter).then(({ data }) => listHolds(data, flowId)),
+  });
   // The flow is loaded for this flow and workspace; another one shows the
   // loader again, derived rather than set inside the effect.
   const loadKey = `${flowId}|${selectedWorkspace || ''}`;
@@ -95,7 +103,10 @@ function FlowRun() {
   const [selectedRunGroup, setSelectedRunGroup] = useState(runFromUrl);
   const [rightTab, setRightTab] = useState(runFromUrl ? 'logs' : 'node'); // node | logs
   const [leftTab, setLeftTab] = useState(runFromUrl || !SHOW_TASK_PICKER ? 'history' : 'tasks'); // tasks | history
-  const [centerTab, setCenterTab] = useState('canvas'); // canvas | chat | artifacts
+  // canvas | chat | artifacts. A phone, held either way, opens on the chat:
+  // the canvas and the chat under it do not both fit its screen.
+  const [centerTab, setCenterTab] = useState(() => (
+    typeof window !== 'undefined' && window.matchMedia?.(PHONE_QUERY).matches ? 'chat' : 'canvas'));
   // The files and views the live chat's nodes produced (FlowChat onArtifacts).
   const [chatArtifacts, setChatArtifacts] = useState({ artifacts: {}, views: [] });
   // What the Artifacts tab has open (`file:<path>` / `view:<id>`), null for its
@@ -284,7 +295,7 @@ function FlowRun() {
     if (!sent) toast.error(t('flowEditor.nodePanel.chatBusy'));
   };
 
-  if (loading || !flow) {
+  if (loading || checking || !flow) {
     return (
       <div className="h-full bg-white"><PageLoader /></div>
     );
@@ -367,21 +378,24 @@ function FlowRun() {
             <button
               onClick={runApi.handleStopFlow}
               disabled={stopping}
+              title={t('flowEditor.stop')}
               className="flex items-center rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-semibold text-rose-600 shadow-sm transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {stopping
-                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                : <Square className="mr-2 h-4 w-4" />}
-              {stopping ? t('flowEditor.stopping') : t('flowEditor.stop')}
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin phone:mr-0" />
+                : <Square className="mr-2 h-4 w-4 phone:mr-0" />}
+              <span className="phone:hidden">{stopping ? t('flowEditor.stopping') : t('flowEditor.stop')}</span>
             </button>
           )}
           <Link
             to={editPath}
             className="flex items-center rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-100"
             data-testid="flow-edit-link"
+            title={t('flowEditor.editFlow')}
+            aria-label={t('flowEditor.editFlow')}
           >
-            <Pencil className="mr-2 h-4 w-4 text-cyan-500" />
-            {t('flowEditor.editFlow')}
+            <Pencil className="mr-2 h-4 w-4 text-cyan-500 phone:mr-0" />
+            <span className="phone:hidden">{t('flowEditor.editFlow')}</span>
           </Link>
         </>}
       />
@@ -433,11 +447,11 @@ function FlowRun() {
             </div>
           ) : (
             // Only the history, with New chat over it.
-            <div className="shrink-0 border-b border-slate-200 p-3">
+            <div className="shrink-0 p-3">
               <button
                 type="button"
                 onClick={startNewChat}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
                 data-testid="flow-new-chat"
               >
                 <MessageSquare className="h-4 w-4" />
@@ -451,7 +465,7 @@ function FlowRun() {
                 <button
                   type="button"
                   onClick={startNewChat}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-700 shadow-sm transition hover:bg-emerald-100"
                 >
                   <MessageSquare className="h-4 w-4" />
                   {t('flowEditor.newChat')}
@@ -609,7 +623,8 @@ function FlowRun() {
             className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${
               centerTab === 'chat' ? 'flex-1'
                 : centerTab === 'artifacts' ? 'hidden'
-                  : 'flex-1 basis-1/2 border-t border-slate-200'
+                  // A phone shows the canvas alone; its chat is a tab away.
+                  : 'flex-1 basis-1/2 border-t border-slate-200 phone:hidden'
             }`}
           >
             {runApi.selectedRun && runApi.selectedRun.kind !== 'chat' ? (
@@ -659,7 +674,9 @@ function FlowRun() {
         </div>
 
         {/* Right column — nodes and their state, execution log */}
-        <div className="flex w-[220px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white xl:w-[260px] 2xl:w-[300px] min-[1800px]:w-[340px]">
+        {/* Below md, and on a phone on its side, it leaves the screen to the
+            canvas and the chat. */}
+        <div className="flex max-md:hidden phone:hidden w-[220px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white xl:w-[260px] 2xl:w-[300px] min-[1800px]:w-[340px]">
           <div className="grid shrink-0 grid-cols-2 border-b border-gray-200">
             <ColumnTab
               active={rightTab === 'node'}

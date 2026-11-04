@@ -2,11 +2,13 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLiveRefetch } from './stream';
+import { usePhone } from '../lib/phone';
+import CompactSelect from './CompactSelect';
 import {
   Plus, CheckCircle, Clock, AlertCircle, StopCircle, Loader,
   ExternalLink, Trash2, List, Columns, UserPlus, ChevronRight,
   GitBranch, User, X, ThumbsUp, ThumbsDown, Github, Gitlab, Workflow, Folder, HelpCircle, ShieldQuestion,
-  Users, RotateCw, Search
+  Users, RotateCw, Search, ListTree
 } from 'lucide-react';
 import { getTasks, deleteTask, approveAssignment, rejectAssignment, updateTask, getProjects } from '../api';
 import CreateTaskModal from './CreateTaskModal';
@@ -480,6 +482,9 @@ export default function TaskBoard({
   // NO_PROJECT tasks without one, else a project id) only on a board that is
   // not already one project's.
   const [query, setQuery] = useState('');
+  // The search's focus: on a phone it widens to the whole toolbar line.
+  const [searchFocused, setSearchFocused] = useState(false);
+  const phone = usePhone();
   const [projectFilter, setProjectFilter] = useState('');
 
   // Persist showSubtasks per workspace in localStorage
@@ -640,76 +645,95 @@ export default function TaskBoard({
 
   // Toolbar: subtasks toggle (kanban only) + view switch + New Task button.
   // It wraps when a tab row has put it on a line of its own that is still
-  // too narrow for it.
+  // too narrow for it. On a phone it is one line: the buttons keep their icons
+  // alone (the name is their tooltip) and the search takes the room left;
+  // while it has the focus it takes the whole line and the buttons step
+  // aside until it lets go.
+  const searchExpanded = phone && searchFocused;
   const controls = (
-    <div className="flex flex-wrap items-center justify-end gap-3">
-      <div className="relative">
+    <div className={`flex flex-wrap items-center justify-end gap-2 sm:gap-3 ${phone ? 'w-full' : ''} ${
+      searchExpanded ? '[&>*:not([data-task-search])]:hidden' : ''}`}>
+      <div className={`relative ${phone ? 'flex-1 basis-32' : ''}`} data-task-search>
         <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => setSearchFocused(false)}
+          onKeyDown={(e) => { if (e.key === 'Escape') e.currentTarget.blur(); }}
           placeholder={t('taskBoard.searchPlaceholder')}
           aria-label={t('taskBoard.searchPlaceholder')}
-          className="w-56 border border-gray-300 rounded-md pl-8 pr-2 py-1.5 text-sm"
+          className={`${phone ? 'w-full' : 'w-56'} border border-gray-300 rounded-md pl-8 pr-2 py-1.5 text-sm`}
         />
       </div>
       {extraControls}
       {!projectId && (
-        <select
+        <CompactSelect
           value={projectFilter}
-          onChange={(e) => setProjectFilter(e.target.value)}
-          aria-label={t('taskBoard.projectFilter')}
-          className="border border-gray-300 rounded-md px-2 py-1.5 text-sm max-w-[12rem]"
-        >
-          <option value="">{t('taskBoard.allProjects')}</option>
-          <option value={NO_PROJECT}>{t('taskBoard.withoutProject')}</option>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+          onChange={setProjectFilter}
+          label={t('taskBoard.projectFilter')}
+          className="max-w-[12rem] phone:max-w-[8rem]"
+          options={[
+            { value: '', label: t('taskBoard.allProjects') },
+            { value: NO_PROJECT, label: t('taskBoard.withoutProject') },
+            ...projects.map((p) => ({ value: p.id, label: p.name })),
+          ]}
+        />
       )}
+      {/* Subtasks on the board: a toggle button, pressed while they show; on
+          a phone its icon alone. */}
       {viewMode === 'kanban' && (
-        <label className="flex items-center gap-2 text-sm text-gray-600 whitespace-nowrap cursor-pointer select-none">
-          <input
-            type="checkbox"
-            className="h-4 w-4 text-indigo-600 border-gray-300 rounded"
-            checked={showSubtasks}
-            onChange={e => {
-              const val = e.target.checked;
-              setShowSubtasks(val);
-              try { localStorage.setItem(_subtasksKey, String(val)); } catch { /* storage unavailable */ }
-            }}
-          />
-          {t('taskBoard.showSubtasks')}
-        </label>
+        <button
+          type="button"
+          aria-pressed={showSubtasks}
+          title={t('taskBoard.showSubtasks')}
+          onClick={() => {
+            const val = !showSubtasks;
+            setShowSubtasks(val);
+            try { localStorage.setItem(_subtasksKey, String(val)); } catch { /* storage unavailable */ }
+          }}
+          className={`flex items-center gap-1.5 px-3 phone:px-2 py-1.5 rounded-md text-sm font-medium whitespace-nowrap border transition-colors ${
+            showSubtasks
+              ? 'text-indigo-700 bg-indigo-50 border-indigo-200'
+              : 'text-gray-600 bg-white border-gray-300 hover:bg-gray-50'
+          }`}
+        >
+          <ListTree className="w-4 h-4" />
+          <span className="phone:hidden">{t('taskBoard.showSubtasks')}</span>
+        </button>
       )}
       {/* View toggle */}
       <div className="flex items-center bg-gray-100 rounded-lg p-1">
         <button
           onClick={() => setViewMode('list')}
+          title={t('taskBoard.list')}
           className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium transition-colors ${
             viewMode === 'list' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
           <List className="w-4 h-4" />
-          {t('taskBoard.list')}
+          <span className="hidden sm:inline">{t('taskBoard.list')}</span>
         </button>
         <button
           onClick={() => setViewMode('kanban')}
+          title={t('taskBoard.kanban')}
           className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium transition-colors ${
             viewMode === 'kanban' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
           <Columns className="w-4 h-4" />
-          {t('taskBoard.kanban')}
+          <span className="hidden sm:inline">{t('taskBoard.kanban')}</span>
         </button>
       </div>
 
       <button
         onClick={() => { setCreateDefaultStatus('todo'); setShowCreateModal(true); }}
-        className="bg-indigo-600 text-white px-4 py-2 rounded-md flex items-center gap-2 text-sm hover:bg-indigo-700 transition-colors"
+        title={t('taskBoard.newTask')}
+        className="bg-indigo-600 text-white px-2.5 sm:px-4 py-2 rounded-md flex items-center gap-2 text-sm hover:bg-indigo-700 transition-colors"
       >
         <Plus className="w-4 h-4" />
-        {t('taskBoard.newTask')}
+        <span className="hidden sm:inline">{t('taskBoard.newTask')}</span>
       </button>
     </div>
   );

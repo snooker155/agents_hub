@@ -6,8 +6,9 @@ import {
 import {
   getTeam, updateTeam, startTeamRun, getTeamRuns, getTeamRun, getTeamTurns,
   getTeamMessages, stopTeamRun, resumeTeamRun, deleteTeamRun, getTeamBriefing, getAgents,
-  estimateTeam, getTeamChat, clearTeamChat, stopTeamChat, teamChatUrl,
+  estimateTeam, getTeamChat, clearTeamChat, stopTeamChat, teamChatUrl, getTeams,
 } from '../api';
+import useWorkspaceSwitchGuard, { listHolds } from '../components/useWorkspaceSwitchGuard';
 import SaveAsEvalCaseDialog from '../components/evals/SaveAsEvalCaseDialog';
 import { usePageChat, usePageChatPanel } from '../components/pageChat/pageChat';
 import { useWorkspace } from '../components/workspace';
@@ -57,6 +58,12 @@ export default function TeamDetails() {
   const toast = useToast();
   const { teamId } = useParams();
   const { selectedWorkspace } = useWorkspace();
+  // A switch to a workspace whose team list does not hold this team goes to
+  // that list; one that holds it reloads its agents.
+  const { checking } = useWorkspaceSwitchGuard({
+    listPath: '/teams',
+    isPresent: (workspace) => getTeams(workspace).then(({ data }) => listHolds(data.teams, teamId, 'team_id')),
+  });
   const [params, setParams] = useSearchParams();
   const settingsOpen = params.get('tab') === 'settings';
   const [viewMode, setViewMode] = useChatViewMode();
@@ -395,7 +402,7 @@ export default function TeamDetails() {
   usePageChat(teamChat);
   const { open: chatOpen, toggle: toggleChat } = usePageChatPanel();
 
-  if (!team || !draft) {
+  if (!team || !draft || checking) {
     return <div className="h-full bg-white"><PageLoader label={t('teamDetails.loadingTheTeam')} /></div>;
   }
 

@@ -25,6 +25,8 @@ import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
 import { fmtRunUsd } from '../components/dashboard/format';
 import { conversationLink } from '../lib/conversationLink';
+import { TabStrip } from '../components/PageTabs';
+import { PHONE_ROW_BLEED, PHONE_ROW_PAD } from '../lib/phone';
 // One label and one value style for every field of the metadata card, so an
 // id, a date and a name read at the same size.
 const META_LABEL = 'text-gray-500';
@@ -739,8 +741,8 @@ export default function MessageDetails() {
 
       {/* Tabs + content */}
       <div className="flex-1 min-h-0 flex flex-col">
-      <div className="border-b border-gray-200 shrink-0">
-        <nav className="flex flex-wrap gap-2 -mb-px">
+      <div className={`border-b border-gray-200 shrink-0 ${PHONE_ROW_BLEED}`}>
+        <TabStrip className={`gap-2 ${PHONE_ROW_PAD}`}>
           {[
             { id: 'insights', icon: MessageSquare, label: t('messageDetails.tabs.insights') },
             // Only a run whose calls went through the tool policy has this tab.
@@ -770,7 +772,7 @@ export default function MessageDetails() {
               {tab.label}
             </button>
           ))}
-        </nav>
+        </TabStrip>
       </div>
 
       {activeTab === 'insights' && (

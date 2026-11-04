@@ -17,6 +17,8 @@ import { useWorkspace } from '../components/workspace';
 import { ReplicasCell, StatusPill, WorkspaceCell } from './Services';
 import { useI18n } from '../i18n';
 import PageLoader from '../components/PageLoader';
+import { TabStrip } from '../components/PageTabs';
+import { PHONE_ROW_BLEED, PHONE_ROW_PAD } from '../lib/phone';
 
 /*
  * One service: its desired state, the replicas realising it, its public
@@ -337,14 +339,17 @@ export default function ServiceDetail() {
         <Stat label={t('services.deploy.idleStop')} value={service.idle_stop_seconds ? `${Math.round(service.idle_stop_seconds / 60)} min` : t('services.detail.never')} />
       </div>
 
-      <div className="flex items-center gap-1 border-b border-gray-200">
-        {TABS.map(({ id, icon: Icon }) => (
-          <button key={id} type="button" onClick={() => setActiveTab(id)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 -mb-px ${
-                    activeTab === id ? 'border-indigo-600 text-indigo-700 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            <Icon className="w-3.5 h-3.5" />{t(`services.tabs.${id}`)}
-          </button>
-        ))}
+      <div className={`border-b border-gray-200 ${PHONE_ROW_BLEED}`}>
+        <TabStrip className={`gap-1 ${PHONE_ROW_PAD}`}>
+          {TABS.map(({ id, icon: Icon }) => (
+            <button key={id} type="button" onClick={() => setActiveTab(id)}
+                    aria-current={activeTab === id ? 'page' : undefined}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 ${
+                      activeTab === id ? 'border-indigo-600 text-indigo-700 font-medium' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+              <Icon className="w-3.5 h-3.5" />{t(`services.tabs.${id}`)}
+            </button>
+          ))}
+        </TabStrip>
       </div>
 
       {activeTab === 'replicas' && (
