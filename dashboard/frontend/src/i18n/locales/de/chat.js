@@ -103,7 +103,6 @@ export default {
   // Example requests under the agent in an empty chat (AgentExamples.jsx);
   // the fallback ones are for an agent with no examples of its own.
   examples: {
-    title: 'Zum Beispiel',
     hint: 'Beispiel in das Eingabefeld übernehmen',
     fallback1: 'Was kannst du?',
     fallback2: 'Womit fange ich am besten an?',
@@ -133,8 +132,6 @@ export default {
   cleanChatMessagesOnly: 'Reiner Chat — nur Nachrichten',
   buildFullTranscriptToolsThinking: 'Build — vollständiges Transkript (Werkzeuge, Denken, Plan) + Datei-Diffs',
   telegram: 'Telegram',
-  telegram2: 'telegram',
-  telegramChats: 'Telegram-Chats',
   telegramChat: 'Chat {{id}}',
   boundTo: 'gebunden an',
   debugMirror: 'Debug-Spiegel',
@@ -370,7 +367,6 @@ export default {
     mountFilesRule: 'Ein Snippet bekommt entweder den Arbeitsbereich oder das Netz, nie beides; e2b und Modal können keinen Arbeitsbereich einbinden.',
     runHint: 'Führt das Snippet in der run_code-Sandbox aus: ohne Netz und ohne Dateien, sofern der Arbeitsbereich nicht eingebunden ist. Nur Python, Node/JavaScript und Bash.',
     mountWorkspaceHint: 'Gibt dem Snippet den Arbeitsbereich der Unterhaltung schreibgeschützt unter /work, für Skripte, die dessen Dateien lesen. Ein Snippet bekommt entweder den Arbeitsbereich oder das Netz, nie beides.',
-    fromReplies: 'Aus Antworten',
     sectionCount: 'Code: {{count}}',
     fromRepliesHint: 'Codeblöcke der Antworten in diesem Gespräch. Sie lassen sich so, wie sie sind, bearbeiten, versionieren, ausführen und in ein Projekt speichern; „Als View speichern“ macht aus einem Block eine View des Gesprächs.',
     replyUnsaved: 'aus einer Antwort',
@@ -428,7 +424,15 @@ export default {
     none: 'Nichts gefunden',
     searching: 'Suche in den Nachrichten…',
     clear: 'Suche leeren',
+    close: 'Suche schließen',
+    recent: 'Letzte Chats',
+    empty: 'Noch keine Chats',
   },
+  // Back from an item opened over the whole narrow Artifacts panel.
+  artifactsBack: 'Zur Liste',
+  fontSmaller: 'Kleinere Schrift',
+  fontLarger: 'Größere Schrift',
+  artifactDeleted: 'Gelöscht',
   artifactsFull: 'Volle Breite statt des Chats',
   artifactsBeside: 'Neben dem Chat',
   panels: {

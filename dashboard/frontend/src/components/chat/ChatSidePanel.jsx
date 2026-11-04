@@ -8,6 +8,10 @@ import { useChatPage } from './context';
 // whole screen instead, and its X closes it as anywhere else.
 const PHONE_SHEET = 'max-sm:fixed max-sm:inset-0 max-sm:z-40 max-sm:min-w-0 max-sm:w-auto max-sm:pt-safe max-sm:pb-safe';
 
+// Below this window width the Artifacts column shows its list alone and an
+// item over the whole column, since beside the chat it is too narrow for both.
+const ARTIFACTS_SIDE_BY_SIDE_FROM = 2300;
+
 /**
  * The columns beside the transcript, toggled from the top bar: what the turns
  * produced (Artifacts: their views, code and files, in one list), and in the
@@ -43,12 +47,16 @@ function Column({ width, title, icon: Icon, actions = null, onClose, t, children
 export default function ChatSidePanel() {
   const {
     activeRunId, agentTopology, artifactPick = null, artifactViews, artifacts, artifactsFull = false, artifactsOpen, currentConv, graphRun,
+    artifactsMode: pageMode, setArtifactsMode: setPageMode,
     loadProcessData, processError, processInsights, processLoading, processOpen, selectedWorkspace,
     setArtifactsFull = () => {}, setArtifactsOpen, setProcessOpen, t, viewMode,
   } = useChatPage();
   const code = useChatCode();
   const workspace = currentConv?.workspace || selectedWorkspace || null;
-  const [artifactsMode, setArtifactsMode] = useArtifactsMode();
+  // The page holds the mode, since its Artifacts button counts by it; a page
+  // that does not, this panel keeps its own.
+  const ownMode = useArtifactsMode();
+  const [artifactsMode, setArtifactsMode] = pageMode ? [pageMode, setPageMode] : ownMode;
   // The whole width, in the chat's place (Chat.jsx hides the conversation):
   // nothing else beside it, the Process column included.
   const full = artifactsOpen && artifactsFull;
@@ -142,7 +150,8 @@ export default function ChatSidePanel() {
           // Closing keeps the way it was shown: it opens that way next time.
           onClose={() => setArtifactsOpen(false)}
         >
-          <ArtifactsPanel artifacts={artifacts} views={artifactViews || []} workspace={workspace} mode={artifactsMode} code={code} pick={artifactPick} />
+          <ArtifactsPanel artifacts={artifacts} views={artifactViews || []} workspace={workspace} mode={artifactsMode} code={code} pick={artifactPick}
+            sideBySideFrom={ARTIFACTS_SIDE_BY_SIDE_FROM} />
         </Column>
       )}
       {showProcess && (

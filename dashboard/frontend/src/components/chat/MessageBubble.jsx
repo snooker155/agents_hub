@@ -78,7 +78,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
     return (
       <div className={`${size.row} flex-row-reverse`}>
         {!compact && (
-          <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white bg-indigo-600">
+          <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white bg-indigo-600 ${size.avatar}`}>
             <User className="w-4 h-4" />
           </div>
         )}
@@ -86,19 +86,20 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
           data-prompt-bubble
           data-quote-source={t('chat.quote.yourMessage')}
           onCopy={copyBubbleText}
-          className={`chat-prompt-bubble ${size.bubble} leading-relaxed bg-indigo-600 text-white rounded-tr-sm`}
+          className={`chat-prompt-bubble ${size.bubble} ${size.prompt} leading-relaxed bg-indigo-600 text-white rounded-tr-sm`}
         >
           {/* Passages quoted with Discuss, above what was asked about them. */}
-          <MessageQuotes quotes={msg.quotes} hasText={Boolean(msg.content)} />
-          <span className="whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
+          {/* Held at the top, the bubble shows its text alone, a few lines of it (index.css). */}
+          <div className="chat-prompt-extra"><MessageQuotes quotes={msg.quotes} hasText={Boolean(msg.content)} /></div>
+          <span className="chat-prompt-text whitespace-pre-wrap">{trimBubbleText(msg.content)}</span>
           {/* Said aloud to the Assistant: the line is its transcript. */}
           {msg.voice && (
-            <span className="mt-1 flex items-center gap-1 text-[11px] text-indigo-100" data-testid="spoken-caption">
+            <span className="chat-prompt-extra mt-1 flex items-center gap-1 text-[11px] text-indigo-100" data-testid="spoken-caption">
               <Mic className="w-3 h-3" /> {t('chat.assistantThread.spoken')}
             </span>
           )}
           {caption && (
-            <span className="mt-1 block text-[11px] text-indigo-100" data-testid="steer-caption">
+            <span className="chat-prompt-extra mt-1 block text-[11px] text-indigo-100" data-testid="steer-caption">
               {msg.steer.mode === 'system' && <span className="font-semibold mr-1">{t('steering.systemTag')}</span>}
               {t(caption.key, caption.values)}
             </span>
@@ -144,6 +145,8 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
   const turnState = isStreaming
     ? stateForTurn({
       waiting: !!waitingOn,
+      // A delegated run still going: the delegate scene, not plain working.
+      delegating: !!liveDelegation?.running,
       thinking: !!liveThought,
       tool: runningTool,
       input: activity?.kind === 'tool' ? activity.input : undefined,
@@ -166,7 +169,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
       {/* Avatar: a fixed width, so every agent's bubble starts at the same
           indent whatever the length of its name; a long name wraps under it,
           three lines at most, in full on hover. A compact chat has one agent and no room for the gutter. */}
-      {!compact && <div className="flex flex-col items-center gap-1 flex-shrink-0 w-14">
+      {!compact && <div className={`flex flex-col items-center gap-1 flex-shrink-0 w-14 ${size.avatar}`}>
         {markState ? (
           <LiveMark state={markState} initial={CHAT_WORKING_STATE} size={32} className="w-8 h-8" />
         ) : (
@@ -184,7 +187,7 @@ function MessageBubble({ msg, isStreaming = false, agentName, onAction, onRetry,
       {/* Bubble: a passage selected in it can be quoted (SelectionDiscuss). */}
       <div
         data-quote-source={agentName ? t('chat.quote.reply', { agent: agentName }) : t('chat.quote.replyPlain')}
-        className={`${size.bubble} min-w-0 leading-relaxed bg-white border border-gray-200 text-gray-800 rounded-tl-sm shadow-sm
+        className={`${size.bubble} ${size.reply} min-w-0 leading-relaxed bg-white border border-gray-200 text-gray-800 rounded-tl-sm shadow-sm
           ${msg.error && !refusal ? 'border-red-300 bg-red-50 text-red-700' : ''}`}
       >
         {progress ? (

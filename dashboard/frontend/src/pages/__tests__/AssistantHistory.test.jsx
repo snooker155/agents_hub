@@ -170,3 +170,36 @@ describe('the Assistant page side column', () => {
     expect(await within(screen.getByTestId('assistant-transcript')).findByText('about dogs')).toBeTruthy();
   });
 });
+
+describe('the Assistant page side column on a phone', () => {
+  beforeEach(() => {
+    // A narrow screen: no media query matches.
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      matches: false, media: query, onchange: null,
+      addEventListener: () => {}, removeEventListener: () => {},
+      addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+    }));
+    localStorage.removeItem(PREFS_KEY);
+    ws.selected = 'default';
+    Object.values(assistantApi).forEach((fn) => fn?.mockReset?.());
+    Object.values(sessionsApi).forEach((fn) => fn.mockReset());
+    assistantApi.getAssistant.mockResolvedValue({ data: META });
+    sessionsApi.getEntityChatSessions.mockResolvedValue({ data: SESSIONS });
+  });
+
+  it('opens the transcript and the history over the page and closes them', async () => {
+    show();
+    await screen.findByTestId('assistant-state');
+    expect(screen.queryByTestId('assistant-side')).toBeNull();
+    fireEvent.click(screen.getByTestId('assistant-side-toggle'));
+    const side = screen.getByTestId('assistant-side');
+    expect(side.className).toContain('fixed');
+    expect(await within(side).findByText('Cats sleep a lot.')).toBeTruthy();
+    fireEvent.click(within(side).getByRole('tab', { name: 'History' }));
+    expect(await within(side).findByText('about dogs')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('assistant-side-close'));
+    expect(screen.queryByTestId('assistant-side')).toBeNull();
+    // Not remembered: the wide screen's choice stays as it was.
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY) || '{}').transcriptOpen).not.toBe(true);
+  });
+});

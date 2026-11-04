@@ -29,6 +29,36 @@ const VIEWS = [{ view_id: 'v1', title: 'Sales chart' }];
 const draw = (props) => render(<I18nProvider><MemoryRouter><ArtifactsPanel {...props} /></MemoryRouter></I18nProvider>);
 
 describe('ArtifactsPanel', () => {
+  it('reads an open file smaller or larger from its header, and keeps the size', () => {
+    localStorage.removeItem('agent_hub_artifact_font_scale');
+    const { unmount } = draw({ artifacts: ARTIFACTS, views: [], workspace: 'ws', mode: 'diff' });
+    const scale = () => screen.getByTestId('artifact-detail').firstElementChild.dataset.fontScale;
+    expect(scale()).toBe('1');
+    fireEvent.click(screen.getByRole('button', { name: /larger text/i }));
+    fireEvent.click(screen.getByRole('button', { name: /larger text/i }));
+    expect(scale()).toBe('1.25');
+    fireEvent.click(screen.getByRole('button', { name: /smaller text/i }));
+    expect(scale()).toBe('1.1');
+    unmount();
+    draw({ artifacts: ARTIFACTS, views: [], workspace: 'ws', mode: 'diff' });
+    expect(scale()).toBe('1.1');
+    localStorage.removeItem('agent_hub_artifact_font_scale');
+  });
+
+  it('on the main chat shows the list alone below the window width it is given', () => {
+    // The panel itself is wide enough (jsdom measures 0 without ResizeObserver);
+    // the window is 1440px, below the 2300 the chat asks for.
+    const width = window.innerWidth;
+    window.innerWidth = 1440;
+    try {
+      draw({ artifacts: ARTIFACTS, views: VIEWS, workspace: 'ws', sideBySideFrom: 2300 });
+      expect(screen.getByTestId('artifacts-box')).toHaveAttribute('data-stacked', 'true');
+      expect(screen.queryByTestId('view-card')).not.toBeInTheDocument();
+    } finally {
+      window.innerWidth = width;
+    }
+  });
+
   it('lists files and views and shows the newest view first', () => {
     draw({ artifacts: ARTIFACTS, views: VIEWS, workspace: 'ws' });
     expect(screen.getByText('app.py')).toBeInTheDocument();
@@ -109,5 +139,63 @@ describe('ArtifactsPanel', () => {
   it('offers no editor in diff mode', () => {
     draw({ artifacts: ARTIFACTS, views: [], workspace: 'ws', mode: 'diff' });
     expect(screen.queryByTestId('artifact-editor')).not.toBeInTheDocument();
+  });
+
+  it('in a narrow panel shows the list alone, and an item over the whole panel', () => {
+    // The panel measures itself: 400px is narrower than list + item side by side.
+    const RO = globalThis.ResizeObserver;
+    const rect = Element.prototype.getBoundingClientRect;
+    globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+    Element.prototype.getBoundingClientRect = function box() { return { width: 400, height: 600 }; };
+    try {
+      draw({ artifacts: ARTIFACTS, views: VIEWS, workspace: 'ws' });
+      expect(screen.getByTestId('artifacts-box')).toHaveAttribute('data-stacked', 'true');
+      expect(screen.getByText('app.py')).toBeInTheDocument();
+      expect(screen.queryByTestId('view-card')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByText('Sales chart'));
+      expect(screen.getByTestId('view-card')).toBeInTheDocument();
+      expect(screen.queryByText('app.py')).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('artifacts-back'));
+      expect(screen.getByText('app.py')).toBeInTheDocument();
+      expect(screen.queryByTestId('view-card')).not.toBeInTheDocument();
+      // Files are blocks with the start of each file: a new one from its
+      // diff, a changed one read from the workspace (the mock answers print("now")).
+      const cards = screen.getAllByTestId('artifact-card');
+      expect(cards).toHaveLength(2);
+      expect(cards.find((c) => c.dataset.artifactPath === 'src/new.py')).toHaveTextContent('print("now")');
+      expect(cards.find((c) => c.dataset.artifactPath === 'src/app.py')).not.toHaveTextContent('+new');
+      // Counts of changed lines belong to the diff mode, not to the files.
+      expect(screen.queryByText('+1')).not.toBeInTheDocument();
+      // A file carries the way back on its own line, before its name.
+      const path = screen.getByText('app.py').closest('[data-artifact-path]').dataset.artifactPath;
+      fireEvent.click(screen.getByText('app.py'));
+      const back = screen.getByTestId('artifacts-back');
+      expect(back.parentElement).toHaveTextContent(path);
+      fireEvent.click(back);
+      expect(screen.getByText('app.py').closest('[data-artifact-path]')).toBeInTheDocument();
+    } finally {
+      globalThis.ResizeObserver = RO;
+      Element.prototype.getBoundingClientRect = rect;
+    }
+  });
+
+  it('in a narrow panel shows the file text in Files mode and the diff in Diff mode', async () => {
+    const RO = globalThis.ResizeObserver;
+    const rect = Element.prototype.getBoundingClientRect;
+    globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+    Element.prototype.getBoundingClientRect = function box() { return { width: 400, height: 600 }; };
+    const card = () => screen.getAllByTestId('artifact-card').find((c) => c.dataset.artifactPath === 'src/app.py');
+    try {
+      const { rerender } = draw({ artifacts: ARTIFACTS, views: [], workspace: 'ws', mode: 'content' });
+      await waitFor(() => expect(card()).toHaveTextContent('print("now")'));
+      expect(card()).not.toHaveTextContent('+1');
+      rerender(<I18nProvider><MemoryRouter><ArtifactsPanel artifacts={ARTIFACTS} views={[]} workspace="ws" mode="diff" /></MemoryRouter></I18nProvider>);
+      expect(card()).toHaveTextContent('+new');
+      expect(card()).toHaveTextContent('-old');
+      expect(card()).toHaveTextContent('+1');
+    } finally {
+      globalThis.ResizeObserver = RO;
+      Element.prototype.getBoundingClientRect = rect;
+    }
   });
 });

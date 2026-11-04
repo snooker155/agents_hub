@@ -345,11 +345,13 @@ export default function EntityChat({
     <button
       onClick={onClear} disabled={busy}
       title={t('entityChat.clearChat')}
+      aria-label={t('entityChat.clear')}
       className={clearTarget
-        ? 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-gray-500 hover:text-red-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40'
+        ? 'inline-flex items-center gap-1 px-2 py-1 phone:p-1.5 rounded-md text-xs text-gray-500 hover:text-red-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40'
         : 'inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-red-600 disabled:opacity-40'}
     >
-      <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
+      <MessageSquarePlus className="w-3.5 h-3.5 phone:w-4 phone:h-4" />
+      <span className="phone:hidden">{t('entityChat.clear')}</span>
     </button>
   ) : null;
 

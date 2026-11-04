@@ -1,43 +1,45 @@
 import { genId } from './turnState';
-import { getMessageInsights, getSessionMessages, getSessions, getTelegramBindings } from '../../api';
+import { getMessageInsights, getSessionMessages, getSessions } from '../../api';
+import { loadConnectorBindings } from './connectorChats';
 import { useEffect } from 'react';
 
 /**
- * The Telegram side of the page: which chats are bound to this workspace, and
- * waking one of them up — a Telegram thread is a conversation the server has
- * been keeping, so opening it means resolving its session and reading its
- * history back rather than starting a new one.
+ * The connectors' side of the page (Telegram and the channels, connectorChats.js):
+ * which of their chats are bound, and waking one of them up. A connector's
+ * thread is a conversation the server has been keeping, so opening it means
+ * resolving its session and reading its history back rather than starting a
+ * new one.
  */
 export function useChatTelegram(deps) {
   const {
-    currentTelegramBinding, setConversations, setSessionId, setTelegramBindings,
+    currentConnectorBinding, setConversations, setSessionId, setConnectorBindings,
   } = deps;
 
-  // ---- load Telegram bindings (refresh on workspace switch + interval) ----
+  // ---- load every connector's bindings ----
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
       try {
-        const { data } = await getTelegramBindings();
-        if (!cancelled) setTelegramBindings(data || []);
+        const rows = await loadConnectorBindings();
+        if (!cancelled) setConnectorBindings(rows);
       } catch {
-        if (!cancelled) setTelegramBindings([]);
+        if (!cancelled) setConnectorBindings([]);
       }
     };
     refresh();
     return () => { cancelled = true; };
-  }, [setTelegramBindings]);
+  }, [setConnectorBindings]);
 
-  // ---- hydrate Telegram conversation: resolve session_id, load past messages ----
-  // Re-runs whenever the binding *or its workspace* changes. The Telegram thread
+  // ---- hydrate a connector's conversation: resolve session_id, load past messages ----
+  // Re-runs whenever the binding *or its workspace* changes. The thread
   // is one conversation_id across workspaces, but each workspace shows only its
   // own slice of runs — so when the workspace context flips, we re-fetch and
   // replace the bubble list with the slice that belongs to the new workspace.
   // Past bubbles are reconstructed from server-side run logs via getMessageInsights.
-  const bindingWorkspaceKey = currentTelegramBinding?.workspace || null;
+  const bindingWorkspaceKey = currentConnectorBinding?.workspace || null;
   useEffect(() => {
-    if (!currentTelegramBinding) return;
-    const convId = currentTelegramBinding.conversation_id;
+    if (!currentConnectorBinding) return;
+    const convId = currentConnectorBinding.conversation_id;
     if (!convId) return;
     let cancelled = false;
 
@@ -50,7 +52,7 @@ export function useChatTelegram(deps) {
 
         const { data: runs } = await getSessionMessages(sess.session_id);
         // Filter runs to only those that executed against the binding's workspace.
-        const bindingWorkspace = currentTelegramBinding.workspace || null;
+        const bindingWorkspace = currentConnectorBinding.workspace || null;
         const scopedRuns = (runs || []).filter((r) => (r.workspace || null) === bindingWorkspace);
         const insightsList = await Promise.all(
           scopedRuns.map((r) =>
@@ -73,7 +75,7 @@ export function useChatTelegram(deps) {
               content: m.content || '',
               agent_id: m.role === 'assistant' ? agentId : undefined,
               run_id: m.role === 'assistant' ? runId : undefined,
-              origin: 'telegram',
+              origin: currentConnectorBinding.connector || 'telegram',
             });
           }
         }
@@ -87,7 +89,7 @@ export function useChatTelegram(deps) {
     })();
 
     return () => { cancelled = true; };
-  }, [currentTelegramBinding, bindingWorkspaceKey, setConversations, setSessionId]);
+  }, [currentConnectorBinding, bindingWorkspaceKey, setConversations, setSessionId]);
 
 }
 

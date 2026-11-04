@@ -9,11 +9,22 @@ export const BUBBLE_SIZES = {
     row: 'flex gap-3 mb-6 mx-2',
     bubble: 'max-w-[88%] sm:max-w-[72%] text-base px-4 py-3 rounded-2xl',
     footer: '-mx-4 -mb-3 mt-3 px-4 pt-2 pb-3',
+    // On a phone: no avatars, and answers and prompts take the whole width,
+    // in every chat. In a narrow transcript (index.css, the chat-transcript
+    // container) the same.
+    avatar: 'max-sm:hidden chat-narrow-hide',
+    reply: 'max-sm:flex-1 max-sm:max-w-full chat-narrow-fill',
+    prompt: 'max-sm:flex-1 max-sm:max-w-full chat-narrow-fill',
   },
+  // On a phone a side column is the whole screen, so a compact chat there
+  // takes the full size, as the Chat page does on a phone.
   compact: {
-    row: 'flex gap-2 mb-3',
-    bubble: 'max-w-[94%] text-sm px-3 py-2 rounded-xl',
-    footer: '-mx-3 -mb-2 mt-2 px-3 pt-1.5 pb-2',
+    row: 'flex gap-2 mb-3 max-sm:mb-6',
+    bubble: 'max-w-[94%] text-sm px-3 py-2 rounded-xl max-sm:text-base max-sm:px-4 max-sm:py-3 max-sm:rounded-2xl',
+    footer: '-mx-3 -mb-2 mt-2 px-3 pt-1.5 pb-2 max-sm:-mx-4 max-sm:-mb-3 max-sm:mt-3 max-sm:px-4 max-sm:pt-2 max-sm:pb-3',
+    avatar: '',
+    reply: 'max-sm:flex-1 max-sm:max-w-full',
+    prompt: 'max-sm:flex-1 max-sm:max-w-full',
   },
 };
 

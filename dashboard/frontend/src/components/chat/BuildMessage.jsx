@@ -120,12 +120,12 @@ function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false, com
     return (
       <div className={`${size.row} flex-row-reverse`}>
         {!compact && (
-          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white">
+          <div className={`flex-shrink-0 w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white ${size.avatar}`}>
             <User className="w-4 h-4" />
           </div>
         )}
-        <div data-prompt-bubble onCopy={copyBubbleText} className={`chat-prompt-bubble ${size.bubble} bg-indigo-600 text-white rounded-tr-sm leading-relaxed whitespace-pre-wrap`}>
-          {trimBubbleText(msg.content)}
+        <div data-prompt-bubble onCopy={copyBubbleText} className={`chat-prompt-bubble ${size.bubble} ${size.prompt} bg-indigo-600 text-white rounded-tr-sm leading-relaxed whitespace-pre-wrap`}>
+          <span className="chat-prompt-text">{trimBubbleText(msg.content)}</span>
         </div>
       </div>
     );
@@ -139,14 +139,14 @@ function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false, com
   const views = isStreaming ? [] : messageViews(msg);
   // Only the text still being written needs its unfinished markup closed.
   const lastTextIdx = timeline ? timeline.map((e) => e.type).lastIndexOf('text') : -1;
-  const textBox = compact ? 'rounded-xl px-3 py-2 text-sm' : 'rounded-2xl px-4 py-3 text-base';
+  const textBox = compact ? 'rounded-xl px-3 py-2 text-sm max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-base' : 'rounded-2xl px-4 py-3 text-base';
   return (
     <ChatCodeActionsContext.Provider value={codeActions}>
     {/* Same row spacing and bubble type as MessageBubble: switching views
         must not move the answers, only add the steps between them. */}
     <div className={size.row}>
       {!compact && (
-        <div className="flex flex-col items-center gap-1 flex-shrink-0 w-14">
+        <div className={`flex flex-col items-center gap-1 flex-shrink-0 w-14 ${size.avatar}`}>
           <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-white">
             <Bot className="w-4 h-4" />
           </div>
@@ -157,7 +157,7 @@ function BuildMessage({ msg, agentName, onJumpArtifact, isStreaming = false, com
       )}
       {/* As wide as a Chat view bubble at most: switching views keeps the
           transcript's shape, the steps just appear between the answers. */}
-      <div className={`${compact ? 'max-w-[94%] w-full' : 'max-w-[88%] sm:max-w-[72%]'} min-w-0 space-y-2 ${msg.error ? 'text-red-700' : ''}`}>
+      <div className={`${compact ? 'max-w-[94%] max-sm:max-w-full w-full' : `max-w-[88%] sm:max-w-[72%] ${size.reply}`} min-w-0 space-y-2 ${msg.error ? 'text-red-700' : ''}`}>
         {timeline ? (
           timeline.map((entry, i) => {
             if (entry.type === 'text') {

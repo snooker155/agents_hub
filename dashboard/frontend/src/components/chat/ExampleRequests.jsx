@@ -31,9 +31,6 @@ export default function ExampleRequests({ load, loadKey, fallback = null, onPick
 
   return (
     <div className={`${compact ? 'mt-4' : 'mt-6'} w-full max-w-2xl`}>
-      <div className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-2">
-        {t('chat.examples.title')}
-      </div>
       <div className={`grid gap-2 ${compact ? '' : 'sm:grid-cols-2'}`}>
         {examples.map((text) => (
           <button

@@ -99,11 +99,11 @@ export default function ChatComposer() {
   const {
     addReferences, addWorkspaceFiles, attachMenuOpen, attachmentError, commandMenuIndex, commandMenuOpen,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage,
-    currentConv, currentTelegramBinding, fileInputRef, handleKeyDown, hasTarget, input, loading,
+    currentConv, currentConnectorBinding, fileInputRef, handleKeyDown, hasTarget, input, loading,
     onPickFiles, pendingAttachments, pendingReferences, pickerKind, removeAttachment,
     removeReference, resizeTextarea, selectCommand, selectedProject, selectedWorkspace,
     sendAsBot, sendMessage, setAttachMenuOpen, setCommandMenuIndex, setCommandMenuOpen,
-    setInput, setPickerKind, t, telegramError, telegramReplyAllowed,
+    setInput, setPickerKind, t, telegramError, connectorReplyAllowed,
     telegramSending, textareaRef, toggleAttachmentStore,
   } = page;
 
@@ -148,7 +148,7 @@ export default function ChatComposer() {
     language, onText: sendSpoken, onError: onVoiceError,
   });
   const boxEmpty = !input.trim() && pendingAttachments.length === 0 && pendingReferences.length === 0;
-  const micShown = boxEmpty && voice.available && !steering.busy && !currentTelegramBinding;
+  const micShown = boxEmpty && voice.available && !steering.busy && !currentConnectorBinding;
   // A mirrored conversation (docs/hub-link.md) is written on another hub; nothing is sent from here.
   const mirrored = currentConv?.origin === 'mirror';
   const micUsable = micShown && hasTarget && !loading && !mirrored;
@@ -182,19 +182,19 @@ export default function ChatComposer() {
   const { selectableAgents, selectedAgent, selectedTeam, targetMode, teams } = page;
   const teamMode = targetMode === 'team';
   const mentionAgents = useMemo(() => {
-    if (currentTelegramBinding || mirrored) return [];
+    if (currentConnectorBinding || mirrored) return [];
     if (teamMode) return teamMentionMembers((teams || []).find((tm) => tm.team_id === selectedTeam));
     return (selectableAgents || [])
       .filter((a) => !(targetMode === 'agent' && a.id === selectedAgent))
       .map((a) => ({ id: a.id, name: a.name, description: a.description }));
-  }, [currentTelegramBinding, mirrored, selectableAgents, selectedAgent, selectedTeam, targetMode, teamMode, teams]);
+  }, [currentConnectorBinding, mirrored, selectableAgents, selectedAgent, selectedTeam, targetMode, teamMode, teams]);
   const mention = useAgentMention({ text: input, setText: setInput, textareaRef, agents: mentionAgents });
 
   const { autoMode } = page;
   const onKeyDown = (e) => {
     if (mention.onKeyDown(e)) return;
     // Shift+Tab switches auto mode, as in Claude Code.
-    if (e.key === 'Tab' && e.shiftKey && autoMode?.allowed && !currentTelegramBinding) {
+    if (e.key === 'Tab' && e.shiftKey && autoMode?.allowed && !currentConnectorBinding) {
       e.preventDefault();
       autoMode.toggle();
       return;
@@ -272,7 +272,7 @@ export default function ChatComposer() {
                 is left of the model's window. Clearing is offered once the
                 context is tight; /clear is the same action from the keyboard. */}
             <ComposerBox
-              highlight={Boolean(autoMode?.on) && !currentTelegramBinding && !mirrored}
+              highlight={Boolean(autoMode?.on) && !currentConnectorBinding && !mirrored}
               // Attach: a file from the computer, or a record the hub already
               // holds (task / view / project / loop / …). An entity picked
               // here is folded into the prompt whether or not the agent owns
@@ -311,12 +311,12 @@ export default function ChatComposer() {
                       <StopCircle className="w-4 h-4" />
                     </button>
                   </>
-                ) : currentTelegramBinding ? (
+                ) : currentConnectorBinding ? (
                   <button
                     onClick={sendAsBot}
-                    disabled={!input.trim() || telegramSending || !telegramReplyAllowed}
-                    title={!telegramReplyAllowed
-                      ? t('chat.telegramBoundElsewhere', { workspace: currentTelegramBinding.workspace || 'default' })
+                    disabled={!input.trim() || telegramSending || !connectorReplyAllowed}
+                    title={!connectorReplyAllowed
+                      ? t('chat.telegramBoundElsewhere', { workspace: currentConnectorBinding.workspace || 'default' })
                       : t('chat.sendAsBotToChat')}
                     className="flex-shrink-0 h-8 px-3 flex items-center gap-1.5 rounded-full
                       bg-sky-600 text-white hover:bg-sky-700 text-xs font-semibold
@@ -337,7 +337,7 @@ export default function ChatComposer() {
                     <Send className="w-3.5 h-3.5" />
                   </button>
                 )}
-              footerLeft={autoMode && !currentTelegramBinding && !mirrored ? (
+              footerLeft={autoMode && !currentConnectorBinding && !mirrored ? (
                     <button
                       type="button"
                       role="switch"

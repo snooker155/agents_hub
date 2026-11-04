@@ -11,6 +11,7 @@
  * CodeSection (its rows in the panel's list) and CodeDetail (the workbench).
  */
 import { useEffect, useMemo, useState } from 'react';
+import FitText from '../FitText';
 import { Code2, Loader2 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { useChatPage } from './context';
@@ -40,7 +41,7 @@ function SnippetListItem({ group, selected, onSelect }) {
   );
 }
 
-/** A fenced block of a reply, listed under "From replies" until it is saved. */
+/** A fenced block of a reply, listed with the saved ones, marked unsaved, until it is saved. */
 function ReplyListItem({ block, selected, onSelect, t }) {
   return (
     <button
@@ -64,8 +65,49 @@ function ReplyListItem({ block, selected, onSelect, t }) {
 
 const isReplyId = (id) => typeof id === 'string' && id.startsWith('reply:');
 
-/** The code's rows in the Artifacts panel's list; `selectedId` is a view or reply id. */
-export function CodeSection({ code, selectedId, onSelect, className = '' }) {
+const PREVIEW_LINES = 5;
+
+/** A snippet in the narrow panel's list: a block across the whole list with its name, language,
+ * version and its first lines (an ellipsis when there is more), like a file
+ * card (panels.jsx). */
+function CodeCard({ title, language, version, count, unsaved, body, onClick, testId, t }) {
+  const lines = (body || '').replace(/\s+$/, '').split('\n');
+  const more = lines.length > PREVIEW_LINES;
+  return (
+    <button type="button" onClick={onClick} data-testid={testId} title={title}
+      className="group block w-full text-left rounded-lg border border-gray-300 bg-white overflow-hidden shadow-sm transition-colors hover:border-indigo-300 hover:bg-indigo-50/40">
+      <span className="flex items-center gap-2 px-3 py-2 border-b border-gray-300 transition-colors bg-gray-200 group-hover:border-indigo-200 group-hover:bg-indigo-100">
+        <Code2 className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+        <FitText sizes={[14, 13, 12, 11]} className="min-w-0 font-semibold text-gray-900 transition-colors group-hover:text-indigo-700">{title}</FitText>
+        {/* One type for every mark: language, version, how many, where from;
+            the same as a file block's folder (panels.jsx). */}
+        <span className="ml-auto flex items-center gap-1 shrink-0 text-xs text-gray-500">
+          {language && <span>{language}</span>}
+          {version != null && <span>v{version}</span>}
+          {count > 1 && <span>· {count}</span>}
+          {unsaved && <span>· {t('chat.code.replyUnsaved')}</span>}
+        </span>
+      </span>
+      {body ? (
+        <span className="block py-2 font-mono text-[12px] leading-5 text-gray-700" data-testid="code-card-preview">
+          {lines.slice(0, PREVIEW_LINES).map((line, i) => (
+            <span key={i} className="block px-3 whitespace-pre overflow-hidden text-ellipsis">{line || ' '}</span>
+          ))}
+          {more && <span className="block px-3 leading-4 text-gray-400" data-testid="preview-more">…</span>}
+        </span>
+      ) : (
+        <span className="flex items-center gap-2 px-3 py-2 text-xs text-gray-400">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** The code's rows in the Artifacts panel's list; `selectedId` is a view or reply id.
+ * `cards`: the narrow panel, where the list has the panel to itself and each
+ * snippet is a card with its first lines. */
+export function CodeSection({ code, selectedId, onSelect, className = '', cards = false }) {
   const { t } = useI18n();
   if (!code || (!code.count && !code.listLoading && !code.listError)) return null;
   return (
@@ -81,7 +123,35 @@ export function CodeSection({ code, selectedId, onSelect, className = '' }) {
       ) : code.listError ? (
         <div className="px-3 py-1.5 text-xs text-red-600">{code.listError}</div>
       ) : null}
-      {code.groups.map((group) => (
+      {cards ? (
+        <div className="mt-1 px-3 space-y-2">
+          {code.groups.map((group) => (
+            <CodeCard
+              key={group.filename}
+              testId="code-card"
+              title={group.filename}
+              language={group.latest.language}
+              version={group.latest.version}
+              count={group.items.length}
+              body={code.envelopes?.[group.latest.view_id]?.spec?.body}
+              onClick={() => onSelect(group.latest.view_id)}
+              t={t}
+            />
+          ))}
+          {code.replies.map((block) => (
+            <CodeCard
+              key={block.id}
+              testId="reply-snippet"
+              title={replyBlockLabel(block, t('chat.codeBlock.plain'))}
+              language={block.language}
+              unsaved
+              body={block.body}
+              onClick={() => onSelect(block.id)}
+              t={t}
+            />
+          ))}
+        </div>
+      ) : code.groups.map((group) => (
         <SnippetListItem
           key={group.filename}
           group={group}
@@ -89,22 +159,17 @@ export function CodeSection({ code, selectedId, onSelect, className = '' }) {
           onSelect={onSelect}
         />
       ))}
-      {code.replies.length > 0 && (
-        <>
-          <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400" title={t('chat.code.fromRepliesHint')}>
-            {t('chat.code.fromReplies')}
-          </div>
-          {code.replies.map((block) => (
-            <ReplyListItem key={block.id} block={block} selected={block.id === selectedId} onSelect={onSelect} t={t} />
-          ))}
-        </>
-      )}
+      {/* A reply's unsaved block follows the saved ones in the same list,
+          marked as unsaved on its own row; no heading of its own. */}
+      {!cards && code.replies.map((block) => (
+        <ReplyListItem key={block.id} block={block} selected={block.id === selectedId} onSelect={onSelect} t={t} />
+      ))}
     </section>
   );
 }
 
 /** The selected snippet at work: a saved view, or a reply's block. */
-export function CodeDetail({ code, viewId }) {
+export function CodeDetail({ code, viewId, onBack = null }) {
   const {
     currentConv, currentConvId, markReplySaved = () => {}, projects, selectedWorkspace,
     setCodeFocus = () => {}, setInput, t, textareaRef,
@@ -148,7 +213,7 @@ export function CodeDetail({ code, viewId }) {
 
   // "Save as view", and only on request: the block (as edited in the
   // workbench) becomes a code view owned by the reply's run, joins the list
-  // and stays selected; the reply's copy leaves "From replies". Nothing else
+  // and stays selected; the reply's copy leaves the list. Nothing else
   // makes a view: a block is run, versioned and saved to a project as it is.
   const [savingView, setSavingView] = useState(false);
   const [saveViewError, setSaveViewError] = useState('');
@@ -208,6 +273,7 @@ export function CodeDetail({ code, viewId }) {
         saveAsView={saveAsView}
         chat={chat}
         className="flex-1 min-h-0"
+        onBack={onBack}
       />
     </div>
   );

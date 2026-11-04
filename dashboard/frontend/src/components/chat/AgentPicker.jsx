@@ -231,10 +231,13 @@ const NONE = { id: '', none: true };
  * @param {Map<string, number>} [props.counts] a per agent count the page keeps (its jobs, its deployments), shown with labels.count.
  * @param {object} [props.labels]          overrides: recent (section), count, pick, current.
  * @param {boolean} [props.details]        the right half with the agent's card (on by default).
+ * @param {boolean} [props.avatarOnWide]   bar only: the avatar from 1800 CSS px; a smaller
+ *   screen gets the name alone (the chat's top bar, where room is tight).
  */
 export default function AgentPicker({
   agents, value, onChange, conversations = [], variant = 'bar', placeholder = '', noneOption = null,
   recent: recentIds = null, counts: countsIn = null, labels = {}, details = true, placement = 'down',
+  avatarOnWide = false,
 }) {
   const { t } = useI18n();
   const isField = variant === 'field';
@@ -356,11 +359,11 @@ export default function AgentPicker({
           onClick={toggle}
           aria-haspopup="listbox"
           aria-expanded={open}
-          className="h-8 flex items-center gap-1.5 pl-1 pr-2.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors max-w-[260px]"
+          className={`h-8 flex items-center gap-1.5 ${avatarOnWide ? 'pl-2.5 min-[1800px]:pl-1' : 'pl-1'} pr-2.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors max-w-[260px]`}
         >
           {selected
-            ? <Avatar agent={selected} size="w-6 h-6 text-[9px]" />
-            : <Bot className="w-4 h-4 ml-1 shrink-0 text-indigo-500" />}
+            ? <Avatar agent={selected} size={`w-6 h-6 text-[9px] ${avatarOnWide ? 'max-[1799px]:hidden' : ''}`} />
+            : <Bot className={`w-4 h-4 ml-1 shrink-0 text-indigo-500 ${avatarOnWide ? 'max-[1799px]:hidden' : ''}`} />}
           <span className={`truncate ${selected ? '' : 'text-gray-500'}`}>{selected?.name || emptyText}</span>
           {selected?.has_running_node && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />}
           <ChevronDown className={`w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -376,7 +379,10 @@ export default function AgentPicker({
           data-testid="agent-picker-panel"
           className={`${isField
             ? 'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[61]'
-            : placement === 'up' ? 'absolute bottom-full left-0 mb-1 z-50' : 'absolute top-full left-0 mt-1 z-50'} ${details
+            : placement === 'up' ? 'absolute bottom-full left-0 mb-1 z-50'
+              // On a phone it opens under the top bar across the screen,
+              // wherever its button sits in the bar.
+              : 'absolute top-full left-0 mt-1 z-50 phone:fixed phone:inset-x-2 phone:top-[calc(3.5rem+env(safe-area-inset-top))] phone:mt-0 phone:w-auto'} ${details
             ? 'w-[min(660px,calc(100vw-1.5rem))]'
             : 'w-[min(360px,calc(100vw-1.5rem))]'} h-[min(460px,70vh)] flex bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden`}
         >

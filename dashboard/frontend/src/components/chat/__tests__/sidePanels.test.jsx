@@ -85,6 +85,68 @@ describe('the mode toggle beside an open Artifacts column', () => {
     expect(screen.getByTestId('mode-dropdown-picker')).toHaveTextContent('flow');
     expect(screen.getByTestId('mode-toggle')).toHaveClass('hidden', 'min-[1800px]:block');
   });
+
+  it('drops the button of an open column under 1800 CSS px, a closed one stays', () => {
+    function Bar(props) {
+      const { t } = useI18n();
+      return (
+        <ChatPageContext.Provider value={{ ...base, ...props, t }}>
+          <ChatTopBar />
+        </ChatPageContext.Provider>
+      );
+    }
+    const { unmount } = render(<I18nProvider><MemoryRouter><Bar artifactsOpen processOpen /></MemoryRouter></I18nProvider>);
+    expect(screen.getByTestId('artifacts-toggle')).toHaveClass('hidden', 'min-[1800px]:block');
+    expect(screen.getByTestId('process-toggle')).toHaveClass('hidden', 'min-[1800px]:block');
+    unmount();
+    render(<I18nProvider><MemoryRouter><Bar /></MemoryRouter></I18nProvider>);
+    expect(screen.getByTestId('artifacts-toggle')).not.toHaveClass('hidden');
+    expect(screen.getByTestId('process-toggle')).not.toHaveClass('hidden');
+  });
+
+  it('keeps Chat and Build as icons under 1800 CSS px while both columns are open', () => {
+    function Bar(props) {
+      const { t } = useI18n();
+      return (
+        <ChatPageContext.Provider value={{ ...base, ...props, t }}>
+          <ChatTopBar />
+        </ChatPageContext.Provider>
+      );
+    }
+    const label = () => screen.getByRole('button', { name: /^chat$/i }).querySelector('span');
+    const { unmount } = render(<I18nProvider><MemoryRouter><Bar artifactsOpen processOpen /></MemoryRouter></I18nProvider>);
+    expect(label()).toHaveClass('hidden', 'min-[1800px]:inline');
+    unmount();
+    render(<I18nProvider><MemoryRouter><Bar artifactsOpen /></MemoryRouter></I18nProvider>);
+    expect(label()).toHaveClass('hidden', 'sm:inline');
+  });
+
+  it('goes compact when the bar itself is narrow: mode dropdown, icons only, no workspace', () => {
+    function Bar(props) {
+      const { t } = useI18n();
+      return (
+        <ChatPageContext.Provider value={{ ...base, ...props, t }}>
+          <ChatTopBar />
+        </ChatPageContext.Provider>
+      );
+    }
+    // The bar measures itself: 600px wide, on a 1280px window.
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+    vi.stubGlobal('innerWidth', 1280);
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ width: 600 });
+    try {
+      render(<I18nProvider><MemoryRouter><Bar processOpen selectedWorkspace="" currentConv={{ workspace: 'jobs' }} /></MemoryRouter></I18nProvider>);
+      expect(screen.getByTestId('mode-toggle')).toHaveClass('hidden');
+      expect(screen.getByTestId('mode-dropdown')).not.toHaveClass('min-[1800px]:hidden');
+      expect(screen.getByRole('button', { name: /^chat$/i }).querySelector('span')).toHaveClass('hidden');
+      expect(screen.getByRole('button', { name: /^chat$/i }).querySelector('span')).not.toHaveClass('sm:inline');
+      expect(screen.queryByTestId('chat-workspace')).not.toBeInTheDocument();
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
 });
 
 describe('chat side columns', () => {

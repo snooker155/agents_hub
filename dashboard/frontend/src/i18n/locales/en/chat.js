@@ -103,7 +103,6 @@ export default {
   // Example requests under the agent in an empty chat (AgentExamples.jsx);
   // the fallback ones are for an agent with no examples of its own.
   examples: {
-    title: 'For example',
     hint: 'Put the example into the message box',
     fallback1: 'What can you do?',
     fallback2: 'Where should I start?',
@@ -133,8 +132,6 @@ export default {
   cleanChatMessagesOnly: 'Clean chat — messages only',
   buildFullTranscriptToolsThinking: 'Build — full transcript (tools, thinking, plan) + file diffs',
   telegram: 'Telegram',
-  telegram2: 'telegram',
-  telegramChats: 'Telegram chats',
   telegramChat: 'Chat {{id}}',
   boundTo: 'bound to',
   debugMirror: 'debug mirror',
@@ -370,7 +367,6 @@ export default {
     mountFilesRule: 'A snippet gets either the workspace or the network, never both; e2b and Modal cannot mount a workspace.',
     runHint: 'Runs the snippet in the run_code sandbox: no network and no files unless the workspace is mounted. Only Python, Node/JavaScript and Bash.',
     mountWorkspaceHint: 'Give the snippet the conversation\'s workspace folder read-only at /work, for scripts that read its files. A snippet gets either the workspace or the network, never both.',
-    fromReplies: 'From replies',
     sectionCount: 'Code: {{count}}',
     fromRepliesHint: 'Code blocks of the replies in this conversation. They can be edited, versioned, run and saved to a project as they are; "Save as view" is for making one a view of the conversation.',
     replyUnsaved: 'from a reply',
@@ -428,7 +424,15 @@ export default {
     none: 'Nothing found',
     searching: 'Searching the messages…',
     clear: 'Clear the search',
+    close: 'Close search',
+    recent: 'Recent chats',
+    empty: 'No chats yet',
   },
+  // Back from an item opened over the whole narrow Artifacts panel.
+  artifactsBack: 'To the list',
+  fontSmaller: 'Smaller text',
+  fontLarger: 'Larger text',
+  artifactDeleted: 'Deleted',
   artifactsFull: 'Full width, in place of the chat',
   artifactsBeside: 'Beside the chat',
   panels: {

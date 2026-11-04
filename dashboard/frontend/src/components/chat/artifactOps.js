@@ -1,3 +1,5 @@
+import { isToolOutputPath } from '../../lib/toolOutputs';
+
 // The letter and colour each artifact operation gets in a chat's file list.
 // Its own module so the components that draw it stay component-only modules,
 // which is what fast refresh needs.
@@ -16,6 +18,14 @@ export function fileLink(file, entities) {
   const match = (entities || []).find((e) => e.kind === 'file' && (e.title === file.path || e.id === file.path
     || String(e.id || '').endsWith(`/${file.path}`)));
   return match?.url || null;
+}
+
+// The files the Artifacts panel lists, in the given mode: no saved tool
+// output, and a deleted file only in Diff mode. What the Artifacts button
+// counts too, so the two never disagree.
+export function listedArtifacts(artifacts, mode = 'content') {
+  return Object.values(artifacts || {})
+    .filter((a) => (mode === 'diff' || a.op !== 'delete') && !isToolOutputPath(a.path));
 }
 
 // The files a conversation's turns changed, by path, the latest change of

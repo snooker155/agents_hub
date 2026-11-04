@@ -21,10 +21,10 @@ import { useChatPage } from '../context';
  */
 const page = (messages, extra = {}) => ({
   agentName: 'Front desk', agents: [{ id: 'front', name: 'Front desk' }],
-  artifacts: {}, currentTelegramBinding: null, flows: [], jumpToArtifact: vi.fn(), liveMessages: [],
+  artifacts: {}, currentConnectorBinding: null, flows: [], jumpToArtifact: vi.fn(), liveMessages: [],
   liveTurn: null, loading: false, messages, renderedMessages: messages,
   runTimelineByRunId: {}, selectedFlow: '', selectedTeam: '', selectedWorkspace: 'default',
-  sendMessage: vi.fn(), t: (k) => k, targetMode: 'agent', teams: [], telegramReplyAllowed: false,
+  sendMessage: vi.fn(), t: (k) => k, targetMode: 'agent', teams: [], connectorReplyAllowed: false,
   viewMode: 'chat', ...extra,
 });
 

@@ -16,11 +16,13 @@
  * open the page in a panel beside the conversation ("show on screen"). On a
  * phone the page is the mark, the button and the last answer.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { PhoneTitleSlot } from '../components/phoneTitleSlot';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AudioLines, Eraser, Keyboard, Loader2, MessageSquarePlus, Mic, PanelRightClose, PanelRightOpen,
-  Phone, PhoneOff, Play, Send, Settings2, Square, StopCircle, Volume2, VolumeX, Zap,
+  Phone, PhoneOff, Play, Send, Settings2, Square, StopCircle, Volume2, VolumeX, X, Zap,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { loadWorkspaceSummary } from '../api/workspaceSummary';
@@ -83,6 +85,8 @@ function useWide() {
 }
 
 export default function Assistant() {
+  // The app's top bar on a phone (Layout.jsx), null elsewhere.
+  const phoneSlot = useContext(PhoneTitleSlot);
   const { t, language } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
@@ -115,6 +119,9 @@ export default function Assistant() {
   // conversation mid-turn.
   const [screenOffer, setScreenOffer] = useState(null);
   const [rightTab, setRightTab] = useState('transcript');
+  // On a phone the side column opens over the page and is not remembered:
+  // the saved transcriptOpen is the wide screen's choice.
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sttFallback, setSttFallback] = useState(false);
   const [turn, setTurn] = useState({ tool: '', input: null, thinking: false, text: false });
@@ -853,7 +860,13 @@ export default function Assistant() {
     (signal) => sampleAssistantVoice({ voice: prefs.voice, language, workspace, mode }, { signal }),
     t('assistant.settings.sampleFailed'),
   );
-  const rightOpen = wide && prefs.transcriptOpen;
+  const rightOpen = wide ? prefs.transcriptOpen : sheetOpen;
+  // Auto mode with the input hidden: the amber frame the input wears moves to
+  // the microphone, so the person still sees tools run without asking. An
+  // outline, not a ring: the dark theme repaints shadow-lg's box-shadow, which
+  // would wipe a ring drawn with box-shadow too.
+  const micFrame = autoOn && prefs.voiceOnly ? ' outline outline-2 outline-offset-2 outline-amber-400' : '';
+  const toggleSide = () => (wide ? setPrefs({ transcriptOpen: !prefs.transcriptOpen }) : setSheetOpen(!sheetOpen));
   // The Setup tab: while the guide runs, and for a day after it finishes so
   // the person can still see what it did.
   const guideFinishedRecently = Boolean(guide?.finished_at)
@@ -868,116 +881,228 @@ export default function Assistant() {
   return (
     <div className="h-full flex min-h-0" data-testid="assistant-page">
       <section className="flex-1 min-w-0 flex flex-col">
-        <header className="flex flex-wrap items-center gap-2 px-4 sm:px-6 py-2 min-h-14 border-b border-gray-200 bg-white">
-          <h1 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mr-auto">
-            <AudioLines className="w-5 h-5 text-indigo-600" /> {t('assistant.title')}
-          </h1>
-          {showModeSwitch(meta) && (
-            <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-xs" role="tablist"
-              aria-label={t('assistant.mode.label')} data-testid="assistant-mode-switch">
-              {['personal', 'service'].map((m, i) => (
-                <button key={m} type="button" role="tab" aria-selected={mode === m} disabled={busy}
-                  onClick={() => setMode(m)}
-                  className={`px-3 py-1.5 ${i ? 'border-l border-gray-200' : ''} ${mode === m
-                    ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
-                  {t(`assistant.mode.${m}`)}
+        {/* On a phone the header's line is the app's top bar (PhoneTitleSlot):
+            the title on the left, the controls on the right. */}
+        {phoneSlot ? createPortal(
+          <>
+            <h1 className="min-w-0 truncate text-base font-bold text-gray-900 flex items-center gap-2">
+              <AudioLines className="w-4 h-4 shrink-0 text-indigo-600" /> {t('assistant.title')}
+            </h1>
+            <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              {showModeSwitch(meta) && (
+                <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-xs" role="tablist"
+                  aria-label={t('assistant.mode.label')} data-testid="assistant-mode-switch">
+                  {['personal', 'service'].map((m, i) => (
+                    <button key={m} type="button" role="tab" aria-selected={mode === m} disabled={busy}
+                      onClick={() => setMode(m)}
+                      className={`px-3 py-1.5 ${i ? 'border-l border-gray-200' : ''} ${mode === m
+                        ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                      {t(`assistant.mode.${m}`)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button type="button" role="switch" aria-checked={autoOn} disabled={!autoAllowed}
+                onClick={() => setPrefs({ autoApprove: !prefs.autoApprove })}
+                title={autoAllowed ? undefined : t('chat.autoMode.disabledByAdmin')}
+                data-testid="assistant-auto-mode"
+                className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium disabled:opacity-40 ${autoOn
+                  ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'text-gray-500 hover:bg-gray-100'}`}>
+                <Zap className="w-4 h-4" />
+                <span className="hidden sm:inline">{autoOn ? t('chat.autoMode.on') : t('chat.autoMode.off')}</span>
+              </button>
+              <button type="button" onClick={() => setPrefs({ muted: !prefs.muted })}
+                title={prefs.muted ? t('assistant.unmute') : t('assistant.mute')}
+                aria-label={prefs.muted ? t('assistant.unmute') : t('assistant.mute')} aria-pressed={prefs.muted}
+                className="p-2 rounded-lg text-gray-500 hover:bg-gray-100">
+                {prefs.muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              </button>
+              <div className="relative" ref={settingsRef}>
+                <button type="button" onClick={() => setSettingsOpen((o) => !o)} aria-expanded={settingsOpen}
+                  title={t('assistant.settings.title')} aria-label={t('assistant.settings.title')}
+                  className="p-2 rounded-lg text-gray-500 hover:bg-gray-100">
+                  <Settings2 className="w-4 h-4" />
                 </button>
-              ))}
-            </div>
-          )}
-          <button type="button" role="switch" aria-checked={autoOn} disabled={!autoAllowed}
-            onClick={() => setPrefs({ autoApprove: !prefs.autoApprove })}
-            title={autoAllowed ? undefined : t('chat.autoMode.disabledByAdmin')}
-            data-testid="assistant-auto-mode"
-            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium disabled:opacity-40 ${autoOn
-              ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'text-gray-500 hover:bg-gray-100'}`}>
-            <Zap className="w-4 h-4" />
-            <span className="hidden sm:inline">{autoOn ? t('chat.autoMode.on') : t('chat.autoMode.off')}</span>
-          </button>
-          <button type="button" onClick={() => setPrefs({ muted: !prefs.muted })}
-            title={prefs.muted ? t('assistant.unmute') : t('assistant.mute')}
-            aria-label={prefs.muted ? t('assistant.unmute') : t('assistant.mute')} aria-pressed={prefs.muted}
-            className="p-2 rounded-lg text-gray-500 hover:bg-gray-100">
-            {prefs.muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-          </button>
-          <div className="relative" ref={settingsRef}>
-            <button type="button" onClick={() => setSettingsOpen((o) => !o)} aria-expanded={settingsOpen}
-              title={t('assistant.settings.title')} aria-label={t('assistant.settings.title')}
-              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100">
-              <Settings2 className="w-4 h-4" />
-            </button>
-            {settingsOpen && (
-              <div className="absolute right-0 top-full mt-1 z-20 w-72 rounded-lg border border-gray-200 bg-white shadow-lg p-3 space-y-3 text-sm"
-                data-testid="assistant-settings">
-                <label className="flex items-start gap-2">
-                  <input type="checkbox" checked={prefs.voiceOnly} onChange={(e) => setPrefs({ voiceOnly: e.target.checked })} className="mt-1" />
-                  <span><span className="font-medium text-gray-800">{t('assistant.settings.voiceOnly')}</span>
-                    <span className="block text-xs text-gray-500">{t('assistant.settings.voiceOnlyHint')}</span></span>
-                </label>
-                <label className="flex items-start gap-2">
-                  <input type="checkbox" checked={prefs.muted} onChange={(e) => setPrefs({ muted: e.target.checked })} className="mt-1" />
-                  <span><span className="font-medium text-gray-800">{t('assistant.settings.muted')}</span>
-                    <span className="block text-xs text-gray-500">{t('assistant.settings.mutedHint')}</span></span>
-                </label>
-                <label className="flex items-start gap-2">
-                  <input type="checkbox" checked={prefs.voiceStop} onChange={(e) => setPrefs({ voiceStop: e.target.checked })} className="mt-1" />
-                  <span><span className="font-medium text-gray-800">{t('assistant.settings.voiceStop')}</span>
-                    <span className="block text-xs text-gray-500">{t('assistant.settings.voiceStopHint')}</span></span>
-                </label>
-                <label className="block text-xs text-gray-600">
-                  {t('assistant.settings.wakePhrase')}
-                  <input type="text" value={prefs.wakePhrase} maxLength={40}
-                    onChange={(e) => setPrefs({ wakePhrase: e.target.value })}
-                    placeholder={DEFAULT_WAKE[language] || DEFAULT_WAKE.en}
-                    className="mt-1 w-full border border-gray-200 rounded px-2 py-1 bg-white text-sm" />
-                  <span className="block mt-1 text-gray-400">{t('assistant.settings.wakePhraseHint')}</span>
-                </label>
-                {serverSpeech && (
-                  <div className="text-xs text-gray-600">
-                    <label htmlFor="assistant-voice">{t('assistant.settings.voice')}</label>
-                    <div className="mt-1 flex items-stretch gap-1.5">
-                      <select id="assistant-voice" value={prefs.voice} onChange={(e) => setPrefs({ voice: e.target.value })}
-                        className="min-w-0 flex-1 border border-gray-200 rounded px-2 py-1 bg-white text-sm">
-                        <option value="">{t('assistant.settings.modelVoice', { voice: voice.speech?.voice || t('assistant.settings.providerDefault') })}</option>
-                        {voiceNames.map((v) => (
-                          <option key={v} value={v}>{voiceLanguages[v] ? `${v} (${voiceLanguages[v]})` : v}</option>
-                        ))}
-                      </select>
-                      <button type="button" onClick={playSample} data-testid="assistant-voice-sample"
-                        title={t('assistant.settings.sampleHint')}
-                        aria-label={sample.busy ? t('assistant.settings.sampleStop') : t('assistant.settings.sample')}
-                        className="inline-flex shrink-0 items-center gap-1 px-2 rounded border border-gray-200 text-gray-700 hover:border-indigo-300 hover:text-indigo-700">
-                        {sample.state.loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : sample.state.playing ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                        {sample.busy ? t('assistant.settings.sampleStop') : t('assistant.settings.sample')}
-                      </button>
-                    </div>
-                    {sample.state.error && <span className="block mt-1 text-red-600">{sample.state.error}</span>}
-                    {!sample.state.error && sample.state.text && (
-                      <span className="block mt-1 italic text-gray-400">
-                        {sample.state.language ? `${sample.state.language}: ` : ''}«{sample.state.text}»
-                      </span>
+                {settingsOpen && (
+                  <div className="absolute right-0 top-full mt-1 z-20 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white shadow-lg p-3 space-y-3 text-sm"
+                    data-testid="assistant-settings">
+                    <label className="flex items-start gap-2">
+                      <input type="checkbox" checked={prefs.voiceOnly} onChange={(e) => setPrefs({ voiceOnly: e.target.checked })} className="mt-1" />
+                      <span><span className="font-medium text-gray-800">{t('assistant.settings.voiceOnly')}</span>
+                        <span className="block text-xs text-gray-500">{t('assistant.settings.voiceOnlyHint')}</span></span>
+                    </label>
+                    <label className="flex items-start gap-2">
+                      <input type="checkbox" checked={prefs.muted} onChange={(e) => setPrefs({ muted: e.target.checked })} className="mt-1" />
+                      <span><span className="font-medium text-gray-800">{t('assistant.settings.muted')}</span>
+                        <span className="block text-xs text-gray-500">{t('assistant.settings.mutedHint')}</span></span>
+                    </label>
+                    <label className="flex items-start gap-2">
+                      <input type="checkbox" checked={prefs.voiceStop} onChange={(e) => setPrefs({ voiceStop: e.target.checked })} className="mt-1" />
+                      <span><span className="font-medium text-gray-800">{t('assistant.settings.voiceStop')}</span>
+                        <span className="block text-xs text-gray-500">{t('assistant.settings.voiceStopHint')}</span></span>
+                    </label>
+                    <label className="block text-xs text-gray-600">
+                      {t('assistant.settings.wakePhrase')}
+                      <input type="text" value={prefs.wakePhrase} maxLength={40}
+                        onChange={(e) => setPrefs({ wakePhrase: e.target.value })}
+                        placeholder={DEFAULT_WAKE[language] || DEFAULT_WAKE.en}
+                        className="mt-1 w-full border border-gray-200 rounded px-2 py-1 bg-white text-sm" />
+                      <span className="block mt-1 text-gray-400">{t('assistant.settings.wakePhraseHint')}</span>
+                    </label>
+                    {serverSpeech && (
+                      <div className="text-xs text-gray-600">
+                        <label htmlFor="assistant-voice">{t('assistant.settings.voice')}</label>
+                        <div className="mt-1 flex items-stretch gap-1.5">
+                          <select id="assistant-voice" value={prefs.voice} onChange={(e) => setPrefs({ voice: e.target.value })}
+                            className="min-w-0 flex-1 border border-gray-200 rounded px-2 py-1 bg-white text-sm">
+                            <option value="">{t('assistant.settings.modelVoice', { voice: voice.speech?.voice || t('assistant.settings.providerDefault') })}</option>
+                            {voiceNames.map((v) => (
+                              <option key={v} value={v}>{voiceLanguages[v] ? `${v} (${voiceLanguages[v]})` : v}</option>
+                            ))}
+                          </select>
+                          <button type="button" onClick={playSample} data-testid="assistant-voice-sample"
+                            title={t('assistant.settings.sampleHint')}
+                            aria-label={sample.busy ? t('assistant.settings.sampleStop') : t('assistant.settings.sample')}
+                            className="inline-flex shrink-0 items-center justify-center w-8 rounded border border-gray-200 text-gray-700 hover:border-indigo-300 hover:text-indigo-700">
+                            {sample.state.loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : sample.state.playing ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                        {sample.state.error && <span className="block mt-1 text-red-600">{sample.state.error}</span>}
+                        {!sample.state.error && sample.state.text && (
+                          <span className="block mt-1 italic text-gray-400">
+                            {sample.state.language ? `${sample.state.language}: ` : ''}«{sample.state.text}»
+                          </span>
+                        )}
+                        <span className="block mt-1 text-gray-400">{t('assistant.settings.voiceHint')}</span>
+                      </div>
                     )}
-                    <span className="block mt-1 text-gray-400">{t('assistant.settings.voiceHint')}</span>
                   </div>
                 )}
               </div>
+              <button type="button" onClick={onNewThread} disabled={busy || !feed.length}
+                title={t('assistant.newThread')} aria-label={t('assistant.newThread')}
+                className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-40">
+                <MessageSquarePlus className="w-4 h-4" />
+              </button>
+              <button type="button" onClick={toggleSide} data-testid="assistant-side-toggle"
+                title={rightOpen ? t('assistant.hideTranscript') : t('assistant.showTranscript')}
+                aria-label={rightOpen ? t('assistant.hideTranscript') : t('assistant.showTranscript')}
+                className="p-2 rounded-lg text-gray-500 hover:bg-gray-100">
+                {rightOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+              </button>
+            </div>
+          </>,
+          phoneSlot,
+        ) : (
+          <header className="flex flex-wrap items-center gap-2 px-4 sm:px-6 py-2 min-h-14">
+            <h1 className="text-lg font-semibold text-gray-900 flex items-center gap-2 mr-auto">
+              <AudioLines className="w-5 h-5 text-indigo-600" /> {t('assistant.title')}
+            </h1>
+            {showModeSwitch(meta) && (
+              <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-xs" role="tablist"
+                aria-label={t('assistant.mode.label')} data-testid="assistant-mode-switch">
+                {['personal', 'service'].map((m, i) => (
+                  <button key={m} type="button" role="tab" aria-selected={mode === m} disabled={busy}
+                    onClick={() => setMode(m)}
+                    className={`px-3 py-1.5 ${i ? 'border-l border-gray-200' : ''} ${mode === m
+                      ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+                    {t(`assistant.mode.${m}`)}
+                  </button>
+                ))}
+              </div>
             )}
-          </div>
-          <button type="button" onClick={onNewThread} disabled={busy || !feed.length}
-            title={t('assistant.newThread')} aria-label={t('assistant.newThread')}
-            className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-40">
-            <MessageSquarePlus className="w-4 h-4" />
-          </button>
-          {wide && (
-            <button type="button" onClick={() => setPrefs({ transcriptOpen: !prefs.transcriptOpen })}
-              title={prefs.transcriptOpen ? t('assistant.hideTranscript') : t('assistant.showTranscript')}
-              aria-label={prefs.transcriptOpen ? t('assistant.hideTranscript') : t('assistant.showTranscript')}
-              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100">
-              {prefs.transcriptOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+            <button type="button" role="switch" aria-checked={autoOn} disabled={!autoAllowed}
+              onClick={() => setPrefs({ autoApprove: !prefs.autoApprove })}
+              title={autoAllowed ? undefined : t('chat.autoMode.disabledByAdmin')}
+              data-testid="assistant-auto-mode"
+              className={`inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium disabled:opacity-40 ${autoOn
+                ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'text-gray-500 hover:bg-gray-100'}`}>
+              <Zap className="w-4 h-4" />
+              <span className="hidden sm:inline">{autoOn ? t('chat.autoMode.on') : t('chat.autoMode.off')}</span>
             </button>
-          )}
-        </header>
+            <button type="button" onClick={() => setPrefs({ muted: !prefs.muted })}
+              title={prefs.muted ? t('assistant.unmute') : t('assistant.mute')}
+              aria-label={prefs.muted ? t('assistant.unmute') : t('assistant.mute')} aria-pressed={prefs.muted}
+              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100">
+              {prefs.muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            </button>
+            <div className="relative" ref={settingsRef}>
+              <button type="button" onClick={() => setSettingsOpen((o) => !o)} aria-expanded={settingsOpen}
+                title={t('assistant.settings.title')} aria-label={t('assistant.settings.title')}
+                className="p-2 rounded-lg text-gray-500 hover:bg-gray-100">
+                <Settings2 className="w-4 h-4" />
+              </button>
+              {settingsOpen && (
+                <div className="absolute right-0 top-full mt-1 z-20 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 bg-white shadow-lg p-3 space-y-3 text-sm"
+                  data-testid="assistant-settings">
+                  <label className="flex items-start gap-2">
+                    <input type="checkbox" checked={prefs.voiceOnly} onChange={(e) => setPrefs({ voiceOnly: e.target.checked })} className="mt-1" />
+                    <span><span className="font-medium text-gray-800">{t('assistant.settings.voiceOnly')}</span>
+                      <span className="block text-xs text-gray-500">{t('assistant.settings.voiceOnlyHint')}</span></span>
+                  </label>
+                  <label className="flex items-start gap-2">
+                    <input type="checkbox" checked={prefs.muted} onChange={(e) => setPrefs({ muted: e.target.checked })} className="mt-1" />
+                    <span><span className="font-medium text-gray-800">{t('assistant.settings.muted')}</span>
+                      <span className="block text-xs text-gray-500">{t('assistant.settings.mutedHint')}</span></span>
+                  </label>
+                  <label className="flex items-start gap-2">
+                    <input type="checkbox" checked={prefs.voiceStop} onChange={(e) => setPrefs({ voiceStop: e.target.checked })} className="mt-1" />
+                    <span><span className="font-medium text-gray-800">{t('assistant.settings.voiceStop')}</span>
+                      <span className="block text-xs text-gray-500">{t('assistant.settings.voiceStopHint')}</span></span>
+                  </label>
+                  <label className="block text-xs text-gray-600">
+                    {t('assistant.settings.wakePhrase')}
+                    <input type="text" value={prefs.wakePhrase} maxLength={40}
+                      onChange={(e) => setPrefs({ wakePhrase: e.target.value })}
+                      placeholder={DEFAULT_WAKE[language] || DEFAULT_WAKE.en}
+                      className="mt-1 w-full border border-gray-200 rounded px-2 py-1 bg-white text-sm" />
+                    <span className="block mt-1 text-gray-400">{t('assistant.settings.wakePhraseHint')}</span>
+                  </label>
+                  {serverSpeech && (
+                    <div className="text-xs text-gray-600">
+                      <label htmlFor="assistant-voice">{t('assistant.settings.voice')}</label>
+                      <div className="mt-1 flex items-stretch gap-1.5">
+                        <select id="assistant-voice" value={prefs.voice} onChange={(e) => setPrefs({ voice: e.target.value })}
+                          className="min-w-0 flex-1 border border-gray-200 rounded px-2 py-1 bg-white text-sm">
+                          <option value="">{t('assistant.settings.modelVoice', { voice: voice.speech?.voice || t('assistant.settings.providerDefault') })}</option>
+                          {voiceNames.map((v) => (
+                            <option key={v} value={v}>{voiceLanguages[v] ? `${v} (${voiceLanguages[v]})` : v}</option>
+                          ))}
+                        </select>
+                        <button type="button" onClick={playSample} data-testid="assistant-voice-sample"
+                          title={t('assistant.settings.sampleHint')}
+                          aria-label={sample.busy ? t('assistant.settings.sampleStop') : t('assistant.settings.sample')}
+                          className="inline-flex shrink-0 items-center justify-center w-8 rounded border border-gray-200 text-gray-700 hover:border-indigo-300 hover:text-indigo-700">
+                          {sample.state.loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : sample.state.playing ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                      {sample.state.error && <span className="block mt-1 text-red-600">{sample.state.error}</span>}
+                      {!sample.state.error && sample.state.text && (
+                        <span className="block mt-1 italic text-gray-400">
+                          {sample.state.language ? `${sample.state.language}: ` : ''}«{sample.state.text}»
+                        </span>
+                      )}
+                      <span className="block mt-1 text-gray-400">{t('assistant.settings.voiceHint')}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <button type="button" onClick={onNewThread} disabled={busy || !feed.length}
+              title={t('assistant.newThread')} aria-label={t('assistant.newThread')}
+              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-40">
+              <MessageSquarePlus className="w-4 h-4" />
+            </button>
+            <button type="button" onClick={toggleSide} data-testid="assistant-side-toggle"
+              title={rightOpen ? t('assistant.hideTranscript') : t('assistant.showTranscript')}
+              aria-label={rightOpen ? t('assistant.hideTranscript') : t('assistant.showTranscript')}
+              className="p-2 rounded-lg text-gray-500 hover:bg-gray-100">
+              {rightOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+            </button>
+          </header>
+        )}
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center gap-6 px-4 sm:px-8 py-8">
           {loadError && <div className="text-sm text-red-600">{loadError}</div>}
           <div className="flex flex-col items-center gap-2">
@@ -1019,7 +1144,7 @@ export default function Assistant() {
                   onClick={onStop}
                   disabled={stopping}
                   aria-label={t('assistant.stop')}
-                  className="relative w-20 h-20 rounded-full flex items-center justify-center text-white shadow-lg select-none bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40"
+                  className={`relative w-20 h-20 rounded-full flex items-center justify-center text-white shadow-lg select-none bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40${micFrame}`}
                 >
                   {stopping ? <Loader2 className="w-8 h-8 animate-spin" /> : <Square className="w-7 h-7 fill-current" />}
                 </button>
@@ -1035,7 +1160,7 @@ export default function Assistant() {
                     : t(awake ? 'assistant.listen.sleep' : 'assistant.listen.callNow')}
                   aria-pressed={listenMode === 'conversation' ? conversing : awake}
                   className={`relative w-20 h-20 rounded-full flex items-center justify-center text-white shadow-lg select-none transition-colors ${
-                    (listenMode === 'conversation' ? conversing : awake) ? 'bg-red-500 hover:bg-red-600' : 'bg-indigo-600 hover:bg-indigo-700'} disabled:opacity-40`}
+                    (listenMode === 'conversation' ? conversing : awake) ? 'bg-red-500 hover:bg-red-600' : 'bg-indigo-600 hover:bg-indigo-700'} disabled:opacity-40${micFrame}`}
                 >
                   {earTranscribing ? <Loader2 className="w-8 h-8 animate-spin" />
                     : listenMode === 'conversation' ? (conversing ? <PhoneOff className="w-8 h-8" /> : <Phone className="w-8 h-8" />)
@@ -1053,7 +1178,7 @@ export default function Assistant() {
                   aria-label={t('assistant.talk')}
                   aria-pressed={talking}
                   className={`relative w-20 h-20 rounded-full flex items-center justify-center text-white shadow-lg select-none touch-none [-webkit-touch-callout:none] transition-colors ${
-                    talking ? 'bg-red-500' : 'bg-indigo-600 hover:bg-indigo-700'} disabled:opacity-40`}
+                    talking ? 'bg-red-500' : 'bg-indigo-600 hover:bg-indigo-700'} disabled:opacity-40${micFrame}`}
                 >
                   {transcribing ? <Loader2 className="w-8 h-8 animate-spin" /> : <Mic className="w-8 h-8" />}
                 </button>
@@ -1137,7 +1262,10 @@ export default function Assistant() {
       </section>
 
       {rightOpen && (
-        <aside className="w-[26rem] xl:w-[32rem] shrink-0 border-l border-gray-200 bg-white flex flex-col min-h-0"
+        <aside className={wide
+          ? 'w-[26rem] xl:w-[32rem] shrink-0 border-l border-gray-200 bg-white flex flex-col min-h-0'
+          // A phone: the whole screen, above the app's own top bar and drawer.
+          : 'fixed inset-0 z-50 bg-white flex flex-col min-h-0 pt-safe pb-safe px-safe'}
           data-testid="assistant-side">
           {/* As tall as the page's header beside it (min-h-14 there). */}
           <div className="flex items-center gap-1 px-3 h-14 border-b border-gray-200 shrink-0 text-xs" role="tablist"
@@ -1154,6 +1282,13 @@ export default function Assistant() {
                 title={t('assistant.clearTranscript')} aria-label={t('assistant.clearTranscript')}
                 className="ml-auto p-2 rounded-lg text-gray-500 hover:bg-gray-100 disabled:opacity-40">
                 <Eraser className="w-4 h-4" />
+              </button>
+            )}
+            {!wide && (
+              <button type="button" onClick={() => setSheetOpen(false)} data-testid="assistant-side-close"
+                title={t('common.close')} aria-label={t('common.close')}
+                className={`${rightTab === 'transcript' ? '' : 'ml-auto '}p-2 rounded-lg text-gray-500 hover:bg-gray-100`}>
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>

@@ -28,10 +28,12 @@ const ACCENTS = {
  * @param {string} [props.emptyText]         the list's text with nothing to pick.
  * @param {string} [props.title]             the button's tooltip.
  * @param {string} [props.width]             the list's minimum width class.
+ * @param {boolean} [props.iconOnWide]       the icon only from 1800 CSS px; a
+ *   smaller screen gets the name alone, where the bar is tight.
  */
 export function PickerDropdown({
   icon: Icon, accent = 'indigo', items, value, onChange, placeholder, emptyText = '', title = '',
-  width = 'min-w-[220px]',
+  width = 'min-w-[220px]', iconOnWide = false,
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -59,13 +61,15 @@ export function PickerDropdown({
         title={title || undefined}
         className="h-8 flex items-center gap-1.5 px-2.5 rounded-lg border border-gray-200 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors max-w-[240px]"
       >
-        <Icon className={`w-4 h-4 shrink-0 ${colors.icon}`} />
+        <Icon className={`w-4 h-4 shrink-0 ${colors.icon} ${iconOnWide ? 'max-[1799px]:hidden' : ''}`} />
         <span className={`truncate ${selected ? '' : 'text-gray-500'}`}>{selected?.name || placeholder}</span>
         <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />
       </button>
 
       {open && (
-        <div className={`absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 ${width} py-1 max-h-64 overflow-y-auto`}>
+        // On a phone the list opens under the top bar across the screen
+        // (the `phone:` classes), wherever its button sits in the bar.
+        <div className={`absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 ${width} py-1 max-h-64 overflow-y-auto phone:fixed phone:inset-x-2 phone:top-[calc(3.5rem+env(safe-area-inset-top))] phone:mt-0 phone:w-auto phone:max-h-[60vh]`}>
           {items.length === 0 && emptyText && (
             <div className="px-4 py-2 text-xs text-gray-400">{emptyText}</div>
           )}
@@ -88,15 +92,18 @@ export function PickerDropdown({
 }
 
 /** The agent picker: search, filters and a details pane (AgentPicker). */
-function AgentDropdown({ agents, value, onChange, conversations }) {
-  return <AgentPicker agents={agents} value={value} onChange={onChange} conversations={conversations} />;
+// `iconOnWide`: the icon only from 1800 CSS px; the top bar asks for it while
+// a column beside the chat takes the room.
+// `details`: the panel's right half with the agent's card; the bar drops it when narrow.
+function AgentDropdown({ agents, value, onChange, conversations, iconOnWide = false, details = true }) {
+  return <AgentPicker agents={agents} value={value} onChange={onChange} conversations={conversations} avatarOnWide={iconOnWide} details={details} />;
 }
 
-function TeamDropdown({ teams, value, onChange }) {
+function TeamDropdown({ teams, value, onChange, iconOnWide = false }) {
   const { t } = useI18n();
   return (
     <PickerDropdown
-      icon={UsersRound} accent="amber" value={value} onChange={onChange}
+      icon={UsersRound} accent="amber" value={value} onChange={onChange} iconOnWide={iconOnWide}
       placeholder={t('chat.selectTeam')} emptyText={t('chat.noTeamsDefined')} width="min-w-[280px]"
       items={teams.map((team) => ({
         id: team.team_id,
@@ -107,11 +114,11 @@ function TeamDropdown({ teams, value, onChange }) {
   );
 }
 
-function FlowDropdown({ flows, value, onChange }) {
+function FlowDropdown({ flows, value, onChange, iconOnWide = false }) {
   const { t } = useI18n();
   return (
     <PickerDropdown
-      icon={Workflow} accent="emerald" value={value} onChange={onChange}
+      icon={Workflow} accent="emerald" value={value} onChange={onChange} iconOnWide={iconOnWide}
       placeholder={t('chat.selectFlow')} emptyText={t('chat.noFlowsDefined')} width="min-w-[260px]"
       items={flows.map((f) => ({
         id: f.id, name: f.name, subtitle: t('chat.nodeCount', { count: (f.nodes || []).length }),
@@ -141,11 +148,11 @@ function ModeDropdown({ value, onChange }) {
 }
 
 /** The project the conversation works in, or none. */
-function ProjectDropdown({ projects, value, onChange }) {
+function ProjectDropdown({ projects, value, onChange, iconOnWide = false }) {
   const { t } = useI18n();
   return (
     <PickerDropdown
-      icon={FolderGit2} accent="emerald" value={value} onChange={onChange}
+      icon={FolderGit2} accent="emerald" value={value} onChange={onChange} iconOnWide={iconOnWide}
       placeholder={t('chat.noProject')} title={t('chat.projectPicker')}
       items={[{ id: '', name: t('chat.noProject') }, ...projects.map((p) => ({ id: p.id, name: p.name }))]}
     />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { I18nProvider } from '../../../i18n';
 import { MessageBubble } from '../MessageBubble';
 
@@ -32,5 +32,25 @@ describe('MessageBubble: a line said to the Assistant', () => {
   it('a typed line has no mark', () => {
     show({ id: 'u2', role: 'user', content: 'and yesterday?' });
     expect(screen.queryByTestId('spoken-caption')).toBeNull();
+  });
+});
+
+describe('MessageBubble: a turn that delegated', () => {
+  const live = (running) => ({
+    id: 'a1', role: 'agent', content: '', timeline: [
+      { type: 'tool', tool: 'delegate_task', running },
+      { type: 'delegation', run_id: 'r2', agent_id: 'researcher', agent_name: 'Researcher', running, ok: running ? null : true, timeline: [] },
+    ],
+  });
+  const mark = (container) => container.querySelector('svg.ah-live-mark');
+
+  it('shows the delegate scene until the delegated agent finishes', async () => {
+    const { container } = render(<I18nProvider><MessageBubble msg={live(true)} isStreaming /></I18nProvider>);
+    await waitFor(() => expect(mark(container)).toHaveAttribute('data-state', 'delegate'));
+  });
+
+  it('goes back to working once it has finished', async () => {
+    const { container } = render(<I18nProvider><MessageBubble msg={live(false)} isStreaming /></I18nProvider>);
+    await waitFor(() => expect(mark(container)?.getAttribute('data-state')).not.toBe('delegate'));
   });
 });

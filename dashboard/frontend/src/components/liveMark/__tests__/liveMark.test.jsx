@@ -141,6 +141,12 @@ describe('what the mark shows for a step', () => {
     expect(stateForTurn({ text: true })).toBe('speak');
     expect(stateForTurn({})).toBe('working');
   });
+
+  it('shows the delegate scene while a delegated agent works, whatever comes after', () => {
+    expect(stateForTurn({ delegating: true })).toBe('delegate');
+    expect(stateForTurn({ delegating: true, tool: 'web_search', thinking: true, text: true })).toBe('delegate');
+    expect(stateForTurn({ delegating: true, waiting: true })).toBe('wait');
+  });
 });
 
 describe('scenes after the Orbit Loader artifact', () => {

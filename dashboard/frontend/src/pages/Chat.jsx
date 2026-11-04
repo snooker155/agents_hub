@@ -4,7 +4,8 @@ import { conversationTarget } from '../components/chat/handoff';
 import { useWorkspace } from '../components/workspace';
 import { useStream } from '../components/stream';
 import ViewCard from '../views/ViewCard';
-import { addPersonalMemoryNote, getAgents, getProjects, getAgentDefinition, stopMessage, sendTelegramMessage, listFlows, getTeams } from '../api';
+import { addPersonalMemoryNote, getAgents, getChatLive, getProjects, getAgentDefinition, stopMessage, listFlows, getTeams } from '../api';
+import { CONNECTOR_ORIGINS, sendAsConnector } from '../components/chat/connectorChats';
 import { loadWorkspaceSummary } from '../api/workspaceSummary';
 import ContextMeter from '../components/ContextMeter';
 import {
@@ -80,9 +81,13 @@ import useChatComposerInput from '../components/chat/useChatComposerInput';
 import useAutoMode from '../components/chat/useAutoMode';
 import useChatSend from '../components/chat/useChatSend';
 import useChatTurns from '../components/chat/useChatTurns';
+import useChatTitles from '../components/chat/useChatTitles';
+import useHideBarOnScroll from '../components/chat/useHideBarOnScroll';
 import useChatSteering from '../components/chat/useChatSteering';
 import useRunningChats from '../components/chat/useRunningChats';
 import { useNoticeArtifacts, withNoticeFiles } from '../components/chat/noticeFiles';
+import { conversationArtifacts, listedArtifacts } from '../components/chat/artifactOps';
+import { useArtifactsMode } from '../components/chat/artifactsMode';
 import { FileOpenContext } from '../components/chat/fileOpenContext';
 
 const EMPTY_MESSAGES = [];
@@ -183,7 +188,9 @@ export default function Chat() {
   const {
     conversations, setConversations, removeConversation, syncError, reloadChat,
   } = useConversationStore(currentConvId, { paused: isTurnRunning });
-  const [telegramBindings, setTelegramBindings] = useState([]);
+  // A new chat's title, named by its agent once the first answer is in.
+  useChatTitles({ turns, conversations, setConversations });
+  const [connectorBindings, setConnectorBindings] = useState([]);
   const [telegramSending, setTelegramSending] = useState(false);
   const [telegramError, setTelegramError] = useState('');
 
@@ -274,24 +281,25 @@ export default function Chat() {
   // A conversation with the Assistant stays in the workspace it started in,
   // like any other (routes/chats.py lists them the same way).
   const visibleConversations = useMemo(() => {
-    const noTelegram = conversations.filter((c) => c.origin !== 'telegram');
-    if (!selectedWorkspace || selectedWorkspace === 'default') return noTelegram;
-    return noTelegram.filter((c) => c.workspace === selectedWorkspace);
+    // A connector's chats are listed under their connector at the foot of the list.
+    const ours = conversations.filter((c) => !CONNECTOR_ORIGINS.has(c.origin));
+    if (!selectedWorkspace || selectedWorkspace === 'default') return ours;
+    return ours.filter((c) => c.workspace === selectedWorkspace);
   }, [conversations, selectedWorkspace]);
 
   // Strict workspace isolation: a Telegram binding is shown only when its
   // workspace exactly matches the active workspace. The `default` selection
   // matches only bindings that explicitly point at `default` (no fallback to
   // "show everything"), so each workspace owns its slice of the Telegram thread.
-  const visibleTelegramBindings = useMemo(() => {
+  const visibleConnectorBindings = useMemo(() => {
     if (!selectedWorkspace) return [];
-    return telegramBindings.filter((b) => (b.workspace || null) === selectedWorkspace);
-  }, [telegramBindings, selectedWorkspace]);
+    return connectorBindings.filter((b) => (b.workspace || null) === selectedWorkspace);
+  }, [connectorBindings, selectedWorkspace]);
 
-  const currentTelegramBinding = useMemo(() => {
+  const currentConnectorBinding = useMemo(() => {
     if (!currentConvId) return null;
-    return telegramBindings.find((b) => b.conversation_id === currentConvId) || null;
-  }, [telegramBindings, currentConvId]);
+    return connectorBindings.find((b) => b.conversation_id === currentConvId) || null;
+  }, [connectorBindings, currentConvId]);
 
   const currentConv = conversations.find((c) => c.id === currentConvId) || null;
   // A stable fallback (EMPTY_MESSAGES): a fresh `[]` per render would re-run
@@ -477,7 +485,7 @@ export default function Chat() {
   // the Chat page was left. The composer can still talk to it (useChatSteering).
   // A Telegram thread's turns are the bot's, and its composer replies as the bot.
   const liveRunId = (
-    !loading && !currentTelegramBinding && targetMode === 'agent'
+    !loading && !currentConnectorBinding && targetMode === 'agent'
     && liveTurnSeen?.status === 'running' && ['chat', 'steer'].includes(liveTurnSeen.source)
   ) ? (liveTurnSeen.runId || null) : null;
 
@@ -498,7 +506,7 @@ export default function Chat() {
     if (!selectedWorkspace) return;
     // The Telegram binding takes priority — it carries the authoritative workspace
     // for any conv promoted from a binding (the local conv may not exist yet).
-    const tgBinding = telegramBindings.find((b) => b.conversation_id === currentConvId);
+    const tgBinding = connectorBindings.find((b) => b.conversation_id === currentConvId);
     if (tgBinding) {
       if ((tgBinding.workspace || null) !== selectedWorkspace) {
         navigate('/chat');
@@ -513,7 +521,7 @@ export default function Chat() {
     if ((conv.workspace || null) !== selectedWorkspace) {
       navigate('/chat');
     }
-  }, [selectedWorkspace, currentConvId, telegramBindings, conversations, navigate]);
+  }, [selectedWorkspace, currentConvId, connectorBindings, conversations, navigate]);
 
   // Persistence lives in useConversationStore: changes to `conversations` are
   // debounced into `PUT /api/chats/{id}` rather than rewritten into localStorage.
@@ -540,8 +548,8 @@ export default function Chat() {
   }, [selectedWorkspace]);
 
   useChatTelegram({
-    currentTelegramBinding, messages, setConversations, setSessionId,
-    setTelegramBindings,
+    currentConnectorBinding, messages, setConversations, setSessionId,
+    setConnectorBindings,
   });
   // ---- load projects for selected workspace ----
   // Leaving every workspace clears what was loaded for the last one (adjusted
@@ -692,10 +700,16 @@ export default function Chat() {
   // The files the turns' own runs changed, after those of the background
   // runs they were woken by (a later change by the agent wins).
   const noticeArtifacts = useNoticeArtifacts(renderedMessages, artifactsOpen);
+  // Under both, the files each reply lists (its saved `files`): the runs'
+  // diffs load only while a panel is open, so a conversation opened with the
+  // panels closed still has its files, and the button counts them.
+  const replyArtifacts = useMemo(() => conversationArtifacts(messages), [messages]);
   const shownArtifacts = useMemo(
-    () => (Object.keys(noticeArtifacts).length ? { ...noticeArtifacts, ...artifacts } : artifacts),
-    [noticeArtifacts, artifacts],
+    () => ({ ...replyArtifacts, ...noticeArtifacts, ...artifacts }),
+    [replyArtifacts, noticeArtifacts, artifacts],
   );
+  // Files or Diff: the panel lists, and the button counts, by it.
+  const [artifactsMode, setArtifactsMode] = useArtifactsMode();
   // The fenced blocks of the replies count as code too, until one is saved as
   // a view (then it is a row). Saved ids are kept for this page visit only.
   const replyBlocks = useMemo(() => replyCodeBlocks(messages), [messages]);
@@ -705,7 +719,7 @@ export default function Chat() {
   }, []);
   const codeCount = codeRows.length + replyBlocks.filter((b) => !savedReplyIds.has(b.id)).length;
   // The Artifacts button counts all three: files, views and code.
-  const artifactCount = Object.keys(shownArtifacts).length + artifactViews.length + codeCount;
+  const artifactCount = listedArtifacts(shownArtifacts, artifactsMode).length + artifactViews.length + codeCount;
 
   const {
     resizeTextarea, onPickFiles, addQuote, removeAttachment, toggleAttachmentStore,
@@ -854,44 +868,58 @@ export default function Chat() {
     }, 50);
   }, []);
 
-  // Stops the open conversation's turn only; the others keep running. A turn
-  // stopped before it named its run is stopped when it does (channelStream).
-  const stopGeneration = useCallback(() => {
-    const turn = getTurn(currentConvId);
-    if (!turn) {
-      if (liveRunId) stopMessage(liveRunId).catch(() => {});
+  // Stops one conversation's turn; the others keep running. A turn this tab
+  // sent is aborted here (one stopped before it named its run is stopped when
+  // it does, channelStream); anyone else's (another tab or device, Telegram)
+  // is stopped by its run, asked of the server when it is not the open one.
+  const stopConversation = useCallback(async (convId) => {
+    if (!convId) return;
+    const open = convId === currentConvId;
+    const turn = getTurn(convId);
+    if (turn) {
+      turn.ctrl.abort();
+      if (turn.stop) {
+        turn.stop();
+      } else {
+        const runId = turn.runId || (open ? activeRunId : null);
+        if (runId) stopMessage(runId).catch(() => {});
+      }
+      endTurn(convId);
       return;
     }
-    turn.ctrl.abort();
-    if (turn.stop) {
-      turn.stop();
-    } else {
-      const runId = turn.runId || activeRunId;
-      if (runId) stopMessage(runId).catch(() => {});
+    if (open && liveRunId) {
+      stopMessage(liveRunId).catch(() => {});
+      return;
     }
-    endTurn(currentConvId);
+    try {
+      const { data } = await getChatLive(convId);
+      const live = data?.turn;
+      if (live?.status === 'running' && live.run_id) await stopMessage(live.run_id);
+    } catch { /* gone already, or not ours to stop */ }
   }, [activeRunId, currentConvId, endTurn, getTurn, liveRunId]);
+
+  const stopGeneration = useCallback(() => stopConversation(currentConvId), [currentConvId, stopConversation]);
 
   // True only when the conversation's binding workspace matches the active workspace.
   // Reply-as-bot is forbidden across workspaces to keep the Telegram surface
   // anchored to whichever workspace the operator is actually working in.
-  const telegramReplyAllowed = Boolean(
-    currentTelegramBinding
+  const connectorReplyAllowed = Boolean(
+    currentConnectorBinding
     && selectedWorkspace
-    && (currentTelegramBinding.workspace || null) === selectedWorkspace
+    && (currentConnectorBinding.workspace || null) === selectedWorkspace
   );
 
-  // Send the composer text back to a Telegram chat as the bot (debug surface).
+  // Send the composer text back to the connector's chat as its bot (debug surface).
   const sendAsBot = useCallback(async () => {
-    if (!currentTelegramBinding) return;
-    if (!telegramReplyAllowed) return;
+    if (!currentConnectorBinding) return;
+    if (!connectorReplyAllowed) return;
     const text = input.trim();
     if (!text) return;
     setTelegramSending(true);
     setTelegramError('');
     try {
-      await sendTelegramMessage(currentTelegramBinding.chat_id, text);
-      const convId = currentTelegramBinding.conversation_id;
+      await sendAsConnector(currentConnectorBinding, text);
+      const convId = currentConnectorBinding.conversation_id;
       setConversations((prev) =>
         prev.map((c) => c.id !== convId ? c : {
           ...c,
@@ -899,7 +927,7 @@ export default function Chat() {
             id: genId(),
             role: 'user',
             content: text,
-            origin: 'telegram-bot',
+            origin: `${currentConnectorBinding.connector || 'telegram'}-bot`,
             createdAt: new Date().toISOString(),
           }],
         })
@@ -910,7 +938,7 @@ export default function Chat() {
     } finally {
       setTelegramSending(false);
     }
-  }, [currentTelegramBinding, telegramReplyAllowed, input, setConversations, t]);
+  }, [currentConnectorBinding, connectorReplyAllowed, input, setConversations, t]);
 
   const handleKeyDown = (e) => {
     if (commandMenuOpen && commandSuggestions.length > 0) {
@@ -937,7 +965,7 @@ export default function Chat() {
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (currentTelegramBinding) {
+      if (currentConnectorBinding) {
         sendAsBot();
       } else {
         sendMessage();
@@ -945,7 +973,7 @@ export default function Chat() {
     }
   };
 
-  // A code block in a reply, shown in the Artifacts panel's code under "From replies".
+  // A code block in a reply, shown in the Artifacts panel's code, marked unsaved.
   // Nothing is stored by opening it: it becomes a code view (versions, runs,
   // a place in a project) only when the person saves it as one there.
   const openInCodePanel = useCallback(async ({ code, runId }) => {
@@ -988,25 +1016,27 @@ export default function Chat() {
   // Published once for the five panes below; see `chat/context.js`.
   // The flows, loops and teams this chat's agent started that are still going.
   const backgroundRuns = useBackgroundRuns(currentConvId);
+  // On a phone the top bar scrolls away with the transcript.
+  const { barRef, barOffset, onTranscriptScroll } = useHideBarOnScroll(currentConvId);
 
   const page = {
     activeRunId, addReferences, backgroundRuns, addWorkspaceFiles, agentModel, autoMode, agentName, agentProvider, agentTopology, agents,
-    artifactCount, artifactPick, artifactViews, artifacts: shownArtifacts, artifactsFull, artifactsOpen, setArtifactsFull, setArtifactsOpen, attachMenuOpen, attachmentError,
+    artifactCount, artifactPick, artifactViews, artifacts: shownArtifacts, artifactsFull, artifactsMode, setArtifactsMode, artifactsOpen, setArtifactsFull, setArtifactsOpen, attachMenuOpen, attachmentError,
     codeCount, codeFocus, codeListError, listOpen, setListOpen, codeListLoading, codeRows, commandMenuIndex, commandMenuOpen,
     markReplySaved, replyBlocks, savedReplyIds, setCodeFocus,
     commandSuggestions, composerPlaceholder, contextKinds, contextUsage, conversationRunIds,
-    conversations, currentConv, currentConvId, currentTelegramBinding, deleteConversation,
+    conversations, currentConv, currentConvId, currentConnectorBinding, deleteConversation,
     fileInputRef, flows, graphRun, handleKeyDown, hasTarget, input, jumpToArtifact, liveMessages,
-    liveTurn, loadProcessData, loading, messages, navigate, newConversation,
+    liveTurn, loadProcessData, loading, messages, navigate, newConversation, onTranscriptScroll,
     onPickFiles, openInCodePanel, pendingAttachments, pendingReferences, pickerKind, processError, processInsights,
     processLoading, processOpen, projects, removeAttachment, removeReference, renderedMessages,
     resizeTextarea, runTimelineByRunId, selectCommand, selectableAgents, selectedAgent,
     selectedFlow, selectedProject, selectedTeam, selectedWorkspace, sendAsBot, sendMessage,
     setAttachMenuOpen, setCommandMenuIndex, setCommandMenuOpen, setConversations,
     setInput, setPickerKind, setProcessOpen, setSelectedAgent, setSelectedFlow, setSelectedProject,
-    setSelectedTeam, setTargetMode, setViewMode, steering, stopGeneration, syncError, t, targetMode,
-    teams, telegramError, turns, runningChats, telegramReplyAllowed, telegramSending, textareaRef,
-    toggleAttachmentStore, viewMode, visibleConversations, visibleTelegramBindings
+    setSelectedTeam, setTargetMode, setViewMode, steering, stopConversation, stopGeneration, syncError, t, targetMode,
+    teams, telegramError, turns, runningChats, connectorReplyAllowed, telegramSending, textareaRef,
+    toggleAttachmentStore, viewMode, visibleConversations, visibleConnectorBindings
   };
 
   return (
@@ -1018,7 +1048,12 @@ export default function Chat() {
       {/* The conversation gives way to the Artifacts column when that is set
           to the whole width (ChatSidePanel). */}
       <div className={`${artifactsOpen && artifactsFull ? 'hidden' : 'flex'} flex-1 flex-col min-w-0`}>
-        <ChatTopBar />
+        {/* Slid up out of sight by its own height while hidden (a phone only;
+            sm:!mt-0 keeps it in place on a wider screen whatever was set). */}
+        <div ref={barRef} className="shrink-0 transition-[margin] duration-200 ease-out sm:!mt-0"
+          style={barOffset != null ? { marginTop: barOffset } : undefined} data-testid="chat-top-bar-wrap">
+          <ChatTopBar />
+        </div>
         {/* The composer floats over the foot of the conversation, which
             scrolls behind it (see ChatComposer). */}
         <div className="relative flex-1 min-h-0 flex flex-col">

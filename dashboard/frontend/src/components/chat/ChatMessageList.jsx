@@ -2,7 +2,8 @@ import AgentExamples, { FlowExamples } from './AgentExamples';
 import { BuildMessage } from './BuildMessage';
 import { MessageBubble, TypingIndicator } from './MessageBubble';
 import HandoffDivider from './HandoffDivider';
-import { AudioLines, Bot, Copy, Radio, Send as SendIcon, UsersRound, Workflow } from 'lucide-react';
+import { AudioLines, Bot, Copy, Radio, UsersRound, Workflow } from 'lucide-react';
+import { connectorMeta } from './connectorChats';
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useChatPage } from './context';
@@ -38,10 +39,10 @@ function groupTurns(messages) {
  */
 export default function ChatMessageList() {
   const {
-    agentName, agents, backgroundRuns, currentConv, currentConvId, currentTelegramBinding, flows, jumpToArtifact,
-    liveMessages, liveTurn, loading, messages, renderedMessages,
+    agentName, agents, backgroundRuns, currentConv, currentConvId, currentConnectorBinding, flows, jumpToArtifact,
+    liveMessages, liveTurn, loading, messages, onTranscriptScroll, renderedMessages,
     runTimelineByRunId, selectedFlow, selectedTeam, selectedWorkspace, sendMessage, t,
-    targetMode, teams, telegramReplyAllowed, viewMode,
+    targetMode, teams, connectorReplyAllowed, viewMode,
   } = useChatPage();
   const lastUserId = [...renderedMessages].reverse().find((m) => m.role === 'user')?.id ?? null;
   const { scrollerRef, contentRef, onScroll, onPromptClick } = useChatScroll({
@@ -156,19 +157,21 @@ export default function ChatMessageList() {
     );
   };
   const turns = groupTurns(renderedMessages);
+  const connector = currentConnectorBinding?.connector || 'telegram';
+  const ConnectorIcon = connectorMeta(connector).icon;
   return (
     <>
-        {/* Fixed Telegram debug-mirror banner — sits above the scrolling messages area */}
-        {currentTelegramBinding && (
+        {/* A connector's chat (Telegram, Slack...): the debug-mirror banner above the scrolling messages */}
+        {currentConnectorBinding && (
           <div className="flex-shrink-0 px-4 py-2 border-b border-sky-200 bg-sky-50 text-xs text-sky-800 flex items-center gap-2">
-            <SendIcon className="w-3.5 h-3.5 shrink-0" />
+            <ConnectorIcon className="w-3.5 h-3.5 shrink-0" />
             <div className="flex-1 min-w-0 truncate">
-              <strong>{t('chat.telegram')}</strong> · {currentTelegramBinding.title || t('chat.telegramChat', { id: currentTelegramBinding.chat_id })}
-              {' '}· {t('chat.boundTo')} <strong>{currentTelegramBinding.agent_name || currentTelegramBinding.agent_id}</strong>
-              {currentTelegramBinding.workspace ? <> · {currentTelegramBinding.workspace}</> : null}
+              <strong>{t(`connectors.tabs.${connector}`)}</strong> · {currentConnectorBinding.title || t('chat.telegramChat', { id: currentConnectorBinding.chat_key ?? currentConnectorBinding.chat_id })}
+              {' '}· {t('chat.boundTo')} <strong>{currentConnectorBinding.agent_name || currentConnectorBinding.agent_id}</strong>
+              {currentConnectorBinding.workspace ? <> · {currentConnectorBinding.workspace}</> : null}
             </div>
-            {!telegramReplyAllowed && (
-              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium" title={`Switch to "${currentTelegramBinding.workspace || 'default'}" to reply.`}>
+            {!connectorReplyAllowed && (
+              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium" title={`Switch to "${currentConnectorBinding.workspace || 'default'}" to reply.`}>
                 {t('chat.readOnly')}
               </span>
             )}
@@ -208,9 +211,9 @@ export default function ChatMessageList() {
         {/* The composer is over the foot of this scroller (ChatComposer sets
             the variable to its height), so the last message can still be
             scrolled clear of it. */}
-        <div ref={scrollerRef} onScroll={onScroll} className="flex-1 overflow-y-auto"
+        <div ref={scrollerRef} onScroll={(e) => { onScroll(e); onTranscriptScroll?.(e.currentTarget); }} className="flex-1 overflow-y-auto"
              style={{ paddingBottom: 'var(--chat-composer-height, 0px)' }}>
-          <div ref={contentRef} className="max-w-full mx-auto px-3 py-4 sm:px-6 sm:py-8">
+          <div ref={contentRef} className="chat-transcript max-w-full mx-auto px-3 pt-4 sm:px-6 sm:pt-8">
             {messages.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full min-h-[40vh] text-center">
                 {targetMode === 'team' ? (
@@ -248,7 +251,8 @@ export default function ChatMessageList() {
                     </h2>
                     <p className="text-sm text-gray-500 max-w-sm leading-relaxed">
                       {t('chat.emptyAgent')}
-                      {selectedWorkspace && <> {t('chat.agentWorksIn')} <strong className="text-gray-700">{selectedWorkspace}</strong> {t('chat.workspace')}</>}
+                      {/* Where the agent works, on a line of its own. */}
+                      {selectedWorkspace && <span className="block">{t('chat.agentWorksIn')} <strong className="text-gray-700">{selectedWorkspace}</strong> {t('chat.workspace')}</span>}
                     </p>
                     <AgentExamples />
                   </>
@@ -264,11 +268,12 @@ export default function ChatMessageList() {
                   return (
                     <React.Fragment key={msg.id}>
                       {/* The prompt, held at the top while its turn scrolls by
-                          (useChatScroll); the spacer takes up what folding a
+                          (useChatScroll), from a tablet up: a phone has no room
+                          to spare for it. The spacer takes up what folding a
                           long held prompt frees, so the replies stay put. */}
                       <div
                         data-turn-prompt={msg.id}
-                        className="chat-turn-prompt sticky top-0 z-10 pointer-events-none"
+                        className="chat-turn-prompt sm:sticky sm:top-0 z-10 pointer-events-none"
                         onClick={onPromptClick}
                       >
                         {rendered}

@@ -5,6 +5,7 @@ import { ChatPageContext } from '../context';
 import { MemoryRouter } from 'react-router-dom';
 import { useChatCode } from '../useChatCode';
 import { ArtifactsPanel } from '../panels';
+import { CodeSection } from '../CodePanel';
 import { useConversationCode } from '../useConversationCode';
 import { listViews, getView } from '../../../api';
 import { createCodeFromReply, getSnippetVersions, runCode, runSnippet, saveSnippetToProject, saveSnippetVersion } from '../../../api/code';
@@ -201,7 +202,8 @@ describe('code in the Artifacts panel', () => {
     });
     // Listed and selected, nothing created.
     await waitFor(() => expect(screen.getByTestId('reply-snippet')).toBeInTheDocument());
-    expect(screen.getByText('chat.code.fromReplies')).toBeInTheDocument();
+    // In the same list as the saved ones, without a heading of its own.
+    expect(screen.queryByText('chat.code.fromReplies')).not.toBeInTheDocument();
     expect(createCodeFromReply).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: /chat.code.saveAsView/ })).toBeInTheDocument();
     // A block has every action a saved snippet has, and none of them makes a view.
@@ -283,5 +285,29 @@ describe('code in the Artifacts panel', () => {
     await waitFor(() => expect(saveSnippetVersion).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'c1:reply:a1:0', workspace: 'ws', base: 'print(2)', body: 'print(3)4' })));
     expect(createCodeFromReply).not.toHaveBeenCalled();
+  });
+});
+
+describe('CodeSection cards', () => {
+  it('in a narrow panel lists each snippet as a card with its first lines and an ellipsis', async () => {
+    const onSelect = vi.fn();
+    const body = Array.from({ length: 9 }, (_, i) => `line ${i + 1}`).join('\n');
+    const code = {
+      count: 2, listLoading: false, listError: '',
+      groups: [{ filename: 'hello.py', items: [{ view_id: 'v1' }], latest: { view_id: 'v1', language: 'python', version: 2 } }],
+      envelopes: { v1: { spec: { body } } },
+      replies: [{ id: 'reply:1', language: 'bash', body: 'echo hi' }],
+    };
+    render(<CodeSection code={code} selectedId={null} onSelect={onSelect} cards />);
+    const [card] = screen.getAllByTestId('code-card');
+    expect(card).toHaveTextContent('hello.py');
+    expect(card).toHaveTextContent('line 5');
+    expect(card).not.toHaveTextContent('line 6');
+    expect(card.querySelector('[data-testid="preview-more"]')).toHaveTextContent('…');
+    const reply = screen.getByTestId('reply-snippet');
+    expect(reply).toHaveTextContent('echo hi');
+    expect(reply.querySelector('[data-testid="preview-more"]')).toBeNull();
+    await userEvent.click(card);
+    expect(onSelect).toHaveBeenCalledWith('v1');
   });
 });

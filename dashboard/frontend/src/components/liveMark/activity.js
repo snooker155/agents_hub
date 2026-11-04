@@ -164,11 +164,13 @@ export function stateForTool(name, input) {
 }
 
 /**
- * The state of a live chat turn: waiting for an approval, a tool, thinking,
- * writing the reply, or just working (nothing reported yet).
+ * The state of a live chat turn: waiting for an approval, another agent at
+ * work on a delegated task (until it finishes, whatever it is doing inside),
+ * a tool, thinking, writing the reply, or just working (nothing reported yet).
  */
-export function stateForTurn({ waiting, thinking, tool, input, text }) {
+export function stateForTurn({ waiting, delegating, thinking, tool, input, text }) {
   if (waiting) return 'wait';
+  if (delegating) return 'delegate';
   if (tool) return stateForTool(tool, input);
   if (thinking) return 'think';
   if (text) return 'speak';

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { autoGrowTextarea } from '../../lib/autoGrow';
-import { Square, MessageSquarePlus, Send } from 'lucide-react';
+import { Square, MessageSquarePlus, Send, ListTodo } from 'lucide-react';
+import ConfirmModal from '../ConfirmModal';
 import AgentTranscript from '../chat/AgentTranscript';
 import ViewModeToggle from '../chat/ViewModeToggle';
 import { useChatViewMode } from '../chat/viewMode';
@@ -37,17 +38,15 @@ const plannerCalls = (projectId, workspace) => (projectId ? {
 });
 
 // The task manager's chat, drawn by its page inside the floating page-chat
-// panel (usePageChatHost): `tools` is the panel header's slot for its Clear,
-// history and view-mode controls. The page's "Generate from
-// architecture" button opens it with `generateRequested` set, and the panel
-// runs the default plan once its transcript is loaded (then calls
-// `onGenerateStarted` so the page clears the request); the chat input sends
-// free-text refinements. Shows thinking + tool calls live and replays the
+// panel (usePageChatHost): `tools` is the panel header's slot for its
+// Generate from architecture (a project's chat only, asked for again in a
+// modal, since it plans the whole task tree), New chat, history and
+// view-mode controls; the chat input sends free-text refinements. Shows thinking + tool calls live and replays the
 // session on reload. "New chat" files the thread in the history, the same
 // way the other build chats do (common/entity_chat_store.py, kind projtasks).
 // Calls onGenerated when tasks change. With `workspace` instead of
 // `projectId` it plans over the whole workspace (the Tasks page).
-function PlannerChat({ projectId, workspace, tools, onGenerated, generateRequested = false, onGenerateStarted }) {
+function PlannerChat({ projectId, workspace, tools, onGenerated }) {
   const { t } = useI18n();
   const calls = React.useMemo(() => plannerCalls(projectId, workspace), [projectId, workspace]);
   // The conversation, in the Chat page's message shape.
@@ -199,20 +198,13 @@ function PlannerChat({ projectId, workspace, tools, onGenerated, generateRequest
     }
   }, [busy, calls, resetContext, t]);
 
-  // The page asked for a generation (its button opened this panel).
-  // On a microtask, not straight from the effect body: starting the run sets
-  // state, which an effect should not do synchronously.
-  useEffect(() => {
-    if (!generateRequested || !loaded || busy) return undefined;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      if (onGenerateStarted) onGenerateStarted();
-      setHistoryOpen(false);
-      run();
-    });
-    return () => { cancelled = true; };
-  }, [generateRequested, loaded, busy, onGenerateStarted, run]);
+  // Generate from architecture, once the modal's question is answered.
+  const [confirmGenerate, setConfirmGenerate] = useState(false);
+  const generate = useCallback(() => {
+    setConfirmGenerate(false);
+    setHistoryOpen(false);
+    run();
+  }, [run]);
 
   const pickSession = useCallback(async (session) => {
     if (session.active) { setHistoryOpen(false); return; }
@@ -233,10 +225,17 @@ function PlannerChat({ projectId, workspace, tools, onGenerated, generateRequest
 
   const controls = (
     <>
+      {projectId && (
+        <button onClick={() => setConfirmGenerate(true)} disabled={busy || !loaded}
+          title={t('flowPlannerChat.createAFullTaskPlan')} aria-label={t('flowPlannerChat.generateFromArchitecture')}
+          className="inline-flex items-center gap-1 px-1 py-0.5 rounded-md text-[11px] font-medium text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+          <ListTodo className="w-3.5 h-3.5 phone:w-4 phone:h-4" /> <span className="phone:hidden">{t('flowPlannerChat.generateShort')}</span>
+        </button>
+      )}
       {messages.length > 0 && !historyOpen && (
-        <button onClick={newChat} disabled={busy} title={t('entityChat.clearChat')}
-          className="inline-flex items-center gap-1 text-[11px] font-normal text-gray-400 hover:text-indigo-600 disabled:opacity-40">
-          <MessageSquarePlus className="w-3.5 h-3.5" /> {t('entityChat.clear')}
+        <button onClick={newChat} disabled={busy} title={t('entityChat.clearChat')} aria-label={t('entityChat.clear')}
+          className="inline-flex items-center gap-1 px-1 py-0.5 rounded-md text-[11px] font-normal text-gray-400 hover:text-indigo-600 hover:bg-gray-50 disabled:opacity-40">
+          <MessageSquarePlus className="w-3.5 h-3.5 phone:w-4 phone:h-4" /> <span className="phone:hidden">{t('entityChat.clear')}</span>
         </button>
       )}
       {sessionHistory.hasHistory && (
@@ -249,6 +248,18 @@ function PlannerChat({ projectId, workspace, tools, onGenerated, generateRequest
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-white">
       {tools && createPortal(controls, tools)}
+      {confirmGenerate && (
+        <ConfirmModal
+          title={t('flowPlannerChat.generateConfirmTitle')}
+          confirmLabel={t('flowPlannerChat.generateFromArchitecture')}
+          cancelLabel={t('common.cancel')}
+          icon={ListTodo}
+          onConfirm={generate}
+          onCancel={() => setConfirmGenerate(false)}
+        >
+          {t('flowPlannerChat.generateConfirmBody')}
+        </ConfirmModal>
+      )}
 
       {error ? <div className="px-4 py-2 text-xs text-red-600 bg-red-50 border-b border-red-100">{error}</div> : null}
 

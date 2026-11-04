@@ -25,16 +25,20 @@ export default function ComposerBox({
       data-testid={testId}
       className={`border rounded-2xl bg-white shadow-lg transition-all ${highlight ? 'border-amber-400' : 'border-gray-400'}`}
     >
-      <div className="flex items-center gap-3 px-4 py-3">
+      {/* On a phone the row hugs the edges (attach and send close to them)
+          and the typing hint is left out: it has no room beside the rest. */}
+      <div className="flex items-center gap-2 px-2 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
         {leading}
         {children}
         {actions}
       </div>
       {(footerLeft || hint || footerRight) && (
-        <div className="grid grid-cols-[1fr_minmax(0,max-content)_1fr] items-center gap-3 border-t border-gray-100 px-3 py-1.5 text-xs">
+        <div className={`grid grid-cols-[1fr_minmax(0,max-content)_1fr] items-center gap-3 border-t border-gray-100 px-3 py-1.5 text-xs ${
+          footerLeft || footerRight ? '' : 'max-sm:hidden'}`}>
           <div className="flex min-w-0 justify-start">{footerLeft}</div>
-          <p className="min-w-0 truncate text-center text-[11px] text-gray-400" title={hintTitle}>{hint}</p>
-          <div className="flex min-w-0 justify-end">{footerRight}</div>
+          <p className="min-w-0 truncate text-center text-[11px] text-gray-400 max-sm:hidden" title={hintTitle}>{hint}</p>
+          {/* Its own column, so it stays at the right when the hint is left out. */}
+          <div className="col-start-3 flex min-w-0 justify-end">{footerRight}</div>
         </div>
       )}
     </div>

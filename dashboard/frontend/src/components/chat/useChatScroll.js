@@ -51,7 +51,9 @@ export function useChatScroll({ convId, lastUserId, messages, stuckHint }) {
       const slot = turn.querySelector(':scope > [data-turn-prompt]');
       if (!slot) continue;
       const rect = turn.getBoundingClientRect();
-      const stuck = rect.top < top - 1 && rect.bottom > top;
+      // A phone does not hold prompts (ChatMessageList): nothing to fold there.
+      const holds = getComputedStyle(slot).position === 'sticky';
+      const stuck = holds && rect.top < top - 1 && rect.bottom > top;
       if (stuck === (slot.dataset.stuck === 'true')) continue;
       const spacer = turn.querySelector(':scope > [data-turn-spacer]');
       const bubble = slot.querySelector('[data-prompt-bubble]');

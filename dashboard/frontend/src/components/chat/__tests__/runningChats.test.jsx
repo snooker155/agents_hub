@@ -1,4 +1,4 @@
-import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const getRunningChats = vi.fn();
@@ -62,7 +62,7 @@ describe('ChatSidebar', () => {
       visibleConversations: [
         { id: 'a', title: 'mine' }, { id: 'b', title: 'elsewhere' }, { id: 'c', title: 'idle' },
       ],
-      visibleTelegramBindings: [],
+      visibleConnectorBindings: [],
     };
     render(<ChatPageContext.Provider value={page}><ChatSidebar /></ChatPageContext.Provider>);
     await waitFor(() => expect(screen.getAllByTestId('chat-conv-running')).toHaveLength(2));
@@ -74,6 +74,29 @@ describe('ChatSidebar', () => {
     // The spinner stands where the delete button is: a running chat has none.
     expect(marked.every((row) => !row.querySelector('[title="chat.delete"]'))).toBe(true);
     expect(rows.find((row) => row.textContent.includes('idle')).querySelector('[title="chat.delete"]')).not.toBeNull();
+  });
+
+  it('stops a running chat from its row without opening it', () => {
+    const stopConversation = vi.fn();
+    const navigate = vi.fn();
+    const page = {
+      currentConvId: 'a', deleteConversation: vi.fn(), flows: [], listOpen: false, navigate,
+      newConversation: vi.fn(), projects: [], setListOpen: vi.fn(), selectableAgents: [],
+      selectedWorkspace: 'default', setConversations: vi.fn(), setSelectedAgent: vi.fn(),
+      setSelectedFlow: vi.fn(), setSelectedProject: vi.fn(), setSelectedTeam: vi.fn(),
+      setTargetMode: vi.fn(), syncError: false, t: (k) => k, teams: [],
+      turns: {}, runningChats: new Set(['b']), stopConversation,
+      visibleConversations: [{ id: 'b', title: 'elsewhere' }, { id: 'c', title: 'idle' }],
+      visibleConnectorBindings: [],
+    };
+    render(<ChatPageContext.Provider value={page}><ChatSidebar /></ChatPageContext.Provider>);
+    // One stop button, on the running chat; shown on hover in place of the spinner.
+    const stop = screen.getByTestId('chat-conv-stop');
+    expect(stop).toHaveClass('hidden', 'group-hover:flex');
+    expect(screen.getByTestId('chat-conv-running')).toHaveClass('group-hover:hidden');
+    fireEvent.click(stop);
+    expect(stopConversation).toHaveBeenCalledWith('b');
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it('searches the chats: titles at once, then a message hit and an older chat from the server', async () => {
@@ -92,14 +115,21 @@ describe('ChatSidebar', () => {
       visibleConversations: [{ id: 'a', title: 'Coffee trends' }, { id: 'c', title: 'idle' }],
     };
     render(<ChatPageContext.Provider value={page}><ChatSidebar /></ChatPageContext.Provider>);
-    fireEvent.change(screen.getByTestId('chat-search'), { target: { value: 'COFFEE' } });
+    // The search is a window opened from the icon beside New chat.
+    expect(screen.queryByTestId('chat-search')).toBeNull();
+    fireEvent.click(screen.getByTestId('chat-search-open'));
+    const modal = within(screen.getByTestId('chat-search-modal'));
+    // Nothing typed: the recent chats.
+    expect(modal.getByText('idle')).toBeInTheDocument();
+    fireEvent.change(modal.getByTestId('chat-search'), { target: { value: 'COFFEE' } });
     // The loaded title matches at once.
-    expect(screen.getByText('Coffee trends')).toBeInTheDocument();
-    expect(screen.queryByText('idle')).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getAllByTestId('chat-search-match')).toHaveLength(2));
+    expect(modal.getByText('Coffee trends')).toBeInTheDocument();
+    expect(modal.queryByText('idle')).not.toBeInTheDocument();
+    await waitFor(() => expect(modal.getAllByTestId('chat-search-match')).toHaveLength(2));
     expect(searchChats).toHaveBeenCalledWith({ q: 'coffee' });
-    // An older chat is listed before it opens, marked not loaded.
-    fireEvent.click(screen.getByText('Old one'));
+    // An older chat is listed before it opens, marked not loaded; the window closes.
+    fireEvent.click(modal.getByText('Old one'));
+    expect(screen.queryByTestId('chat-search-modal')).toBeNull();
     const next = setConversations.mock.calls[0][0]([]);
     expect(next).toEqual([expect.objectContaining({ id: 'old', messages: [], _hydrated: false })]);
     expect(next[0].match).toBeUndefined();

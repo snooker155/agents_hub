@@ -16,8 +16,9 @@
  * workspace says (views/file_run.py), the unsaved text in its place.
  */
 import { useEffect, useState } from 'react';
+import FitText from '../FitText';
 import {
-  AlertCircle, BookmarkPlus, Check, Copy, Download, Edit3, FolderGit2, History, Info, ListChecks, Loader2,
+  AlertCircle, BookmarkPlus, Check, ChevronLeft, Copy, Download, Edit3, FolderGit2, History, Info, ListChecks, Loader2,
   MessageSquare, Play, Save,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
@@ -80,7 +81,10 @@ MOUNT_EXAMPLE.js = MOUNT_EXAMPLE.javascript;
 MOUNT_EXAMPLE.sh = MOUNT_EXAMPLE.bash;
 MOUNT_EXAMPLE.shell = MOUNT_EXAMPLE.bash;
 
-const popover = 'absolute mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20';
+// top-full: right under the button whatever the parent is. Without it the
+// mount help, whose parent is an inline-flex centred row, was centred on its
+// button and its top went up under the Artifacts header.
+const popover = 'absolute top-full mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20';
 
 const formatWhen = (iso) => {
   if (!iso) return '';
@@ -102,11 +106,12 @@ const formatWhen = (iso) => {
  * @param {boolean} [props.runHistory]   a Runs button with the view's recorded runs.
  * @param {{workspace: string, path: string}} [props.file] a workspace file: Save writes it, Run runs it from its folder.
  * @param {string}  [props.className]
+ * @param {Function} [props.onBack]     "To the list" before the name, as breadcrumbs (a narrow Artifacts panel).
  */
 export default function CodeWorkbench({
   envelope, isReply = false, replyKey = null, workspace, projects, onVersionSaved = () => {},
   onDraftChange = null, saveAsView = null, chat = null, runHistory = false, file = null,
-  className = '',
+  className = '', onBack = null,
 }) {
   const { t } = useI18n();
   const dark = useResolvedDark();
@@ -362,26 +367,45 @@ export default function CodeWorkbench({
   return (
     <div className={`flex flex-col min-h-0 ${className}`} data-testid="code-workbench">
       <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-800 flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-medium text-gray-800 dark:text-gray-100 truncate max-w-[140px]" title={isFile ? file.path : undefined}>
-          {spec.filename || t('chat.code.untitled')}
-        </span>
+        {onBack ? (
+          <>
+            <button type="button" onClick={onBack} data-testid="artifacts-back"
+              className="shrink-0 inline-flex items-center gap-0.5 rounded text-xs font-medium text-gray-500 hover:text-indigo-700">
+              <ChevronLeft className="w-3.5 h-3.5" />
+              {t('chat.artifactsBack')}
+            </button>
+            <span className="shrink-0 text-gray-300" aria-hidden="true">/</span>
+          </>
+        ) : null}
+        {/* A file's workbench sits under the file's own line, which names it already. */}
+        {isFile ? (
+          <span className="text-xs font-medium text-gray-800 dark:text-gray-100 truncate max-w-[140px]" title={file.path}>
+            {spec.filename || t('chat.code.untitled')}
+          </span>
+        ) : (
+          <FitText className="min-w-0 max-w-[16rem] font-semibold text-gray-800 dark:text-gray-100" title={spec.filename}>
+            {spec.filename || t('chat.code.untitled')}
+          </FitText>
+        )}
+        {/* The marks after the name share one type, as on the Artifacts
+            blocks (chat/CodePanel.jsx); only an unsaved edit stands out in amber. */}
         {spec.language && (
-          <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+          <span className="text-xs text-gray-400">
             {spec.language}
           </span>
         )}
         {spec.version != null && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300">
+          <span className="text-xs text-gray-400">
             {t('chat.code.versionShort', { version: spec.version })}
           </span>
         )}
         {isReply && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400" title={t('chat.code.fromRepliesHint')}>
+          <span className="text-xs text-gray-400" title={t('chat.code.fromRepliesHint')}>
             {t('chat.code.replyUnsaved')}
           </span>
         )}
         {dirty && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-300">
+          <span className="text-xs text-amber-600 dark:text-amber-300">
             {t('chat.code.unsaved')}
           </span>
         )}

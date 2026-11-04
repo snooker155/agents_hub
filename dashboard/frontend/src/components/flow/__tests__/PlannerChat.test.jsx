@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { I18nProvider } from '../../../i18n';
 
@@ -32,6 +32,15 @@ const show = (props = {}) => {
   return render(<I18nProvider><PlannerChat projectId="p1" tools={tools} {...props} /></I18nProvider>);
 };
 
+// Generate from architecture: the header's button, then the modal's.
+const generate = async () => {
+  const button = await screen.findByRole('button', { name: 'Generate from architecture' });
+  await waitFor(() => expect(button).not.toBeDisabled());
+  fireEvent.click(button);
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: /Generate from architecture/ }));
+};
+
 beforeEach(() => {
   getProjectTasksChat.mockImplementation(() => ok({
     messages: [{ role: 'user', content: 'plan it' }, { role: 'assistant', content: 'Done.' }],
@@ -48,12 +57,16 @@ beforeEach(() => {
 });
 
 describe('PlannerChat', () => {
-  it('runs a requested generation once the transcript is loaded, in the interface language', async () => {
-    const onGenerateStarted = vi.fn();
+  it('asks before generating from the architecture, then runs it in the interface language', async () => {
     const onGenerated = vi.fn();
-    show({ generateRequested: true, onGenerateStarted, onGenerated });
+    show({ onGenerated });
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate from architecture' }));
+    // Cancel leaves it be.
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(streamProjectTasksGenerate).not.toHaveBeenCalled();
+    await generate();
     await waitFor(() => expect(streamProjectTasksGenerate).toHaveBeenCalledTimes(1));
-    expect(onGenerateStarted).toHaveBeenCalled();
     expect(streamProjectTasksGenerate.mock.calls[0][0].message).toBe('Generate tasks from the architecture & process graphs.');
     expect(await screen.findByText('Made 3 tasks.')).toBeInTheDocument();
     expect(screen.getByText('Done.')).toBeInTheDocument();
@@ -84,7 +97,8 @@ describe('PlannerChat', () => {
       await new Promise((r) => { finish = r; });
       onEvent({ type: 'done', created: 0 });
     });
-    show({ generateRequested: true, onGenerateStarted: vi.fn() });
+    show();
+    await generate();
     // create_task and add_subtask both read "Creating a task".
     await waitFor(() => expect(screen.getAllByText(/Creating a task/)).toHaveLength(2));
     const marks = () => screen.getAllByTestId('tool-status').map((m) => m.dataset.status);

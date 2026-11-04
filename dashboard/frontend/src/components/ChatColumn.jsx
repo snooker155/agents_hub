@@ -77,18 +77,25 @@ export function useChatColumn(defaultOpen = true, { wide = false } = {}) {
 }
 
 /** Header button that folds the column away and brings it back. */
-export function ChatToggle({ open, onToggle, label, className = '' }) {
+// `iconOnly`: on a phone the icon alone, the label its tooltip (a header of
+// icon actions); a wide screen still shows the label.
+export function ChatToggle({ open, onToggle, label, iconOnly = false, className = '' }) {
   return (
     <button
       onClick={onToggle}
       aria-pressed={open}
-      className={`inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg border ${
+      title={iconOnly ? label : undefined}
+      aria-label={iconOnly ? label : undefined}
+      className={`inline-flex items-center ${
+        iconOnly ? 'h-9 shrink-0 justify-center gap-1.5 px-3 phone:w-9 phone:px-0' : 'px-3 py-2'
+      } text-sm font-medium rounded-lg border ${
         open
           ? 'text-indigo-700 bg-indigo-50 border-indigo-200 hover:bg-indigo-100'
           : 'text-gray-600 bg-white border-gray-300 hover:text-indigo-700 hover:border-indigo-300'
       } ${className}`}
     >
-      <MessagesSquare className="w-4 h-4 mr-1.5" /> {label}
+      <MessagesSquare className={iconOnly ? 'w-4 h-4 shrink-0' : 'w-4 h-4 mr-1.5'} />
+      {iconOnly ? <span className="phone:hidden whitespace-nowrap">{label}</span> : <> {label}</>}
     </button>
   );
 }

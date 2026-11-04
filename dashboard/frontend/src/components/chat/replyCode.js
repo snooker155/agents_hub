@@ -1,6 +1,6 @@
 /**
  * The fenced code blocks in a conversation's replies, as the Code panel lists
- * them under "From replies": read off the messages, never stored. One becomes
+ * them, marked unsaved: read off the messages, never stored. One becomes
  * a code view (a snippet with versions, runs and a place in a project) only
  * when the person saves it as one.
  *

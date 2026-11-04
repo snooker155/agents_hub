@@ -189,6 +189,23 @@ describe('the Assistant page', () => {
     expect(screen.queryByPlaceholderText('Or type here')).toBeNull();
   });
 
+  it('frames the microphone in amber in auto mode when the text field is hidden', async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ voiceOnly: true, autoApprove: true }));
+    show();
+    await screen.findByTestId('assistant-page');
+    const mic = document.querySelector('[data-tour="assistant-talk"]');
+    expect(mic.className).toContain('outline-amber-400');
+    fireEvent.click(screen.getByRole('switch'));
+    expect(document.querySelector('[data-tour="assistant-talk"]').className).not.toContain('outline-amber-400');
+  });
+
+  it('keeps the microphone unframed in auto mode while the text field shows', async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ autoApprove: true }));
+    show();
+    await screen.findByPlaceholderText('Or type here');
+    expect(document.querySelector('[data-tour="assistant-talk"]').className).not.toContain('outline-amber-400');
+  });
+
   it('says a refusal for the budget in words, not as a raw error', async () => {
     assistantApi.streamAssistantTurn.mockRejectedValue(
       new assistantApi.AssistantError(402, { code: 'budget', message: 'limit' }));

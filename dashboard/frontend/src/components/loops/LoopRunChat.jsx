@@ -27,13 +27,13 @@ const SHOW_ESTIMATE = false;
 function ReplyRow({ name, children }) {
   return (
     <div className={`${SIZE.row} flex-row`}>
-      <div className="flex flex-col items-center gap-1 flex-shrink-0 w-14">
+      <div className={`flex flex-col items-center gap-1 flex-shrink-0 w-14 ${SIZE.avatar}`}>
         <div className="w-8 h-8 rounded-full flex items-center justify-center text-white bg-gray-800">
           <Bot className="w-4 h-4" />
         </div>
         {name && <span title={name} className={AVATAR_NAME_CLS}>{name}</span>}
       </div>
-      <div className="min-w-0 flex-1 max-w-[92%]">{children}</div>
+      <div className={`min-w-0 flex-1 max-w-[92%] ${SIZE.reply}`}>{children}</div>
     </div>
   );
 }
@@ -169,10 +169,10 @@ export default function LoopRunChat({
             <div className="mx-auto w-full max-w-5xl">
               {/* What the run was asked for: the person's message. */}
               <div className={`${SIZE.row} flex-row-reverse`}>
-                <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white bg-indigo-600">
+                <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white bg-indigo-600 ${SIZE.avatar}`}>
                   <User className="w-4 h-4" />
                 </div>
-                <div className={`${SIZE.bubble} leading-relaxed bg-indigo-600 text-white rounded-tr-sm`}>
+                <div className={`${SIZE.bubble} ${SIZE.prompt} leading-relaxed bg-indigo-600 text-white rounded-tr-sm`}>
                   <span className="whitespace-pre-wrap">{[run.goal || t('loops.noGoal'), attached].filter(Boolean).join('\n')}</span>
                 </div>
               </div>
