@@ -20,7 +20,7 @@
 ARG WITH_RAG=false
 
 # ---------- the shared dependency stack ----------
-FROM python:3.11-slim AS deps-false
+FROM python:3.15-slim AS deps-false
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -71,7 +71,7 @@ RUN (pip install --no-cache-dir torch --index-url https://download.pytorch.org/w
 # can drive the host daemon (managers/container_manager.py) and run agents in
 # their own containers. The daemon itself is never installed. Its own stage,
 # so a source change never downloads it again.
-FROM python:3.11-slim AS docker-cli
+FROM python:3.15-slim AS docker-cli
 
 ARG TARGETARCH
 ARG DOCKER_CLI_VERSION=27.5.1
